@@ -1,134 +1,100 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux — an agentic research companion: schematic">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux — an agentic research companion: schematic of the crux-tree and the loop">
+  <style>
+    .ink{fill:#1f2328}.muted{fill:#57606a}.accent{fill:#b8860b}.accent-s{stroke:#b8860b}
+    @media (prefers-color-scheme:dark){
+      .ink{fill:#e6edf3}.muted{fill:#9aa4b2}.accent{fill:#ffd24a}.accent-s{stroke:#ffd24a}
+    }
+  </style>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0c1640"/>
-      <stop offset="1" stop-color="#080d27"/>
-    </linearGradient>
-    <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L6,3 L0,6 Z" fill="#9aa6d6"/>
-    </marker>
-    <marker id="ahg" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L6,3 L0,6 Z" fill="#ffd24a"/>
+    <marker id="a" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
+      <path d="M0,0 L5,2.5 L0,5 Z" fill="#8b949e"/>
     </marker>
   </defs>
 
-  <rect width="1200" height="660" fill="url(#bg)"/>
-
-  <!-- scattered stars -->
-  <g fill="#ffffff">
-    <circle cx="120" cy="120" r="1.1" opacity=".5"/><circle cx="300" cy="80" r="1" opacity=".4"/>
-    <circle cx="640" cy="70" r="1.3" opacity=".55"/><circle cx="900" cy="150" r="1" opacity=".4"/>
-    <circle cx="200" cy="470" r="1" opacity=".4"/><circle cx="560" cy="560" r="1.2" opacity=".45"/>
-    <circle cx="1140" cy="300" r="1" opacity=".4"/><circle cx="80" cy="600" r="1" opacity=".35"/>
-    <circle cx="980" cy="520" r="1.1" opacity=".4"/><circle cx="430" cy="150" r="1" opacity=".35"/>
+  <!-- ===== logo: Crux / Southern Cross ===== -->
+  <g class="accent-s" stroke-opacity=".45" stroke-width="1">
+    <line x1="70" y1="32" x2="66" y2="92"/>
+    <line x1="44" y1="66" x2="90" y2="61"/>
+  </g>
+  <g class="accent">
+    <circle cx="70" cy="32" r="2.4"/>
+    <circle cx="66" cy="92" r="3.2"/>
+    <circle cx="44" cy="66" r="2.4"/>
+    <circle cx="90" cy="61" r="2.1"/>
+    <circle cx="76" cy="78" r="1.4"/>
   </g>
 
-  <!-- Southern Cross (Crux constellation), top-right -->
-  <g stroke="#ffd24a" stroke-opacity=".35" stroke-width="1">
-    <line x1="1086" y1="58" x2="1072" y2="150"/>
-    <line x1="1040" y1="104" x2="1110" y2="108"/>
-  </g>
-  <g fill="#ffd24a">
-    <circle cx="1086" cy="58" r="2.6"/><circle cx="1072" cy="150" r="2.2"/>
-    <circle cx="1040" cy="104" r="2"/><circle cx="1110" cy="108" r="2.4"/>
-    <circle cx="1096" cy="92" r="1.5"/>
-  </g>
+  <!-- ===== wordmark ===== -->
+  <text x="116" y="68" class="accent" font-size="38" font-weight="700">Crux</text>
+  <text x="118" y="92" class="muted" font-size="15">an agentic research companion</text>
 
-  <!-- header -->
-  <text x="48" y="74" fill="#ffd24a" font-size="46" font-weight="700">✦ Crux</text>
-  <text x="50" y="104" fill="#aab4e6" font-size="19">an agentic research companion — a scientific-method lab notebook your LLM agent drives</text>
-  <line x1="48" y1="128" x2="1152" y2="128" stroke="#ffffff" stroke-opacity=".12"/>
+  <!-- ===== zone labels ===== -->
+  <text x="44" y="160" class="muted" font-size="12" letter-spacing="2.5" font-weight="600">CRUX-TREE</text>
+  <text x="715" y="160" class="muted" font-size="12" letter-spacing="2.5" font-weight="600">THE LOOP</text>
+  <line x1="585" y1="150" x2="585" y2="452" stroke="#8b949e" stroke-opacity=".22"/>
 
-  <!-- ============ LEFT: THE VAULT (data model tree) ============ -->
-  <text x="48" y="172" fill="#8b95c9" font-size="13" letter-spacing="2" font-weight="600">THE VAULT — A TREE YOU OPEN IN OBSIDIAN</text>
-
-  <!-- edges -->
-  <g stroke="#5b67a6" stroke-width="1.5" fill="none">
-    <path d="M315,240 C315,270 175,266 175,296" marker-end="url(#ah)"/>
-    <path d="M315,240 C315,270 435,266 435,296" marker-end="url(#ah)"/>
-    <path d="M435,344 C435,376 380,374 380,404" marker-end="url(#ah)"/>
-    <path d="M435,344 C435,376 557,374 557,404" marker-end="url(#ah)"/>
+  <!-- ===== CRUX-TREE ===== -->
+  <g stroke="#8b949e" stroke-opacity=".7" fill="none">
+    <line x1="280" y1="216" x2="196" y2="262"/>
+    <line x1="280" y1="216" x2="384" y2="262"/>
+    <line x1="390" y1="304" x2="332" y2="350"/>
+    <line x1="390" y1="304" x2="468" y2="350"/>
   </g>
 
-  <!-- Project -->
-  <rect x="250" y="196" width="130" height="44" rx="10" fill="#ffffff" fill-opacity=".06" stroke="#ffd24a" stroke-opacity=".8"/>
-  <text x="315" y="223" text-anchor="middle" fill="#eaeeff" font-size="16" font-weight="600">Project</text>
+  <!-- project (root) -->
+  <rect x="220" y="176" width="120" height="40" rx="9" fill="none" class="accent-s" stroke-width="1.4"/>
+  <text x="280" y="201" text-anchor="middle" class="ink" font-size="14" font-weight="600">Project</text>
 
-  <!-- Question (open) -->
-  <rect x="96" y="296" width="158" height="48" rx="10" fill="#ffffff" fill-opacity=".06" stroke="#6ea8ff" stroke-opacity=".85"/>
-  <circle cx="116" cy="320" r="5" fill="#fbbf24"/>
-  <text x="132" y="316" fill="#eaeeff" font-size="15" font-weight="600">Question</text>
-  <text x="132" y="333" fill="#9aa6d6" font-size="11.5">open</text>
+  <!-- questions -->
+  <rect x="120" y="262" width="140" height="42" rx="9" fill="none" stroke="#8b949e"/>
+  <text x="190" y="288" text-anchor="middle" class="ink" font-size="14">Question</text>
+  <rect x="320" y="262" width="140" height="42" rx="9" fill="none" stroke="#8b949e"/>
+  <text x="390" y="288" text-anchor="middle" class="ink" font-size="14">Question</text>
 
-  <!-- Question (review) -->
-  <rect x="356" y="296" width="158" height="48" rx="10" fill="#ffffff" fill-opacity=".06" stroke="#6ea8ff" stroke-opacity=".85"/>
-  <circle cx="376" cy="320" r="5" fill="#ff8a4c"/>
-  <text x="392" y="316" fill="#eaeeff" font-size="15" font-weight="600">Question</text>
-  <text x="392" y="333" fill="#9aa6d6" font-size="11.5">review — needs you</text>
+  <!-- hypotheses: approved / rejected -->
+  <rect x="266" y="350" width="132" height="40" rx="9" fill="none" stroke="#8b949e"/>
+  <text x="282" y="375" font-size="13.5"><tspan fill="#2ea043" font-weight="700">✓</tspan><tspan class="ink" dx="6">Hypothesis</tspan></text>
+  <rect x="402" y="350" width="132" height="40" rx="9" fill="none" stroke="#8b949e"/>
+  <text x="418" y="375" font-size="13.5"><tspan fill="#e5484d" font-weight="700">✕</tspan><tspan class="ink" dx="6">Hypothesis</tspan></text>
 
-  <!-- Hypothesis supported -->
-  <rect x="300" y="404" width="160" height="50" rx="10" fill="#ffffff" fill-opacity=".06" stroke="#b98cff" stroke-opacity=".85"/>
-  <circle cx="320" cy="429" r="5" fill="#4ade80"/>
-  <text x="336" y="425" fill="#eaeeff" font-size="15" font-weight="600">Hypothesis</text>
-  <text x="336" y="442" fill="#9aa6d6" font-size="11.5">✓ supported · imp +0.012</text>
+  <text x="400" y="424" text-anchor="middle" class="muted" font-size="12">approved or rejected by its verifiables</text>
 
-  <!-- Hypothesis partial -->
-  <rect x="472" y="404" width="170" height="50" rx="10" fill="#ffffff" fill-opacity=".06" stroke="#b98cff" stroke-opacity=".85"/>
-  <circle cx="492" cy="429" r="5" fill="#fbbf24"/>
-  <text x="508" y="425" fill="#eaeeff" font-size="15" font-weight="600">Hypothesis</text>
-  <text x="508" y="442" fill="#9aa6d6" font-size="11.5">~ partial · imp +0.003</text>
-
-  <!-- captions -->
-  <text x="96" y="496" fill="#c3cbf0" font-size="12.5">Each leaf pre-registers <tspan fill="#eaeeff" font-weight="600">verifiables</tspan> ☑ ☐ → a mechanical <tspan fill="#eaeeff" font-weight="600">verdict</tspan> → <tspan fill="#eaeeff" font-weight="600">findings</tspan>.</text>
-  <text x="96" y="516" fill="#c3cbf0" font-size="12.5">Findings <tspan fill="#eaeeff" font-weight="600">roll up the ledger</tspan> to answer the question. Links form the graph.</text>
-
-  <!-- divider between zones -->
-  <line x1="660" y1="150" x2="660" y2="520" stroke="#ffffff" stroke-opacity=".10"/>
-
-  <!-- ============ RIGHT: THE LOOP ============ -->
-  <text x="700" y="172" fill="#8b95c9" font-size="13" letter-spacing="2" font-weight="600">THE LOOP — AGENT DRAFTS · YOU DECIDE</text>
-
-  <!-- pipeline arrows -->
-  <g stroke="#5b67a6" stroke-width="1.6" fill="none">
-    <line x1="805" y1="238" x2="805" y2="252" marker-end="url(#ah)"/>
-    <line x1="805" y1="294" x2="805" y2="308" marker-end="url(#ah)"/>
-    <line x1="805" y1="350" x2="805" y2="364" marker-end="url(#ah)"/>
-    <line x1="805" y1="406" x2="805" y2="420" marker-end="url(#ah)"/>
-    <line x1="805" y1="462" x2="805" y2="476" marker-end="url(#ah)"/>
+  <!-- ===== THE LOOP ===== -->
+  <g stroke="#8b949e" stroke-opacity=".85" marker-end="url(#a)">
+    <line x1="810" y1="212" x2="810" y2="223"/>
+    <line x1="810" y1="262" x2="810" y2="273"/>
+    <line x1="810" y1="312" x2="810" y2="323"/>
+    <line x1="810" y1="362" x2="810" y2="373"/>
+    <line x1="810" y1="412" x2="810" y2="423"/>
   </g>
 
   <!-- pills -->
-  <g>
-    <rect x="700" y="198" width="210" height="40" rx="20" fill="#ffffff" fill-opacity=".06" stroke="#6ea8ff" stroke-opacity=".7"/>
-    <text x="805" y="223" text-anchor="middle" fill="#eaeeff" font-size="14.5">ask <tspan fill="#9aa6d6" font-size="12">— a question</tspan></text>
-
-    <rect x="700" y="254" width="210" height="40" rx="20" fill="#ffffff" fill-opacity=".06" stroke="#b98cff" stroke-opacity=".7"/>
-    <text x="805" y="279" text-anchor="middle" fill="#eaeeff" font-size="14.5">hypothesize <tspan fill="#9aa6d6" font-size="12">+ verifiables</tspan></text>
-
-    <rect x="700" y="310" width="210" height="40" rx="20" fill="#ffffff" fill-opacity=".06" stroke="#6ea8ff" stroke-opacity=".55"/>
-    <text x="805" y="335" text-anchor="middle" fill="#eaeeff" font-size="14.5">test <tspan fill="#9aa6d6" font-size="12">— run it</tspan></text>
-
-    <rect x="700" y="366" width="210" height="40" rx="20" fill="#ffffff" fill-opacity=".06" stroke="#4ade80" stroke-opacity=".7"/>
-    <text x="805" y="391" text-anchor="middle" fill="#eaeeff" font-size="14.5">close <tspan fill="#9aa6d6" font-size="12">→ verdict, roll up</tspan></text>
-
-    <rect x="700" y="422" width="210" height="40" rx="20" fill="#ffd24a" fill-opacity=".12" stroke="#ffd24a" stroke-opacity=".9"/>
-    <text x="805" y="447" text-anchor="middle" fill="#ffe9a6" font-size="14.5" font-weight="600">review gate <tspan fill="#d9b86a" font-size="12">— you</tspan></text>
-
-    <rect x="700" y="478" width="210" height="40" rx="20" fill="#ffffff" fill-opacity=".06" stroke="#6ea8ff" stroke-opacity=".7"/>
-    <text x="805" y="503" text-anchor="middle" fill="#eaeeff" font-size="14.5">answer <tspan fill="#9aa6d6" font-size="12">/ pursue</tspan></text>
+  <g font-size="14" text-anchor="middle">
+    <rect x="715" y="174" width="190" height="38" rx="19" fill="none" stroke="#8b949e"/>
+    <text x="810" y="198" class="ink">ask</text>
+    <rect x="715" y="224" width="190" height="38" rx="19" fill="none" stroke="#8b949e"/>
+    <text x="810" y="248" class="ink">hypothesize</text>
+    <rect x="715" y="274" width="190" height="38" rx="19" fill="none" stroke="#8b949e"/>
+    <text x="810" y="298" class="ink">test</text>
+    <rect x="715" y="324" width="190" height="38" rx="19" fill="none" stroke="#8b949e"/>
+    <text x="810" y="348" class="ink">close</text>
+    <rect x="715" y="374" width="190" height="38" rx="19" fill="none" class="accent-s" stroke-width="1.6"/>
+    <text x="810" y="398"><tspan class="accent" font-weight="600">review</tspan><tspan class="muted" dx="4">· human</tspan></text>
+    <rect x="715" y="424" width="190" height="38" rx="19" fill="none" stroke="#8b949e"/>
+    <text x="810" y="448" class="ink">answer / pursue</text>
   </g>
 
-  <!-- loopback: spawns new questions -->
-  <path d="M910,498 C998,498 998,218 916,218" fill="none" stroke="#ffd24a" stroke-opacity=".6" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#ahg)"/>
-  <text x="1006" y="362" fill="#d9b86a" font-size="11.5" transform="rotate(90 1006 362)" text-anchor="middle">findings spawn new questions</text>
+  <!-- loop-back: findings spawn new questions -->
+  <path d="M905,443 C963,443 963,193 911,193" fill="none" class="accent-s" stroke-opacity=".55" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#a)"/>
+  <text x="958" y="318" class="muted" font-size="11" text-anchor="middle" transform="rotate(90 958 318)">findings → new questions</text>
 
-  <!-- ============ ROLES + OUTPUTS ============ -->
-  <line x1="48" y1="566" x2="1152" y2="566" stroke="#ffffff" stroke-opacity=".12"/>
-  <g font-size="13.5">
-    <circle cx="56" cy="600" r="5" fill="#ffd24a"/><text x="68" y="605" fill="#eaeeff"><tspan font-weight="600">PI</tspan> <tspan fill="#9aa6d6">— decides</tspan></text>
-    <circle cx="208" cy="600" r="5" fill="#6ea8ff"/><text x="220" y="605" fill="#eaeeff"><tspan font-weight="600">Agent</tspan> <tspan fill="#9aa6d6">— drafts</tspan></text>
-    <circle cx="372" cy="600" r="5" fill="#4ade80"/><text x="384" y="605" fill="#eaeeff"><tspan font-weight="600">Engine</tspan> <tspan fill="#9aa6d6">— bookkeeps, deterministic</tspan></text>
-    <text x="760" y="605" fill="#9aa6d6">generates → <tspan fill="#eaeeff" font-weight="600">META.md</tspan> · <tspan fill="#eaeeff" font-weight="600">EXPERIMENTS.md</tspan></text>
-  </g>
-  <text x="1152" y="640" text-anchor="end" fill="#56608f" font-size="11">github.com/mehdiforoozandeh/crux</text>
+  <!-- ===== roles ===== -->
+  <line x1="44" y1="486" x2="1036" y2="486" stroke="#8b949e" stroke-opacity=".22"/>
+  <text x="540" y="514" text-anchor="middle" font-size="13.5">
+    <tspan class="ink" font-weight="700">Human</tspan><tspan class="muted" dx="3">decides</tspan>
+    <tspan class="muted" dx="16">·</tspan>
+    <tspan class="ink" font-weight="700" dx="16">Agent</tspan><tspan class="muted" dx="3">drafts</tspan>
+    <tspan class="muted" dx="16">·</tspan>
+    <tspan class="ink" font-weight="700" dx="16">Engine</tspan><tspan class="muted" dx="3">records (deterministic)</tspan>
+  </text>
 </svg>
