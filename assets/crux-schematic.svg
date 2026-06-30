@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux — an agentic research companion: schematic of the crux-tree and the loop">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux — an agentic research companion: schematic of the crux-tree and the loop">
   <style>
     .gold{fill:#c99219}.golds{stroke:#c99219}
     .blue{fill:#3b82f6}.blues{stroke:#3b82f6}
@@ -13,89 +13,89 @@
   </defs>
 
   <!-- ===== logo: Crux / Southern Cross ===== -->
-  <g class="golds" stroke-opacity=".5" stroke-width="1">
-    <line x1="70" y1="32" x2="66" y2="92"/>
-    <line x1="44" y1="66" x2="90" y2="61"/>
+  <g class="golds" stroke-opacity=".5" stroke-width="1.1">
+    <line x1="70" y1="30" x2="65" y2="98"/>
+    <line x1="40" y1="66" x2="92" y2="60"/>
   </g>
   <g class="gold">
-    <circle cx="70" cy="32" r="2.4"/>
-    <circle cx="66" cy="92" r="3.2"/>
-    <circle cx="44" cy="66" r="2.4"/>
-    <circle cx="90" cy="61" r="2.1"/>
-    <circle cx="76" cy="78" r="1.4"/>
+    <circle cx="70" cy="30" r="2.7"/>
+    <circle cx="65" cy="98" r="3.6"/>
+    <circle cx="40" cy="66" r="2.7"/>
+    <circle cx="92" cy="60" r="2.3"/>
+    <circle cx="77" cy="82" r="1.6"/>
   </g>
 
   <!-- ===== wordmark ===== -->
-  <text x="116" y="68" class="gold" font-size="38" font-weight="700">Crux</text>
-  <text x="118" y="92" class="mut" font-size="15">an agentic research companion</text>
+  <text x="120" y="72" class="gold" font-size="42" font-weight="700">Crux</text>
+  <text x="122" y="100" class="mut" font-size="18">an agentic research companion</text>
 
   <!-- ===== zone labels ===== -->
-  <text x="44" y="160" class="mut" font-size="12" letter-spacing="2.5" font-weight="600">CRUX-TREE</text>
-  <text x="715" y="160" class="mut" font-size="12" letter-spacing="2.5" font-weight="600">THE LOOP</text>
-  <line x1="585" y1="150" x2="585" y2="452" stroke="#8b949e" stroke-opacity=".25"/>
+  <text x="48" y="172" class="mut" font-size="15" letter-spacing="2.5" font-weight="600">CRUX-TREE</text>
+  <text x="735" y="172" class="mut" font-size="15" letter-spacing="2.5" font-weight="600">THE LOOP</text>
+  <line x1="600" y1="160" x2="600" y2="500" stroke="#8b949e" stroke-opacity=".25"/>
 
   <!-- ===== CRUX-TREE ===== -->
   <g stroke="#8b949e" stroke-opacity=".7" fill="none">
-    <line x1="280" y1="216" x2="196" y2="262"/>
-    <line x1="280" y1="216" x2="384" y2="262"/>
-    <line x1="390" y1="304" x2="332" y2="350"/>
-    <line x1="390" y1="304" x2="468" y2="350"/>
+    <line x1="310" y1="242" x2="200" y2="292"/>
+    <line x1="310" y1="242" x2="420" y2="292"/>
+    <line x1="420" y1="340" x2="335" y2="392"/>
+    <line x1="420" y1="340" x2="505" y2="392"/>
   </g>
 
   <!-- project (root) -->
-  <rect x="220" y="176" width="120" height="40" rx="9" fill="none" class="golds" stroke-width="1.6"/>
-  <text x="280" y="201" text-anchor="middle" class="gold" font-size="14" font-weight="700">Project</text>
+  <rect x="240" y="196" width="140" height="46" rx="10" fill="none" class="golds" stroke-width="1.7"/>
+  <text x="310" y="225" text-anchor="middle" class="gold" font-size="18" font-weight="700">Project</text>
 
   <!-- questions -->
-  <rect x="120" y="262" width="140" height="42" rx="9" fill="none" class="blues" stroke-width="1.4"/>
-  <text x="190" y="288" text-anchor="middle" class="blue" font-size="14" font-weight="600">Question</text>
-  <rect x="320" y="262" width="140" height="42" rx="9" fill="none" class="blues" stroke-width="1.4"/>
-  <text x="390" y="288" text-anchor="middle" class="blue" font-size="14" font-weight="600">Question</text>
+  <rect x="120" y="292" width="160" height="48" rx="10" fill="none" class="blues" stroke-width="1.5"/>
+  <text x="200" y="322" text-anchor="middle" class="blue" font-size="18" font-weight="600">Question</text>
+  <rect x="340" y="292" width="160" height="48" rx="10" fill="none" class="blues" stroke-width="1.5"/>
+  <text x="420" y="322" text-anchor="middle" class="blue" font-size="18" font-weight="600">Question</text>
 
   <!-- hypotheses: approved / rejected -->
-  <rect x="266" y="350" width="132" height="40" rx="9" fill="none" class="vios" stroke-width="1.4"/>
-  <text x="282" y="375" font-size="13.5" font-weight="600"><tspan class="ok">✓</tspan><tspan class="vio" dx="6">Hypothesis</tspan></text>
-  <rect x="402" y="350" width="132" height="40" rx="9" fill="none" class="vios" stroke-width="1.4"/>
-  <text x="418" y="375" font-size="13.5" font-weight="600"><tspan class="no">✕</tspan><tspan class="vio" dx="6">Hypothesis</tspan></text>
+  <rect x="260" y="392" width="150" height="46" rx="10" fill="none" class="vios" stroke-width="1.5"/>
+  <text x="276" y="421" font-size="16" font-weight="600"><tspan class="ok">✓</tspan><tspan class="vio" dx="7">Hypothesis</tspan></text>
+  <rect x="430" y="392" width="150" height="46" rx="10" fill="none" class="vios" stroke-width="1.5"/>
+  <text x="446" y="421" font-size="16" font-weight="600"><tspan class="no">✕</tspan><tspan class="vio" dx="7">Hypothesis</tspan></text>
 
-  <text x="400" y="424" text-anchor="middle" class="mut" font-size="12">approved or rejected by its verifiables</text>
+  <text x="420" y="472" text-anchor="middle" class="mut" font-size="14">approved or rejected by its verifiables</text>
 
   <!-- ===== THE LOOP ===== -->
   <g stroke="#8b949e" stroke-opacity=".85" marker-end="url(#a)">
-    <line x1="810" y1="212" x2="810" y2="223"/>
-    <line x1="810" y1="262" x2="810" y2="273"/>
-    <line x1="810" y1="312" x2="810" y2="323"/>
-    <line x1="810" y1="362" x2="810" y2="373"/>
-    <line x1="810" y1="412" x2="810" y2="423"/>
+    <line x1="840" y1="236" x2="840" y2="247"/>
+    <line x1="840" y1="292" x2="840" y2="303"/>
+    <line x1="840" y1="348" x2="840" y2="359"/>
+    <line x1="840" y1="404" x2="840" y2="415"/>
+    <line x1="840" y1="460" x2="840" y2="471"/>
   </g>
 
   <!-- pills -->
-  <g font-size="14" font-weight="600" text-anchor="middle">
-    <rect x="715" y="174" width="190" height="38" rx="19" fill="none" class="blues" stroke-width="1.3"/>
-    <text x="810" y="198" class="blue">ask</text>
-    <rect x="715" y="224" width="190" height="38" rx="19" fill="none" class="blues" stroke-width="1.3"/>
-    <text x="810" y="248" class="blue">hypothesize</text>
-    <rect x="715" y="274" width="190" height="38" rx="19" fill="none" class="blues" stroke-width="1.3"/>
-    <text x="810" y="298" class="blue">test</text>
-    <rect x="715" y="324" width="190" height="38" rx="19" fill="none" class="blues" stroke-width="1.3"/>
-    <text x="810" y="348" class="blue">close</text>
-    <rect x="715" y="374" width="190" height="38" rx="19" fill="none" class="golds" stroke-width="1.7"/>
-    <text x="810" y="398"><tspan class="gold">review</tspan><tspan class="mut" dx="4" font-weight="400">· human</tspan></text>
-    <rect x="715" y="424" width="190" height="38" rx="19" fill="none" class="blues" stroke-width="1.3"/>
-    <text x="810" y="448" class="blue">answer / pursue</text>
+  <g font-size="18" font-weight="600" text-anchor="middle">
+    <rect x="735" y="192" width="210" height="44" rx="22" fill="none" class="blues" stroke-width="1.4"/>
+    <text x="840" y="220" class="blue">ask</text>
+    <rect x="735" y="248" width="210" height="44" rx="22" fill="none" class="blues" stroke-width="1.4"/>
+    <text x="840" y="276" class="blue">hypothesize</text>
+    <rect x="735" y="304" width="210" height="44" rx="22" fill="none" class="blues" stroke-width="1.4"/>
+    <text x="840" y="332" class="blue">test</text>
+    <rect x="735" y="360" width="210" height="44" rx="22" fill="none" class="blues" stroke-width="1.4"/>
+    <text x="840" y="388" class="blue">close</text>
+    <rect x="735" y="416" width="210" height="44" rx="22" fill="none" class="golds" stroke-width="1.8"/>
+    <text x="840" y="444"><tspan class="gold">review</tspan><tspan class="mut" dx="5" font-size="16" font-weight="400">· human</tspan></text>
+    <rect x="735" y="472" width="210" height="44" rx="22" fill="none" class="blues" stroke-width="1.4"/>
+    <text x="840" y="500" class="blue">answer / pursue</text>
   </g>
 
   <!-- loop-back: findings spawn new questions -->
-  <path d="M905,443 C963,443 963,193 911,193" fill="none" class="golds" stroke-opacity=".6" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#a)"/>
-  <text x="958" y="318" class="mut" font-size="11" text-anchor="middle" transform="rotate(90 958 318)">findings → new questions</text>
+  <path d="M945,494 C1008,494 1008,214 951,214" fill="none" class="golds" stroke-opacity=".6" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a)"/>
+  <text x="1000" y="354" class="mut" font-size="13" text-anchor="middle" transform="rotate(90 1000 354)">findings → new questions</text>
 
   <!-- ===== roles ===== -->
-  <line x1="44" y1="486" x2="1036" y2="486" stroke="#8b949e" stroke-opacity=".25"/>
-  <text x="540" y="514" text-anchor="middle" font-size="13.5">
-    <tspan class="gold" font-weight="700">Human</tspan><tspan class="mut" dx="3">decides</tspan>
-    <tspan class="mut" dx="16">·</tspan>
-    <tspan class="blue" font-weight="700" dx="16">Agent</tspan><tspan class="mut" dx="3">drafts</tspan>
-    <tspan class="mut" dx="16">·</tspan>
-    <tspan class="vio" font-weight="700" dx="16">Engine</tspan><tspan class="mut" dx="3">records (deterministic)</tspan>
+  <line x1="48" y1="534" x2="1072" y2="534" stroke="#8b949e" stroke-opacity=".25"/>
+  <text x="560" y="564" text-anchor="middle" font-size="16">
+    <tspan class="gold" font-weight="700">Human</tspan><tspan class="mut" dx="4">decides</tspan>
+    <tspan class="mut" dx="18">·</tspan>
+    <tspan class="blue" font-weight="700" dx="18">Agent</tspan><tspan class="mut" dx="4">drafts</tspan>
+    <tspan class="mut" dx="18">·</tspan>
+    <tspan class="vio" font-weight="700" dx="18">Engine</tspan><tspan class="mut" dx="4">records (deterministic)</tspan>
   </text>
 </svg>
