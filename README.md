@@ -72,7 +72,7 @@ node and a falsifiable bar; you approve; it runs the engine. You never memorize 
 researcher opens a question and designs the first hypothesis:
 
 <p align="center">
-  <img src="assets/minute-with-crux.svg" alt="A chat: the researcher types /crux to start a project, the agent opens the question 'Do mycorrhizal inoculants increase yield under drought?' (q1), then proposes and pre-registers a hypothesis with a falsifiable verifiable (grain yield ≥ +15% vs control, p<0.05, 4 reps) as h1 — each engine command run only after the researcher approves." width="820">
+  <img src="assets/minute-with-crux.svg" alt="A chat: the researcher types /crux to start a project, the agent opens the question 'Does data augmentation improve test accuracy?' (q1), then proposes and pre-registers a hypothesis with a falsifiable verifiable (test accuracy ≥ +2% vs the no-aug baseline, held-out) as h1 — each engine command run only after the researcher approves." width="820">
 </p>
 
 The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine never reads your run logs — you supply the per-box judgment and a headline metric. That keeps it domain-agnostic. Running an experiment and recording a verdict are always **your** call — crux is human-in-charge by default.
