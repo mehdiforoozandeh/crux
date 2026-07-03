@@ -71,27 +71,9 @@ You drive crux by **talking to your agent**. You describe the science; it propos
 node and a falsifiable bar; you approve; it runs the engine. You never memorize verbs. Here a
 researcher opens a question and designs the first hypothesis:
 
-> **You:** `/crux` — start tracking a project on drought-resistant crops.
-> **Agent:** I'll set up a vault and open the project *“Improving crop yield under drought.”* Good?
-> **You:** yes
-> **Agent:** → `crux init "Improving crop yield under drought"`. What's the first open question?
->
-> **You:** whether a mycorrhizal inoculant actually helps when water is scarce.
-> **Agent:** That's a **Question** — it has no single answer of its own, it's resolved by the
-> hypotheses under it. Open it as *“Do mycorrhizal inoculants increase yield under drought?”*
-> **You:** yes
-> **Agent:** → `crux ask "Do mycorrhizal inoculants increase yield under drought?"` → `q1`.
-> What's your first hypothesis under it?
->
-> **You:** the strain *R. irregularis* will beat an untreated control.
-> **Agent:** Good — falsifiable. I'd **pre-register the verifiable** as *grain yield ≥ +15% vs
-> untreated control at 50% irrigation, p < 0.05 across 4 field reps*. Is +15% the effect you care
-> about, or should it be tighter?
-> **You:** +15% is right.
-> **Agent:** → `crux hypothesize "R. irregularis beats untreated control" -p q1 -v "grain yield ≥ +15% vs control @50% irrigation, p<0.05, 4 reps"` → `h1` (an open idea, ready to run).
->
-> *…after the trial:* you tick h1's verifiable from the result, the agent writes the findings and
-> runs `crux close h1 -m "yield +18%, p=0.02"` — and the verdict rolls up to `q1`.
+<p align="center">
+  <img src="assets/minute-with-crux.svg" alt="A chat: the researcher types /crux to start a project, the agent opens the question 'Do mycorrhizal inoculants increase yield under drought?' (q1), then proposes and pre-registers a hypothesis with a falsifiable verifiable (grain yield ≥ +15% vs control, p<0.05, 4 reps) as h1 — each engine command run only after the researcher approves." width="820">
+</p>
 
 The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine never reads your run logs — you supply the per-box judgment and a headline metric. That keeps it domain-agnostic. Running an experiment and recording a verdict are always **your** call — crux is human-in-charge by default.
 
