@@ -34,6 +34,37 @@ git clone https://github.com/mehdiforoozandeh/crux
 python crux/scaffold/crux.py --help
 ```
 
+## Setting up in your project
+
+Once the skill is installed, just tell your agent to **set up crux in your repo**. It runs
+a short interview — *you only think about the science* — and stands up the vault for you:
+
+- **Have a proposal, notes, or a draft paper?** Point the agent at it; it drafts your setup from it.
+- **Already have a working repo** (code, results, months of work)? It reads it and *migrates*
+  it into an organized crux-tree — reconstructing what was asked, tested, and found. It only
+  ever writes under `crux/` and never touches your existing files.
+- **Nothing written down yet?** It figures the project out with you, one question at a time.
+
+Either way it drafts one **seed outline**, you approve it, and the engine materializes the
+whole notebook atomically. The seed shows both a fresh hypothesis and a migrated (already-run) one:
+
+```
+- Project: CANDI — self-supervised epigenome imputation
+  - Q: Can JEPA improve CANDI?
+    - H: JEPA pretraining beats supervised init            # fresh — an idea to run
+      - v: imputation Spearman ≥ +0.01 vs baseline
+    - H: [tested] contrastive aux loss lifts peak AUROC    # migrated — already-run work
+      - v: [x] peak AUROC ≥ +0.02 (found: 0.71 → 0.74)
+      - finding: net win on peaks.
+```
+```bash
+crux init --from seed.md --dir crux
+```
+
+crux is **human-in-charge by default**: the agent drafts, runs, and reports, but *you* approve
+before an experiment runs and before any verdict is recorded. Full seed-spec reference in
+[`scaffold/README.md`](scaffold/README.md).
+
 ## A minute with crux
 
 ```bash

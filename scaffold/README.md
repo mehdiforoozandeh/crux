@@ -23,7 +23,7 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 
 | verb | aliases | what it does |
 |------|---------|--------------|
-| `init` | start, new | bootstrap a vault here |
+| `init` | start, new | bootstrap a vault here (`--from seed.md` materializes a whole tree — see **Setup**) |
 | `ask` | question, q, meta | open a Question under the project or another question |
 | `hypothesize` | hypothesis, idea | add a testable hypothesis under a question (register `-v` verifiables) |
 | `test` | experiment, run, stage, launch | advance an idea: `idea → staged → running` (`stage`→staged, others→running) |
@@ -59,3 +59,54 @@ python crux.py close h1 -m "metric +0.012" -f "A wins decisively."
 python crux.py review            # → q1 awaits a decision
 python crux.py answer q1 -t "A is the load-bearing change."
 ```
+
+## Setup — `init --from` a seed outline
+
+Standing up a vault node-by-node is tedious. Instead the agent drafts one **seed
+outline** (from your docs, your existing repo, or a conversation), you edit/approve it,
+and the engine materializes the whole vault in one atomic step:
+
+```bash
+python crux.py init --from seed.md --dir crux
+```
+
+The seed is an **indented-bullet outline** — indent (2 spaces) = nesting, a type prefix
+per line. It's parsed deterministically (stdlib) and fully validated *before* any file is
+written, so a malformed seed leaves nothing behind.
+
+```
+- Project: CANDI — self-supervised epigenome imputation & denoising
+  - Q: Can JEPA improve CANDI?
+    - Q: Does a predictive latent help imputation?
+      - H: JEPA pretraining beats supervised init      # open idea (not yet run)
+        - v: imputation Spearman ≥ +0.01 vs baseline   # a verifiable
+        - v: no calibration regression
+      - H: [tested] contrastive aux loss lifts peak AUROC   # reconstruct finished work
+        - v: [x] peak AUROC ≥ +0.02 (found: 0.71 → 0.74)   # tick = met; (…) = evidence
+        - v: [ ] no train-time slowdown
+        - finding: net win on peaks; ~15% slower per step.
+```
+
+Node kinds and where they may sit (mirrors the model — the parser enforces it):
+
+| prefix | node | parent must be | notes |
+|--------|------|----------------|-------|
+| `Project:` | project root | — (exactly one, at top) | `TITLE — GOAL` (em-dash or `--` splits goal) |
+| `Q:` | question | Project or another `Q` | nests arbitrarily deep |
+| `H:` | hypothesis | a `Q` | prefix `[tested]` to reconstruct already-run work |
+| `v:` | verifiable | an `H` | optional `[x]`/`[ ]`/`[-]` tick + trailing `(evidence)` |
+| `finding:` | finding line | an `H` | one-line narrative for a `[tested]` hypothesis |
+| `problem:` | problem statement | an `H` | optional; why it's worth testing |
+
+For a **`[tested]`** hypothesis the engine ticks the verifiables as written, records the
+finding, and **closes it** — deriving the verdict *mechanically* from the ticks (`[x]`
+met · `[ ]` unmet · `[-]` n/a). It never invents a verdict; you supply the ticks. Fresh
+(un-`[tested]`) hypotheses land as open `idea`s to run through the normal flow.
+
+## Engine version stamp
+
+`init` records `engine_version` in `.crux.yaml`. On every run against an existing vault,
+the engine compares that stamp to its own version; on a mismatch it prints a loud drift
+warning and re-stamps (so the change lands as a `git` diff — an auditable record that the
+engine moved under a fixed vault). Verdicts depend on both your ticks *and* the engine, so
+the version travels with the vault in version control.

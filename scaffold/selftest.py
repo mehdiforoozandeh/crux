@@ -121,6 +121,89 @@ def run_demo(keep_dir=None):
     return root
 
 
+SEED = """\
+- Project: Demo Seeded — validate seed-spec ingest
+  - Q: Does approach A help?
+    - H: [tested] A helps overall
+      - v: [x] overall metric >= +0.01 (found: +0.02)
+      - finding: A helps in aggregate.
+    - Q: Which variant of A is best?
+      - H: variant A1 beats baseline
+        - v: metric >= +0.01 vs baseline
+        - v: no regression on control
+      - H: [tested] variant A2 already beat baseline
+        - v: [x] metric >= +0.01 vs baseline (found: +0.03)
+        - v: [x] no regression on control
+        - finding: A2 cleared both bars in job 7788.
+  - Q: Is A robust to noise?
+    - H: [tested] A degrades under noise
+      - v: [x] AUROC drop <= 0.05
+      - v: [ ] stable across 3 seeds
+      - finding: mixed — AUROC held but seed variance high.
+"""
+
+def run_seed():
+    print("\n# seed-spec ingest (crux init --from)")
+    base = tempfile.mkdtemp(prefix="crux_seed_")
+    seed_path = os.path.join(base, "seed.md")
+    with open(seed_path, "w") as f: f.write(SEED)
+    root = os.path.join(base, "vault")
+
+    E.cmd_init_from(seed_path, root)
+    v = E.Vault(root)
+    check("seed: vault marker written", os.path.exists(os.path.join(root, ".crux.yaml")))
+    check("seed: project title", v.cfg["title"] == "Demo Seeded")
+    check("seed: 3 questions", sum(1 for n in v.nodes.values() if n.type == "question") == 3)
+    check("seed: 4 hypotheses", sum(1 for n in v.nodes.values() if n.type == "idea") == 4)
+    # structure: q2 nests under q1; hypotheses under the right questions
+    check("seed: q2 nested under q1", v.get("q2").parent == "q1")
+    check("seed: q1 under project root", v.get("q1").parent == "root")
+    check("seed: h2 under q2", v.get("h2").parent == "q2")
+    check("seed: h4 under q3", v.get("h4").parent == "q3")
+    # fresh hypothesis stays an open idea with its verifiables registered
+    check("seed: h2 is a fresh idea", v.get("h2").status == "idea")
+    check("seed: h2 has 2 verifiables", sum(E.count_verifiables(read(node_path(root, "h2")))) == 2)
+    # tested hypotheses are closed with mechanically-derived verdicts
+    check("seed: h1 done+supported", v.get("h1").status == "done" and v.get("h1")["fm"]["verdict"] == "supported")
+    check("seed: h4 done+partial", v.get("h4").status == "done" and v.get("h4")["fm"]["verdict"] == "partial")
+    check("seed: h3 finding kept", "cleared both bars" in read(node_path(root, "h3")))
+    check("seed: h3 evidence kept", "+0.03" in read(node_path(root, "h3")))
+    check("seed: q2 ledger shows supported", "supported" in read(node_path(root, "q2")))
+    # gate: q3's only child (h4) is terminal -> review
+    check("seed: q3 tripped to review", v.get("q3").status == "review")
+    # REGRESSION (two-directional gate): q1 momentarily had only a terminal child (h1)
+    # during materialize, but its later subquestion q2 is non-terminal -> q1 must stay open
+    check("seed: q1 not prematurely in review", v.get("q1").status == "open")
+    check("seed: q2 open (fresh child h2 pending)", v.get("q2").status == "open")
+    check("seed: META reflects seed", "Demo Seeded" in read(os.path.join(root, "META.md")))
+    check("seed: vault validates clean", E.cmd_validate(root) == [])
+
+    # atomicity + guards
+    expect_error("seed: refuses to overwrite a vault", lambda: E.cmd_init_from(seed_path, root))
+    expect_error("seed: malformed outline rejected", lambda: E.parse_seed("- Q: orphan question with no project"))
+    expect_error("seed: H under project rejected", lambda: E.parse_seed("- Project: X\n  - H: floating\n    - v: y"))
+    bad_seed = os.path.join(base, "bad.md")
+    with open(bad_seed, "w") as f: f.write("- Project: Half\n  - Q: ok\n  - H: floating under project\n    - v: y\n")
+    expect_error("seed: malformed seed rejected", lambda: E.cmd_init_from(bad_seed, os.path.join(base, "vault2")))
+    check("seed: no partial vault left behind", not os.path.exists(os.path.join(base, "vault2", ".crux.yaml")))
+    shutil.rmtree(base, ignore_errors=True)
+
+
+def run_version():
+    print("\n# engine-version stamp + drift")
+    root = tempfile.mkdtemp(prefix="crux_ver_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Versioned", root)
+    check("version: stamped at init", E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("version: in-sync -> no warning", E.check_and_stamp_version(root) is None)
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 0.0")
+    warn = E.check_and_stamp_version(root)
+    check("version: drift -> loud warning", warn is not None and "0.0" in warn)
+    check("version: drift re-stamped to current", E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("version: warning clears after re-stamp", E.check_and_stamp_version(root) is None)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_integrity():
     print("\n# integrity vault (validator catches corruption)")
     root = tempfile.mkdtemp(prefix="crux_intg_")
@@ -154,6 +237,8 @@ def main():
     ap.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
     a = ap.parse_args()
     root = run_demo(a.keep)
+    run_seed()
+    run_version()
     run_integrity()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

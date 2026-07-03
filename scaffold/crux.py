@@ -27,7 +27,11 @@ import engine as E
 
 
 def _vault():
-    return E.find_vault()
+    root = E.find_vault()
+    warn = E.check_and_stamp_version(root)
+    if warn:
+        print(f"crux: ⚠ {warn}", file=sys.stderr)
+    return root
 
 
 def main(argv=None):
@@ -36,7 +40,8 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", metavar="<verb>")
 
     s = sub.add_parser("init", aliases=["start", "new"], help="bootstrap a project vault in the current directory")
-    s.add_argument("title"); s.add_argument("--dir", default="."); s.add_argument("--goal", default="")
+    s.add_argument("title", nargs="?", default=None); s.add_argument("--dir", default="."); s.add_argument("--goal", default="")
+    s.add_argument("--from", dest="seed", default=None, help="materialize the whole vault from an approved seed outline (setup)")
 
     s = sub.add_parser("ask", aliases=["question", "q", "meta"], help="open a Question under the project or another question")
     s.add_argument("title"); s.add_argument("-p", "--parent", default=None, help="parent id (default: project root)")
@@ -84,8 +89,15 @@ def main(argv=None):
 def dispatch(a):
     c = a.cmd
     if c in ("init", "start", "new"):
-        root, fn = E.cmd_init(a.title, a.dir, a.goal)
-        print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: crux ask \"your first question\"")
+        if a.seed:
+            root, fn = E.cmd_init_from(a.seed, a.dir)
+            print(f"✓ materialized vault at {root} from {a.seed}\n  root node: {fn}\n"
+                  f"  next: crux status   — review the tree, then crux review for questions awaiting you")
+        elif a.title:
+            root, fn = E.cmd_init(a.title, a.dir, a.goal)
+            print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: crux ask \"your first question\"")
+        else:
+            print("crux: init needs a project title, or --from <seed.md>", file=sys.stderr); return 1
     elif c in ("ask", "question", "q", "meta"):
         nid, fn = E.cmd_ask(_vault(), a.title, a.parent, a.body)
         print(f"✓ {nid}  ({fn})")

@@ -11,9 +11,10 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, datetime
+import os, re, sys, datetime, tempfile, shutil
 
 # ----------------------------------------------------------------------------- constants
+ENGINE_VERSION = "1.0"          # bumped when verdict/roll-up/view logic changes; stamped into every vault
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
@@ -114,6 +115,25 @@ def find_vault(start=None):
         if parent == d:
             raise CruxError("not inside a crux vault (no .crux.yaml found). Run `crux init` first.")
         d = parent
+
+def check_and_stamp_version(root):
+    """Compare the engine version stamped in the vault against this engine.
+    On mismatch: return a loud warning AND record the current version (a git diff on
+    .crux.yaml becomes the durable, auditable record of drift). Returns None if in sync."""
+    cfg_path = os.path.join(root, VAULT_MARKER)
+    cfg = yaml_load(read(cfg_path))
+    stamped = cfg.get("engine_version")
+    stamped = None if stamped is None else str(stamped)
+    if stamped == ENGINE_VERSION:
+        return None
+    cfg["engine_version"] = ENGINE_VERSION
+    write_if_changed(cfg_path, yaml_dump(cfg) + "\n")
+    if stamped is None:
+        return None  # pre-versioned vault; silently adopt the stamp
+    return (f"engine drift: this vault was written with crux engine v{stamped}, "
+            f"but you are running v{ENGINE_VERSION}. Verdicts and generated views may "
+            f"differ. Pin the matching engine (re-install the crux skill at v{stamped}) "
+            f"if you need to reproduce the recorded results exactly.")
 
 # ----------------------------------------------------------------------------- templates
 _BUILTIN = {
@@ -343,12 +363,16 @@ def refresh(root):
     """Recompute all derived content from the nodes. Idempotent. Returns True if anything changed on disk."""
     v = Vault(root)
     changed = False
-    # review gate: an open question with >=1 child, all direct children terminal -> review
+    # review gate (two-directional): a non-resolved question is in `review` iff it has
+    # >=1 child and all direct children are terminal; otherwise `open`. Recomputing both
+    # directions each refresh corrects an intermediate trip — e.g. during a bulk seed
+    # materialize, a question can momentarily have only a terminal child before its later
+    # (non-terminal) children are added. `resolved` is human-set and never auto-changed.
     for qid, n in v.nodes.items():
-        if n.type == "question" and n.status == "open":
+        if n.type == "question" and n.status in ("open", "review"):
             kids = v.children[qid]
-            if kids and all(is_terminal(v.nodes[k]) for k in kids):
-                n["fm"]["status"] = "review"
+            terminal = bool(kids) and all(is_terminal(v.nodes[k]) for k in kids)
+            n["fm"]["status"] = "review" if terminal else "open"
     # evidence ledger into each question file (engine-owned block only)
     for qid, n in v.nodes.items():
         if n.type == "question":
@@ -419,12 +443,159 @@ def cmd_init(title, dirpath=".", goal=""):
     if os.path.exists(os.path.join(root, VAULT_MARKER)):
         raise CruxError("a crux vault already exists here")
     slug = slugify(title)
-    cfg = {"title": title, "slug": slug, "root_id": "root",
+    cfg = {"title": title, "slug": slug, "root_id": "root", "engine_version": ENGINE_VERSION,
            "counter_q": 0, "counter_h": 0, "counter_s": 0}
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
     refresh(root)
+    return root, f"{slug}.md"
+
+# ----------------------------------------------------------------------------- seed-spec (setup: read source -> propose tree -> approve -> write)
+# The agent drafts one human-editable seed file; the human approves it; the engine
+# materializes the whole vault atomically. Format = indented-bullet outline, indent
+# (2 spaces) = nesting, type prefix = node kind:
+#
+#   - Project: TITLE — GOAL
+#     - Q: a question
+#       - Q: a nested question
+#         - H: a hypothesis                         (open; not yet run)
+#           - v: metric ≥ threshold vs baseline     (a verifiable)
+#       - H: [tested] an already-run hypothesis     (migration: reconstruct done work)
+#         - v: [x] first check (found: 0.46 → 0.48) (tick = met; parenthetical = evidence)
+#         - v: [ ] second check
+#         - finding: one-line narrative of the result
+#
+# Rules mirror the model: Project→Q ; Q→Q|H ; H→v|finding|problem. Verdicts on
+# [tested] hypotheses are still derived mechanically from the ticks — the engine
+# never invents them.
+def _seed_val(line):
+    """Return (indent, key, value) for a `  - Key: value` bullet, else None."""
+    m = re.match(r"^(\s*)-\s+([A-Za-z]+):\s?(.*)$", line.rstrip())
+    if not m:
+        return None
+    return len(m.group(1)), m.group(2).lower(), m.group(3).strip()
+
+def _parse_verifiable(val):
+    m = re.match(r"\[([ xX-])\]\s*(.*)$", val)
+    tick, text = (m.group(1).lower(), m.group(2).strip()) if m else (" ", val)
+    evidence = None
+    if m:  # only tested verifiables carry a trailing (evidence) note
+        em = re.search(r"\s*\((.*)\)\s*$", text)
+        if em:
+            evidence, text = em.group(1).strip(), text[:em.start()].strip()
+    return {"tick": tick, "text": text, "evidence": evidence}
+
+def parse_seed(text):
+    """Parse the seed outline into a project dict with nested children. Raises CruxError
+    on malformed structure. Pure (no I/O) so the whole seed is validated before any write."""
+    project, stack = None, []   # stack: list of (indent, node)
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        parsed = _seed_val(raw)
+        if not parsed:
+            raise CruxError(f"seed: cannot parse line: {raw.strip()!r} "
+                            "(expected `- Project:/Q:/H:/v:/finding: …`)")
+        indent, key, val = parsed
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1] if stack else None
+        if key == "project":
+            if parent is not None or project is not None:
+                raise CruxError("seed: exactly one top-level `- Project:` is required")
+            title, _, goal = val.partition(" — ")
+            if not goal:
+                title, _, goal = val.partition(" -- ")
+            node = {"type": "project", "title": title.strip(),
+                    "goal": goal.strip(), "children": []}
+            project = node
+        elif key == "q":
+            if parent is None or parent["type"] not in ("project", "question"):
+                raise CruxError(f"seed: a Q must sit under Project or another Q (got {val!r})")
+            node = {"type": "question", "title": val, "children": []}
+            parent["children"].append(node)
+        elif key == "h":
+            if parent is None or parent["type"] != "question":
+                raise CruxError(f"seed: an H must sit under a Q (got {val!r})")
+            tested = False
+            m = re.match(r"\[tested\]\s*(.*)$", val, re.I)
+            if m:
+                tested, val = True, m.group(1).strip()
+            node = {"type": "hypothesis", "title": val, "tested": tested,
+                    "problem": "", "finding": "", "verifiables": []}
+            parent["children"].append(node)
+        elif key == "v":
+            if parent is None or parent["type"] != "hypothesis":
+                raise CruxError(f"seed: a verifiable (v) must sit under an H (got {val!r})")
+            parent["verifiables"].append(_parse_verifiable(val))
+            node = None
+        elif key in ("finding", "problem"):
+            if parent is None or parent["type"] != "hypothesis":
+                raise CruxError(f"seed: `{key}` must sit under an H (got {val!r})")
+            parent[key] = val
+            node = None
+        else:
+            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/finding/problem)")
+        if node is not None:
+            stack.append((indent, node))
+    if project is None:
+        raise CruxError("seed: no `- Project:` line found")
+    return project
+
+def _render_verifiables(body, verifiables):
+    """Replace the template's `## Verifiables` list with the seed's ticks + evidence."""
+    lines = []
+    for vf in verifiables:
+        ev = f"   ({vf['evidence']})" if vf["evidence"] else ""
+        lines.append(f"- [{vf['tick']}] {vf['text']}{ev}")
+    block = "\n".join(lines)
+    return re.sub(r"(## Verifiables\n\n)(?:<!--.*?-->\n)?(?:- \[.\].*\n?)+",
+                  lambda m: m.group(1) + block + "\n", body, count=1)
+
+def _materialize(root, project):
+    cmd_init(project["title"], root, goal=project["goal"] or "")
+    def walk_question(node, parent_id):
+        for child in node["children"]:
+            if child["type"] == "question":
+                qid, _ = cmd_ask(root, child["title"], parent=parent_id)
+                walk_question(child, qid)
+            else:
+                _add_hypothesis(root, child, parent_id)
+    def _add_hypothesis(root, h, qid):
+        if h["tested"] and not h["verifiables"]:
+            raise CruxError(f"seed: [tested] hypothesis {h['title']!r} needs at least one verifiable")
+        hid, _ = cmd_hypothesize(root, h["title"], parent=qid, problem=h["problem"],
+                                 verifiables=[vf["text"] for vf in h["verifiables"]])
+        if not h["tested"]:
+            return
+        n = Vault(root).get(hid)
+        n["body"] = _render_verifiables(n["body"], h["verifiables"])
+        write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
+        cmd_close(root, hid, findings=h["finding"] or None)
+    for child in project["children"]:
+        if child["type"] != "question":
+            raise CruxError("seed: the Project's direct children must be questions (Q)")
+        qid, _ = cmd_ask(root, child["title"], parent=None)
+        walk_question(child, qid)
+
+def cmd_init_from(seed_path, dirpath="."):
+    """Atomically materialize a whole vault from an approved seed outline."""
+    root = os.path.abspath(dirpath)
+    if os.path.exists(os.path.join(root, VAULT_MARKER)):
+        raise CruxError("a crux vault already exists here")
+    project = parse_seed(read(seed_path))          # fully validate before any write
+    build = tempfile.mkdtemp(prefix="crux_build_")
+    try:
+        _materialize(build, project)
+    except BaseException:
+        shutil.rmtree(build, ignore_errors=True)
+        raise
+    os.makedirs(root, exist_ok=True)
+    for fn in os.listdir(build):
+        shutil.move(os.path.join(build, fn), os.path.join(root, fn))
+    shutil.rmtree(build, ignore_errors=True)
+    slug = slugify(project["title"])
     return root, f"{slug}.md"
 
 def _save_cfg(v):
