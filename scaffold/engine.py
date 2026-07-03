@@ -437,6 +437,15 @@ def validate(v):
     return problems
 
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
+def _write_obsidian_vault(root):
+    """Make the vault a recognized Obsidian vault out of the box: the presence of
+    `.obsidian/app.json` is what makes Obsidian open the folder as an *existing* vault
+    (no 'create vault?' prompt), so the Q/H `[[Parent::]]` graph is one click away.
+    Empty config = Obsidian fills in its own sane defaults on first open."""
+    od = os.path.join(root, ".obsidian")
+    os.makedirs(od, exist_ok=True)
+    write_if_changed(os.path.join(od, "app.json"), "{}\n")
+
 def cmd_init(title, dirpath=".", goal=""):
     root = os.path.abspath(dirpath)
     os.makedirs(root, exist_ok=True)
@@ -448,6 +457,7 @@ def cmd_init(title, dirpath=".", goal=""):
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
+    _write_obsidian_vault(root)
     refresh(root)
     return root, f"{slug}.md"
 

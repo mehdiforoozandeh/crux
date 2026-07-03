@@ -43,6 +43,7 @@ def run_demo(keep_dir=None):
     check("init: .crux.yaml", os.path.exists(os.path.join(root, ".crux.yaml")))
     check("init: META.md", os.path.exists(os.path.join(root, "META.md")))
     check("init: project root node", os.path.exists(os.path.join(root, "demo_candi.md")))
+    check("init: Obsidian-detectable (.obsidian/app.json)", os.path.exists(os.path.join(root, ".obsidian", "app.json")))
 
     # 2. ask root Q + sub-Q
     q1, _ = E.cmd_ask(root, "Can JEPA pretraining improve CANDI?")
@@ -152,6 +153,7 @@ def run_seed():
     E.cmd_init_from(seed_path, root)
     v = E.Vault(root)
     check("seed: vault marker written", os.path.exists(os.path.join(root, ".crux.yaml")))
+    check("seed: Obsidian-detectable (.obsidian/app.json)", os.path.exists(os.path.join(root, ".obsidian", "app.json")))
     check("seed: project title", v.cfg["title"] == "Demo Seeded")
     check("seed: 3 questions", sum(1 for n in v.nodes.values() if n.type == "question") == 3)
     check("seed: 4 hypotheses", sum(1 for n in v.nodes.values() if n.type == "idea") == 4)
