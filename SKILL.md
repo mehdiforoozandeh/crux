@@ -98,7 +98,7 @@ source, converge on a single human-editable **seed file** (this *is* the proposa
 it, let them edit/approve it as one block, then materialize the whole vault atomically:
 
 ```bash
-python <skill>/scaffold/crux.py init --from seed.md --dir crux
+python <skill>/scaffold/crux.py init --from seed.md --dir cruxvault
 ```
 
 Don't create nodes one verb at a time during setup — approval happens on the seed.
@@ -130,7 +130,7 @@ evidence for each tick** and let the human approve the whole reconstructed seed 
 recorded. Fresh (un-`[tested]`) hypotheses land as open ideas to run through the normal loop.
 
 **Migration guardrail — absolute.** When reading an existing repo you may read anything,
-but you may **only ever create, edit, move, or delete files under `crux/`**. Never touch
+but you may **only ever create, edit, move, or delete files under `cruxvault/`**. Never touch
 the user's code, data, results, or docs. The vault is the only thing you write.
 
 ## The verbs

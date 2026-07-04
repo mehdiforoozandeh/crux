@@ -39,8 +39,8 @@ def main(argv=None):
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", metavar="<verb>")
 
-    s = sub.add_parser("init", aliases=["start", "new"], help="bootstrap a project vault in the current directory")
-    s.add_argument("title", nargs="?", default=None); s.add_argument("--dir", default="."); s.add_argument("--goal", default="")
+    s = sub.add_parser("init", aliases=["start", "new"], help="bootstrap a project vault (default dir: ./cruxvault)")
+    s.add_argument("title", nargs="?", default=None); s.add_argument("--dir", default="cruxvault"); s.add_argument("--goal", default="")
     s.add_argument("--from", dest="seed", default=None, help="materialize the whole vault from an approved seed outline (setup)")
 
     s = sub.add_parser("ask", aliases=["question", "q", "meta"], help="open a Question under the project or another question")

@@ -42,7 +42,7 @@ a short interview — *you only think about the science* — and stands up the v
 - **Have a proposal, notes, or a draft paper?** Point the agent at it; it drafts your setup from it.
 - **Already have a working repo** (code, results, months of work)? It reads it and *migrates*
   it into an organized crux-tree — reconstructing what was asked, tested, and found. It only
-  ever writes under `crux/` and never touches your existing files.
+  ever writes under `cruxvault/` and never touches your existing files.
 - **Nothing written down yet?** It figures the project out with you, one question at a time.
 
 Either way it drafts one **seed outline**, you approve it, and the engine materializes the
@@ -58,7 +58,7 @@ whole notebook atomically. The seed shows both a fresh hypothesis and a migrated
       - finding: net win on peaks.
 ```
 ```bash
-crux init --from seed.md --dir crux
+crux init --from seed.md --dir cruxvault
 ```
 
 crux is **human-in-charge by default**: the agent drafts, runs, and reports, but *you* approve

@@ -67,7 +67,7 @@ outline** (from your docs, your existing repo, or a conversation), you edit/appr
 and the engine materializes the whole vault in one atomic step:
 
 ```bash
-python crux.py init --from seed.md --dir crux
+python crux.py init --from seed.md --dir cruxvault
 ```
 
 The seed is an **indented-bullet outline** — indent (2 spaces) = nesting, a type prefix
