@@ -86,10 +86,10 @@ flip that item's status when it lands.
 The moment the PRD is signed off, translate its acceptance criteria into the harness crux
 already has:
 
-1. **Write the asserts first (red).** Add new cases to `scaffold/selftest.py` — one per
-   automatable acceptance criterion — and run `python scaffold/selftest.py`; the new ones
-   should **fail**. (For a bug, this failing test *is* the reproduction.)
-2. **Implement to green.** Edit `scaffold/` (`engine.py` / `crux.py` / `render.py` /
+1. **Write the asserts first (red).** Add new cases to `skills/crux/scaffold/selftest.py` — one
+   per automatable acceptance criterion — and run `python skills/crux/scaffold/selftest.py`; the
+   new ones should **fail**. (For a bug, this failing test *is* the reproduction.)
+2. **Implement to green.** Edit `skills/crux/scaffold/` (`engine.py` / `crux.py` / `render.py` /
    `templates/`) until selftest is fully green — new asserts included, none regressed.
 3. **Un-automatable criteria** (a GUI looking right, Obsidian rendering) stay as a **manual
    checklist** carried in the PRD; you'll walk them by hand in `validate`.
@@ -106,15 +106,15 @@ decision (not a different one you drifted into).
 
 A fixed gate; **all four must pass before ship.** Nothing here is judgment — it's a checklist.
 
-1. **Selftest green.** `python scaffold/selftest.py` → all pass, and the count has *grown*
+1. **Selftest green.** `python skills/crux/scaffold/selftest.py` → all pass, and the count has *grown*
    by your new asserts (a feature that added no assert didn't really register its criteria).
 2. **Stdlib-only.** Grep the diff for imports; fail on any module outside the Python stdlib.
-   `git diff -U0 -- scaffold | grep -E '^\+\s*(import|from) ' | grep -vE '<stdlib names>'`
+   `git diff -U0 -- skills/crux/scaffold | grep -E '^\+\s*(import|from) ' | grep -vE '<stdlib names>'`
 3. **Existing vaults still load.** Run the engine's read paths — `status`, `review`,
    `validate`, and a render — against a vault **copy** and confirm nothing breaks:
    - if a **real vault is discoverable** (e.g. a `cruxvault/` in a nearby project), copy it
      to a scratch dir and validate against the copy — never mutate the original;
-   - **otherwise** fall back to the committed synthetic fixture **`examples/demo_vault/`**
+   - **otherwise** fall back to the committed synthetic fixture **`skills/crux/examples/demo_vault/`**
      (copy it out first). This synthetic vault is the *default* gate — it ships in the repo,
      so every contributor can run it; the real-vault check is an optional local upgrade.
 4. **Version / migration.** *Only if the change alters vault format or verdict/roll-up/view

@@ -21,18 +21,23 @@ Everything is plain markdown in an **Obsidian-graphable vault**: open it and the
 
 ## Install
 
-As an agent skill (Claude Code and other [skills.sh](https://www.skills.sh)-compatible agents):
+`crux` is a small collection of skills under [`skills/`](skills). Install them all with any
+[skills.sh](https://www.skills.sh)-compatible agent (Claude Code and others):
 
 ```bash
 npx skills add mehdiforoozandeh/crux
 ```
 
-Or clone and use the engine directly (Python 3, stdlib only — no dependencies):
+Or clone and run the installer — it symlinks every crux skill into your Claude Code skills
+dir (the `crux` tool skill, `evolve-crux`, and any future crux skills):
 
 ```bash
 git clone https://github.com/mehdiforoozandeh/crux
-python crux/scaffold/crux.py --help
+cd crux && ./install.sh
 ```
+
+The engine is Python 3, stdlib only — no dependencies. Run it directly with
+`python skills/crux/scaffold/crux.py --help`.
 
 ## Setting up in your project
 
@@ -63,7 +68,7 @@ crux init --from seed.md --dir cruxvault
 
 crux is **human-in-charge by default**: the agent drafts, runs, and reports, but *you* approve
 before an experiment runs and before any verdict is recorded. Full seed-spec reference in
-[`scaffold/README.md`](scaffold/README.md).
+[`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
 
 ## A minute with crux
 
@@ -79,14 +84,16 @@ The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x
 
 ## How it's built
 
-- `SKILL.md` — the PI ⇄ Agent ⇄ Engine playbook the LLM follows.
-- `scaffold/` — the engine: `crux.py` (CLI), `engine.py`, `render.py`, `templates/`, `selftest.py`. See [`scaffold/README.md`](scaffold/README.md) for the full CLI reference.
+`crux` is a **collection of skills** under `skills/`:
 
-Validate the install end-to-end (no GPU/tokens/SLURM):
+- [`skills/crux/`](skills/crux) — the tool itself: `SKILL.md` (the PI ⇄ Agent ⇄ Engine playbook) + `scaffold/` (the engine: `crux.py`, `engine.py`, `render.py`, `templates/`, `selftest.py` — see [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md)) + `examples/`.
+- [`skills/evolve-crux/`](skills/evolve-crux) — the playbook for evolving crux itself (ideate → build → validate → ship).
+
+Validate the engine end-to-end (no GPU/tokens/SLURM):
 
 ```bash
-python scaffold/selftest.py            # builds a dummy vault, asserts every invariant
-python scaffold/selftest.py --keep ./v # …and keep it to open in Obsidian
+python skills/crux/scaffold/selftest.py            # builds a dummy vault, asserts every invariant
+python skills/crux/scaffold/selftest.py --keep ./v # …and keep it to open in Obsidian
 ```
 
 ## Roadmap
