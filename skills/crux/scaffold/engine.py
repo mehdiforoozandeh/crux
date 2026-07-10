@@ -863,14 +863,17 @@ def _ledger_summary(c):
 def _node_json(v, n):
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
     if n.type == "question":
+        pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent
         d["stale"] = bool(n["fm"].get("stale"))
-        d["answer"] = _section(n["body"].split(LEDGER_START)[0], "Answer so far")
+        d["detail"] = _section(pre, "Question")
+        d["answer"] = _section(pre, "Answer so far")
         d["ledger"] = ledger_counts(v, n.id)
         d["children"] = list(v.children[n.id])
     elif n.type == "idea":
+        verdict = n["fm"].get("verdict")
         d["parent"] = n.parent
-        d["verdict"] = n["fm"].get("verdict") or None
+        d["verdict"] = verdict if verdict in VERDICTS else None   # only ever a valid enum or None
         d["metric"] = n["fm"].get("metric") or None
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")

@@ -34,6 +34,17 @@ def _vault():
     return root
 
 
+def _vault_ro():
+    """Resolve the vault WITHOUT stamping — for read-only verbs (serve). Warns on drift but
+    never writes, so the GUI honors its no-write invariant even on a pre-versioned/drifted vault."""
+    root = E.find_vault()
+    stamped = E.yaml_load(E.read(os.path.join(root, E.VAULT_MARKER))).get("engine_version")
+    if stamped is not None and str(stamped) != E.ENGINE_VERSION:
+        print(f"crux: ⚠ engine drift: vault v{stamped} vs engine v{E.ENGINE_VERSION} "
+              f"— serve is read-only and will not re-stamp.", file=sys.stderr)
+    return root
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="crux", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -74,6 +85,13 @@ def main(argv=None):
     s.add_argument("title"); s.add_argument("-q", "--questions", required=True, help="comma-separated question ids")
 
     sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault")
+
+    s = sub.add_parser("serve", aliases=["gui", "ui", "cockpit"], help="open the read-only browser cockpit over this vault")
+    s.add_argument("--port", type=int, default=None, help="pin a port (default: auto from 8787)")
+    s.set_defaults(open=None)
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--open", dest="open", action="store_true", help="force-open the system browser")
+    g.add_argument("--no-open", dest="open", action="store_false", help="never open a browser")
 
     args = p.parse_args(argv)
     if not args.cmd:
@@ -138,6 +156,9 @@ def dispatch(a):
         for nid, msg in probs:
             print(f"✗ {nid}: {msg}")
         return 1
+    elif c in ("serve", "gui", "ui", "cockpit"):
+        import serve as SV
+        SV.serve(_vault_ro(), port=a.port, force_open=a.open)
     return 0
 
 

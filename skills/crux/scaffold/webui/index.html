@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>crux cockpit</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand"><span class="mark">✦</span><span id="project-title">crux</span></div>
+    <div class="tools">
+      <input id="search" type="search" placeholder="Search nodes — Enter to jump" autocomplete="off" spellcheck="false">
+      <button id="review-btn" type="button">Review (0)</button>
+      <span id="meta" class="meta"></span>
+    </div>
+  </header>
+  <main id="cockpit">
+    <section id="tree-pane">
+      <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
+      <div id="legend"></div>
+      <div class="hint">scroll = zoom · drag = pan · click a node · click ± to collapse</div>
+    </section>
+    <aside id="detail-pane"></aside>
+  </main>
+  <div id="offline" hidden>server disconnected — showing last known state</div>
+  <script src="app.js"></script>
+</body>
+</html>
