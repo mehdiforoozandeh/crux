@@ -226,6 +226,107 @@ def run_integrity():
     shutil.rmtree(root)
 
 
+def _dir_bytes(root):
+    """Snapshot every file's bytes under root — used to prove a call didn't touch disk."""
+    out = {}
+    for dp, _, fns in os.walk(root):
+        for fn in sorted(fns):
+            p = os.path.join(dp, fn)
+            with open(p, "rb") as f:
+                out[p] = f.read()
+    return out
+
+
+def run_snapshot():
+    print("\n# snapshot (read-only JSON contract for the GUI)")
+    import json
+    root = tempfile.mkdtemp(prefix="crux_snap_")
+    shutil.rmtree(root); os.makedirs(root)
+
+    if not (hasattr(E, "snapshot") and hasattr(E, "ledger_counts")):
+        check("snapshot: engine.snapshot + engine.ledger_counts exist", False)
+        shutil.rmtree(root, ignore_errors=True)
+        return
+
+    # a vault with a nested question, two closed hypotheses, and a synthesis
+    E.cmd_init("Snap", root, goal="Test the snapshot contract.")
+    q1, _ = E.cmd_ask(root, "Q one")
+    q2, _ = E.cmd_ask(root, "Q two", parent=q1)
+    h1, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"])
+    h2, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"])
+    E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
+    E.cmd_close(root, h1, metric="imp +0.012")
+    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # one met -> partial
+    E.cmd_close(root, h2, metric="imp +0.003")
+    syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
+
+    v = E.Vault(root)
+    snap = E.snapshot(v)
+
+    # -- top-level shape / serializability
+    check("snapshot: top-level keys exact",
+          set(snap.keys()) == {"engine_version", "project", "nodes", "tree", "queue"})
+    check("snapshot: engine_version stamped", snap["engine_version"] == E.ENGINE_VERSION)
+    dumped = json.dumps(snap)
+    check("snapshot: JSON-serializable + round-trips", json.loads(dumped) == snap)
+    check("snapshot: project id/title", snap["project"]["id"] == "root" and snap["project"]["title"] == "Snap")
+    check("snapshot: accepts a root path too", E.snapshot(root)["project"]["id"] == "root")
+
+    # -- tree nesting exactly matches parent links
+    def tree_ids(t):
+        yield t["id"]
+        for c in t["children"]:
+            yield from tree_ids(c)
+    ids = list(tree_ids(snap["tree"]))
+    nonsyn = {nid for nid, n in v.nodes.items() if n.type != "synthesis"}
+    check("snapshot: tree root is the project root", snap["tree"]["id"] == v.cfg["root_id"])
+    check("snapshot: tree has no duplicate nodes", len(ids) == len(set(ids)))
+    check("snapshot: tree covers each parent-linked node once", set(ids) == nonsyn)
+    def children_match(t):
+        return ([c["id"] for c in t["children"]] == v.children[t["id"]]
+                and all(children_match(c) for c in t["children"]))
+    check("snapshot: tree children match v.children in order", children_match(snap["tree"]))
+    check("snapshot: synthesis in nodes but not in the tree",
+          syn in snap["nodes"] and syn not in ids)
+    check("snapshot: synthesis relates to q1,q2 in order", snap["nodes"][syn]["related"] == [q1, q2])
+
+    # -- queue == cmd_review
+    check("snapshot: queue ids == cmd_review output",
+          [r["id"] for r in snap["queue"]] == [nid for nid, _ in E.cmd_review(root)])
+    check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
+    check("snapshot: queue rows carry title + summary",
+          bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
+
+    # -- idea nodes carry status; done ideas carry a consistent verdict + metric
+    h1n = snap["nodes"][h1]
+    met, unmet, na = E.count_verifiables(read(node_path(root, h1)))
+    check("snapshot: h1 status is done", h1n["status"] == "done")
+    check("snapshot: h1 verdict consistent with derive_verdict",
+          h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
+    check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
+    check("snapshot: h2 verdict partial", snap["nodes"][h2]["verdict"] == "partial")
+
+    # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
+    q2n = snap["nodes"][q2]
+    lc = E.ledger_counts(v, q2)
+    lb = E.ledger_block(v, q2)
+    check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
+    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 partial)",
+          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1 and lc["partial"] == 1)
+    check("snapshot: ledger_counts consistent with ledger_block text",
+          f"**{lc['children']} children**" in lb
+          and f"supported {lc['supported']}" in lb and f"partial {lc['partial']}" in lb)
+
+    # -- pure read: constructing a snapshot mutates nothing on disk
+    before = _dir_bytes(root)
+    E.snapshot(E.Vault(root))
+    check("snapshot: pure read (byte-for-byte identical vault)", _dir_bytes(root) == before)
+
+    check("snapshot: source vault validates clean", E.cmd_validate(root) == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"]):
@@ -242,6 +343,7 @@ def main():
     run_seed()
     run_version()
     run_integrity()
+    run_snapshot()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
