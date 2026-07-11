@@ -25,6 +25,12 @@ const MAX_LINES = 4;
 const geomOf = (id) => state.nodeGeom[id];
 // verdict glyph shown inside a done hypothesis (colored by verdict)
 const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~" };
+// Every question & hypothesis carries its short code (Q10 / H13) on the LEFT of the node —
+// monospace so digits align, measured with the same font the CSS renders so the left gutter
+// fits it snugly. Root/synthesis have no code. In compact density the code is ALL a node shows.
+const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+const codeFontOf = (type) => (type === "question" ? "700 15px " : "650 12.5px ") + MONO;
+const codeOf = (id, type) => (type === "project" || type === "synthesis") ? "" : String(id).toUpperCase();
 
 function wrapLines(text, cpl) {
   const words = String(text || "").split(/\s+/).filter(Boolean);
@@ -50,22 +56,34 @@ function computeGeom() {
   const g = {};
   for (const [id, n] of Object.entries(state.snap.nodes)) {
     const k = KIND[n.type] || KIND.question;
-    let w, h, lines, dotsPad = 0;
+    const code = codeOf(id, n.type);        // "Q10" / "H13" — questions & hypotheses only
+    let w, h, lines, dotsPad = 0, gutter = 0;
     if (n.type === "project") {
       // snug pill sized to the Crux mark + centred title — no empty slack
       lines = [trunc(n.title, 42)];
       w = Math.round(ROOT_PAD * 2 + ROOT_MARK_W + ROOT_MARK_GAP + measure(lines[0], ROOT_FONT));
       h = 42;
-    } else if (state.density === "compact" || n.type === "synthesis") {
-      lines = [trunc(n.title, k.ctrunc)];
+    } else if (n.type === "synthesis") {
+      lines = [trunc(n.title, k.ctrunc)];   // (never drawn, but keep geometry defined)
+      w = k.cw; h = k.ch;
+    } else if (state.density === "compact") {
+      // compact = a codes-only map: the box carries just its code (Q10 / H13), nothing else
+      const isQ = n.type === "question";
+      lines = [code];
       dotsPad = n.type === "idea" && (n.verifiables || []).length ? 11 : 0;   // bottom badge row
-      w = k.cw; h = k.ch + dotsPad;
+      let cw = measure(code, codeFontOf(n.type)) + 30;
+      if (dotsPad) cw = Math.max(cw, (Math.min(n.verifiables.length, 8) - 1) * 12 + 22);  // fit the dot row
+      w = Math.max(cw, isQ ? 56 : 44); h = k.ch + dotsPad;
     } else {
+      // detail = a left code gutter (Q10 / H13) + the wrapped title to its right
+      const isQ = n.type === "question", codeX = isQ ? 14 : 11, basePad = isQ ? 15 : 12;
       lines = wrapLines(n.title, k.cpl);
       dotsPad = n.type === "idea" && (n.verifiables || []).length ? 16 : 0;   // bottom badge row
-      w = k.dw; h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
+      gutter = codeX + measure(code, codeFontOf(n.type)) + 12;                // left gutter fits the code
+      w = gutter + (k.dw - basePad);                                          // keep the title zone width
+      h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
     }
-    g[id] = { w, h, rx: k.pill ? h / 2 : k.rx, lines, lh: k.lh, dotsPad, kind: n.type };
+    g[id] = { w, h, rx: k.pill ? h / 2 : k.rx, lines, lh: k.lh, dotsPad, kind: n.type, code, gutter };
   }
   return g;
 }
@@ -266,18 +284,28 @@ function rootLabel(n, g, k) {
   return rootMark(startX) + `<text class="lbl ${k.lbl}" x="${tx}" y="4">${esc(g.lines[0])}</text>`;
 }
 
-// question / hypothesis body: the verdict glyph (ideas) plus the wrapped title, left-aligned
+// question / hypothesis body. Compact: ONLY the code (Q10 / H13), centred. Detail: the code in
+// a left gutter, then the verdict glyph (ideas) plus the wrapped title, left-aligned beside it.
 function bodyLabel(n, g, k) {
-  const pad = n.type === "question" ? 15 : 12;
+  const codeCls = n.type === "question" ? "t-code t-code-q" : "t-code t-code-h";
+  if (state.density === "compact") {
+    return `<text class="lbl ${codeCls}" x="${g.w / 2}" y="${-g.dotsPad / 2 + 5}" text-anchor="middle">${esc(g.code)}</text>`;
+  }
+  const codeX = n.type === "question" ? 14 : 11;
+  // the code sits at the box's TRUE vertical middle (y=0 + baseline nudge), independent of the
+  // verifiable-dots row — the divider separates it from the title, so it needn't line up with it
+  const codeEl = g.code ? `<text class="lbl ${codeCls}" x="${codeX}" y="4">${esc(g.code)}</text>` : "";
+  const divEl = g.code ? `<line class="code-div" x1="${g.gutter - 6}" y1="${-g.h / 2 + 7}" x2="${g.gutter - 6}" y2="${g.h / 2 - 7}"/>` : "";
+  const startX = g.gutter;
   const y0 = -g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;
   const glyph = n.type === "idea" && n.verdict
-    ? `<text class="glyph" x="${pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
+    ? `<text class="glyph" x="${startX}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
     : "";
   const lbl = g.lines.map((ln, i) => {
-    const startX = i === 0 && glyph ? pad + 13 : pad;
-    return `<text class="lbl ${k.lbl}" x="${startX}" y="${y0 + i * g.lh}">${esc(ln)}</text>`;
+    const x = i === 0 && glyph ? startX + 13 : startX;
+    return `<text class="lbl ${k.lbl}" x="${x}" y="${y0 + i * g.lh}">${esc(ln)}</text>`;
   }).join("");
-  return glyph + lbl;
+  return codeEl + divEl + glyph + lbl;
 }
 
 // `fromPos`, when given, is the previous position map; surviving nodes animate from there to
@@ -647,7 +675,10 @@ svg.addEventListener("click", (e) => {
 });
 
 $("detail-pane").addEventListener("click", (e) => {
-  const fbtn = e.target.closest("[data-font]");
+  // Scope to the font BUTTONS: #detail-content also carries a data-font attribute (it drives the
+  // text-size CSS), so a bare closest("[data-font]") swallows every click inside the detail
+  // content — including the review-queue rows and child links — and their data-go never fires.
+  const fbtn = e.target.closest("#detail-fontctl [data-font]");
   if (fbtn) { setDetailFont(fbtn.getAttribute("data-font")); return; }
   const go = e.target.closest("[data-go]");
   if (go) selectNode(go.getAttribute("data-go"), { center: true });

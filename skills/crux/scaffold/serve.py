@@ -78,6 +78,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WEBUI, **kw)
 
+    def end_headers(self):
+        # The cockpit is a live view, often iterated in place: never let a browser serve a
+        # stale webui asset (or snapshot) from cache. One choke point covers every response —
+        # static files and /snapshot.json alike — so a plain reload always re-fetches.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def do_GET(self):
         if self.path.split("?", 1)[0] == "/snapshot.json":
             return self._snapshot()
@@ -91,7 +98,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

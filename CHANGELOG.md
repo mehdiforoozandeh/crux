@@ -27,6 +27,23 @@ verdict/roll-up/view logic changes.
   always-fresh relaunch can't silently break an open tunnel. Playbook only: no engine
   changes (ENGINE_VERSION stays 1.1).
 
+- **Cockpit GUI polish (Epic 1).** Every question and hypothesis now shows its short code
+  (**Q10 / H13**) on the left of the node — and the **compact** node view becomes a clean
+  codes-only map. An always-visible **view-only reminder** (a header "View-only" pill plus a
+  pinned detail-pane footer) makes explicit that the cockpit never writes: edits go through
+  the agent or the crux CLI. The server now sends `Cache-Control: no-store` on every response,
+  so a plain browser reload always reflects the latest webui and vault state (no stale-cache
+  surprises while iterating). Webui + `serve.py` only; ENGINE_VERSION stays 1.1.
+
+### Fixed
+
+- **Cockpit: detail-pane links were dead when a text size was active.** The review-queue rows
+  and the Children / Related links did nothing, because the text-size control writes a
+  `data-font` attribute onto the content container and the click handler's
+  `closest("[data-font]")` matched that container and returned before reaching its navigation
+  branch. The font check is now scoped to its own buttons, so clicking a review row or child
+  link opens that node as expected.
+
 ## [0.3.0] - 2026-07-11
 
 Two headline additions — a **browser GUI** (Epic 1) and a **literature wiki** (Epic 3).

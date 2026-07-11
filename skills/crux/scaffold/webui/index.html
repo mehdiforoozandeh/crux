@@ -18,6 +18,7 @@
       <span class="wordmark">Crux</span>
       <span class="divider"></span>
       <span id="project-title"></span>
+      <span class="ro-badge" title="This cockpit is read-only — it shows the crux tree but never changes it. Edits (open a question, record a verdict, resolve a question) go through your agent, or the crux CLI.">View-only</span>
     </div>
     <div class="tools">
       <div class="viewctl" role="group" aria-label="Tree view controls">
@@ -53,6 +54,9 @@
         <button data-font="large" type="button" aria-label="Large text">A</button>
       </div>
       <div id="detail-content"></div>
+      <div id="ro-footer" title="The cockpit never writes to the vault. To change the tree, ask your agent (it drives the crux engine) or run the crux CLI.">
+        Read-only view — ask your agent to edit the tree <span class="ro-sub">(or use the crux CLI)</span>
+      </div>
     </aside>
   </main>
   <div id="offline" hidden>server disconnected — showing last known state</div>
