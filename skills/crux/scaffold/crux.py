@@ -73,7 +73,11 @@ def main(argv=None):
     s = sub.add_parser("synthesize", aliases=["weave", "rollup"], help="create a horizontal synthesis across questions")
     s.add_argument("title"); s.add_argument("-q", "--questions", required=True, help="comma-separated question ids")
 
-    sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault")
+    s = sub.add_parser("ingest", aliases=["source", "add-source"], help="register a PI-curated source (under raw/) into the literature wiki")
+    s.add_argument("path", help="path (under raw/, relative to the vault) to the source to register")
+    s.add_argument("-t", "--title", default=None, help="human title for the source (default: filename)")
+
+    sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki)")
 
     args = p.parse_args(argv)
     if not args.cmd:
@@ -130,6 +134,9 @@ def dispatch(a):
     elif c in ("synthesize", "weave", "rollup"):
         nid, fn = E.cmd_synthesize(_vault(), a.title, [x.strip() for x in a.questions.split(",")])
         print(f"✓ {nid}  ({fn})")
+    elif c in ("ingest", "source", "add-source"):
+        state, rel = E.cmd_ingest(_vault(), a.path, a.title)
+        print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
     elif c in ("validate", "lint", "check"):
         probs = E.cmd_validate(_vault())
         if not probs:
