@@ -52,9 +52,9 @@ function computeGeom() {
     const k = KIND[n.type] || KIND.question;
     let w, h, lines, dotsPad = 0;
     if (n.type === "project") {
-      // snug pill sized to the (centred) title — no fixed width, no empty slack
+      // snug pill sized to the Crux mark + centred title — no empty slack
       lines = [trunc(n.title, 42)];
-      w = Math.max(120, Math.round(lines[0].length * 8.8 + 34));
+      w = Math.round(ROOT_PAD * 2 + ROOT_MARK_W + ROOT_MARK_GAP + measure(lines[0], ROOT_FONT));
       h = 42;
     } else if (state.density === "compact" || n.type === "synthesis") {
       lines = [trunc(n.title, k.ctrunc)];
@@ -243,36 +243,39 @@ function nodeSVG(n, p) {
     `${tip}${shape}${qbar}${inner}${dots}${toggle}</g>`;
 }
 
-// the project title, centred in its snug node (no mark, no left/right slack)
-function rootLabel(n, g, k) {
-  return `<text class="lbl ${k.lbl}" x="${g.w / 2}" y="4" text-anchor="middle">${esc(g.lines[0])}</text>`;
-}
-
-// Accurate text measurement (canvas) so we can justify by stretching only the gaps BETWEEN
-// words — not the letters within them — to a common right edge.
+// Canvas text measurement so we can size the (snug) root box to its content.
 const _mctx = document.createElement("canvas").getContext("2d");
 const FAMILY = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
-const LBL_FONT = { question: "680 12.5px " + FAMILY, idea: "400 10px " + FAMILY };
-function lineWidth(text, type) { _mctx.font = LBL_FONT[type] || LBL_FONT.question; return _mctx.measureText(text).width; }
+const ROOT_FONT = "780 16.5px " + FAMILY;
+function measure(text, font) { _mctx.font = font; return _mctx.measureText(text).width; }
 
-// question / hypothesis body: the verdict glyph (ideas) plus the wrapped title, JUSTIFIED —
-// every line but the last is flush left and right. The last line and single-word lines stay natural.
+// the Crux constellation mark, drawn at local x (vertically centred on the node anchor)
+function rootMark(x) {
+  return `<g class="rootmark" transform="translate(${x},-8) scale(0.19)">` +
+    `<g class="mk-l"><line x1="38" y1="8" x2="33" y2="76"/><line x1="8" y1="44" x2="60" y2="38"/></g>` +
+    `<g class="mk-s"><circle cx="38" cy="8" r="4"/><circle cx="33" cy="76" r="5"/>` +
+    `<circle cx="8" cy="44" r="4"/><circle cx="60" cy="38" r="3.4"/><circle cx="45" cy="60" r="2.4"/></g></g>`;
+}
+const ROOT_MARK_W = 14, ROOT_MARK_GAP = 7, ROOT_PAD = 15;
+
+// project root: the Crux mark next to the centred title, in a snug pill
+function rootLabel(n, g, k) {
+  const nameW = measure(g.lines[0], ROOT_FONT);
+  const startX = (g.w - (ROOT_MARK_W + ROOT_MARK_GAP + nameW)) / 2;
+  const tx = startX + ROOT_MARK_W + ROOT_MARK_GAP;
+  return rootMark(startX) + `<text class="lbl ${k.lbl}" x="${tx}" y="4">${esc(g.lines[0])}</text>`;
+}
+
+// question / hypothesis body: the verdict glyph (ideas) plus the wrapped title, left-aligned
 function bodyLabel(n, g, k) {
-  const pad = n.type === "question" ? 15 : 12, rightPad = 14;
+  const pad = n.type === "question" ? 15 : 12;
   const y0 = -g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;
   const glyph = n.type === "idea" && n.verdict
     ? `<text class="glyph" x="${pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
     : "";
-  const last = g.lines.length - 1;
   const lbl = g.lines.map((ln, i) => {
     const startX = i === 0 && glyph ? pad + 13 : pad;
-    const words = ln.trim().split(/\s+/);
-    let style = "";
-    if (i < last && words.length >= 2) {
-      const extra = (g.w - rightPad - startX) - lineWidth(ln, n.type);
-      if (extra > 1) style = ` style="word-spacing:${(extra / (words.length - 1)).toFixed(2)}px"`;
-    }
-    return `<text class="lbl ${k.lbl}" x="${startX}" y="${y0 + i * g.lh}"${style}>${esc(ln)}</text>`;
+    return `<text class="lbl ${k.lbl}" x="${startX}" y="${y0 + i * g.lh}">${esc(ln)}</text>`;
   }).join("");
   return glyph + lbl;
 }

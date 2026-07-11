@@ -84,6 +84,12 @@ verdict/roll-up/view logic changes.
     now sit centred along the **bottom-middle** of the hypothesis box. The dot-grid canvas
     background is removed in both themes. The controls-help line (bottom-left) is smaller and
     collapses to a small **?** button (persisted).
+  - **Round 9 — legibility & palette follow-ups.** Hypothesis label text is full-strength ink in
+    dark mode (was dimmed and hard to read on the coloured fills). Dropped text justification in
+    nodes (back to left-aligned). Kept the deeper (non-pastel) palette but split the two clashing
+    pairs into distinct hues — **resolved = teal** (vs supported green), **review = violet** (vs
+    partial gold) — so each concept maps to one colour. The project root shows the Crux mark next
+    to its centred title again.
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

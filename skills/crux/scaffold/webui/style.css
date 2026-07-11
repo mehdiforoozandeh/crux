@@ -9,8 +9,9 @@
   --accent: #a882ff; --focus: #d9a13b;
   --brand: #c99219;
   --shadow: 0 4px 14px rgba(0, 0, 0, .45);
-  /* status palette */
-  --q-open: #5a6470; --q-review: #d9a13b; --q-resolved: #4a8a63;
+  /* status palette — each concept a distinct hue (question colours kept off the verdict
+     hues): resolved = teal (not the supported green), review = violet (not the partial gold) */
+  --q-open: #5a6470; --q-review: #8b5cf6; --q-resolved: #2f9e8f;
   --h-idea: #6a7280; --h-staged: #4f74c8; --h-running: #4f9fe0;
   --v-supported: #3fa06a; --v-partial: #d9a13b; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
   --root: #8a8f98; --synth: #57c8c0;
@@ -22,7 +23,7 @@
   --edge: #c9ccd3; --edge-dash: #b8bcc6;
   --accent: #7b5bd6; --focus: #c08a1e;
   --shadow: 0 4px 14px rgba(30, 35, 40, .12);
-  --q-open: #6e7a86; --q-review: #c08a1e; --q-resolved: #3f7d5a;
+  --q-open: #6e7a86; --q-review: #7c4fd0; --q-resolved: #1f8f80;
   --h-idea: #7a8290; --h-staged: #3f63c0; --h-running: #2f87cf;
   --v-supported: #2f8a57; --v-partial: #c08a1e; --v-refuted: #d14b4b; --v-inconclusive: #77839a;
   --root: #9aa0a8; --synth: #2fa39a;
@@ -217,7 +218,7 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 /* type hierarchy: root >> question > hypothesis — size + weight is the kind signal */
 .node .lbl.t-root { font-size: 16.5px; font-weight: 780; letter-spacing: .3px; }
 .node .lbl.t-q { font-size: 12.5px; font-weight: 680; }
-.node .lbl.t-h { font-size: 10px; font-weight: 400; fill: var(--ink-dim); }
+.node .lbl.t-h { font-size: 10px; font-weight: 400; fill: var(--ink); }
 .node .lbl.t-s { font-size: 10.5px; font-weight: 600; font-style: italic; }
 .node .rootmark .mk-l { stroke: var(--brand); stroke-opacity: .55; stroke-width: 2.6; }
 .node .rootmark .mk-s { fill: var(--brand); }
