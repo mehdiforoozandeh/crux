@@ -51,6 +51,12 @@ A hypothesis's `## Findings` can spawn **new** child questions — that's the lo
 The tree is the `Parent:: [[…]]` wikilink in each file; `META.md`/`EXPERIMENTS.md` are
 generated views (never hand-edit).
 
+**Literature wiki (optional).** A crux vault can carry a `raw/` + `wiki/` **literature layer**
+— prior methods, SOTA, baselines, definitions the agent compiles and draws on. It's a separate
+skill (**crux-wiki**) sharing this engine; when proposing questions/hypotheses, consult
+`WIKI.md` if the vault has one. Knowledge flows one way: literature → wiki → tree; findings
+never enter the wiki.
+
 **Lifecycles**
 - Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** from the
   verifiable checkboxes: all `- [x]` → `supported`; any unmet → `refuted`/`partial`;
@@ -149,7 +155,8 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `pursue` | branch, extend, reopen | ◆ | keep a question open; optionally spawn a fresh hypothesis |
 | `status` | map, tree, where, show | ○ | print the tree / a node's ledger |
 | `synthesize` | weave, rollup | ◆ | optional horizontal synthesis across questions |
-| `validate` | lint, check | ○ | integrity checks |
+| `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
+| `validate` | lint, check | ○ | integrity checks (tree + wiki structural lint) |
 
 ## How you run a session
 

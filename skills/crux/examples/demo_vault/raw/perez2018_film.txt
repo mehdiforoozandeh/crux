@@ -1,0 +1,1 @@
+Perez et al 2018 — FiLM. Feature-wise linear modulation conditions a network on side information via per-channel affine (gamma, beta) transforms.

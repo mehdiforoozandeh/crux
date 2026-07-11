@@ -1,0 +1,1 @@
+LeCun 2022 — A Path Towards Autonomous ML. JEPA predicts latent representations of masked regions in an abstract space, avoiding pixel/token reconstruction.

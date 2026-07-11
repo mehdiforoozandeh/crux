@@ -4,7 +4,7 @@ invariant. No GPU / tokens / SLURM; pure file ops. Exit non-zero on any failure.
 
     python selftest.py [--keep DIR]   # --keep leaves the demo vault for inspection
 """
-import os, sys, shutil, tempfile, subprocess, argparse
+import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
@@ -189,6 +189,172 @@ def run_seed():
     expect_error("seed: malformed seed rejected", lambda: E.cmd_init_from(bad_seed, os.path.join(base, "vault2")))
     check("seed: no partial vault left behind", not os.path.exists(os.path.join(base, "vault2", ".crux.yaml")))
     shutil.rmtree(base, ignore_errors=True)
+
+
+def write(p, text):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(text)
+
+def wiki_page(root, slug, title, summary, sources="", category="concept", extra=""):
+    """Write a wiki page the way the agent would (per templates/wiki.md)."""
+    fm = (f"---\ntype: wiki\ntitle: {title}\nsummary: {summary}\n"
+          f"category: {category}\nsources: {sources}\ncreated: x\nupdated: x\n---\n")
+    write(os.path.join(root, "wiki", slug + ".md"), fm + f"\n# {title}\n\n{summary}\n\n{extra}\n")
+
+def wiki_probs(root):
+    return [m for _, m in E.cmd_validate(root)]
+
+
+def run_wiki():
+    """Epic 3 — literature wiki layer: ingest + engine-rendered index + structural lint.
+    Faithful to Karpathy's LLM-wiki (raw/ immutable sources → agent-compiled wiki/ pages,
+    ingest/query/lint, index.md + log.md) with crux's deterministic engine owning the
+    bookkeeping the pattern's #1 documented failure mode (drift) needs."""
+    print("\n# wiki layer (ingest · index · structural lint)")
+    root = tempfile.mkdtemp(prefix="crux_wiki_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Wiki Demo", root, goal="Exercise the literature wiki.")
+    q1, _ = E.cmd_ask(root, "What do prior methods do?")
+
+    # backward-compat: a pre-wiki vault grows no wiki artifacts, refresh stays a no-op
+    check("wiki: no WIKI.md before any ingest", not os.path.exists(os.path.join(root, "WIKI.md")))
+    check("wiki: refresh no-op with no wiki", E.refresh(root) is False)
+    check("wiki: validate clean with no wiki", E.cmd_validate(root) == [])
+    n_nodes_before = len(E.Vault(root).nodes)
+
+    # ingest registers a PI-curated source: hash + Karpathy log line + lazy structure
+    src1 = os.path.join(root, "raw", "smith2024.txt")
+    write(src1, "Smith et al 2024: baseline BM25 gets 0.41 nDCG.\n")
+    E.cmd_ingest(root, "raw/smith2024.txt", title="Smith et al 2024")
+    check("wiki: wiki/ created lazily", os.path.isdir(os.path.join(root, "wiki")))
+    check("wiki: log.md created", os.path.exists(os.path.join(root, "wiki", "log.md")))
+    check("wiki: SCHEMA.md seeded", os.path.exists(os.path.join(root, "wiki", "SCHEMA.md")))
+    check("wiki: WIKI.md rendered once wiki is active", os.path.exists(os.path.join(root, "WIKI.md")))
+    reg = E.load_sources(root)
+    want_sha = hashlib.sha256(read(src1).encode()).hexdigest()
+    check("wiki: source registered with correct sha256", reg.get("raw/smith2024.txt", {}).get("sha256") == want_sha)
+    log = read(os.path.join(root, "wiki", "log.md"))
+    check("wiki: log line matches Karpathy grep prefix",
+          bool(re.search(r"^## \[\d{4}-\d{2}-\d{2}\] ingest \| Smith et al 2024$", log, re.M)))
+
+    # re-ingest unchanged file: no duplicate log entry
+    E.cmd_ingest(root, "raw/smith2024.txt", title="Smith et al 2024")
+    n1 = len(re.findall(r"^## \[.*\] ingest \|", read(os.path.join(root, "wiki", "log.md")), re.M))
+    check("wiki: re-ingest unchanged file adds no duplicate log entry", n1 == 1)
+
+    # uncompiled source is a lint finding until a page cites it
+    check("wiki: uncompiled source flagged", any("uncompiled" in m and "smith2024" in m for m in wiki_probs(root)))
+
+    # agent compiles an interlinked stable set (bm25 <-> transformers), both citing the source
+    wiki_page(root, "bm25", "BM25", "Sparse lexical baseline; 0.41 nDCG in Smith 2024.",
+              sources="raw/smith2024.txt", category="concept", extra="See [[transformers]].")
+    wiki_page(root, "transformers", "Transformers", "Attention-based architecture.",
+              sources="raw/smith2024.txt", category="method", extra="Baseline: [[bm25]].")
+    E.refresh(root)
+    wm = read(os.path.join(root, "WIKI.md"))
+    check("wiki: WIKI.md lists the page + summary", "BM25" in wm and "0.41 nDCG" in wm)
+    check("wiki: WIKI.md groups by category", "concept" in wm.lower())
+    check("wiki: uncompiled clears once page cites source",
+          not any("uncompiled" in m for m in wiki_probs(root)))
+
+    # generated index + refresh idempotency (byte-stable, no timestamps)
+    check("wiki: refresh #1 no-op after compile", E.refresh(root) is False)
+    check("wiki: refresh #2 no-op after compile", E.refresh(root) is False)
+
+    # hash drift: raw bytes change → flagged; re-ingest resolves + appends a new log line
+    write(src1, "Smith et al 2024 (v2): baseline BM25 gets 0.43 nDCG after tuning.\n")
+    check("wiki: source hash drift flagged", any("drift" in m and "smith2024" in m for m in wiki_probs(root)))
+    E.cmd_ingest(root, "raw/smith2024.txt", title="Smith et al 2024")
+    check("wiki: drift clears after re-ingest", not any("drift" in m for m in wiki_probs(root)))
+    check("wiki: re-ingest of changed file appends a log line",
+          len(re.findall(r"^## \[.*\] ingest \|", read(os.path.join(root, "wiki", "log.md")), re.M)) == 2)
+
+    # ghost source lifecycle: register → raw file deleted (missing) → restore → compile a page
+    write(os.path.join(root, "raw", "ghost.txt"), "temp\n")
+    E.cmd_ingest(root, "raw/ghost.txt", title="Ghost")
+    os.remove(os.path.join(root, "raw", "ghost.txt"))
+    check("wiki: missing registered source file caught", any("missing" in m and "ghost" in m for m in wiki_probs(root)))
+    write(os.path.join(root, "raw", "ghost.txt"), "temp\n")  # restore + compile so the vault ends tidy
+    E.cmd_ingest(root, "raw/ghost.txt", title="Ghost")
+    wiki_page(root, "ghost-note", "Ghost Note", "Cites the ghost source.", sources="raw/ghost.txt", extra="See [[bm25]].")
+    wiki_page(root, "bm25", "BM25", "Sparse lexical baseline; 0.43 nDCG in Smith 2024.",
+              sources="raw/smith2024.txt", category="concept", extra="See [[transformers]] and [[ghost-note]].")
+    E.refresh(root)
+    check("wiki: stable set validates clean", E.cmd_validate(root) == [])
+
+    # --- dirty single-finding checks, each via a throwaway page removed afterwards ---
+    # broken wiki→wiki link
+    wiki_page(root, "brk", "Broken", "Links nowhere.", sources="raw/smith2024.txt", extra="See [[does-not-exist]].")
+    check("wiki: broken wiki→wiki link caught", any("broken" in m and "does-not-exist" in m for m in wiki_probs(root)))
+    os.remove(os.path.join(root, "wiki", "brk.md"))
+
+    # flow-rule violation: a wiki page must NOT cite a tree node (wiki→tree)
+    node_base = E.Vault(root).get(q1).basename
+    wiki_page(root, "flw", "Flow", "Links the tree.", sources="raw/smith2024.txt", extra="See [[%s]]." % node_base)
+    check("wiki: wiki→tree link flagged as flow violation",
+          any("flow" in m and "flw" in m for m in wiki_probs(root)))
+    os.remove(os.path.join(root, "wiki", "flw.md"))
+
+    # missing required frontmatter (summary)
+    write(os.path.join(root, "wiki", "nofm.md"),
+          "---\ntype: wiki\ntitle: No Summary\ncategory: concept\nsources:\ncreated: x\nupdated: x\n---\n\n# No Summary\n")
+    check("wiki: missing summary frontmatter caught", any("summary" in m and "nofm" in m for m in wiki_probs(root)))
+    os.remove(os.path.join(root, "wiki", "nofm.md"))
+
+    # a page citing a source file that does not exist (dangling provenance)
+    wiki_page(root, "dangle", "Dangle", "Cites a non-existent source.", sources="raw/imaginary.txt")
+    check("wiki: page citing missing source caught",
+          any("cites missing source" in m and "dangle" in m for m in wiki_probs(root)))
+    os.remove(os.path.join(root, "wiki", "dangle.md"))
+
+    # broken tree→wiki link (direction 2): explicit wiki/ path form in a node body
+    n = E.Vault(root).get(q1)
+    edit(n["path"], "## Answer so far", "## Answer so far\n\nSee [[wiki/nonexistent]].")
+    check("wiki: broken tree→wiki link caught", any("broken" in m and "nonexistent" in m for m in wiki_probs(root)))
+    edit(n["path"], "\n\nSee [[wiki/nonexistent]].", "")
+
+    # orphan page: cited by nothing — the generated WIKI.md link must NOT rescue it
+    wiki_page(root, "island", "Island", "Only the index links here.", sources="raw/smith2024.txt")
+    E.refresh(root)
+    check("wiki: WIKI.md links the orphan (index is not an inbound link)",
+          "Island" in read(os.path.join(root, "WIKI.md")))
+    check("wiki: orphan flagged despite WIKI.md link (Emmimal miscount guard)",
+          any("orphan" in m and "island" in m for m in wiki_probs(root)))
+    os.remove(os.path.join(root, "wiki", "island.md"))
+    E.refresh(root)
+    check("wiki: orphan clears once the page is gone", not any("orphan" in m and "island" in m for m in wiki_probs(root)))
+
+    # wiki artifacts are never ingested as tree nodes
+    v = E.Vault(root)
+    check("wiki: node count unchanged by wiki pages", len(v.nodes) == n_nodes_before)
+    check("wiki: no wiki page became a node", not any(n.type == "wiki" for n in v.nodes.values()))
+    check("wiki: WIKI.md is not a node", "WIKI.md" not in [n["fn"] for n in v.nodes.values()])
+
+    # once tidy, the whole vault (tree + wiki) validates clean
+    check("wiki: tidy vault validates clean", E.cmd_validate(root) == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_wiki_migration():
+    """A pre-wiki v1.0 vault must load, validate, and refresh unchanged — and its first
+    ingest must lazily stand up the wiki without KeyError (evolve-crux gate 4)."""
+    print("\n# wiki backward-compat / migration (old vault → first ingest)")
+    root = tempfile.mkdtemp(prefix="crux_wmig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Vault", root)
+    E.cmd_ask(root, "a question")
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.0")
+    check("wmig: old vault status works", isinstance(E.status_text(root), str))
+    check("wmig: old vault validates clean", E.cmd_validate(root) == [])
+    check("wmig: old vault refresh is a no-op", E.refresh(root) is False)
+    check("wmig: old vault grows no WIKI.md", not os.path.exists(os.path.join(root, "WIKI.md")))
+    write(os.path.join(root, "raw", "p.txt"), "content\n")
+    E.cmd_ingest(root, "raw/p.txt", title="Paper")
+    check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
+    check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
+    check("wmig: ENGINE_VERSION bumped to 1.1", E.ENGINE_VERSION == "1.1")
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def run_version():
@@ -500,6 +666,8 @@ def main():
     a = ap.parse_args()
     root = run_demo(a.keep)
     run_seed()
+    run_wiki()
+    run_wiki_migration()
     run_version()
     run_integrity()
     run_snapshot()
