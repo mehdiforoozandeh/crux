@@ -66,6 +66,13 @@ verdict/roll-up/view logic changes.
     (fully rounded) with smaller dimmer text and their verdict glyph. Fixed the Review button
     wrapping onto two lines (nowrap, no shrink). Slimmed the whole top bar (less padding, 28px
     controls).
+  - **Round 6 — verifiable badges + defaults.** The verifiable badges under a hypothesis are
+    bigger and now read correctly: **met = solid green** (approved), **unmet on a closed
+    hypothesis = solid red** (rejected), and **anything not yet decided** (an unmet criterion on
+    an un-closed idea, or an n/a) is a **hollow circle** — previously untested criteria showed as
+    red. Badges sit in a bottom row clear of the pill's rounded cap. The default theme is now
+    always **dark** (only the toggle switches to light; system light-mode no longer flips it).
+    Bolder Crux logo (thicker constellation, heavier wordmark).
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

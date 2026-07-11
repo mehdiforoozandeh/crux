@@ -55,7 +55,7 @@ function computeGeom() {
       w = k.cw; h = k.ch; lines = [trunc(n.title, k.ctrunc)]; dotsPad = 0;
     } else {
       lines = wrapLines(n.title, k.cpl);
-      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 10 : 0;
+      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 13 : 0;
       w = k.dw; h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
     }
     g[id] = { w, h, rx: k.pill ? h / 2 : k.rx, lines, lh: k.lh, dotsPad, kind: n.type };
@@ -186,13 +186,26 @@ function edgeD(paId, chId, pos) {
   return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
 }
 
-// tiny tri-state dots inside a hypothesis: its verifiables (met · unmet · n/a). Coordinates
-// are LOCAL to the node anchor (0,0). Compact: inline at the right edge; detail: bottom-right row.
+// Verifiable badges on a hypothesis (LOCAL coords). Three meanings:
+//   met  -> filled green (approved)
+//   unmet on a CLOSED hypothesis -> filled red (tested & rejected)
+//   anything else (unmet-but-not-yet-tested, or n/a) -> hollow circle (not decided)
+// Detail: their own row along the bottom-left, clear of the pill's rounded right cap.
+// Compact: inline near the right edge (there's no room for a row).
+function vBadgeClass(v, n) {
+  if (v.state === "met") return "v-met";
+  if (v.state === "unmet" && n.status === "done") return "v-unmet";
+  return "v-pending";
+}
 function verifDots(n, g) {
-  const vs = (n.verifiables || []).slice(0, 6);
-  const cy = state.density === "compact" ? 0 : g.h / 2 - 8;
-  return vs.map((v, i) =>
-    `<circle class="vdot v-${esc(v.state)}" cx="${g.w - 12 - i * 8}" cy="${cy}" r="2.6"/>`).join("");
+  const vs = (n.verifiables || []).slice(0, 8);
+  if (!vs.length) return "";
+  if (state.density === "compact") {
+    const r = 3.2, gap = 9, x0 = g.w - 11;
+    return vs.map((v, i) => `<circle class="vdot ${vBadgeClass(v, n)}" cx="${x0 - i * gap}" cy="0" r="${r}"/>`).join("");
+  }
+  const r = 4.2, gap = 12.5, y = g.h / 2 - r - 4, x0 = 12 + r;
+  return vs.map((v, i) => `<circle class="vdot ${vBadgeClass(v, n)}" cx="${x0 + i * gap}" cy="${y}" r="${r}"/>`).join("");
 }
 
 // the Crux constellation, drawn inside the root node (local coords) so the project is unmistakable
@@ -630,8 +643,8 @@ function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   $("theme-btn").textContent = t === "dark" ? "☀" : "☾";
 }
-applyTheme(localStorage.getItem("crux-theme") ||
-  (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+// dark is the default; only a saved preference (the toggle) can switch to light
+applyTheme(localStorage.getItem("crux-theme") === "light" ? "light" : "dark");
 $("theme-btn").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   localStorage.setItem("crux-theme", next);

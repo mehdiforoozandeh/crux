@@ -53,10 +53,10 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   flex: 0 0 auto; user-select: none; -webkit-user-select: none;
 }
 .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.brand .mark { height: 20px; width: auto; flex: 0 0 auto; }
-.brand .mark .mk-l { stroke: var(--brand); stroke-opacity: .5; stroke-width: 2.4; }
+.brand .mark { height: 22px; width: auto; flex: 0 0 auto; }
+.brand .mark .mk-l { stroke: var(--brand); stroke-opacity: .8; stroke-width: 3.6; stroke-linecap: round; }
 .brand .mark .mk-s { fill: var(--brand); }
-.brand .wordmark { color: var(--brand); font-weight: 700; font-size: 15px; letter-spacing: .2px; }
+.brand .wordmark { color: var(--brand); font-weight: 800; font-size: 15.5px; letter-spacing: .2px; }
 .brand .divider { width: 1px; height: 16px; background: var(--line); }
 #project-title { font-size: 12.5px; color: var(--ink-dim); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -196,10 +196,12 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .node .rootmark .mk-l { stroke: var(--brand); stroke-opacity: .55; stroke-width: 2.6; }
 .node .rootmark .mk-s { fill: var(--brand); }
 .node .glyph { font-size: 10px; font-weight: 700; pointer-events: none; }
-.node .vdot { stroke-width: 1.3; }
+/* verifiable badges: met = solid green (approved) · unmet-on-closed = solid red (rejected) ·
+   pending / n/a = hollow ring (not decided yet) */
+.node .vdot { stroke-width: 1.6; }
 .node .vdot.v-met { fill: var(--v-supported); stroke: var(--v-supported); }
-.node .vdot.v-unmet { fill: none; stroke: var(--v-refuted); }
-.node .vdot.v-na { fill: var(--ink-mute); stroke: var(--ink-mute); }
+.node .vdot.v-unmet { fill: var(--v-refuted); stroke: var(--v-refuted); }
+.node .vdot.v-pending { fill: none; stroke: var(--ink-mute); }
 .node.dim { opacity: .22; }
 .node.hit .box { stroke: var(--focus); stroke-width: 2.5; }
 .node .box.selected { stroke: var(--accent); stroke-width: 2.2;
