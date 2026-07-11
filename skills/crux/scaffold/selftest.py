@@ -392,9 +392,269 @@ def run_integrity():
     shutil.rmtree(root)
 
 
+def _dir_bytes(root):
+    """Snapshot every file's bytes under root — used to prove a call didn't touch disk."""
+    out = {}
+    for dp, _, fns in os.walk(root):
+        for fn in sorted(fns):
+            p = os.path.join(dp, fn)
+            with open(p, "rb") as f:
+                out[p] = f.read()
+    return out
+
+
+def run_snapshot():
+    print("\n# snapshot (read-only JSON contract for the GUI)")
+    import json
+    root = tempfile.mkdtemp(prefix="crux_snap_")
+    shutil.rmtree(root); os.makedirs(root)
+
+    if not (hasattr(E, "snapshot") and hasattr(E, "ledger_counts")):
+        check("snapshot: engine.snapshot + engine.ledger_counts exist", False)
+        shutil.rmtree(root, ignore_errors=True)
+        return
+
+    # a vault with a nested question, two closed hypotheses, and a synthesis
+    E.cmd_init("Snap", root, goal="Test the snapshot contract.")
+    q1, _ = E.cmd_ask(root, "Q one")
+    q2, _ = E.cmd_ask(root, "Q two", parent=q1)
+    h1, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"])
+    h2, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"])
+    E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
+    E.cmd_close(root, h1, metric="imp +0.012")
+    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # one met -> partial
+    E.cmd_close(root, h2, metric="imp +0.003")
+    syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
+
+    v = E.Vault(root)
+    snap = E.snapshot(v)
+
+    # -- top-level shape / serializability
+    check("snapshot: top-level keys exact",
+          set(snap.keys()) == {"engine_version", "project", "nodes", "tree", "queue"})
+    check("snapshot: engine_version stamped", snap["engine_version"] == E.ENGINE_VERSION)
+    dumped = json.dumps(snap)
+    check("snapshot: JSON-serializable + round-trips", json.loads(dumped) == snap)
+    check("snapshot: project id/title", snap["project"]["id"] == "root" and snap["project"]["title"] == "Snap")
+    check("snapshot: accepts a root path too", E.snapshot(root)["project"]["id"] == "root")
+
+    # -- tree nesting exactly matches parent links
+    def tree_ids(t):
+        yield t["id"]
+        for c in t["children"]:
+            yield from tree_ids(c)
+    ids = list(tree_ids(snap["tree"]))
+    nonsyn = {nid for nid, n in v.nodes.items() if n.type != "synthesis"}
+    check("snapshot: tree root is the project root", snap["tree"]["id"] == v.cfg["root_id"])
+    check("snapshot: tree has no duplicate nodes", len(ids) == len(set(ids)))
+    check("snapshot: tree covers each parent-linked node once", set(ids) == nonsyn)
+    def children_match(t):
+        return ([c["id"] for c in t["children"]] == v.children[t["id"]]
+                and all(children_match(c) for c in t["children"]))
+    check("snapshot: tree children match v.children in order", children_match(snap["tree"]))
+    check("snapshot: synthesis in nodes but not in the tree",
+          syn in snap["nodes"] and syn not in ids)
+    check("snapshot: synthesis relates to q1,q2 in order", snap["nodes"][syn]["related"] == [q1, q2])
+
+    # -- queue == cmd_review
+    check("snapshot: queue ids == cmd_review output",
+          [r["id"] for r in snap["queue"]] == [nid for nid, _ in E.cmd_review(root)])
+    check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
+    check("snapshot: queue rows carry title + summary",
+          bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
+    check("snapshot: question node surfaces its own statement ('detail')", "detail" in snap["nodes"][q2])
+
+    # -- idea nodes carry status; done ideas carry a consistent verdict + metric
+    h1n = snap["nodes"][h1]
+    met, unmet, na = E.count_verifiables(read(node_path(root, h1)))
+    check("snapshot: h1 status is done", h1n["status"] == "done")
+    check("snapshot: h1 verdict consistent with derive_verdict",
+          h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
+    check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
+    check("snapshot: h2 verdict partial", snap["nodes"][h2]["verdict"] == "partial")
+
+    # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
+    q2n = snap["nodes"][q2]
+    lc = E.ledger_counts(v, q2)
+    lb = E.ledger_block(v, q2)
+    check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
+    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 partial)",
+          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1 and lc["partial"] == 1)
+    check("snapshot: ledger_counts consistent with ledger_block text",
+          f"**{lc['children']} children**" in lb
+          and f"supported {lc['supported']}" in lb and f"partial {lc['partial']}" in lb)
+
+    # -- pure read: constructing a snapshot mutates nothing on disk
+    before = _dir_bytes(root)
+    E.snapshot(E.Vault(root))
+    check("snapshot: pure read (byte-for-byte identical vault)", _dir_bytes(root) == before)
+
+    check("snapshot: source vault validates clean", E.cmd_validate(root) == [])
+    # a non-VERDICT verdict string in frontmatter must never reach the snapshot verbatim
+    # (clean data contract + defense-in-depth against attribute injection in the GUI)
+    edit(node_path(root, h1), "verdict: supported", "verdict: bogus")
+    check("snapshot: non-VERDICT verdict is clamped to None",
+          E.snapshot(E.Vault(root))["nodes"][h1]["verdict"] is None)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_serve():
+    print("\n# serve (crux serve — stdlib browser cockpit host)")
+    import json, socket, threading, urllib.request
+    try:
+        import serve as S
+    except Exception as e:
+        check(f"serve: serve.py imports cleanly (got {e!r})", False)
+        return
+
+    # -- stdlib-only: every module serve.py imports is stdlib (or the local engine/render)
+    src = read(os.path.join(HERE, "serve.py"))
+    mods = set()
+    for line in src.splitlines():
+        import re as _re
+        m = _re.match(r"\s*(?:import|from)\s+([a-zA-Z0-9_.]+)", line)
+        if m:
+            mods.add(m.group(1).split(".")[0])
+    stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
+        "os", "sys", "json", "socket", "http", "socketserver", "webbrowser",
+        "functools", "threading", "urllib", "io", "re", "datetime", "argparse"}
+    bad = mods - stdlib - {"engine", "render"}
+    check("serve: stdlib-only imports", not bad)
+
+    # -- context detection returns the right mode for faked env combos, no browser spawned
+    check("serve: context plain", S.detect_context({}) == "plain")
+    check("serve: context vscode (TERM_PROGRAM)", S.detect_context({"TERM_PROGRAM": "vscode"}) == "vscode")
+    check("serve: context remote (SSH_CONNECTION)", S.detect_context({"SSH_CONNECTION": "1 2 3 4"}) == "remote")
+    check("serve: context vscode+remote -> remote",
+          S.detect_context({"TERM_PROGRAM": "vscode", "SSH_CONNECTION": "x"}) == "remote")
+
+    # -- auto-open policy (inject a fake opener; a real browser is never launched)
+    calls = []
+    op = lambda u: calls.append(u)
+    calls.clear(); S.maybe_open("http://localhost:1", "plain", force_open=None, opener=op)
+    check("serve: plain mode auto-opens", calls == ["http://localhost:1"])
+    calls.clear(); S.maybe_open("http://localhost:1", "vscode", force_open=None, opener=op)
+    check("serve: vscode mode does not auto-open", calls == [])
+    calls.clear(); S.maybe_open("http://localhost:1", "remote", force_open=None, opener=op)
+    check("serve: remote mode does not auto-open", calls == [])
+    calls.clear(); S.maybe_open("http://localhost:1", "plain", force_open=False, opener=op)
+    check("serve: --no-open suppresses the browser", calls == [])
+    calls.clear(); S.maybe_open("http://localhost:1", "remote", force_open=True, opener=op)
+    check("serve: --open forces the browser", calls == ["http://localhost:1"])
+
+    # -- URL / banner: exactly one http://localhost:<port> line is printed
+    check("serve: local_url form", S.local_url(8787) == "http://localhost:8787")
+    lines = S.banner_lines("http://localhost:8787", "plain")
+    check("serve: banner prints exactly one URL line",
+          sum(1 for l in lines if "http://localhost:8787" in l) == 1)
+    check("serve: banner mentions Ctrl-C", any("Ctrl-C" in l for l in lines))
+    check("serve: remote banner hints Simple Browser",
+          any("Simple Browser" in l for l in S.banner_lines("http://localhost:8787", "remote")))
+
+    # -- free port: a busy default falls back to the next free port
+    busy = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    busy.bind(("127.0.0.1", 0)); busy.listen(1)
+    busy_port = busy.getsockname()[1]
+    p = S.find_free_port("127.0.0.1", busy_port)
+    check("serve: free-port fallback skips the busy port", p > busy_port)
+    busy.close()
+
+    # -- binds 127.0.0.1, pins the requested port, and really serves the snapshot
+    root = tempfile.mkdtemp(prefix="crux_serve_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Served", root, goal="serve integration")
+    q1, _ = E.cmd_ask(root, "a question")
+    free = S.find_free_port("127.0.0.1", 8900)
+    httpd = S.make_server(root, port=free)
+    check("serve: binds 127.0.0.1", httpd.server_address[0] == "127.0.0.1")
+    check("serve: pins requested port", httpd.server_address[1] == free)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+    try:
+        base = f"http://127.0.0.1:{free}"
+        with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as r:
+            ctype = r.headers.get("Content-Type"); snap = json.loads(r.read())
+        check("serve: /snapshot.json is application/json", ctype == "application/json")
+        check("serve: /snapshot.json == engine.snapshot", snap == E.snapshot(root))
+        with urllib.request.urlopen(base + "/", timeout=5) as r2:
+            html = r2.read().decode("utf-8", "replace").lower()
+        check("serve: serves the cockpit HTML at /", "<html" in html or "crux" in html)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+
+    # -- the real CLI prints the URL promptly (flushed) while the server is still running, and
+    # serve stays READ-ONLY even on a drifted vault (version-stamping would be a forbidden write).
+    # A reader thread consumes stdout so we catch the banner even though the server then blocks.
+    cfg_path = os.path.join(root, ".crux.yaml")
+    edit(cfg_path, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 0.9")
+    cfg_before = read(cfg_path)
+    cli_port = S.find_free_port("127.0.0.1", 8940)
+    proc = subprocess.Popen(
+        [sys.executable, os.path.join(HERE, "crux.py"), "serve", "--no-open", "--port", str(cli_port)],
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines = []
+    def _read_banner():
+        for line in proc.stdout:
+            lines.append(line)
+            if "http://localhost:" in line:
+                break
+    tr = threading.Thread(target=_read_banner, daemon=True); tr.start()
+    tr.join(timeout=10)
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+    buf = "".join(lines)
+    check("serve: `crux serve` CLI prints the URL promptly (flushed to a pipe)",
+          f"http://localhost:{cli_port}" in buf and buf.count("http://localhost:") == 1)
+    check("serve: read-only on a drifted vault (.crux.yaml never re-stamped)",
+          read(cfg_path) == cfg_before)
+
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_webui():
+    print("\n# webui (frontend cockpit — served assets · pure-read · issue-#1 guard)")
+    import threading, urllib.request
+    import serve as S
+    app_js = read(os.path.join(HERE, "webui", "app.js"))
+
+    # -- the host serves every static asset the cockpit HTML references, not just index.html
+    root = tempfile.mkdtemp(prefix="crux_webui_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Webui", root, goal="webui asset serving")
+    free = S.find_free_port("127.0.0.1", 8980)
+    httpd = S.make_server(root, port=free)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+    try:
+        base = f"http://127.0.0.1:{free}"
+        for path, ctype in (("/app.js", "javascript"), ("/style.css", "css")):
+            try:
+                with urllib.request.urlopen(base + path, timeout=5) as r:
+                    ok = ctype in (r.headers.get("Content-Type") or "")
+            except Exception:
+                ok = False
+            check(f"webui: serves {path}", ok)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+    shutil.rmtree(root, ignore_errors=True)
+
+    # -- pure-read at the browser layer: the cockpit only ever GETs the snapshot, never mutates
+    #    the vault (single read endpoint, no fetch method override). Mirrors the engine invariant.
+    check("webui: app.js is pure-read (one GET of snapshot.json, no write verbs)",
+          app_js.count("fetch(") == 1 and 'fetch("snapshot.json"' in app_js and "method:" not in app_js)
+
+    # -- issue #1 regression guard: capturing the pointer on the tree <svg> retargets the
+    #    follow-up `click` to the svg itself, so node/toggle hit-testing (e.target.closest)
+    #    silently no-ops and the whole tree goes dead. Never reintroduce it there.
+    check("webui: app.js never setPointerCapture on the tree (issue #1 regression)",
+          "setPointerCapture(" not in app_js)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
-    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"]):
+    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True)
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -410,6 +670,9 @@ def main():
     run_wiki_migration()
     run_version()
     run_integrity()
+    run_snapshot()
+    run_serve()
+    run_webui()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

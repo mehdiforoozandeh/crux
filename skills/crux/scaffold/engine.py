@@ -394,20 +394,33 @@ def derive_verdict(met, unmet, na):
     return "partial"
 
 # ----------------------------------------------------------------------------- ledger / gate / refresh
+def ledger_counts(v, qid):
+    """Pure roll-up of a question's direct children into JSON-able counts. Single source
+    of truth shared by `ledger_block` (the markdown view) and `snapshot` (the GUI JSON)."""
+    kids = v.children[qid]
+    ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
+    subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
+    vc = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
+    return {"children": len(kids),
+            "ideas_total": len(ideas),
+            "ideas_done": sum(1 for n in ideas if n.status == "done"),
+            "supported": vc["supported"], "partial": vc["partial"],
+            "refuted": vc["refuted"], "inconclusive": vc["inconclusive"],
+            "subq_total": len(subqs),
+            "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}
+
 def ledger_block(v, qid):
     kids = v.children[qid]
     if not kids:
         return "_(no children yet)_"
     ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
     subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
-    n_done = sum(1 for n in ideas if n.status == "done")
-    vc = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
-    q_res = sum(1 for n in subqs if n.status == "resolved")
-    summary = (f"**{len(kids)} children** · ideas {n_done}/{len(ideas)} done "
-               f"(supported {vc['supported']}, partial {vc['partial']}, "
-               f"refuted {vc['refuted']}, inconclusive {vc['inconclusive']})")
+    c = ledger_counts(v, qid)
+    summary = (f"**{c['children']} children** · ideas {c['ideas_done']}/{c['ideas_total']} done "
+               f"(supported {c['supported']}, partial {c['partial']}, "
+               f"refuted {c['refuted']}, inconclusive {c['inconclusive']})")
     if subqs:
-        summary += f" · sub-questions {q_res}/{len(subqs)} resolved"
+        summary += f" · sub-questions {c['subq_resolved']}/{c['subq_total']} resolved"
     rows = []
     for n in (ideas + subqs):
         if n.type == "idea":
@@ -1017,3 +1030,112 @@ def status_text(root, node=None):
             walk(c, depth + 1)
     walk(v.cfg["root_id"], 0)
     return "\n".join(lines)
+
+# ----------------------------------------------------------------------------- snapshot (read-only JSON contract for the GUI)
+# `snapshot` is the single machine-readable view of a vault: the GUI (crux serve)
+# consumes it as /snapshot.json and never re-parses markdown. Pure read — it builds a
+# Vault and reads bodies, but writes nothing. Stdlib only; returns plain JSON types.
+def _section(body, heading):
+    """Return the text under a `## <heading>` up to the next `## ` (stripped, '' if absent)."""
+    out, grab = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            grab = line[3:].strip().lower() == heading.lower()
+            continue
+        if grab:
+            out.append(line)
+    return "\n".join(out).strip()
+
+def _verifiables(body):
+    """The `## Verifiables` list as read-only tri-state: [{text, state}] with state in met/unmet/na."""
+    items, in_sec = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "verifiables"
+            continue
+        if not in_sec:
+            continue
+        m = re.match(r"\s*- \[(.)\]\s*(.*)$", line)
+        if not m:
+            continue
+        c = m.group(1).lower()
+        state = "met" if c == "x" else "na" if c == "-" else "unmet"
+        items.append({"text": m.group(2).strip(), "state": state})
+    return items
+
+def _run_links(body):
+    """Non-placeholder bullets under `## Run Links`."""
+    links, in_sec = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "run links"
+            continue
+        if in_sec and re.match(r"\s*- (?!_\(none)", line):
+            links.append(line.strip()[2:].strip())
+    return links
+
+def _related_ids(v, body):
+    """Question ids a synthesis links to, read in order from its `Related::` wikilinks."""
+    by_basename = {n.basename: n.id for n in v.nodes.values()}
+    ids = []
+    for line in body.splitlines():
+        if line.strip().startswith("Related::"):
+            for m in re.finditer(r"\[\[([^\]|]+)", line):
+                nid = by_basename.get(m.group(1).strip())
+                if nid:
+                    ids.append(nid)
+    return ids
+
+def _ledger_summary(c):
+    """A compact one-line ledger summary for a review-queue row."""
+    parts = [f"{c['children']} children", f"{c['ideas_done']}/{c['ideas_total']} ideas done"]
+    verd = [f"{c[k]} {k}" for k in VERDICTS if c[k]]
+    if verd:
+        parts.append(", ".join(verd))
+    if c["subq_total"]:
+        parts.append(f"{c['subq_resolved']}/{c['subq_total']} sub-questions resolved")
+    return " · ".join(parts)
+
+def _node_json(v, n):
+    d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
+    if n.type == "question":
+        pre = n["body"].split(LEDGER_START)[0]
+        d["parent"] = n.parent
+        d["stale"] = bool(n["fm"].get("stale"))
+        d["detail"] = _section(pre, "Question")
+        d["answer"] = _section(pre, "Answer so far")
+        d["ledger"] = ledger_counts(v, n.id)
+        d["children"] = list(v.children[n.id])
+    elif n.type == "idea":
+        verdict = n["fm"].get("verdict")
+        d["parent"] = n.parent
+        d["verdict"] = verdict if verdict in VERDICTS else None   # only ever a valid enum or None
+        d["metric"] = n["fm"].get("metric") or None
+        d["problem"] = _section(n["body"], "Problem Statement")
+        d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
+        d["verifiables"] = _verifiables(n["body"])
+        d["run_links"] = _run_links(n["body"])
+        d["findings"] = _section(n["body"], "Findings")
+    elif n.type == "synthesis":
+        d["related"] = _related_ids(v, n["body"])
+    return d
+
+def _subtree(v, nid):
+    return {"id": nid, "children": [_subtree(v, c) for c in v.children[nid]]}
+
+def snapshot(vault):
+    """Read-only JSON snapshot of a vault. `vault` is a Vault or a root path.
+    Keys: engine_version, project, nodes (flat map by id), tree (parent-link hierarchy
+    from the root; synthesis nodes are excluded — they attach via `related`), queue."""
+    v = vault if isinstance(vault, Vault) else Vault(vault)
+    root_id = v.cfg["root_id"]
+    root = v.get(root_id)
+    return {
+        "engine_version": ENGINE_VERSION,
+        "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
+                    "status": root.status, "goal": _section(root["body"], "Goal")},
+        "nodes": {nid: _node_json(v, n) for nid, n in v.nodes.items()},
+        "tree": _subtree(v, root_id),
+        "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
+                  for n in v.nodes.values() if n.type == "question" and n.status == "review"],
+    }
