@@ -9,11 +9,11 @@
   --accent: #a882ff; --focus: #d9a13b;
   --brand: #c99219;
   --shadow: 0 4px 14px rgba(0, 0, 0, .45);
-  /* status palette — each concept a distinct hue (question colours kept off the verdict
-     hues): resolved = teal (not the supported green), review = violet (not the partial gold) */
-  --q-open: #5a6470; --q-review: #8b5cf6; --q-resolved: #2f9e8f;
+  /* status palette — each concept a distinct hue: resolved = teal (not the supported green),
+     review = gold, partial = violet (swapped so nothing collides) */
+  --q-open: #5a6470; --q-review: #d9a13b; --q-resolved: #2f9e8f;
   --h-idea: #6a7280; --h-staged: #4f74c8; --h-running: #4f9fe0;
-  --v-supported: #3fa06a; --v-partial: #d9a13b; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
+  --v-supported: #3fa06a; --v-partial: #8b5cf6; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
   --root: #8a8f98; --synth: #57c8c0;
   color-scheme: dark;
 }
@@ -23,9 +23,9 @@
   --edge: #c9ccd3; --edge-dash: #b8bcc6;
   --accent: #7b5bd6; --focus: #c08a1e;
   --shadow: 0 4px 14px rgba(30, 35, 40, .12);
-  --q-open: #6e7a86; --q-review: #7c4fd0; --q-resolved: #1f8f80;
+  --q-open: #6e7a86; --q-review: #c08a1e; --q-resolved: #1f8f80;
   --h-idea: #7a8290; --h-staged: #3f63c0; --h-running: #2f87cf;
-  --v-supported: #2f8a57; --v-partial: #c08a1e; --v-refuted: #d14b4b; --v-inconclusive: #77839a;
+  --v-supported: #2f8a57; --v-partial: #7c4fd0; --v-refuted: #d14b4b; --v-inconclusive: #77839a;
   --root: #9aa0a8; --synth: #2fa39a;
   color-scheme: light;
 }
