@@ -11,12 +11,14 @@ issues under each. Status: ☐ todo · ◐ in progress · ☑ done.
 so a PI can drive the whole loop — browse the tree, open questions, tick verifiables,
 close cases, and clear the review gate — without the terminal.
 
-- ☐ **Decide stack & architecture** — Obsidian plugin vs standalone web app vs desktop (Tauri/Electron); write a short ADR capturing the choice and why.
-- ☐ **Engine JSON API** — have the engine emit machine-readable vault state (tree, ledgers, gate queue) so any UI consumes one stable interface instead of re-parsing markdown.
-- ☐ **Interactive tree / graph view** — render the Question→Hypothesis constellation, status-colored, navigable; the visual heart of the product.
-- ☐ **Node detail + edit** — create/edit Questions & Hypotheses, tick verifiables, write findings; all writes go through the engine (never hand-edit generated content).
-- ☐ **Review-gate inbox** — surface questions in `review`, with `answer` / `pursue` actions for the PI.
+- ☑ **Decide stack & architecture** — Obsidian plugin vs standalone web app vs desktop (Tauri/Electron); write a short ADR capturing the choice and why. *(GUI v1 PRD chose a stdlib-served local web app — [`docs/prd/gui-v1.md`](docs/prd/gui-v1.md).)*
+- ☑ **Engine JSON API** — have the engine emit machine-readable vault state (tree, ledgers, gate queue) so any UI consumes one stable interface instead of re-parsing markdown. *(`engine.snapshot` → `/snapshot.json`.)*
+- ☑ **Interactive tree / graph view** — render the Question→Hypothesis constellation, status-colored, navigable; the visual heart of the product. *(the `crux serve` cockpit tree: pan / zoom / collapse / search / re-orient.)*
+- ◐ **Node detail + edit** — create/edit Questions & Hypotheses, tick verifiables, write findings; all writes go through the engine (never hand-edit generated content). *(read-only detail shipped in GUI v1; editing is a deliberate v1 non-goal — mutations stay in the agent/CLI.)*
+- ◐ **Review-gate inbox** — surface questions in `review`, with `answer` / `pursue` actions for the PI. *(the queue is surfaced read-only; `answer` / `pursue` still run via the agent/CLI.)*
 - ☐ **Package & ship** — build + distribute (plugin release / hosted app / desktop bundle per the stack decision).
+
+*GUI v1 delivered as `crux serve` + `engine.snapshot` + the `webui/` frontend (read-only cockpit; editing and packaging remain).*
 
 ## Epic 2 — Marketing animation + README hero  `marketing`
 

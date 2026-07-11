@@ -17,7 +17,7 @@
 - A deterministic **engine** does the bookkeeping — IDs, the parent tree, validators, the evidence-ledger roll-up, a human **review gate**, and regenerating a navigable `META.md` map + `EXPERIMENTS.md` registry.
 - An **LLM agent** drives it conversationally; **you (the PI)** make the judgment calls — which questions matter, the verifiable bar, and when a question is truly answered.
 
-Everything is plain markdown in an **Obsidian-graphable vault**: open it and the question/hypothesis tree *is* the graph.
+Everything is plain markdown in an **Obsidian-graphable vault**: open it and the question/hypothesis tree *is* the graph — or run **`crux serve`** for a dependency-free, status-colored **browser cockpit** over the same vault (read-only: pan / zoom / search the tree, watch the review gate). A parallel **literature wiki** (the `crux-wiki` skill) compiles PI-curated sources into an interlinked knowledge base the agent draws on, cross-linked with the tree.
 
 ## Install
 
@@ -87,6 +87,7 @@ The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x
 `crux` is a **collection of skills** under `skills/`:
 
 - [`skills/crux/`](skills/crux) — the tool itself: `SKILL.md` (the PI ⇄ Agent ⇄ Engine playbook) + `scaffold/` (the engine: `crux.py`, `engine.py`, `render.py`, `templates/`, `selftest.py` — see [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md)) + `examples/`.
+- [`skills/crux-wiki/`](skills/crux-wiki) — the literature-wiki layer: compile PI-curated sources under `raw/` into interlinked `wiki/` pages the agent draws on (knowledge flows literature → wiki → tree; findings never flow back).
 - [`skills/evolve-crux/`](skills/evolve-crux) — the playbook for evolving crux itself (ideate → build → validate → ship).
 
 Validate the engine end-to-end (no GPU/tokens/SLURM):
@@ -98,7 +99,7 @@ python skills/crux/scaffold/selftest.py --keep ./v # …and keep it to open in O
 
 ## Roadmap
 
-`crux` is the home for a small constellation of agentic-research tools. Planned siblings under the same roof: **era** (whole-program search toward a score) and **autoresearch** (autonomous experiment loops), with a GUI later.
+A read-only **browser cockpit** (`crux serve`) and a **literature wiki** (`crux-wiki`) both landed in **0.3.0** — see [`ROADMAP.md`](ROADMAP.md) and the [changelog](CHANGELOG.md). `crux` is the home for a small constellation of agentic-research tools; planned siblings under the same roof: **era** (whole-program search toward a score) and **autoresearch** (autonomous experiment loops).
 
 ## License
 

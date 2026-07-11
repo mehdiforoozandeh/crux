@@ -156,6 +156,7 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `status` | map, tree, where, show | ○ | print the tree / a node's ledger |
 | `synthesize` | weave, rollup | ◆ | optional horizontal synthesis across questions |
 | `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
+| `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit over the vault (localhost; view-only — pan/zoom/search the tree + review gate) |
 | `validate` | lint, check | ○ | integrity checks (tree + wiki structural lint) |
 
 ## How you run a session

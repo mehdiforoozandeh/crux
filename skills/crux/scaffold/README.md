@@ -33,7 +33,9 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 | `pursue` | branch, extend, reopen | keep a question open; optionally spawn a fresh hypothesis |
 | `status` | map, tree, where, show | print the tree, or one node's ledger |
 | `synthesize` | weave, rollup | optional horizontal synthesis across questions |
-| `validate` | lint, check | run all integrity checks |
+| `ingest` | source, add-source | register a PI-curated `raw/` source into the literature wiki |
+| `serve` | gui, ui, cockpit | open the read-only browser cockpit over the vault (localhost, view-only) |
+| `validate` | lint, check | run all integrity checks (tree + wiki structural lint) |
 
 ## Lifecycles
 
