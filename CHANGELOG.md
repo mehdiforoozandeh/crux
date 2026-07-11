@@ -18,6 +18,14 @@ verdict/roll-up/view logic changes.
   from `/snapshot.json` (~1s poll) with stable node positions. View-only: the GUI performs
   no writes. Delivers ROADMAP Epic 1 #3, #5, and the read half of #4. (stdlib-only engine;
   no vault-format change.)
+  - **Tree interaction layer rewritten** so the cockpit is actually usable: node selection,
+    the ± collapse/expand toggle, drag-to-pan, wheel/​button zoom, and search-to-jump now work.
+    The tree previously went dead because a `setPointerCapture` on every pointerdown retargeted
+    the follow-up `click` to the `<svg>` (so `e.target.closest('.node')` was always null). Pan is
+    now a distinct gesture (a real drag threshold, `window`-scoped move/up, no pointer capture),
+    pan/zoom are `requestAnimationFrame`-coalesced, synthesis nodes sit beside their related
+    questions (short dashed edges instead of danglers), and a fit/zoom control cluster was added.
+    Guarded by four new `selftest` asserts (asset serving, frontend pure-read, issue-#1 regression).
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

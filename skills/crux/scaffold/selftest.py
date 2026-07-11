@@ -448,6 +448,44 @@ def run_serve():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_webui():
+    print("\n# webui (frontend cockpit — served assets · pure-read · issue-#1 guard)")
+    import threading, urllib.request
+    import serve as S
+    app_js = read(os.path.join(HERE, "webui", "app.js"))
+
+    # -- the host serves every static asset the cockpit HTML references, not just index.html
+    root = tempfile.mkdtemp(prefix="crux_webui_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Webui", root, goal="webui asset serving")
+    free = S.find_free_port("127.0.0.1", 8980)
+    httpd = S.make_server(root, port=free)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+    try:
+        base = f"http://127.0.0.1:{free}"
+        for path, ctype in (("/app.js", "javascript"), ("/style.css", "css")):
+            try:
+                with urllib.request.urlopen(base + path, timeout=5) as r:
+                    ok = ctype in (r.headers.get("Content-Type") or "")
+            except Exception:
+                ok = False
+            check(f"webui: serves {path}", ok)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+    shutil.rmtree(root, ignore_errors=True)
+
+    # -- pure-read at the browser layer: the cockpit only ever GETs the snapshot, never mutates
+    #    the vault (single read endpoint, no fetch method override). Mirrors the engine invariant.
+    check("webui: app.js is pure-read (one GET of snapshot.json, no write verbs)",
+          app_js.count("fetch(") == 1 and 'fetch("snapshot.json"' in app_js and "method:" not in app_js)
+
+    # -- issue #1 regression guard: capturing the pointer on the tree <svg> retargets the
+    #    follow-up `click` to the svg itself, so node/toggle hit-testing (e.target.closest)
+    #    silently no-ops and the whole tree goes dead. Never reintroduce it there.
+    check("webui: app.js never setPointerCapture on the tree (issue #1 regression)",
+          "setPointerCapture(" not in app_js)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"]):
@@ -466,6 +504,7 @@ def main():
     run_integrity()
     run_snapshot()
     run_serve()
+    run_webui()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

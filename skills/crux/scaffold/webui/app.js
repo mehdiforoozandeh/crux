@@ -13,6 +13,7 @@ const state = {
   selected: null,           // node id, or null => review queue
   view: { tx: 60, ty: 40, k: 1 },
   positions: {},            // id -> {x, y, depth}
+  childCount: {},           // id -> number of tree children (drives the ± toggle)
   search: "",
   centered: false,          // one-time fit after first snapshot
 };
@@ -57,25 +58,34 @@ function onSnapshot() {
 // x = depth column; y = leaf order (post-order). Same structure => same positions,
 // so nodes never jump on auto-refresh. Collapsed nodes lay out as leaves.
 function layout() {
-  const snap = state.snap, pos = {};
+  const snap = state.snap, pos = {}, kids = {};
   let leaf = 0;
   (function visit(node, depth) {
-    const kids = state.collapsed.has(node.id) ? [] : node.children;
-    if (!kids.length) {
+    kids[node.id] = node.children ? node.children.length : 0;   // true count (for the toggle)
+    const shown = state.collapsed.has(node.id) ? [] : node.children;
+    if (!shown.length) {
       pos[node.id] = { x: depth * COL_W, y: leaf * ROW_H, depth };
       leaf++;
     } else {
       const ys = [];
-      for (const c of kids) { visit(c, depth + 1); ys.push(pos[c.id].y); }
+      for (const c of shown) { visit(c, depth + 1); ys.push(pos[c.id].y); }
       pos[node.id] = { x: depth * COL_W, y: (ys[0] + ys[ys.length - 1]) / 2, depth };
     }
   })(snap.tree, 0);
-  // synthesis nodes are outside the parent tree; stack them past the deepest column
+  // synthesis nodes live outside the parent tree — place them one column past the deepest
+  // node, at the mean y of the questions they relate to, so their dashed edges stay short
+  // and legible instead of dangling across the whole canvas.
   const maxDepth = Math.max(0, ...Object.values(pos).map((p) => p.depth));
+  const placed = [];
   Object.values(snap.nodes).filter((n) => n.type === "synthesis").forEach((n, i) => {
-    pos[n.id] = { x: (maxDepth + 1) * COL_W, y: (leaf + i) * ROW_H, depth: maxDepth + 1 };
+    const ys = (n.related || []).map((rid) => pos[rid] && pos[rid].y).filter((y) => y != null);
+    let y = ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : (leaf + i) * ROW_H;
+    while (placed.some((u) => Math.abs(u - y) < ROW_H)) y += ROW_H;   // de-overlap siblings
+    placed.push(y);
+    pos[n.id] = { x: (maxDepth + 1) * COL_W, y, depth: maxDepth + 1 };
   });
   state.positions = pos;
+  state.childCount = kids;
 }
 
 // ------------------------------------------------------------------ tree render
@@ -108,7 +118,7 @@ function nodeSVG(n, p) {
     ? `<polygon class="box ${boxCls}" points="${diamond(p)}"/>`
     : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - NODE_H / 2}" width="${NODE_W}" height="${NODE_H}" rx="6"/>`;
   const lbl = `<text class="lbl" x="${p.x + 11}" y="${p.y + 4}">${esc(trunc(n.title, 25))}</text>`;
-  const hasKids = n.children && n.children.length;
+  const hasKids = (state.childCount && state.childCount[n.id]) || 0;
   const toggle = hasKids
     ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${p.x + NODE_W}" cy="${p.y}" r="7.5"/>` +
       `<text x="${p.x + NODE_W}" y="${p.y + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
@@ -132,9 +142,16 @@ function renderTree() {
   svg.innerHTML = `<g transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
 }
 
+// Pan/zoom only mutate the group transform. Coalesce bursts of pointer/wheel events into one
+// write per animation frame so a fast drag or trackpad zoom can't queue up dozens of relayouts.
+let _rafPending = 0;
 function applyTransform() {
-  const g = svg.firstChild;
-  if (g) g.setAttribute("transform", `translate(${state.view.tx},${state.view.ty}) scale(${state.view.k})`);
+  if (_rafPending) return;
+  _rafPending = requestAnimationFrame(() => {
+    _rafPending = 0;
+    const g = svg.firstChild;
+    if (g) g.setAttribute("transform", `translate(${state.view.tx},${state.view.ty}) scale(${state.view.k})`);
+  });
 }
 
 function renderLegend() {
@@ -160,7 +177,7 @@ function fitToView() {
   const minY = Math.min(...ps.map((p) => p.y)) - NODE_H, maxY = Math.max(...ps.map((p) => p.y)) + NODE_H;
   const r = svg.getBoundingClientRect();
   const k = Math.min(1, (r.width - 60) / (maxX - minX || 1), (r.height - 60) / (maxY - minY || 1));
-  state.view.k = clamp(k, 0.2, 1);
+  state.view.k = clamp(k, 0.12, 1);
   state.view.tx = 30 - minX * state.view.k;
   state.view.ty = (r.height - (maxY - minY) * state.view.k) / 2 - minY * state.view.k;
 }
@@ -175,11 +192,12 @@ function centerOn(id) {
 }
 
 // ------------------------------------------------------------------ selection / detail
-function selectNode(id) {
+function selectNode(id, opts) {
   state.selected = id;
   updateReviewBtn();
   renderTree();
   renderDetail();
+  if (opts && opts.center) centerOn(id);   // used when jumping from the queue / a detail link / search
 }
 
 function showQueue() {
@@ -302,35 +320,63 @@ function trunc(s, n) { s = s || ""; return s.length > n ? s.slice(0, n - 1) + "�
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 
 // ------------------------------------------------------------------ interaction wiring
-let drag = null, moved = false;
-svg.addEventListener("wheel", (e) => {
-  e.preventDefault();
+// Pan and select are separate gestures. A pointerdown starts a *possible* pan; only once the
+// pointer travels past DRAG_THRESHOLD does it become a real pan (and suppress the trailing
+// click). We deliberately do NOT call setPointerCapture on the <svg>: capturing retargets the
+// follow-up `click` to the svg itself, so `e.target.closest('.node')` would be null and every
+// node click / ± toggle would no-op. Instead, while a pan is live we listen on `window`, so the
+// drag keeps tracking even when the cursor leaves the svg and always ends cleanly.
+const DRAG_THRESHOLD = 5;
+let pan = null, moved = false;
+
+// cursor-anchored zoom by `factor` about viewport point (cx, cy)
+function zoomAt(cx, cy, factor) {
   const v = state.view, r = svg.getBoundingClientRect();
-  const mx = e.clientX - r.left, my = e.clientY - r.top;
-  const k2 = clamp(v.k * Math.exp(-e.deltaY * 0.0016), 0.2, 3);
+  const k2 = clamp(v.k * factor, 0.1, 3);
+  if (k2 === v.k) return;
+  const mx = cx - r.left, my = cy - r.top;
   v.tx = mx - (mx - v.tx) * (k2 / v.k);
   v.ty = my - (my - v.ty) * (k2 / v.k);
   v.k = k2;
   applyTransform();
+}
+
+svg.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
 }, { passive: false });
 
+function onPanMove(e) {
+  if (!pan) return;
+  const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+  if (!moved && dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+    moved = true;
+    svg.classList.add("panning");
+  }
+  if (moved) {
+    state.view.tx = pan.tx + dx;
+    state.view.ty = pan.ty + dy;
+    applyTransform();
+  }
+}
+function onPanEnd() {
+  window.removeEventListener("pointermove", onPanMove);
+  window.removeEventListener("pointerup", onPanEnd);
+  window.removeEventListener("pointercancel", onPanEnd);
+  svg.classList.remove("panning");
+  pan = null;   // `moved` stays set until the trailing click reads it; next pointerdown clears it
+}
 svg.addEventListener("pointerdown", (e) => {
-  drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
+  if (e.button !== 0) return;
+  pan = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
   moved = false;
-  svg.setPointerCapture(e.pointerId);
+  window.addEventListener("pointermove", onPanMove);
+  window.addEventListener("pointerup", onPanEnd);
+  window.addEventListener("pointercancel", onPanEnd);
 });
-svg.addEventListener("pointermove", (e) => {
-  if (!drag) return;
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-  if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-  state.view.tx = drag.tx + dx;
-  state.view.ty = drag.ty + dy;
-  applyTransform();
-});
-svg.addEventListener("pointerup", () => { drag = null; });
 
 svg.addEventListener("click", (e) => {
-  if (moved) return;
+  if (moved) return;   // the pointer travelled — this was a pan, not a click
   const tog = e.target.closest("[data-toggle]");
   if (tog) {
     const id = tog.getAttribute("data-toggle");
@@ -344,21 +390,31 @@ svg.addEventListener("click", (e) => {
 
 $("detail-pane").addEventListener("click", (e) => {
   const go = e.target.closest("[data-go]");
-  if (go) selectNode(go.getAttribute("data-go"));
+  if (go) selectNode(go.getAttribute("data-go"), { center: true });
 });
 
 $("review-btn").addEventListener("click", showQueue);
+
+// on-screen zoom controls (zoom about the tree-pane centre)
+function centerZoom(factor) {
+  const r = svg.getBoundingClientRect();
+  zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+}
+$("zoom-in").addEventListener("click", () => centerZoom(1.25));
+$("zoom-out").addEventListener("click", () => centerZoom(1 / 1.25));
+$("zoom-fit").addEventListener("click", () => { if (state.snap) { fitToView(); applyTransform(); } });
 
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
   if (state.snap) renderTree();
 });
 $("search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; if (state.snap) renderTree(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
   const hit = Object.keys(state.positions).find((id) => matchNode(state.snap.nodes[id]));
-  if (hit) { selectNode(hit); centerOn(hit); }
+  if (hit) selectNode(hit, { center: true });
 });
 
-window.addEventListener("resize", () => { if (state.snap) renderTree(); });
+window.addEventListener("resize", applyTransform);
 
 poll();
