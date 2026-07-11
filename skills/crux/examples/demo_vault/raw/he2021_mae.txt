@@ -1,0 +1,1 @@
+He et al 2021 — Masked Autoencoders. Reconstruct heavily-masked inputs; the choice of target (raw token vs learned stem) shapes what the encoder learns.

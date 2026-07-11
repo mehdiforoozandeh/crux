@@ -11,13 +11,22 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, datetime, tempfile, shutil
+import os, re, sys, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.0"          # bumped when verdict/roll-up/view logic changes; stamped into every vault
+ENGINE_VERSION = "1.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
+
+# wiki layer (Epic 3): a PI-curated literature wiki alongside the q/h tree.
+WIKI_DIR     = "wiki"           # agent-owned compiled markdown pages + log.md + SCHEMA.md
+RAW_DIR      = "raw"            # immutable, PI-curated sources; the engine hashes bytes, never reads content
+WIKI_INDEX   = "WIKI.md"        # generated index of wiki pages (Karpathy's index.md), rendered at vault root
+SOURCES_FILE = os.path.join(WIKI_DIR, ".sources.tsv")   # engine-owned source registry: sha256<TAB>date<TAB>path<TAB>title
+WIKI_LOG     = os.path.join(WIKI_DIR, "log.md")          # append-only chronological log (Karpathy's log.md)
+WIKI_SCHEMA  = os.path.join(WIKI_DIR, "SCHEMA.md")       # per-vault conventions the agent + PI co-evolve
+GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX) # root .md views the node scan must never treat as nodes
 
 TYPES            = ["project", "question", "idea", "synthesis"]
 QUESTION_STATUS  = ["open", "review", "resolved"]
@@ -244,6 +253,58 @@ Related:: <<related>>
 
 ## Implications for next batch
 """,
+"wiki": """---
+type: wiki
+title: <<title>>
+summary: <<summary>>
+category: <<category>>
+sources: <<sources>>
+created: <<now>>
+updated: <<now>>
+---
+
+# <<title>>
+
+_(lead: one sentence that extends the summary — scope, context, or the sharpest claim; don't restate the summary)_
+
+## Background
+
+_(synthesize across the cited sources — every claim traces to a file under `raw/`; don't mirror a single source)_
+
+## See also
+
+Related:: <<related>>
+""",
+"wiki_schema": """---
+type: wiki_schema
+title: Wiki schema
+---
+
+# Wiki schema — conventions for THIS vault's literature wiki
+
+Co-evolved by you (the PI) and the agent. The global rules live in the `crux-wiki`
+skill; this file records the choices specific to this project.
+
+## What the wiki is
+A literature background layer: prior methods, SOTA, baselines, datasets, definitions —
+compiled once from the immutable sources in `raw/`, then kept current. It exists to
+sharpen `ask` / `hypothesize` and to interpret findings. It is **not** a record of this
+project's own results.
+
+## Flow rule (hard)
+Literature → wiki → informs the tree. **Never** the reverse. A wiki page may link other
+wiki pages; it must never cite a q/h tree node. Findings never enter the wiki.
+
+## Page conventions
+- One concept / entity / comparison per page; concept-slug filenames (`film-conditioning.md`).
+- Frontmatter: `title`, `summary` (one line — becomes the index entry), `category`
+  (entity | concept | method | comparison | dataset | overview | …), `sources`
+  (comma-separated `raw/…` paths every claim traces to).
+- Write for the LLM reader: dense and explicit over pretty.
+
+## Categories in use
+_(list the categories this vault uses, so pages stay consistent)_
+""",
 }
 
 def load_template(kind):
@@ -278,7 +339,7 @@ class Vault:
         self.cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
         self.nodes = {}
         for fn in sorted(os.listdir(root)):
-            if not fn.endswith(".md") or fn in ("META.md", "EXPERIMENTS.md"):
+            if not fn.endswith(".md") or fn in GENERATED:
                 continue
             fm, body = parse_doc(read(os.path.join(root, fn)))
             if "id" not in fm:
@@ -386,6 +447,8 @@ def refresh(root):
     import render
     if write_if_changed(os.path.join(root, "META.md"), render.render_meta(v)):        changed = True
     if write_if_changed(os.path.join(root, "EXPERIMENTS.md"), render.render_experiments(v)): changed = True
+    if wiki_active(root):
+        if write_if_changed(os.path.join(root, WIKI_INDEX), render.render_wiki(v, root)): changed = True
     return changed
 
 # ----------------------------------------------------------------------------- validation
@@ -434,6 +497,179 @@ def validate(v):
             if cur in seen:
                 problems.append((nid, "parent cycle detected")); break
             seen.add(cur)
+    return problems
+
+# ----------------------------------------------------------------------------- wiki layer (Epic 3)
+# A PI-curated literature wiki: immutable sources under raw/, agent-compiled pages under
+# wiki/. The engine owns only the bookkeeping — source hashes, the generated index, and the
+# structural lint. It never reads a source's content or judges a page. Everything that needs
+# meaning (what to compile, contradictions, staleness) is the agent's job. Flow is one-way:
+# literature → wiki → informs the tree; findings never enter the wiki.
+WIKILINK_RE = re.compile(r"\[\[\s*([^\]|#]+?)\s*(?:[|#][^\]]*)?\]\]")
+
+def wiki_dir(root):    return os.path.join(root, WIKI_DIR)
+def raw_dir(root):     return os.path.join(root, RAW_DIR)
+def wiki_active(root): return os.path.isdir(wiki_dir(root))
+
+def _rel(root, path):
+    return os.path.relpath(os.path.abspath(path), root).replace(os.sep, "/")
+
+def link_targets(text):
+    """Basenames referenced by [[wikilinks]] in text (alias/heading stripped, any dir
+    prefix and .md dropped). Order-preserving-unique, deterministic."""
+    out, seen = [], set()
+    for m in WIKILINK_RE.findall(text):
+        t = m.strip().split("/")[-1]
+        if t.endswith(".md"):
+            t = t[:-3]
+        if t and t not in seen:
+            seen.add(t); out.append(t)
+    return out
+
+def load_sources(root):
+    """Read the engine-owned source registry → {relpath: {sha256, date, title}}."""
+    path = os.path.join(root, SOURCES_FILE)
+    reg = {}
+    if os.path.exists(path):
+        for line in read(path).splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                reg[parts[2]] = {"sha256": parts[0], "date": parts[1], "title": "\t".join(parts[3:])}
+    return reg
+
+def save_sources(root, reg):
+    lines = [f"{r['sha256']}\t{r['date']}\t{rel}\t{r['title']}" for rel, r in sorted(reg.items())]
+    write_if_changed(os.path.join(root, SOURCES_FILE), ("\n".join(lines) + "\n") if lines else "")
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def scan_wiki_pages(root):
+    """Every compiled wiki page (a *.md under wiki/ with `type: wiki`), sorted by slug.
+    log.md / SCHEMA.md are excluded automatically (their type isn't `wiki`)."""
+    pages, wd = [], wiki_dir(root)
+    if not os.path.isdir(wd):
+        return pages
+    for dirpath, dirnames, filenames in os.walk(wd):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            fm, body = parse_doc(read(os.path.join(dirpath, fn)))
+            if fm.get("type") != "wiki":
+                continue
+            srcs = [s.strip() for s in str(fm.get("sources") or "").split(",") if s.strip()]
+            pages.append({"slug": fn[:-3], "fn": fn, "path": os.path.join(dirpath, fn), "fm": fm,
+                          "body": body, "title": fm.get("title"), "summary": fm.get("summary"),
+                          "category": (fm.get("category") or "uncategorized"), "sources": srcs,
+                          "links": link_targets(body)})
+    pages.sort(key=lambda p: p["slug"])
+    return pages
+
+def ensure_wiki(root):
+    """Lazily stand up the wiki subsystem (idempotent, safe on a pre-wiki vault)."""
+    os.makedirs(wiki_dir(root), exist_ok=True)
+    os.makedirs(raw_dir(root), exist_ok=True)
+    if not os.path.exists(os.path.join(root, WIKI_LOG)):
+        write_if_changed(os.path.join(root, WIKI_LOG),
+                         "# Wiki log\n\n_Append-only. `grep '^## \\[' log.md` for the timeline._\n")
+    if not os.path.exists(os.path.join(root, WIKI_SCHEMA)):
+        write_if_changed(os.path.join(root, WIKI_SCHEMA), load_template("wiki_schema"))
+
+def cmd_ingest(root, path, title=None):
+    """Register a PI-curated source under raw/: record its sha256, append a Karpathy-format
+    log line, (re)render the index. The agent compiles pages afterward — the engine never
+    reads the source's content. Idempotent on an unchanged, already-registered file."""
+    abspath = os.path.abspath(path if os.path.isabs(path) else os.path.join(root, path))
+    rawroot = os.path.abspath(raw_dir(root))
+    if os.path.commonpath([abspath, rawroot]) != rawroot:
+        raise CruxError(f"ingest: a source must live under {RAW_DIR}/ (got {path!r}); place the "
+                        "file in raw/ first — the PI curates what enters raw/")
+    if not os.path.isfile(abspath):
+        raise CruxError(f"ingest: no such file: {path}")
+    ensure_wiki(root)
+    rel, sha = _rel(root, abspath), _sha256_file(abspath)
+    title = " ".join((title or os.path.splitext(os.path.basename(abspath))[0]).split())  # single-line: registry + log are line-based
+    reg = load_sources(root)
+    if rel in reg and reg[rel]["sha256"] == sha:
+        refresh(root)
+        return "unchanged", rel
+    state = "updated" if rel in reg else "ingested"
+    reg[rel] = {"sha256": sha, "date": datetime.date.today().isoformat(), "title": title}
+    save_sources(root, reg)
+    with open(os.path.join(root, WIKI_LOG), "a", encoding="utf-8") as f:
+        f.write(f"\n## [{datetime.date.today().isoformat()}] ingest | {title}\n")
+    refresh(root)
+    return state, rel
+
+def validate_wiki(root):
+    """Structural lint over the wiki layer — mechanical checks only (broken/flow links,
+    orphans, missing frontmatter, source hash drift, uncompiled/missing sources). Semantic
+    checks (contradictions, staleness, missing pages) are the agent's job, not the engine's."""
+    problems = []
+    if not wiki_active(root):
+        return problems
+    v = Vault(root)
+    pages = scan_wiki_pages(root)
+    page_slugs = {p["slug"] for p in pages}
+    tree_targets = set(v.nodes) | {n.basename for n in v.nodes.values()}
+
+    # per-page: required frontmatter + cited-source integrity + link resolution
+    for p in pages:
+        for field in ("title", "summary"):
+            if not str(p["fm"].get(field) or "").strip():
+                problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': missing required field '{field}'"))
+        for s in p["sources"]:
+            if not os.path.isfile(os.path.join(root, s)):
+                problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': cites missing source '{s}' (not a file under the vault)"))
+        for t in p["links"]:
+            if t in page_slugs:
+                continue
+            if t in tree_targets:
+                problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': flow violation — links "
+                                 f"tree node [[{t}]] (the wiki must not cite the tree)"))
+            else:
+                problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': broken link [[{t}]]"))
+
+    # orphans: no inbound from another wiki page or a tree node. The generated WIKI.md is NOT
+    # scanned as a page, so its links can never rescue an orphan (guards the Emmimal miscount).
+    inbound = {p["slug"]: 0 for p in pages}
+    for p in pages:
+        for t in p["links"]:
+            if t in inbound and t != p["slug"]:
+                inbound[t] += 1
+    for n in v.nodes.values():
+        for t in link_targets(n["body"]):
+            if t in inbound:
+                inbound[t] += 1
+    for p in pages:
+        if inbound[p["slug"]] == 0:
+            problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': orphan (no inbound links)"))
+
+    # tree → wiki: an explicit [[wiki/…]] reference in a node body must resolve
+    for n in v.nodes.values():
+        for m in re.findall(r"\[\[\s*wiki/([^\]|#]+?)(?:\.md)?\s*(?:[|#][^\]]*)?\]\]", n["body"]):
+            if m.strip().split("/")[-1] not in page_slugs:
+                problems.append((f"node:{n.id}", f"node '{n.id}': broken wiki link [[wiki/{m.strip()}]]"))
+
+    # source registry: hash drift, missing file, uncompiled (no page cites it)
+    reg, compiled = load_sources(root), set()
+    for p in pages:
+        compiled.update(p["sources"])
+    for rel, rec in sorted(reg.items()):
+        ap = os.path.join(root, rel)
+        if not os.path.isfile(ap):
+            problems.append((f"src:{rel}", f"source '{rel}': missing (registered but file not found)")); continue
+        if _sha256_file(ap) != rec["sha256"]:
+            problems.append((f"src:{rel}", f"source '{rel}': hash drift since ingest (re-ingest to refresh)"))
+        if rel not in compiled:
+            problems.append((f"src:{rel}", f"uncompiled source '{rel}': registered but no wiki page cites it"))
     return problems
 
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
@@ -755,7 +991,7 @@ def cmd_synthesize(root, title, questions):
     return nid, fn
 
 def cmd_validate(root):
-    return validate(Vault(root))
+    return validate(Vault(root)) + validate_wiki(root)
 
 # ----------------------------------------------------------------------------- text status view
 def status_text(root, node=None):

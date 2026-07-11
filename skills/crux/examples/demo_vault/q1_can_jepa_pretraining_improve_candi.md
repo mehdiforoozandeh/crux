@@ -19,7 +19,7 @@ Can JEPA pretraining improve CANDI?
 
 ## Answer so far
 
-_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
+JEPA (see [[wiki/jepa]]) predicts latent targets, which may sidestep the token-vs-stem choice in [[wiki/masked-modeling]]. Open until the encoder question (q2) lands.
 
 <!-- crux:ledger:start -->
 **1 children** · ideas 0/0 done (supported 0, partial 0, refuted 0, inconclusive 0) · sub-questions 0/1 resolved

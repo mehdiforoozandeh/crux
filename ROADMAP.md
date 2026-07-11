@@ -31,15 +31,19 @@ rendered to video + GIF and embedded as the hero on the README and the repo's so
 
 ## Epic 3 — LLM wiki  `wiki`
 
-**Goal:** a wiki layer in the vault — a living, interlinked knowledge base the agent maintains
-and draws on (background, definitions, methods, prior findings, references), cross-linked with
-the crux-tree so questions and hypotheses can cite and build on accumulated knowledge.
-*(Early — scope to firm up.)*
+**Goal:** a **literature** layer in the vault — a living, interlinked knowledge base of *prior*
+knowledge (background, definitions, methods, SOTA, baselines, references) that the agent
+compiles from PI-curated immutable sources and draws on, cross-linked with the crux-tree so
+questions and hypotheses can cite and build on what's known. Knowledge flows **one way**:
+literature → wiki → tree; a project's own findings never enter the wiki (this keeps provenance
+clean and prevents the self-ingestion failure mode). Instantiates Karpathy's LLM-wiki pattern.
 
-- ☐ **Define the wiki note** — its node type / area in the vault and how it links to Questions & Hypotheses (`[[wikilinks]]`, Obsidian-graphable like the rest).
-- ☐ **Agent reads the wiki for context** — pull relevant wiki notes when proposing questions/hypotheses, so work builds on what's known.
-- ☐ **Agent writes the wiki** — distil durable knowledge out of findings into wiki notes (promote one-off findings into reusable background).
-- ☐ **Index & render** — a wiki index (and/or surface in `META.md`) without polluting the question/hypothesis tree.
+- ☑ **Define the wiki page** — `type: wiki` pages under `wiki/` (concept-slug filenames), parentless and outside the roll-up tree, linked via `[[wikilinks]]`; immutable sources under `raw/`.
+- ☑ **Agent reads the wiki for context** — `WIKI.md` index + pages consulted when proposing questions/hypotheses; tree nodes may cite `[[wiki/page]]` (the crux-wiki skill).
+- ☑ **Agent compiles the wiki from literature** — `crux ingest` registers a source; the agent compiles/updates pages that cite `raw/`. *(Amended: knowledge comes from curated literature, not from distilling the project's own findings — findings never enter the wiki.)*
+- ☑ **Index & render** — engine-generated `WIKI.md` at the vault root (pages by category + source registry), byte-stable, without polluting the question/hypothesis tree; structural lint via `crux validate`.
+
+*Delivered as the `crux-wiki` skill + engine `ingest`/`WIKI.md`/wiki-lint (ENGINE_VERSION 1.1).*
 
 ---
 
