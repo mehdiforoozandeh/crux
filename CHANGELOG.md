@@ -13,7 +13,14 @@ verdict/roll-up/view logic changes.
   when none exists), kills any stale server for that vault (fresh-start, scoped per vault),
   launches backgrounded with `--no-open`, verifies `/` **and** `/snapshot.json` answer
   before reporting, and hands the user one clickable localhost URL — plus status / stop /
-  restart. Playbook only: no engine changes (ENGINE_VERSION stays 1.1).
+  restart. Covers local **and** remote work: on VS Code Remote-SSH the agent creates the
+  port forward itself via the remote CLI (`code --openExternal` — reliable on shared/HPC
+  hosts where VS Code's auto-forwarding silently degrades), with click-to-forward and the
+  Ports panel as fallbacks; on a plain SSH terminal it hands the user the exact `ssh -L`
+  tunnel command (incl. multi-hop `-J` for compute nodes behind a login node); and in any
+  remote context it pins the port persistently (`~/.cache/crux-cockpit/`) so an
+  always-fresh relaunch can't silently break an open tunnel. Playbook only: no engine
+  changes (ENGINE_VERSION stays 1.1).
 
 ## [0.3.0] - 2026-07-11
 
