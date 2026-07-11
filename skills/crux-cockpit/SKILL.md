@@ -88,9 +88,10 @@ missing tool pass a check. Stdlib substitutes: a port is free iff
 Linux a PID's cwd is `readlink /proc/<pid>/cwd`.)
 
 **4 — Launch, backgrounded, log captured.** Run from inside the vault so the engine
-resolves it; never block your shell on the server. **Remote? Pin first** — if any SSH
-marker is set, derive `$PORT` from the pin block *below* before launching, and append
-`--port "$PORT"` to this line:
+resolves it; never block your shell on the server. **Remote? Pin first** — if the session
+classifies as *any* remote per **Local vs remote** (SSH markers, **or** the tunnel-remote
+probes: `$CODESPACES` / `$REMOTE_CONTAINERS` / `/.dockerenv`), derive `$PORT` from the
+pin block *below* before launching, and append `--port "$PORT"` to this line:
 
 ```bash
 LOG="${TMPDIR:-/tmp}/crux-cockpit-$VID.log"
@@ -101,8 +102,8 @@ cd "$VAULT" && nohup python3 "$ENGINE" serve --no-open >"$LOG" 2>&1 &   # remote
 captured log. And if shell state doesn't persist between your commands, re-derive
 `$VAULT`/`$LOG`/`$URL` in each call rather than assuming the variables survive.)
 
-**Running remotely?** (any SSH marker in your env — see **Local vs remote** below.) Pin
-the port with `--port`, and make the pin outlive your session — an auto-picked port
+**Running remotely?** (any remote classification — SSH-marked *or* tunnel-based; see
+**Local vs remote** below.) Pin the port with `--port`, and make the pin outlive your session — an auto-picked port
 drifts on an always-fresh relaunch (8787 → 8789), silently breaking a tunnel or forward
 the user already has open, and "remember it in conversation" dies with the session:
 
@@ -119,7 +120,7 @@ fi
 
 Launch with `--port "$PORT"`. If a *recorded* pin is busy at launch even after the step-3
 kill loop, a foreign process took it: re-pick, update the pin file, and tell the user
-their tunnel/forward target changed. Local launches keep auto-pick — no pin file.
+their tunnel/forward target changed. Truly local launches keep auto-pick — no pin file.
 
 **5 — Parse the URL from the banner.** The server prints exactly one line carrying it
 (`crux cockpit (read-only) → http://localhost:<port>`; port auto-picked from 8787, or pin
@@ -162,7 +163,7 @@ SSH markers = any of `$SSH_CONNECTION`, `$SSH_CLIENT`, `$SSH_TTY`. VS Code marke
 
 | your env | context | what reaches the user |
 |---|---|---|
-| **none** of the SSH markers set | **local** — your machine is their machine | the URL, as-is |
+| **none** of the SSH markers set | **local** — your machine is their machine *(after ruling out the tunnel-based remotes below)* | the URL, as-is |
 | SSH markers **plus** VS Code markers | **VS Code Remote-SSH** | same URL, once the port is forwarded — you drive the forward (below) |
 | SSH markers, **no** VS Code markers | **plain SSH terminal** | nothing yet — they must open a tunnel; you hand them the command |
 
@@ -197,7 +198,8 @@ SSH markers = any of `$SSH_CONNECTION`, `$SSH_CLIENT`, `$SSH_TTY`. VS Code marke
      port and fails. Say this explicitly; it is the classic trap.
   3. **Manual forward**: **Ports** panel (the tab next to TERMINAL — or Cmd/Ctrl+Shift+P →
      *Ports: Focus on Ports View*) → **Forward a Port** → `<port>`.
-  4. The filled-in `ssh -L` one-liner (always included anyway — see below).
+  4. The filled-in `ssh -L` one-liner (SSH remotes only — skip this rung in tunnel-based
+     remotes, which have no SSH endpoint; there, rung 3 is the last resort).
 
   Move down a rung whenever the current rung's guard fails or the user says it didn't
   work — and deliver rungs 2–4 together in one message, not one at a time.
@@ -225,14 +227,27 @@ In any remote context, word the report so *verified* and *reachable* aren't conf
 "serving on the remote and verified there; it opens in your browser once the
 forward/tunnel is up."
 
+**Tunnel-based remotes: VS Code markers, no SSH markers.** Not every remote arrives over
+SSH — GitHub Codespaces, VS Code Tunnels, and Dev Containers set the VS Code markers but
+no `SSH_*` at all, and localhost-as-is does **not** reach the user there. Rule them out
+before calling a session local: `$CODESPACES` = `true` (Codespaces), `$REMOTE_CONTAINERS`
+= `true` or `/.dockerenv` exists (a container; podman writes `/run/.containerenv`
+instead). Any of those → use the **VS Code ladder**:
+rung 1 (`code --openExternal`) works over tunnels exactly as over SSH; there is no
+`ssh -L` rung, so the Ports panel is the true last resort. WSL (`$WSL_DISTRO_NAME` set)
+is the benign case — WSL2 forwards localhost to Windows by default, so the URL usually
+works as-is; if it doesn't, same ladder.
+
 **When the markers lie.** tmux/screen can strip or *preserve stale* env (`$SSH_*` gone, or
 a `$VSCODE_IPC_HOOK_CLI` left over from an earlier VS Code session); mosh sets no SSH vars
 at all. Concrete probes when the table's answer smells wrong: `$SSH_CLIENT` often survives
 where `$SSH_CONNECTION` didn't; `$TMUX` set means the env may predate the current
 connection; `who am i` shows the connecting host for SSH logins. When still unsure, ask
 one question — "are you SSH'd into this machine?" — and classify from the answer. And
-because a stale VS Code marker misroutes a plain-SSH user, **every remote report includes
-the filled-in `ssh -L` one-liner as the last-resort fallback**, even in VS Code mode.
+because a stale VS Code marker misroutes a plain-SSH user, **every SSH-remote report
+includes the filled-in `ssh -L` one-liner as the last-resort fallback**, even in VS Code
+mode. (Tunnel-based remotes are the exception — no SSH endpoint exists, so omit it and
+make the Ports panel the last resort there.)
 
 **Other editors and agents — nothing above may leak into the local flow.** Everything
 remote-specific (pin files, the forwarding ladder, tunnel commands, opening a browser) is
