@@ -43,7 +43,14 @@
       <div class="hint">scroll or pinch = zoom · drag = pan · click a node · click ± to collapse</div>
     </section>
     <div id="splitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
-    <aside id="detail-pane"></aside>
+    <aside id="detail-pane">
+      <div id="detail-fontctl" title="Text size" aria-label="Detail text size">
+        <button data-font="small" type="button" aria-label="Small text">A</button>
+        <button data-font="medium" type="button" aria-label="Medium text">A</button>
+        <button data-font="large" type="button" aria-label="Large text">A</button>
+      </div>
+      <div id="detail-content"></div>
+    </aside>
   </main>
   <div id="offline" hidden>server disconnected — showing last known state</div>
   <script src="app.js"></script>

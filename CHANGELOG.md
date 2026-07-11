@@ -73,6 +73,13 @@ verdict/roll-up/view logic changes.
     red. Badges sit in a bottom row clear of the pill's rounded cap. The default theme is now
     always **dark** (only the toggle switches to light; system light-mode no longer flips it).
     Bolder Crux logo (thicker constellation, heavier wordmark).
+  - **Round 7 — palette, root, justify, detail text size.** New **pastel palette where every
+    concept maps to a unique colour**: questions use a cool grey/violet/teal family so `resolved`
+    (teal) no longer collides with `supported` (green), nor `review` (violet) with `partial`
+    (amber). Node body text is **justified** (flush both edges) by stretching only the gaps
+    between words (measured, not letter-spaced). The project root is centred in a snug pill (no
+    left/right slack, no inline mark) with the largest font (root ≫ question > hypothesis). The
+    detail pane has a **text-size control** (small / medium / large, persisted) in its top-right.
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,
