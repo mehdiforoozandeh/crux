@@ -6,6 +6,15 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **`crux-cockpit` skill** — the GUI launcher: an agent playbook that runs `crux serve`
+  beginning to finish. Locates the vault (or offers vault-setup / a disposable demo vault
+  when none exists), kills any stale server for that vault (fresh-start, scoped per vault),
+  launches backgrounded with `--no-open`, verifies `/` **and** `/snapshot.json` answer
+  before reporting, and hands the user one clickable localhost URL — plus status / stop /
+  restart. Playbook only: no engine changes (ENGINE_VERSION stays 1.1).
+
 ## [0.3.0] - 2026-07-11
 
 Two headline additions — a **browser GUI** (Epic 1) and a **literature wiki** (Epic 3).

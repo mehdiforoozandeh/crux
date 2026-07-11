@@ -88,6 +88,7 @@ The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x
 
 - [`skills/crux/`](skills/crux) — the tool itself: `SKILL.md` (the PI ⇄ Agent ⇄ Engine playbook) + `scaffold/` (the engine: `crux.py`, `engine.py`, `render.py`, `templates/`, `selftest.py` — see [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md)) + `examples/`.
 - [`skills/crux-wiki/`](skills/crux-wiki) — the literature-wiki layer: compile PI-curated sources under `raw/` into interlinked `wiki/` pages the agent draws on (knowledge flows literature → wiki → tree; findings never flow back).
+- [`skills/crux-cockpit/`](skills/crux-cockpit) — the GUI launcher: the agent playbook that runs `crux serve` beginning to finish — locate the vault, start fresh on localhost, verify, hand you one clickable URL; plus status / stop / restart.
 - [`skills/evolve-crux/`](skills/evolve-crux) — the playbook for evolving crux itself (ideate → build → validate → ship).
 
 Validate the engine end-to-end (no GPU/tokens/SLURM):

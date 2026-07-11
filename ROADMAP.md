@@ -16,7 +16,7 @@ close cases, and clear the review gate — without the terminal.
 - ☑ **Interactive tree / graph view** — render the Question→Hypothesis constellation, status-colored, navigable; the visual heart of the product. *(the `crux serve` cockpit tree: pan / zoom / collapse / search / re-orient.)*
 - ◐ **Node detail + edit** — create/edit Questions & Hypotheses, tick verifiables, write findings; all writes go through the engine (never hand-edit generated content). *(read-only detail shipped in GUI v1; editing is a deliberate v1 non-goal — mutations stay in the agent/CLI.)*
 - ◐ **Review-gate inbox** — surface questions in `review`, with `answer` / `pursue` actions for the PI. *(the queue is surfaced read-only; `answer` / `pursue` still run via the agent/CLI.)*
-- ☐ **Package & ship** — build + distribute (plugin release / hosted app / desktop bundle per the stack decision).
+- ◐ **Package & ship** — build + distribute (plugin release / hosted app / desktop bundle per the stack decision). *(Launch/lifecycle UX ships as the `crux-cockpit` skill — locate vault → fresh server → verified URL → stop/restart; plugin/desktop packaging still open.)*
 
 *GUI v1 delivered as `crux serve` + `engine.snapshot` + the `webui/` frontend (read-only cockpit; editing and packaging remain).*
 
