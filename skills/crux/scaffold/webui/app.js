@@ -3,20 +3,61 @@
    No writes, no build step, no dependencies. */
 "use strict";
 
-const COL_W = 220, ROW_H = 36;
 const VERDICTS = ["supported", "partial", "refuted", "inconclusive"];
 
-// Each node kind gets its own geometry + label style so the tree reads at a glance:
-// a colorless pill root, squared questions, soft-pill hypotheses, diamond syntheses.
+// Node geometry comes in two densities. "detail" (the default) sizes every box to fit its
+// full title, word-wrapped up to MAX_LINES, so a question or hypothesis is readable without
+// clicking it; "compact" is the one-line truncated map view. Kinds are sized to be told
+// apart at a glance — questions are deliberately BIGGER than hypotheses (box and font), and
+// the root is a colorless pill carrying the Crux mark.
+//   cw/ch = compact box   dw = detail width (height follows the wrapped text)
+//   cpl   = chars per wrapped line (detail)   ctrunc = truncation (compact)
 const KIND = {
-  project:   { w: 190, h: 34, rx: 17, lbl: "t-root", trunc: 26 },
-  question:  { w: 176, h: 28, rx: 6,  lbl: "t-q",    trunc: 25 },
-  idea:      { w: 168, h: 24, rx: 12, lbl: "t-h",    trunc: 19 },
-  synthesis: { w: 172, h: 26, rx: 0,  lbl: "t-s",    trunc: 23 },
+  project:   { cw: 210, ch: 38, dw: 260, rx: 19, lbl: "t-root", lh: 16,   cpl: 28, ctrunc: 24 },
+  question:  { cw: 196, ch: 32, dw: 250, rx: 7,  lbl: "t-q",    lh: 15,   cpl: 32, ctrunc: 25 },
+  idea:      { cw: 156, ch: 22, dw: 224, rx: 11, lbl: "t-h",    lh: 13.5, cpl: 33, ctrunc: 17 },
+  synthesis: { cw: 172, ch: 26, dw: 172, rx: 0,  lbl: "t-s",    lh: 14,   cpl: 23, ctrunc: 23 },
 };
-const dims = (n) => KIND[n.type] || KIND.question;
+const MAX_LINES = 4;
+const geomOf = (id) => state.nodeGeom[id];
 // verdict glyph shown inside a done hypothesis (colored by verdict)
 const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~" };
+
+function wrapLines(text, cpl) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (let i = 0; i < words.length; i++) {
+    const cand = cur ? cur + " " + words[i] : words[i];
+    if (cand.length <= cpl || !cur) { cur = cand; continue; }
+    if (lines.length === MAX_LINES - 1) {          // out of lines — ellipsize the remainder
+      const rest = cur + " " + words.slice(i).join(" ");
+      lines.push(rest.length > cpl ? rest.slice(0, cpl - 1) + "…" : rest);
+      return lines;
+    }
+    lines.push(cur); cur = words[i];
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
+}
+
+// Per-snapshot geometry: id -> {w, h, rx, lines, lh, dotsPad}. Synthesis stays single-line
+// in both densities (a diamond doesn't wrap well and it's a link marker, not content).
+function computeGeom() {
+  const g = {};
+  for (const [id, n] of Object.entries(state.snap.nodes)) {
+    const k = KIND[n.type] || KIND.question;
+    if (state.density === "compact" || n.type === "synthesis") {
+      g[id] = { w: k.cw, h: k.ch, rx: k.rx, lines: [trunc(n.title, k.ctrunc)], lh: k.lh, dotsPad: 0 };
+    } else {
+      const lines = wrapLines(n.title, k.cpl);
+      const dotsPad = n.type === "idea" && (n.verifiables || []).length ? 10 : 0;
+      const h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
+      g[id] = { w: k.dw, h, rx: k.rx, lines, lh: k.lh, dotsPad };
+    }
+  }
+  return g;
+}
 
 const state = {
   snap: null,
@@ -26,6 +67,10 @@ const state = {
   view: { tx: 60, ty: 40, k: 1 },
   positions: {},            // id -> {x, y, depth}
   childCount: {},           // id -> number of tree children (drives the ± toggle)
+  nodeGeom: {},             // id -> {w, h, rx, lines, lh, dotsPad} for the current density
+  orient: localStorage.getItem("crux-orient") || "lr",       // "lr" | "td"
+  density: localStorage.getItem("crux-density") || "detail", // "detail" | "compact"
+  focused: false,           // focus-open mode: all non-open questions collapsed
   search: "",
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
@@ -69,34 +114,68 @@ function onSnapshot() {
 }
 
 // ------------------------------------------------------------------ deterministic layout
-// x = depth column; y = leaf order (post-order). Same structure => same positions,
-// so nodes never jump on auto-refresh. Collapsed nodes lay out as leaves.
+// A tidy tree in either orientation. Every subtree gets a slot along the MAIN axis
+// (y when left-right, x when top-down) sized max(own extent, sum of child slots); the
+// CROSS axis advances per depth by that depth's tallest/widest node. Same structure =>
+// same positions, so nodes never jump on auto-refresh; collapsed nodes lay out as leaves.
+// pos[id] = { x: left edge, y: vertical center }.
 function layout() {
-  const snap = state.snap, pos = {}, kids = {};
-  let leaf = 0;
-  (function visit(node, depth) {
+  const snap = state.snap, geom = (state.nodeGeom = computeGeom());
+  const pos = {}, kids = {};
+  const GAP = 14, CROSS_GAP = state.orient === "td" ? 56 : 70;
+  const horiz = state.orient !== "td";
+  const mainOf = (id) => (horiz ? geom[id].h : geom[id].w);
+  const ext = {}, depthOf = {}, center = {}, maxCross = [];
+  (function measure(node, depth) {
     kids[node.id] = node.children ? node.children.length : 0;   // true count (for the toggle)
+    depthOf[node.id] = depth;
+    maxCross[depth] = Math.max(maxCross[depth] || 0, horiz ? geom[node.id].w : geom[node.id].h);
     const shown = state.collapsed.has(node.id) ? [] : node.children;
-    if (!shown.length) {
-      pos[node.id] = { x: depth * COL_W, y: leaf * ROW_H, depth };
-      leaf++;
-    } else {
-      const ys = [];
-      for (const c of shown) { visit(c, depth + 1); ys.push(pos[c.id].y); }
-      pos[node.id] = { x: depth * COL_W, y: (ys[0] + ys[ys.length - 1]) / 2, depth };
+    let e = mainOf(node.id) + GAP;
+    if (shown.length) {
+      let sum = 0;
+      for (const c of shown) sum += measure(c, depth + 1);
+      e = Math.max(e, sum);
+    }
+    return (ext[node.id] = e);
+  })(snap.tree, 0);
+  (function place(node, start) {
+    const shown = state.collapsed.has(node.id) ? [] : node.children;
+    if (!shown.length) center[node.id] = start + ext[node.id] / 2;
+    else {
+      let cur = start + (ext[node.id] - shown.reduce((s, c) => s + ext[c.id], 0)) / 2;
+      for (const c of shown) { place(c, cur); cur += ext[c.id]; }
+      center[node.id] = (center[shown[0].id] + center[shown[shown.length - 1].id]) / 2;
     }
   })(snap.tree, 0);
-  // synthesis nodes live outside the parent tree — place them one column past the deepest
-  // node, at the mean y of the questions they relate to, so their dashed edges stay short
-  // and legible instead of dangling across the whole canvas.
-  const maxDepth = Math.max(0, ...Object.values(pos).map((p) => p.depth));
+  const crossAt = [0];
+  for (let d = 0; d < maxCross.length; d++) crossAt[d + 1] = crossAt[d] + maxCross[d] + CROSS_GAP;
+  for (const id in depthOf) {
+    const d = depthOf[id], g = geom[id];
+    pos[id] = horiz ? { x: crossAt[d], y: center[id] }
+                    : { x: center[id] - g.w / 2, y: crossAt[d] + g.h / 2 };
+  }
+  // synthesis nodes live outside the parent tree — park them one level past the deepest
+  // node, near the mean position of the questions they relate to, so their dashed edges
+  // stay short and legible instead of dangling across the whole canvas.
+  const beyond = crossAt[maxCross.length];
   const placed = [];
   Object.values(snap.nodes).filter((n) => n.type === "synthesis").forEach((n, i) => {
-    const ys = (n.related || []).map((rid) => pos[rid] && pos[rid].y).filter((y) => y != null);
-    let y = ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : (leaf + i) * ROW_H;
-    while (placed.some((u) => Math.abs(u - y) < ROW_H)) y += ROW_H;   // de-overlap siblings
-    placed.push(y);
-    pos[n.id] = { x: (maxDepth + 1) * COL_W, y, depth: maxDepth + 1 };
+    const g = geom[n.id];
+    const relIds = (n.related || []).filter((rid) => pos[rid]);
+    if (horiz) {
+      let y = relIds.length ? relIds.reduce((s, rid) => s + pos[rid].y, 0) / relIds.length
+                            : (i + 1) * (g.h + GAP);
+      while (placed.some((u) => Math.abs(u - y) < g.h + GAP)) y += g.h + GAP;
+      placed.push(y);
+      pos[n.id] = { x: beyond, y };
+    } else {
+      let cx = relIds.length ? relIds.reduce((s, rid) => s + pos[rid].x + geom[rid].w / 2, 0) / relIds.length
+                             : (i + 1) * (g.w + GAP);
+      while (placed.some((u) => Math.abs(u - cx) < g.w + GAP)) cx += g.w + GAP;
+      placed.push(cx);
+      pos[n.id] = { x: cx - g.w / 2, y: beyond + g.h / 2 };
+    }
   });
   state.positions = pos;
   state.childCount = kids;
@@ -111,26 +190,46 @@ function statusClass(n) {
   return "h-" + n.status;
 }
 
-function edgePath(a, b, dashed) {   // a, b = node objects (positions looked up)
+function edgePath(a, b, dashed) {   // a, b = node objects (positions/geometry looked up)
   const pa = state.positions[a.id], pb = state.positions[b.id];
-  const x1 = pa.x + dims(a).w, y1 = pa.y, x2 = pb.x, y2 = pb.y, mx = (x1 + x2) / 2;
-  return `<path class="edge${dashed ? " dashed" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+  const ga = geomOf(a.id), gb = geomOf(b.id);
+  let d;
+  if (state.orient !== "td") {          // left-right: right edge -> left edge
+    const x1 = pa.x + ga.w, y1 = pa.y, x2 = pb.x, y2 = pb.y, mx = (x1 + x2) / 2;
+    d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+  } else {                              // top-down: bottom centre -> top centre
+    const x1 = pa.x + ga.w / 2, y1 = pa.y + ga.h / 2, x2 = pb.x + gb.w / 2, y2 = pb.y - gb.h / 2;
+    const my = (y1 + y2) / 2;
+    d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+  }
+  return `<path class="edge${dashed ? " dashed" : ""}" d="${d}"/>`;
 }
 
-function diamond(p, d) {
-  const cx = p.x + d.w / 2, cy = p.y, hw = d.w / 2, hh = d.h / 2 + 3;
+function diamond(p, g) {
+  const cx = p.x + g.w / 2, cy = p.y, hw = g.w / 2, hh = g.h / 2 + 3;
   return `${cx},${cy - hh} ${cx + hw},${cy} ${cx},${cy + hh} ${cx - hw},${cy}`;
 }
 
-// tiny tri-state dots inside a hypothesis: its verifiables (■ met · □ unmet · ▪ n/a)
-function verifDots(n, p, d) {
-  const vs = (n.verifiables || []).slice(0, 5);
+// tiny tri-state dots inside a hypothesis: its verifiables (met · unmet · n/a).
+// Compact: inline at the right edge. Detail: their own row at the bottom-right.
+function verifDots(n, p, g) {
+  const vs = (n.verifiables || []).slice(0, 6);
+  const cy = state.density === "compact" ? p.y : p.y + g.h / 2 - 8;
   return vs.map((v, i) =>
-    `<circle class="vdot v-${esc(v.state)}" cx="${p.x + d.w - 12 - i * 8}" cy="${p.y}" r="2.6"/>`).join("");
+    `<circle class="vdot v-${esc(v.state)}" cx="${p.x + g.w - 12 - i * 8}" cy="${cy}" r="2.6"/>`).join("");
+}
+
+// the Crux constellation, drawn inside the root node so the project is unmistakable
+function rootMark(p) {
+  const x = p.x + 12, y = p.y - 8;
+  return `<g class="rootmark" transform="translate(${x},${y}) scale(0.19)">` +
+    `<g class="mk-l"><line x1="38" y1="8" x2="33" y2="76"/><line x1="8" y1="44" x2="60" y2="38"/></g>` +
+    `<g class="mk-s"><circle cx="38" cy="8" r="4"/><circle cx="33" cy="76" r="5"/>` +
+    `<circle cx="8" cy="44" r="4"/><circle cx="60" cy="38" r="3.4"/><circle cx="45" cy="60" r="2.4"/></g></g>`;
 }
 
 function nodeSVG(n, p) {
-  const d = dims(n), cls = statusClass(n);
+  const g = geomOf(n.id), k = KIND[n.type] || KIND.question, cls = statusClass(n);
   const sel = state.selected === n.id ? " selected" : "";
   const matches = state.search && matchNode(n);
   const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
@@ -138,23 +237,29 @@ function nodeSVG(n, p) {
     (dimmed ? " dim" : "") + (matches ? " hit" : "");
   const boxCls = esc(cls) + sel;
   const shape = n.type === "synthesis"
-    ? `<polygon class="box ${boxCls}" points="${diamond(p, d)}"/>`
-    : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - d.h / 2}" width="${d.w}" height="${d.h}" rx="${d.rx}"/>`;
-  const pad = n.type === "project" ? 16 : 11;
+    ? `<polygon class="box ${boxCls}" points="${diamond(p, g)}"/>`
+    : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
+  const mark = n.type === "project" ? rootMark(p) : "";
+  const pad = n.type === "project" ? 32 : 12;
+  // first-line baseline so the wrapped block sits centred (dots row excluded from centring)
+  const y0 = p.y - g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;
   const glyph = n.type === "idea" && n.verdict
-    ? `<text class="glyph" x="${p.x + pad}" y="${p.y + 3.5}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
+    ? `<text class="glyph" x="${p.x + pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
     : "";
   const lx = glyph ? p.x + pad + 13 : p.x + pad;
-  const lbl = `<text class="lbl ${d.lbl}" x="${lx}" y="${p.y + 4}">${esc(trunc(n.title, d.trunc))}</text>`;
-  const dots = n.type === "idea" ? verifDots(n, p, d) : "";
+  const lbl = g.lines.map((ln, i) =>
+    `<text class="lbl ${k.lbl}" x="${i === 0 ? lx : p.x + pad}" y="${y0 + i * g.lh}">${esc(ln)}</text>`).join("");
+  const dots = n.type === "idea" ? verifDots(n, p, g) : "";
   const hasKids = (state.childCount && state.childCount[n.id]) || 0;
+  const tcx = state.orient !== "td" ? p.x + g.w : p.x + g.w / 2;
+  const tcy = state.orient !== "td" ? p.y : p.y + g.h / 2;
   const toggle = hasKids
-    ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${p.x + d.w}" cy="${p.y}" r="7.5"/>` +
-      `<text x="${p.x + d.w}" y="${p.y + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
+    ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${tcx}" cy="${tcy}" r="7.5"/>` +
+      `<text x="${tcx}" y="${tcy + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
     : "";
   const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
   const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
-  return `<g class="${wrap}" data-id="${esc(n.id)}">${tip}${shape}${glyph}${lbl}${dots}${toggle}</g>`;
+  return `<g class="${wrap}" data-id="${esc(n.id)}">${tip}${shape}${mark}${glyph}${lbl}${dots}${toggle}</g>`;
 }
 
 function renderTree() {
@@ -196,17 +301,15 @@ const LEGEND = [
     ["h-partial", "--v-partial", "partial", "Hypothesis — verdict: partially supported"],
     ["h-refuted", "--v-refuted", "refuted", "Hypothesis — verdict: refuted (rejected)"],
   ]],
-  ["links", [
-    ["n-synth", "--synth", "synthesis", "Synthesis — links findings across questions"],
-  ]],
 ];
 
 function renderLegend() {
   $("legend").innerHTML = LEGEND.map(([group, items]) =>
-    `<span class="lg-group">${group}</span>` + items.map(([key, varName, label, tip]) =>
+    `<div class="lg-row"><span class="lg-group">${group}</span>` +
+    items.map(([key, varName, label, tip]) =>
       `<button type="button" class="lg${state.filter === key ? " on" : ""}" data-lg="${key}"` +
       ` style="--c:var(${varName})" title="${esc(tip)} — click to spotlight">` +
-      `<span class="sw"></span>${label}</button>`).join("")).join("");
+      `<span class="sw"></span>${label}</button>`).join("") + `</div>`).join("");
 }
 
 // ------------------------------------------------------------------ search / navigation
@@ -222,9 +325,9 @@ function fitToView() {
   if (r.width < 80 || r.height < 80) return false;   // hidden/background tab — nothing to fit against
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const id of ids) {
-    const p = state.positions[id], d = dims(state.snap.nodes[id]);
-    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + d.w);
-    minY = Math.min(minY, p.y - d.h); maxY = Math.max(maxY, p.y + d.h);
+    const p = state.positions[id], g = geomOf(id);
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + g.w);
+    minY = Math.min(minY, p.y - g.h / 2 - 10); maxY = Math.max(maxY, p.y + g.h / 2 + 10);
   }
   const k = Math.min(1, (r.width - 60) / (maxX - minX || 1), (r.height - 60) / (maxY - minY || 1));
   state.view.k = clamp(k, 0.12, 1);
@@ -237,7 +340,7 @@ function centerOn(id) {
   const p = state.positions[id];
   if (!p) return;
   const r = svg.getBoundingClientRect();
-  state.view.tx = r.width / 2 - (p.x + dims(state.snap.nodes[id]).w / 2) * state.view.k;
+  state.view.tx = r.width / 2 - (p.x + geomOf(id).w / 2) * state.view.k;
   state.view.ty = r.height / 2 - p.y * state.view.k;
   applyTransform();
 }
@@ -474,6 +577,51 @@ $("theme-btn").addEventListener("click", () => {
   localStorage.setItem("crux-theme", next);
   applyTheme(next);
 });
+
+// ------------------------------------------------------------------ tree toolbar
+// orientation (left-right / top-down) · node text (full / compact) · focus open questions
+function relayout() {
+  if (!state.snap) return;
+  layout(); fitToView(); renderTree();
+}
+function updateToolbar() {
+  const ob = $("orient-btn");
+  ob.textContent = state.orient === "td" ? "⇄" : "⇅";
+  ob.title = state.orient === "td" ? "Switch to a left-to-right tree" : "Switch to a top-down tree";
+  const db = $("density-btn");
+  db.textContent = state.density === "detail" ? "▭" : "☰";
+  db.title = state.density === "detail"
+    ? "Compact nodes — one truncated line each"
+    : "Full-text nodes — read whole questions/hypotheses without clicking";
+  const fb = $("focus-btn");
+  fb.classList.toggle("on", state.focused);
+  fb.title = state.focused
+    ? "Show everything again"
+    : "Focus — collapse every non-open question, keep what needs work";
+}
+$("orient-btn").addEventListener("click", () => {
+  state.orient = state.orient === "td" ? "lr" : "td";
+  localStorage.setItem("crux-orient", state.orient);
+  updateToolbar(); relayout();
+});
+$("density-btn").addEventListener("click", () => {
+  state.density = state.density === "detail" ? "compact" : "detail";
+  localStorage.setItem("crux-density", state.density);
+  updateToolbar(); relayout();
+});
+$("focus-btn").addEventListener("click", () => {
+  if (!state.snap) return;
+  if (!state.focused) {
+    state.collapsed = new Set(Object.values(state.snap.nodes)
+      .filter((n) => n.type === "question" && n.status !== "open").map((n) => n.id));
+    state.focused = true;
+  } else {
+    state.collapsed.clear();
+    state.focused = false;
+  }
+  updateToolbar(); relayout();
+});
+updateToolbar();
 
 // on-screen zoom controls (zoom about the tree-pane centre)
 function centerZoom(factor) {

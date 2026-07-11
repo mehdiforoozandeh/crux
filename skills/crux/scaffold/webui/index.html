@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>crux cockpit</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,6 +29,11 @@
     <section id="tree-pane">
       <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
       <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
+      <div id="tree-toolbar">
+        <button id="orient-btn" type="button" aria-label="Toggle tree orientation"></button>
+        <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
+        <button id="focus-btn" type="button" aria-label="Focus open questions">◎</button>
+      </div>
       <div id="zoom-ctl">
         <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
         <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>

@@ -35,6 +35,16 @@ verdict/roll-up/view logic changes.
     zoom (two-finger scroll and pinch, separately tuned); text selection suppressed on the
     canvas (no more select-all while panning); and the initial auto-fit retries until the tab
     is actually visible (a background-tab open used to load mis-fitted).
+  - **Layout & node views (round 2).** Two selectable tree orientations — left-to-right and
+    top-down — with a toolbar toggle (persisted), backed by a rewritten tidy-tree layout that
+    handles variable node sizes in either axis. A **full-text node view is now the default**
+    (mindmap.io-style): each box grows to fit its whole title, word-wrapped up to 4 lines, so
+    questions and hypotheses are readable without clicking; a compact one-line view remains one
+    toggle away. Node kinds are now unmistakable by size *and* shape *and* font — the project
+    root is a colorless pill carrying the Crux mark, questions are the largest boxes, hypotheses
+    the smallest. A **focus button** collapses every non-open question in one click, so a large
+    program shows only what still needs work. The legend dropped the synthesis chip and is laid
+    out as two aligned rows (questions / hypotheses). Added a Crux favicon (was a default "L").
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

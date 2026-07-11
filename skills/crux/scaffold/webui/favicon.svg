@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- the Crux mark: the Southern Cross, same as the repo logo in assets/ -->
+  <g stroke="#c99219" stroke-opacity=".55" stroke-width="4" stroke-linecap="round">
+    <line x1="57" y1="12" x2="50" y2="90"/>
+    <line x1="18" y1="53" x2="86" y2="46"/>
+  </g>
+  <g fill="#c99219">
+    <circle cx="57" cy="12" r="9"/>
+    <circle cx="50" cy="90" r="11"/>
+    <circle cx="18" cy="53" r="9"/>
+    <circle cx="86" cy="46" r="8"/>
+    <circle cx="66" cy="72" r="5.5"/>
+  </g>
+</svg>
