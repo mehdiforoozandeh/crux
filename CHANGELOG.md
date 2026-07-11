@@ -45,6 +45,16 @@ verdict/roll-up/view logic changes.
     the smallest. A **focus button** collapses every non-open question in one click, so a large
     program shows only what still needs work. The legend dropped the synthesis chip and is laid
     out as two aligned rows (questions / hypotheses). Added a Crux favicon (was a default "L").
+  - **Round 3 — motion, splitter, labels, synthesis gone.** Toolbar buttons now show a text
+    label beside the icon (Left-right / Top-down · Full text / Compact · Focus). Synthesis nodes
+    are no longer drawn in the cockpit at all (they still exist in the vault/snapshot). The
+    tree ⇔ detail boundary is a **draggable splitter** (double-click to reset; width persists).
+    A **fluid-motion pass**: relayouts (collapse/expand, focus, orientation, density) now animate
+    — surviving nodes glide to their new positions while edges stay attached — and programmatic
+    camera moves (fit, centre-on-jump, the zoom buttons) ease instead of snapping, while drag and
+    wheel stay 1:1. Added detail-pane content fade-in and hover/press micro-transitions across the
+    chrome, plus a smooth theme cross-fade. All motion is gated on `prefers-reduced-motion` and
+    falls back to correct final state in a hidden/background tab (rAF paused).
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

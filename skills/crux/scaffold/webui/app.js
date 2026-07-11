@@ -155,28 +155,8 @@ function layout() {
     pos[id] = horiz ? { x: crossAt[d], y: center[id] }
                     : { x: center[id] - g.w / 2, y: crossAt[d] + g.h / 2 };
   }
-  // synthesis nodes live outside the parent tree — park them one level past the deepest
-  // node, near the mean position of the questions they relate to, so their dashed edges
-  // stay short and legible instead of dangling across the whole canvas.
-  const beyond = crossAt[maxCross.length];
-  const placed = [];
-  Object.values(snap.nodes).filter((n) => n.type === "synthesis").forEach((n, i) => {
-    const g = geom[n.id];
-    const relIds = (n.related || []).filter((rid) => pos[rid]);
-    if (horiz) {
-      let y = relIds.length ? relIds.reduce((s, rid) => s + pos[rid].y, 0) / relIds.length
-                            : (i + 1) * (g.h + GAP);
-      while (placed.some((u) => Math.abs(u - y) < g.h + GAP)) y += g.h + GAP;
-      placed.push(y);
-      pos[n.id] = { x: beyond, y };
-    } else {
-      let cx = relIds.length ? relIds.reduce((s, rid) => s + pos[rid].x + geom[rid].w / 2, 0) / relIds.length
-                             : (i + 1) * (g.w + GAP);
-      while (placed.some((u) => Math.abs(u - cx) < g.w + GAP)) cx += g.w + GAP;
-      placed.push(cx);
-      pos[n.id] = { x: cx - g.w / 2, y: beyond + g.h / 2 };
-    }
-  });
+  // synthesis nodes are intentionally NOT laid out or drawn in the cockpit — they add clutter
+  // without helping navigation. (They still exist in the vault and the JSON snapshot.)
   state.positions = pos;
   state.childCount = kids;
 }
@@ -190,44 +170,37 @@ function statusClass(n) {
   return "h-" + n.status;
 }
 
-function edgePath(a, b, dashed) {   // a, b = node objects (positions/geometry looked up)
-  const pa = state.positions[a.id], pb = state.positions[b.id];
-  const ga = geomOf(a.id), gb = geomOf(b.id);
-  let d;
-  if (state.orient !== "td") {          // left-right: right edge -> left edge
+// edge path between two nodes, from a position map (so it can be recomputed each frame while
+// animating a relayout). Left-right: right edge -> left edge. Top-down: bottom -> top centre.
+function edgeD(paId, chId, pos) {
+  const pa = pos[paId], pb = pos[chId], ga = geomOf(paId), gb = geomOf(chId);
+  if (state.orient !== "td") {
     const x1 = pa.x + ga.w, y1 = pa.y, x2 = pb.x, y2 = pb.y, mx = (x1 + x2) / 2;
-    d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
-  } else {                              // top-down: bottom centre -> top centre
-    const x1 = pa.x + ga.w / 2, y1 = pa.y + ga.h / 2, x2 = pb.x + gb.w / 2, y2 = pb.y - gb.h / 2;
-    const my = (y1 + y2) / 2;
-    d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+    return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
   }
-  return `<path class="edge${dashed ? " dashed" : ""}" d="${d}"/>`;
+  const x1 = pa.x + ga.w / 2, y1 = pa.y + ga.h / 2, x2 = pb.x + gb.w / 2, y2 = pb.y - gb.h / 2, my = (y1 + y2) / 2;
+  return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
 }
 
-function diamond(p, g) {
-  const cx = p.x + g.w / 2, cy = p.y, hw = g.w / 2, hh = g.h / 2 + 3;
-  return `${cx},${cy - hh} ${cx + hw},${cy} ${cx},${cy + hh} ${cx - hw},${cy}`;
-}
-
-// tiny tri-state dots inside a hypothesis: its verifiables (met · unmet · n/a).
-// Compact: inline at the right edge. Detail: their own row at the bottom-right.
-function verifDots(n, p, g) {
+// tiny tri-state dots inside a hypothesis: its verifiables (met · unmet · n/a). Coordinates
+// are LOCAL to the node anchor (0,0). Compact: inline at the right edge; detail: bottom-right row.
+function verifDots(n, g) {
   const vs = (n.verifiables || []).slice(0, 6);
-  const cy = state.density === "compact" ? p.y : p.y + g.h / 2 - 8;
+  const cy = state.density === "compact" ? 0 : g.h / 2 - 8;
   return vs.map((v, i) =>
-    `<circle class="vdot v-${esc(v.state)}" cx="${p.x + g.w - 12 - i * 8}" cy="${cy}" r="2.6"/>`).join("");
+    `<circle class="vdot v-${esc(v.state)}" cx="${g.w - 12 - i * 8}" cy="${cy}" r="2.6"/>`).join("");
 }
 
-// the Crux constellation, drawn inside the root node so the project is unmistakable
-function rootMark(p) {
-  const x = p.x + 12, y = p.y - 8;
-  return `<g class="rootmark" transform="translate(${x},${y}) scale(0.19)">` +
-    `<g class="mk-l"><line x1="38" y1="8" x2="33" y2="76"/><line x1="8" y1="44" x2="60" y2="38"/></g>` +
-    `<g class="mk-s"><circle cx="38" cy="8" r="4"/><circle cx="33" cy="76" r="5"/>` +
-    `<circle cx="8" cy="44" r="4"/><circle cx="60" cy="38" r="3.4"/><circle cx="45" cy="60" r="2.4"/></g></g>`;
-}
+// the Crux constellation, drawn inside the root node (local coords) so the project is unmistakable
+const ROOT_MARK =
+  `<g class="rootmark" transform="translate(12,-8) scale(0.19)">` +
+  `<g class="mk-l"><line x1="38" y1="8" x2="33" y2="76"/><line x1="8" y1="44" x2="60" y2="38"/></g>` +
+  `<g class="mk-s"><circle cx="38" cy="8" r="4"/><circle cx="33" cy="76" r="5"/>` +
+  `<circle cx="8" cy="44" r="4"/><circle cx="60" cy="38" r="3.4"/><circle cx="45" cy="60" r="2.4"/></g></g>`;
 
+// A node is a <g> positioned by `transform="translate(anchorX, anchorY)"`; everything inside is
+// drawn relative to that anchor (0,0). This lets a relayout animate by tweening just the wrapper
+// transform (and the edge paths) instead of rebuilding geometry.
 function nodeSVG(n, p) {
   const g = geomOf(n.id), k = KIND[n.type] || KIND.question, cls = statusClass(n);
   const sel = state.selected === n.id ? " selected" : "";
@@ -235,47 +208,46 @@ function nodeSVG(n, p) {
   const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
   const wrap = "node" + (n.status === "running" ? " running" : "") +
     (dimmed ? " dim" : "") + (matches ? " hit" : "");
-  const boxCls = esc(cls) + sel;
-  const shape = n.type === "synthesis"
-    ? `<polygon class="box ${boxCls}" points="${diamond(p, g)}"/>`
-    : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
-  const mark = n.type === "project" ? rootMark(p) : "";
+  const shape = `<rect class="box ${esc(cls)}${sel}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
+  const mark = n.type === "project" ? ROOT_MARK : "";
   const pad = n.type === "project" ? 32 : 12;
-  // first-line baseline so the wrapped block sits centred (dots row excluded from centring)
-  const y0 = p.y - g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;
+  const y0 = -g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;   // centred wrapped block
   const glyph = n.type === "idea" && n.verdict
-    ? `<text class="glyph" x="${p.x + pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
+    ? `<text class="glyph" x="${pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
     : "";
-  const lx = glyph ? p.x + pad + 13 : p.x + pad;
+  const lx = glyph ? pad + 13 : pad;
   const lbl = g.lines.map((ln, i) =>
-    `<text class="lbl ${k.lbl}" x="${i === 0 ? lx : p.x + pad}" y="${y0 + i * g.lh}">${esc(ln)}</text>`).join("");
-  const dots = n.type === "idea" ? verifDots(n, p, g) : "";
+    `<text class="lbl ${k.lbl}" x="${i === 0 ? lx : pad}" y="${y0 + i * g.lh}">${esc(ln)}</text>`).join("");
+  const dots = n.type === "idea" ? verifDots(n, g) : "";
   const hasKids = (state.childCount && state.childCount[n.id]) || 0;
-  const tcx = state.orient !== "td" ? p.x + g.w : p.x + g.w / 2;
-  const tcy = state.orient !== "td" ? p.y : p.y + g.h / 2;
+  const tcx = state.orient !== "td" ? g.w : g.w / 2;
+  const tcy = state.orient !== "td" ? 0 : g.h / 2;
   const toggle = hasKids
     ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${tcx}" cy="${tcy}" r="7.5"/>` +
       `<text x="${tcx}" y="${tcy + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
     : "";
   const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
   const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
-  return `<g class="${wrap}" data-id="${esc(n.id)}">${tip}${shape}${mark}${glyph}${lbl}${dots}${toggle}</g>`;
+  return `<g class="${wrap}" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">` +
+    `${tip}${shape}${mark}${glyph}${lbl}${dots}${toggle}</g>`;
 }
 
-function renderTree() {
+// `fromPos`, when given, is the previous position map; surviving nodes animate from there to
+// their new spots (and entrants fade in). Synthesis nodes are never in `positions`, so never drawn.
+function renderTree(fromPos) {
   const snap = state.snap, pos = state.positions;
   let edges = "", nodes = "";
   (function walk(node) {
     if (state.collapsed.has(node.id)) return;
-    for (const c of node.children) { edges += edgePath(snap.nodes[node.id], snap.nodes[c.id], false); walk(c); }
+    for (const c of node.children) {
+      edges += `<path class="edge" data-p="${esc(node.id)}" data-c="${esc(c.id)}" d="${edgeD(node.id, c.id, pos)}"/>`;
+      walk(c);
+    }
   })(snap.tree);
-  for (const n of Object.values(snap.nodes)) {
-    if (n.type !== "synthesis") continue;
-    for (const rid of n.related) if (pos[rid]) edges += edgePath(n, snap.nodes[rid], true);
-  }
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
-  svg.innerHTML = `<g transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
+  svg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
+  if (fromPos && !REDUCED_MOTION) animateLayout(fromPos);
 }
 
 // Pan/zoom only mutate the group transform — one cheap attribute write; the browser batches
@@ -285,6 +257,64 @@ function applyTransform() {
   const g = svg.firstChild;
   if (g) g.setAttribute("transform", `translate(${state.view.tx},${state.view.ty}) scale(${state.view.k})`);
 }
+
+// ------------------------------------------------------------------ motion
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+// Tween nodes from their previous positions to the freshly-rendered ones, redrawing edges each
+// frame so they stay attached. Surviving nodes glide; new nodes fade in place.
+let _layoutRAF = 0;
+function animateLayout(fromPos) {
+  cancelAnimationFrame(_layoutRAF);
+  // renderTree already drew nodes at their FINAL positions; only animate if rAF will actually
+  // run. In a hidden/background tab rAF is paused, so skipping leaves the correct final state
+  // (rather than the synchronous first frame stranding nodes at their old positions).
+  if (document.hidden) return;
+  const vp = svg.firstChild;
+  if (!vp) return;
+  const pos = state.positions;
+  const nodeEls = {};
+  vp.querySelectorAll(".node").forEach((el) => (nodeEls[el.getAttribute("data-id")] = el));
+  const edgeEls = [...vp.querySelectorAll(".edge")].map((el) =>
+    ({ el, p: el.getAttribute("data-p"), c: el.getAttribute("data-c") }));
+  const DUR = 400, t0 = performance.now();
+  function frame(now) {
+    const e = easeOutCubic(Math.min(1, (now - t0) / DUR));
+    const ip = {};
+    for (const id in pos) {
+      const np = pos[id], op = fromPos[id] || np;
+      ip[id] = { x: op.x + (np.x - op.x) * e, y: op.y + (np.y - op.y) * e };
+    }
+    for (const id in nodeEls) {
+      const q = ip[id];
+      if (q) nodeEls[id].setAttribute("transform", `translate(${q.x},${q.y})`);
+      if (!fromPos[id]) nodeEls[id].style.opacity = String(e);   // entrants fade in
+    }
+    for (const { el, p, c } of edgeEls) if (ip[p] && ip[c]) el.setAttribute("d", edgeD(p, c, ip));
+    if (e < 1) _layoutRAF = requestAnimationFrame(frame);
+    else for (const id in nodeEls) if (!fromPos[id]) nodeEls[id].style.opacity = "";
+  }
+  frame(t0);
+}
+
+// Glide the camera (pan + zoom together) to a target view. Used for programmatic moves —
+// fit, centre-on-node, the zoom buttons — while drag and wheel stay 1:1 (they cancel this).
+let _viewRAF = 0;
+function tweenView(tx, ty, k, dur = 440) {
+  cancelAnimationFrame(_viewRAF);
+  // reduced-motion or a hidden tab (rAF paused): jump straight to the target
+  if (REDUCED_MOTION || document.hidden) { state.view = { tx, ty, k }; applyTransform(); return; }
+  const s = { ...state.view }, t0 = performance.now();
+  function frame(now) {
+    const e = easeOutCubic(Math.min(1, (now - t0) / dur));
+    state.view = { tx: s.tx + (tx - s.tx) * e, ty: s.ty + (ty - s.ty) * e, k: s.k + (k - s.k) * e };
+    applyTransform();
+    if (e < 1) _viewRAF = requestAnimationFrame(frame);
+  }
+  _viewRAF = requestAnimationFrame(frame);
+}
+function stopViewTween() { cancelAnimationFrame(_viewRAF); }
 
 // The legend is the color key for the tree; every chip is also a filter — click one to
 // spotlight only nodes in that state (click again, or another chip, to change/clear).
@@ -318,31 +348,38 @@ function matchNode(n) {
   return q && (n.title.toLowerCase().includes(q) || n.id.toLowerCase().includes(q));
 }
 
-function fitToView() {
+// Returns the view {tx,ty,k} that frames the whole tree, or null if there's nothing/no room.
+function fitView() {
   const ids = Object.keys(state.positions);
-  if (!ids.length) return false;
+  if (!ids.length) return null;
   const r = svg.getBoundingClientRect();
-  if (r.width < 80 || r.height < 80) return false;   // hidden/background tab — nothing to fit against
+  if (r.width < 80 || r.height < 80) return null;   // hidden/background tab — nothing to fit against
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const id of ids) {
     const p = state.positions[id], g = geomOf(id);
     minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + g.w);
     minY = Math.min(minY, p.y - g.h / 2 - 10); maxY = Math.max(maxY, p.y + g.h / 2 + 10);
   }
-  const k = Math.min(1, (r.width - 60) / (maxX - minX || 1), (r.height - 60) / (maxY - minY || 1));
-  state.view.k = clamp(k, 0.12, 1);
-  state.view.tx = 30 - minX * state.view.k;
-  state.view.ty = (r.height - (maxY - minY) * state.view.k) / 2 - minY * state.view.k;
+  const k = clamp(Math.min(1, (r.width - 60) / (maxX - minX || 1), (r.height - 60) / (maxY - minY || 1)), 0.12, 1);
+  return { k, tx: 30 - minX * k, ty: (r.height - (maxY - minY) * k) / 2 - minY * k };
+}
+
+// fit the tree to the pane. animate => glide there; otherwise snap. Returns false if it couldn't.
+function fitToView(animate) {
+  const v = fitView();
+  if (!v) return false;
+  if (animate) tweenView(v.tx, v.ty, v.k);
+  else { state.view = v; applyTransform(); }
   return true;
 }
 
-function centerOn(id) {
+function centerOn(id, animate) {
   const p = state.positions[id];
   if (!p) return;
-  const r = svg.getBoundingClientRect();
-  state.view.tx = r.width / 2 - (p.x + geomOf(id).w / 2) * state.view.k;
-  state.view.ty = r.height / 2 - p.y * state.view.k;
-  applyTransform();
+  const r = svg.getBoundingClientRect(), k = state.view.k;
+  const tx = r.width / 2 - (p.x + geomOf(id).w / 2) * k, ty = r.height / 2 - p.y * k;
+  if (animate === false) { state.view.tx = tx; state.view.ty = ty; applyTransform(); }
+  else tweenView(tx, ty, k);
 }
 
 // ------------------------------------------------------------------ selection / detail
@@ -500,6 +537,7 @@ function zoomAt(cx, cy, factor) {
 // gesture. deltaMode normalizes mouse wheels that report lines instead of pixels.
 svg.addEventListener("wheel", (e) => {
   e.preventDefault();
+  stopViewTween();   // wheel/pinch is 1:1 — never fight a running camera glide
   const dy = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
   const sens = e.ctrlKey ? 0.012 : 0.0028;
   zoomAt(e.clientX, e.clientY, Math.exp(-dy * sens));
@@ -528,6 +566,7 @@ function onPanEnd() {
 svg.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   e.preventDefault();   // a drag on the canvas must never start a text selection
+  stopViewTween();      // grabbing the canvas cancels any running camera glide
   pan = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
   moved = false;
   window.addEventListener("pointermove", onPanMove);
@@ -539,9 +578,11 @@ svg.addEventListener("click", (e) => {
   if (moved) return;   // the pointer travelled — this was a pan, not a click
   const tog = e.target.closest("[data-toggle]");
   if (tog) {
+    const from = state.positions;             // animate the subtree collapse/expand
     const id = tog.getAttribute("data-toggle");
     state.collapsed.has(id) ? state.collapsed.delete(id) : state.collapsed.add(id);
-    layout(); renderTree();
+    if (state.focused) { state.focused = false; updateToolbar(); }   // manual toggle leaves focus mode
+    layout(); renderTree(from);
     return;
   }
   const node = e.target.closest(".node");
@@ -579,35 +620,43 @@ $("theme-btn").addEventListener("click", () => {
 });
 
 // ------------------------------------------------------------------ tree toolbar
-// orientation (left-right / top-down) · node text (full / compact) · focus open questions
-function relayout() {
+// orientation (left-right / top-down) · node text (full / compact) · focus open questions.
+// `refit` glides the camera to the new fit (for big reshapes: orientation, density); otherwise
+// the camera holds still and only the nodes glide (for local changes: focus, collapse).
+function relayout(refit) {
   if (!state.snap) return;
-  layout(); fitToView(); renderTree();
+  const from = state.positions;
+  layout();
+  renderTree(from);
+  if (refit) { const v = fitView(); if (v) tweenView(v.tx, v.ty, v.k); }
 }
+// each toolbar button shows an icon AND a text label of its CURRENT mode
+function iconLabel(icon, label) { return `<span class="ic">${icon}</span><span class="tb-label">${label}</span>`; }
 function updateToolbar() {
   const ob = $("orient-btn");
-  ob.textContent = state.orient === "td" ? "⇄" : "⇅";
-  ob.title = state.orient === "td" ? "Switch to a left-to-right tree" : "Switch to a top-down tree";
+  ob.innerHTML = state.orient === "td" ? iconLabel("⇅", "Top-down") : iconLabel("⇄", "Left-right");
+  ob.title = state.orient === "td" ? "Layout: top-down — click for left-to-right" : "Layout: left-to-right — click for top-down";
   const db = $("density-btn");
-  db.textContent = state.density === "detail" ? "▭" : "☰";
+  db.innerHTML = state.density === "detail" ? iconLabel("☰", "Full text") : iconLabel("▭", "Compact");
   db.title = state.density === "detail"
-    ? "Compact nodes — one truncated line each"
-    : "Full-text nodes — read whole questions/hypotheses without clicking";
+    ? "Nodes: full text — click for compact one-line nodes"
+    : "Nodes: compact — click for full-text nodes you can read without opening";
   const fb = $("focus-btn");
   fb.classList.toggle("on", state.focused);
+  fb.innerHTML = iconLabel("◎", state.focused ? "Focused" : "Focus open");
   fb.title = state.focused
-    ? "Show everything again"
-    : "Focus — collapse every non-open question, keep what needs work";
+    ? "Focus on — showing only open questions; click to show everything"
+    : "Focus — collapse every non-open question, keep what still needs work";
 }
 $("orient-btn").addEventListener("click", () => {
   state.orient = state.orient === "td" ? "lr" : "td";
   localStorage.setItem("crux-orient", state.orient);
-  updateToolbar(); relayout();
+  updateToolbar(); relayout(true);
 });
 $("density-btn").addEventListener("click", () => {
   state.density = state.density === "detail" ? "compact" : "detail";
   localStorage.setItem("crux-density", state.density);
-  updateToolbar(); relayout();
+  updateToolbar(); relayout(true);
 });
 $("focus-btn").addEventListener("click", () => {
   if (!state.snap) return;
@@ -623,14 +672,17 @@ $("focus-btn").addEventListener("click", () => {
 });
 updateToolbar();
 
-// on-screen zoom controls (zoom about the tree-pane centre)
+// on-screen zoom controls — glide to the new zoom about the tree-pane centre
 function centerZoom(factor) {
-  const r = svg.getBoundingClientRect();
-  zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+  const r = svg.getBoundingClientRect(), v = state.view;
+  const k2 = clamp(v.k * factor, 0.1, 3);
+  if (k2 === v.k) return;
+  const mx = r.width / 2, my = r.height / 2;
+  tweenView(mx - (mx - v.tx) * (k2 / v.k), my - (my - v.ty) * (k2 / v.k), k2, 260);
 }
-$("zoom-in").addEventListener("click", () => centerZoom(1.25));
-$("zoom-out").addEventListener("click", () => centerZoom(1 / 1.25));
-$("zoom-fit").addEventListener("click", () => { if (state.snap) { fitToView(); applyTransform(); } });
+$("zoom-in").addEventListener("click", () => centerZoom(1.35));
+$("zoom-out").addEventListener("click", () => centerZoom(1 / 1.35));
+$("zoom-fit").addEventListener("click", () => { if (state.snap) fitToView(true); });
 
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
@@ -642,6 +694,41 @@ $("search").addEventListener("keydown", (e) => {
   const hit = Object.keys(state.positions).find((id) => matchNode(state.snap.nodes[id]));
   if (hit) selectNode(hit, { center: true });
 });
+
+// ------------------------------------------------------------------ movable pane splitter
+// Drag the divider to resize the detail pane; the tree pane takes the rest. Width persists.
+(function () {
+  const detail = $("detail-pane"), split = $("splitter");
+  function setW(px) {
+    const w = clamp(px, 300, Math.max(320, window.innerWidth - 420));
+    detail.style.flex = `0 0 ${w}px`;
+    detail.style.maxWidth = "none";
+  }
+  const saved = parseInt(localStorage.getItem("crux-detail-w") || "", 10);
+  if (saved) setW(saved);
+  let dragging = false;
+  function onMove(e) {
+    if (!dragging) return;
+    setW(window.innerWidth - e.clientX);
+  }
+  function onUp() {
+    dragging = false;
+    document.body.style.cursor = "";
+    split.classList.remove("active");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    localStorage.setItem("crux-detail-w", String(Math.round(detail.getBoundingClientRect().width)));
+  }
+  split.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dragging = true;
+    document.body.style.cursor = "col-resize";
+    split.classList.add("active");
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+  split.addEventListener("dblclick", () => { localStorage.removeItem("crux-detail-w"); detail.style.flex = ""; detail.style.maxWidth = ""; });
+})();
 
 // If the initial fit was deferred (tab opened in the background), run it as soon as the
 // pane actually has geometry — on first show or on a resize.

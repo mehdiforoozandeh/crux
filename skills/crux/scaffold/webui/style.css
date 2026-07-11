@@ -36,6 +36,15 @@ body {
   background: var(--bg); color: var(--ink); overflow: hidden;
   display: flex; flex-direction: column;
 }
+/* smooth theme cross-fade on the major surfaces */
+body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
+/* interactive-chrome micro-transitions */
+#review-btn, #theme-btn, #zoom-ctl button, #legend .lg, .rowlink {
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .1s ease;
+}
+.rowlink:active, #review-btn:active, #theme-btn:active { transform: translateY(1px); }
+.node .toggle circle { transition: stroke .16s ease, fill .3s ease; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* top bar */
 #topbar {
@@ -78,7 +87,12 @@ body {
 #tree { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; background:
   radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 0) 0 0 / 26px 26px; }
 #tree.panning { cursor: grabbing; }
-#detail-pane { flex: 1 1 38%; min-width: 320px; max-width: 560px; overflow-y: auto; padding: 18px 20px; background: var(--panel); }
+#detail-pane { flex: 1 1 38%; min-width: 280px; max-width: 560px; overflow-y: auto; padding: 18px 20px; background: var(--panel); }
+/* detail content eases in whenever it changes (new selection / queue) */
+@media (prefers-reduced-motion: no-preference) {
+  #detail-pane > * { animation: d-in .28s cubic-bezier(.22,.61,.36,1) both; }
+}
+@keyframes d-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .hint { position: absolute; left: 12px; bottom: 10px; color: var(--ink-mute); font-size: 11px; pointer-events: none; }
 #zoom-ctl { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; }
@@ -95,15 +109,26 @@ body {
 /* tree toolbar — orientation · node text density · focus open questions */
 #tree-toolbar { position: absolute; left: 12px; top: 10px; display: flex; gap: 6px; }
 #tree-toolbar button {
-  min-width: 32px; height: 32px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--line);
+  height: 32px; padding: 0 11px; border-radius: 9px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
-  font-size: 14px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 12.5px; line-height: 1; cursor: pointer; display: flex; align-items: center; gap: 7px;
   backdrop-filter: blur(3px); box-shadow: var(--shadow);
+  transition: border-color .16s ease, color .16s ease, background-color .16s ease, transform .1s ease;
 }
+#tree-toolbar button .ic { font-size: 14px; }
+#tree-toolbar button .tb-label { font-weight: 550; white-space: nowrap; }
 #tree-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
 #tree-toolbar button:active { transform: translateY(1px); }
 #tree-toolbar button.on { border-color: var(--accent); color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+
+/* movable divider between the tree and the detail pane */
+#splitter { flex: 0 0 6px; cursor: col-resize; position: relative; background: var(--line);
+  transition: background-color .15s ease; touch-action: none; }
+#splitter::before { content: ""; position: absolute; inset: 0 -4px; }   /* fat hit area */
+#splitter::after { content: ""; position: absolute; top: 50%; left: 50%; width: 2px; height: 26px;
+  transform: translate(-50%, -50%); border-radius: 2px; background: var(--ink-mute); opacity: .5; }
+#splitter:hover, #splitter.active { background: var(--accent); }
 
 /* legend — a color key for the tree; each chip is also a click-to-filter toggle */
 #legend {
@@ -125,10 +150,11 @@ body {
 #legend .sw { width: 9px; height: 9px; border-radius: 3px; background: var(--c); flex: 0 0 auto; }
 
 /* svg tree */
-.edge { fill: none; stroke: var(--edge); stroke-width: 1.4; }
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.4; transition: stroke .2s ease; }
 .edge.dashed { stroke: var(--edge-dash); stroke-dasharray: 4 4; }
 .node { cursor: pointer; }
-.node .box { stroke-width: 1.5; }
+.node .box { stroke-width: 1.5; transition: filter .16s ease, stroke-width .16s ease, stroke .16s ease, fill .3s ease; }
+.node:hover .box { filter: brightness(1.12) saturate(1.04); }
 .node .lbl { fill: var(--ink); pointer-events: none; }
 /* type hierarchy: root > question > hypothesis — size IS the kind signal */
 .node .lbl.t-root { font-size: 13px; font-weight: 750; letter-spacing: .3px; }
