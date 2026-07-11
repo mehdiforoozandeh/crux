@@ -334,12 +334,21 @@ const LEGEND = [
 ];
 
 function renderLegend() {
-  $("legend").innerHTML = LEGEND.map(([group, items]) =>
+  const head = `<div class="lg-head"><span class="lg-title">Color key</span>` +
+    `<button type="button" class="lg-hide" data-legend-hide title="Hide the color key" aria-label="Hide the color key">×</button></div>`;
+  $("legend").innerHTML = head + LEGEND.map(([group, items]) =>
     `<div class="lg-row"><span class="lg-group">${group}</span>` +
     items.map(([key, varName, label, tip]) =>
       `<button type="button" class="lg${state.filter === key ? " on" : ""}" data-lg="${key}"` +
       ` style="--c:var(${varName})" title="${esc(tip)} — click to spotlight">` +
       `<span class="sw"></span>${label}</button>`).join("") + `</div>`).join("");
+}
+
+// show/hide the color key (persisted); a small "Key" button takes its place when hidden
+function setLegendHidden(hidden) {
+  $("legend").hidden = hidden;
+  $("legend-btn").hidden = !hidden;
+  localStorage.setItem("crux-legend-hidden", hidden ? "1" : "0");
 }
 
 // ------------------------------------------------------------------ search / navigation
@@ -598,6 +607,7 @@ $("review-btn").addEventListener("click", showQueue);
 
 // legend chips: click to spotlight one status; click again (or another chip) to change/clear
 $("legend").addEventListener("click", (e) => {
+  if (e.target.closest("[data-legend-hide]")) { setLegendHidden(true); return; }
   const chip = e.target.closest("[data-lg]");
   if (!chip) return;
   const key = chip.getAttribute("data-lg");
@@ -605,6 +615,8 @@ $("legend").addEventListener("click", (e) => {
   renderLegend();
   if (state.snap) renderTree();
 });
+$("legend-btn").addEventListener("click", () => setLegendHidden(false));
+setLegendHidden(localStorage.getItem("crux-legend-hidden") === "1");
 
 // theme: resolve saved preference (else system) once at boot, then the button toggles
 function applyTheme(t) {

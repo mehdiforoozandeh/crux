@@ -55,6 +55,11 @@ verdict/roll-up/view logic changes.
     wheel stay 1:1. Added detail-pane content fade-in and hover/press micro-transitions across the
     chrome, plus a smooth theme cross-fade. All motion is gated on `prefers-reduced-motion` and
     falls back to correct final state in a hidden/background tab (rAF paused).
+  - **Round 4 — chrome placement.** The orientation / density / focus controls moved out of the
+    canvas into the top bar beside the search box. The color-key legend is smaller and now
+    **dismissable** — an × collapses it to a small "Key" button (state persists) so it never
+    blocks the tree. The zoom in/out/fit buttons are ~30% smaller, with the fit glyph enlarged
+    relative to its button.
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,

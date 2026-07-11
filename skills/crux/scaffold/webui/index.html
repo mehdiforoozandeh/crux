@@ -20,6 +20,11 @@
       <span id="project-title"></span>
     </div>
     <div class="tools">
+      <div class="viewctl" role="group" aria-label="Tree view controls">
+        <button id="orient-btn" type="button" aria-label="Toggle tree orientation"></button>
+        <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
+        <button id="focus-btn" type="button" aria-label="Focus open questions"></button>
+      </div>
       <input id="search" type="search" placeholder="Search nodes — Enter to jump" autocomplete="off" spellcheck="false">
       <button id="review-btn" type="button">Review (0)</button>
       <button id="theme-btn" type="button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
@@ -28,12 +33,8 @@
   <main id="cockpit">
     <section id="tree-pane">
       <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
+      <button id="legend-btn" type="button" title="Show the color key" aria-label="Show the color key" hidden>Key</button>
       <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
-      <div id="tree-toolbar">
-        <button id="orient-btn" type="button" aria-label="Toggle tree orientation"></button>
-        <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
-        <button id="focus-btn" type="button" aria-label="Focus open questions">◎</button>
-      </div>
       <div id="zoom-ctl">
         <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
         <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>

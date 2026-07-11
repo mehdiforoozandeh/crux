@@ -60,13 +60,28 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .brand .divider { width: 1px; height: 18px; background: var(--line); }
 #project-title { font-size: 13.5px; color: var(--ink-dim); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tools { display: flex; align-items: center; gap: 10px; }
+.tools { display: flex; align-items: center; gap: 10px; min-width: 0; }
 #search {
-  width: 240px; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line);
+  flex: 0 1 240px; min-width: 130px; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--ink); font-size: 13px;
   user-select: text; -webkit-user-select: text;
 }
 #search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* tree view controls, in the top bar next to search: orientation · density · focus */
+.viewctl { display: flex; gap: 5px; flex: 0 0 auto; }
+.viewctl button {
+  height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--ink); font-size: 12.5px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  transition: border-color .16s ease, color .16s ease, background-color .16s ease, transform .1s ease;
+}
+.viewctl button .ic { font-size: 14px; }
+.viewctl button .tb-label { font-weight: 550; white-space: nowrap; }
+.viewctl button:hover { border-color: var(--accent); color: var(--accent); }
+.viewctl button:active { transform: translateY(1px); }
+.viewctl button.on { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
 #review-btn {
   padding: 6px 13px; border-radius: 8px; border: 1px solid var(--q-review);
   background: transparent; color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer;
@@ -95,32 +110,19 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 @keyframes d-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .hint { position: absolute; left: 12px; bottom: 10px; color: var(--ink-mute); font-size: 11px; pointer-events: none; }
-#zoom-ctl { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; }
+/* zoom controls — compact (~30% smaller than the header buttons); fit glyph sized larger
+   relative to its button so it reads clearly at this size */
+#zoom-ctl { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 #zoom-ctl button {
-  width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--line);
+  width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
-  font-size: 16px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(3px); box-shadow: var(--shadow);
+  transition: border-color .16s ease, color .16s ease, transform .1s ease;
 }
 #zoom-ctl button:hover { border-color: var(--accent); color: var(--accent); }
 #zoom-ctl button:active { transform: translateY(1px); }
-#zoom-ctl #zoom-fit { font-size: 14px; }
-
-/* tree toolbar — orientation · node text density · focus open questions */
-#tree-toolbar { position: absolute; left: 12px; top: 10px; display: flex; gap: 6px; }
-#tree-toolbar button {
-  height: 32px; padding: 0 11px; border-radius: 9px; border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
-  font-size: 12.5px; line-height: 1; cursor: pointer; display: flex; align-items: center; gap: 7px;
-  backdrop-filter: blur(3px); box-shadow: var(--shadow);
-  transition: border-color .16s ease, color .16s ease, background-color .16s ease, transform .1s ease;
-}
-#tree-toolbar button .ic { font-size: 14px; }
-#tree-toolbar button .tb-label { font-weight: 550; white-space: nowrap; }
-#tree-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
-#tree-toolbar button:active { transform: translateY(1px); }
-#tree-toolbar button.on { border-color: var(--accent); color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+#zoom-ctl #zoom-fit { font-size: 15px; }
 
 /* movable divider between the tree and the detail pane */
 #splitter { flex: 0 0 6px; cursor: col-resize; position: relative; background: var(--line);
@@ -130,24 +132,44 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   transform: translate(-50%, -50%); border-radius: 2px; background: var(--ink-mute); opacity: .5; }
 #splitter:hover, #splitter.active { background: var(--accent); }
 
-/* legend — a color key for the tree; each chip is also a click-to-filter toggle */
+/* legend — a compact, dismissable color key; each chip is also a click-to-filter toggle */
 #legend {
   position: absolute; right: 12px; top: 10px;
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(3px);
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 4px 7px 5px; border-radius: 9px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(3px);
+  box-shadow: var(--shadow);
 }
-#legend .lg-row { display: flex; align-items: center; gap: 4px; }
-#legend .lg-group { color: var(--ink-mute); font-size: 10px; text-transform: uppercase;
-  letter-spacing: .7px; width: 82px; text-align: right; margin-right: 4px; flex: 0 0 auto; }
+#legend[hidden] { display: none; }
+#legend .lg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 1px; }
+#legend .lg-title { font-size: 8.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); }
+#legend .lg-hide {
+  width: 15px; height: 15px; border: none; background: none; color: var(--ink-mute); cursor: pointer;
+  font-size: 14px; line-height: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+}
+#legend .lg-hide:hover { color: var(--ink); background: var(--panel2); }
+#legend .lg-row { display: flex; align-items: center; gap: 3px; }
+#legend .lg-group { color: var(--ink-mute); font-size: 8.5px; text-transform: uppercase;
+  letter-spacing: .5px; width: 62px; text-align: right; margin-right: 3px; flex: 0 0 auto; }
 #legend .lg {
-  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-dim);
-  padding: 2px 7px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--ink-dim);
+  padding: 1px 5px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer;
   font-family: inherit;
 }
 #legend .lg:hover { border-color: var(--line); color: var(--ink); }
 #legend .lg.on { border-color: var(--c); color: var(--ink); background: color-mix(in srgb, var(--c) 16%, transparent); }
-#legend .sw { width: 9px; height: 9px; border-radius: 3px; background: var(--c); flex: 0 0 auto; }
+#legend .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--c); flex: 0 0 auto; }
+
+/* the small "Key" button shown (top-right) when the legend is hidden */
+#legend-btn {
+  position: absolute; right: 12px; top: 10px; height: 24px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--ink-dim); font-size: 11px; font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  backdrop-filter: blur(3px); box-shadow: var(--shadow); transition: border-color .16s ease, color .16s ease;
+}
+#legend-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px;
+  background: linear-gradient(135deg, var(--v-supported) 50%, var(--q-review) 50%); }
+#legend-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* svg tree */
 .edge { fill: none; stroke: var(--edge); stroke-width: 1.4; transition: stroke .2s ease; }
