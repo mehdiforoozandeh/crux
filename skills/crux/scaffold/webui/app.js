@@ -3,8 +3,20 @@
    No writes, no build step, no dependencies. */
 "use strict";
 
-const COL_W = 220, ROW_H = 42, NODE_W = 172, NODE_H = 26;
+const COL_W = 220, ROW_H = 36;
 const VERDICTS = ["supported", "partial", "refuted", "inconclusive"];
+
+// Each node kind gets its own geometry + label style so the tree reads at a glance:
+// a colorless pill root, squared questions, soft-pill hypotheses, diamond syntheses.
+const KIND = {
+  project:   { w: 190, h: 34, rx: 17, lbl: "t-root", trunc: 26 },
+  question:  { w: 176, h: 28, rx: 6,  lbl: "t-q",    trunc: 25 },
+  idea:      { w: 168, h: 24, rx: 12, lbl: "t-h",    trunc: 19 },
+  synthesis: { w: 172, h: 26, rx: 0,  lbl: "t-s",    trunc: 23 },
+};
+const dims = (n) => KIND[n.type] || KIND.question;
+// verdict glyph shown inside a done hypothesis (colored by verdict)
+const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~" };
 
 const state = {
   snap: null,
@@ -15,6 +27,7 @@ const state = {
   positions: {},            // id -> {x, y, depth}
   childCount: {},           // id -> number of tree children (drives the ± toggle)
   search: "",
+  filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
 };
 
@@ -42,13 +55,14 @@ async function poll() {
 
 function onSnapshot() {
   const snap = state.snap;
-  $("project-title").textContent = snap.project.title || "crux";
-  $("meta").textContent = "engine v" + snap.engine_version;
+  $("project-title").textContent = snap.project.title || "";
   // drop selection if the node disappeared
   if (state.selected && !(state.selected in snap.nodes)) state.selected = null;
   updateReviewBtn();
   layout();
-  if (!state.centered) { fitToView(); state.centered = true; }
+  // One-time fit — but a tab opened in the background has a 0×0 rect until it's shown,
+  // so keep retrying on each poll until the pane has real geometry to fit against.
+  if (!state.centered && fitToView()) state.centered = true;
   renderLegend();
   renderTree();
   renderDetail();
@@ -97,33 +111,50 @@ function statusClass(n) {
   return "h-" + n.status;
 }
 
-function edgePath(a, b, dashed) {
-  const x1 = a.x + NODE_W, y1 = a.y, x2 = b.x, y2 = b.y, mx = (x1 + x2) / 2;
+function edgePath(a, b, dashed) {   // a, b = node objects (positions looked up)
+  const pa = state.positions[a.id], pb = state.positions[b.id];
+  const x1 = pa.x + dims(a).w, y1 = pa.y, x2 = pb.x, y2 = pb.y, mx = (x1 + x2) / 2;
   return `<path class="edge${dashed ? " dashed" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
 }
 
-function diamond(p) {
-  const cx = p.x + NODE_W / 2, cy = p.y, hw = NODE_W / 2, hh = NODE_H / 2 + 3;
+function diamond(p, d) {
+  const cx = p.x + d.w / 2, cy = p.y, hw = d.w / 2, hh = d.h / 2 + 3;
   return `${cx},${cy - hh} ${cx + hw},${cy} ${cx},${cy + hh} ${cx - hw},${cy}`;
 }
 
+// tiny tri-state dots inside a hypothesis: its verifiables (■ met · □ unmet · ▪ n/a)
+function verifDots(n, p, d) {
+  const vs = (n.verifiables || []).slice(0, 5);
+  return vs.map((v, i) =>
+    `<circle class="vdot v-${esc(v.state)}" cx="${p.x + d.w - 12 - i * 8}" cy="${p.y}" r="2.6"/>`).join("");
+}
+
 function nodeSVG(n, p) {
-  const cls = statusClass(n);
+  const d = dims(n), cls = statusClass(n);
   const sel = state.selected === n.id ? " selected" : "";
   const matches = state.search && matchNode(n);
+  const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
   const wrap = "node" + (n.status === "running" ? " running" : "") +
-    (state.search && !matches ? " dim" : "") + (matches ? " hit" : "");
+    (dimmed ? " dim" : "") + (matches ? " hit" : "");
   const boxCls = esc(cls) + sel;
   const shape = n.type === "synthesis"
-    ? `<polygon class="box ${boxCls}" points="${diamond(p)}"/>`
-    : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - NODE_H / 2}" width="${NODE_W}" height="${NODE_H}" rx="6"/>`;
-  const lbl = `<text class="lbl" x="${p.x + 11}" y="${p.y + 4}">${esc(trunc(n.title, 25))}</text>`;
+    ? `<polygon class="box ${boxCls}" points="${diamond(p, d)}"/>`
+    : `<rect class="box ${boxCls}" x="${p.x}" y="${p.y - d.h / 2}" width="${d.w}" height="${d.h}" rx="${d.rx}"/>`;
+  const pad = n.type === "project" ? 16 : 11;
+  const glyph = n.type === "idea" && n.verdict
+    ? `<text class="glyph" x="${p.x + pad}" y="${p.y + 3.5}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
+    : "";
+  const lx = glyph ? p.x + pad + 13 : p.x + pad;
+  const lbl = `<text class="lbl ${d.lbl}" x="${lx}" y="${p.y + 4}">${esc(trunc(n.title, d.trunc))}</text>`;
+  const dots = n.type === "idea" ? verifDots(n, p, d) : "";
   const hasKids = (state.childCount && state.childCount[n.id]) || 0;
   const toggle = hasKids
-    ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${p.x + NODE_W}" cy="${p.y}" r="7.5"/>` +
-      `<text x="${p.x + NODE_W}" y="${p.y + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
+    ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${p.x + d.w}" cy="${p.y}" r="7.5"/>` +
+      `<text x="${p.x + d.w}" y="${p.y + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
     : "";
-  return `<g class="${wrap}" data-id="${esc(n.id)}">${shape}${lbl}${toggle}</g>`;
+  const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
+  const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
+  return `<g class="${wrap}" data-id="${esc(n.id)}">${tip}${shape}${glyph}${lbl}${dots}${toggle}</g>`;
 }
 
 function renderTree() {
@@ -131,37 +162,51 @@ function renderTree() {
   let edges = "", nodes = "";
   (function walk(node) {
     if (state.collapsed.has(node.id)) return;
-    for (const c of node.children) { edges += edgePath(pos[node.id], pos[c.id], false); walk(c); }
+    for (const c of node.children) { edges += edgePath(snap.nodes[node.id], snap.nodes[c.id], false); walk(c); }
   })(snap.tree);
   for (const n of Object.values(snap.nodes)) {
     if (n.type !== "synthesis") continue;
-    for (const rid of n.related) if (pos[rid]) edges += edgePath(pos[n.id], pos[rid], true);
+    for (const rid of n.related) if (pos[rid]) edges += edgePath(n, snap.nodes[rid], true);
   }
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
   svg.innerHTML = `<g transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
 }
 
-// Pan/zoom only mutate the group transform. Coalesce bursts of pointer/wheel events into one
-// write per animation frame so a fast drag or trackpad zoom can't queue up dozens of relayouts.
-let _rafPending = 0;
+// Pan/zoom only mutate the group transform — one cheap attribute write; the browser batches
+// the actual paint per frame. Deliberately synchronous (not rAF-coalesced): rAF stops firing
+// in an occluded/background window, which would leave the view stale until the next interaction.
 function applyTransform() {
-  if (_rafPending) return;
-  _rafPending = requestAnimationFrame(() => {
-    _rafPending = 0;
-    const g = svg.firstChild;
-    if (g) g.setAttribute("transform", `translate(${state.view.tx},${state.view.ty}) scale(${state.view.k})`);
-  });
+  const g = svg.firstChild;
+  if (g) g.setAttribute("transform", `translate(${state.view.tx},${state.view.ty}) scale(${state.view.k})`);
 }
 
+// The legend is the color key for the tree; every chip is also a filter — click one to
+// spotlight only nodes in that state (click again, or another chip, to change/clear).
+// Chip keys match statusClass() outputs so filtering is a straight comparison.
+const LEGEND = [
+  ["questions", [
+    ["q-open", "--q-open", "open", "Question — open, still being worked"],
+    ["q-review", "--q-review", "review", "Question — awaiting your decision (the review gate)"],
+    ["q-resolved", "--q-resolved", "resolved", "Question — resolved by your decision"],
+  ]],
+  ["hypotheses", [
+    ["h-running", "--h-running", "running", "Hypothesis — experiment running now"],
+    ["h-supported", "--v-supported", "supported", "Hypothesis — verdict: supported (approved)"],
+    ["h-partial", "--v-partial", "partial", "Hypothesis — verdict: partially supported"],
+    ["h-refuted", "--v-refuted", "refuted", "Hypothesis — verdict: refuted (rejected)"],
+  ]],
+  ["links", [
+    ["n-synth", "--synth", "synthesis", "Synthesis — links findings across questions"],
+  ]],
+];
+
 function renderLegend() {
-  const items = [
-    ["q-open", "Q open"], ["q-review", "Q review"], ["q-resolved", "Q resolved"],
-    ["h-running", "running"], ["h-supported", "supported"], ["h-partial", "partial"],
-    ["h-refuted", "refuted"], ["n-synth", "synthesis"],
-  ];
-  $("legend").innerHTML = items.map(([c, t]) =>
-    `<span class="lg"><span class="sw ${c}"></span>${t}</span>`).join("");
+  $("legend").innerHTML = LEGEND.map(([group, items]) =>
+    `<span class="lg-group">${group}</span>` + items.map(([key, varName, label, tip]) =>
+      `<button type="button" class="lg${state.filter === key ? " on" : ""}" data-lg="${key}"` +
+      ` style="--c:var(${varName})" title="${esc(tip)} — click to spotlight">` +
+      `<span class="sw"></span>${label}</button>`).join("")).join("");
 }
 
 // ------------------------------------------------------------------ search / navigation
@@ -171,22 +216,28 @@ function matchNode(n) {
 }
 
 function fitToView() {
-  const ps = Object.values(state.positions);
-  if (!ps.length) return;
-  const minX = Math.min(...ps.map((p) => p.x)), maxX = Math.max(...ps.map((p) => p.x)) + NODE_W;
-  const minY = Math.min(...ps.map((p) => p.y)) - NODE_H, maxY = Math.max(...ps.map((p) => p.y)) + NODE_H;
+  const ids = Object.keys(state.positions);
+  if (!ids.length) return false;
   const r = svg.getBoundingClientRect();
+  if (r.width < 80 || r.height < 80) return false;   // hidden/background tab — nothing to fit against
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const id of ids) {
+    const p = state.positions[id], d = dims(state.snap.nodes[id]);
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + d.w);
+    minY = Math.min(minY, p.y - d.h); maxY = Math.max(maxY, p.y + d.h);
+  }
   const k = Math.min(1, (r.width - 60) / (maxX - minX || 1), (r.height - 60) / (maxY - minY || 1));
   state.view.k = clamp(k, 0.12, 1);
   state.view.tx = 30 - minX * state.view.k;
   state.view.ty = (r.height - (maxY - minY) * state.view.k) / 2 - minY * state.view.k;
+  return true;
 }
 
 function centerOn(id) {
   const p = state.positions[id];
   if (!p) return;
   const r = svg.getBoundingClientRect();
-  state.view.tx = r.width / 2 - (p.x + NODE_W / 2) * state.view.k;
+  state.view.tx = r.width / 2 - (p.x + dims(state.snap.nodes[id]).w / 2) * state.view.k;
   state.view.ty = r.height / 2 - p.y * state.view.k;
   applyTransform();
 }
@@ -341,9 +392,14 @@ function zoomAt(cx, cy, factor) {
   applyTransform();
 }
 
+// Trackpad-first zoom: a two-finger scroll zooms about the cursor, and a pinch (which the
+// browser reports as ctrl+wheel) zooms too, at a higher sensitivity to feel 1:1 with the
+// gesture. deltaMode normalizes mouse wheels that report lines instead of pixels.
 svg.addEventListener("wheel", (e) => {
   e.preventDefault();
-  zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+  const dy = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
+  const sens = e.ctrlKey ? 0.012 : 0.0028;
+  zoomAt(e.clientX, e.clientY, Math.exp(-dy * sens));
 }, { passive: false });
 
 function onPanMove(e) {
@@ -368,6 +424,7 @@ function onPanEnd() {
 }
 svg.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+  e.preventDefault();   // a drag on the canvas must never start a text selection
   pan = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
   moved = false;
   window.addEventListener("pointermove", onPanMove);
@@ -395,6 +452,29 @@ $("detail-pane").addEventListener("click", (e) => {
 
 $("review-btn").addEventListener("click", showQueue);
 
+// legend chips: click to spotlight one status; click again (or another chip) to change/clear
+$("legend").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-lg]");
+  if (!chip) return;
+  const key = chip.getAttribute("data-lg");
+  state.filter = state.filter === key ? null : key;
+  renderLegend();
+  if (state.snap) renderTree();
+});
+
+// theme: resolve saved preference (else system) once at boot, then the button toggles
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("theme-btn").textContent = t === "dark" ? "☀" : "☾";
+}
+applyTheme(localStorage.getItem("crux-theme") ||
+  (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+$("theme-btn").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("crux-theme", next);
+  applyTheme(next);
+});
+
 // on-screen zoom controls (zoom about the tree-pane centre)
 function centerZoom(factor) {
   const r = svg.getBoundingClientRect();
@@ -415,6 +495,12 @@ $("search").addEventListener("keydown", (e) => {
   if (hit) selectNode(hit, { center: true });
 });
 
-window.addEventListener("resize", applyTransform);
+// If the initial fit was deferred (tab opened in the background), run it as soon as the
+// pane actually has geometry — on first show or on a resize.
+function retryFit() {
+  if (!state.centered && state.snap && fitToView()) { state.centered = true; applyTransform(); }
+}
+window.addEventListener("resize", () => { retryFit(); applyTransform(); });
+document.addEventListener("visibilitychange", retryFit);
 
 poll();

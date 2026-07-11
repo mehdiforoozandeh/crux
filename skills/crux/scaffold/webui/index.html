@@ -8,23 +8,32 @@
 </head>
 <body>
   <header id="topbar">
-    <div class="brand"><span class="mark">✦</span><span id="project-title">crux</span></div>
+    <div class="brand">
+      <!-- the Crux mark: the Southern Cross (same as the repo logo in assets/) -->
+      <svg class="mark" viewBox="32 22 66 84" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g class="mk-l"><line x1="70" y1="30" x2="65" y2="98"/><line x1="40" y1="66" x2="92" y2="60"/></g>
+        <g class="mk-s"><circle cx="70" cy="30" r="3.4"/><circle cx="65" cy="98" r="4.5"/><circle cx="40" cy="66" r="3.4"/><circle cx="92" cy="60" r="2.9"/><circle cx="77" cy="82" r="2"/></g>
+      </svg>
+      <span class="wordmark">Crux</span>
+      <span class="divider"></span>
+      <span id="project-title"></span>
+    </div>
     <div class="tools">
       <input id="search" type="search" placeholder="Search nodes — Enter to jump" autocomplete="off" spellcheck="false">
       <button id="review-btn" type="button">Review (0)</button>
-      <span id="meta" class="meta"></span>
+      <button id="theme-btn" type="button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
     </div>
   </header>
   <main id="cockpit">
     <section id="tree-pane">
       <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
-      <div id="legend"></div>
+      <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
       <div id="zoom-ctl">
         <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
         <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
         <button id="zoom-fit" type="button" title="Fit tree to view" aria-label="Fit tree to view">⤢</button>
       </div>
-      <div class="hint">scroll = zoom · drag = pan · click a node · click ± to collapse</div>
+      <div class="hint">scroll or pinch = zoom · drag = pan · click a node · click ± to collapse</div>
     </section>
     <aside id="detail-pane"></aside>
   </main>

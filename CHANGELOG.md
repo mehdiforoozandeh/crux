@@ -26,6 +26,15 @@ verdict/roll-up/view logic changes.
     pan/zoom are `requestAnimationFrame`-coalesced, synthesis nodes sit beside their related
     questions (short dashed edges instead of danglers), and a fit/zoom control cluster was added.
     Guarded by four new `selftest` asserts (asset serving, frontend pure-read, issue-#1 regression).
+  - **Visual/UX pass (post-v1 polish).** Two explicit Obsidian-like themes — near-black dark
+    (default) and light — with a persisted ☀/☾ toggle; the real Crux logo (Southern Cross mark
+    + gold wordmark) in the top bar and the `engine v…` meta dropped; per-kind node styling
+    (colorless pill root, squared questions, soft-pill hypotheses with verdict glyphs ✓/✕/◐ and
+    tri-state verifiable dots, diamond syntheses) so the tree reads without the key; the legend
+    rebuilt as a grouped color key whose chips are click-to-spotlight filters; trackpad-first
+    zoom (two-finger scroll and pinch, separately tuned); text selection suppressed on the
+    canvas (no more select-all while panning); and the initial auto-fit retries until the tab
+    is actually visible (a background-tab open used to load mis-fitted).
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,
