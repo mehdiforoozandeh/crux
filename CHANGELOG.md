@@ -8,6 +8,11 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`./crux`** — a root-level executable wrapper that forwards every argument to the
+  engine (`skills/crux/scaffold/crux.py`), so a clone runs `./crux <verb>` directly and
+  the repo front page leads with the product's name. Pure delegation; skills installers
+  never see it.
+
 - **`crux-cockpit` skill** — the GUI launcher: an agent playbook that runs `crux serve`
   beginning to finish. Locates the vault (or offers vault-setup / a disposable demo vault
   when none exists), kills any stale server for that vault (fresh-start, scoped per vault),

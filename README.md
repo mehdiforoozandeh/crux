@@ -36,8 +36,8 @@ git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./install.sh
 ```
 
-The engine is Python 3, stdlib only — no dependencies. Run it directly with
-`python skills/crux/scaffold/crux.py --help`.
+The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
+root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`).
 
 ## Setting up in your project
 

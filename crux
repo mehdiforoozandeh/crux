@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# crux — repo-root entry point to the engine (which lives in skills/crux/scaffold/).
+exec python3 "$(dirname "$0")/skills/crux/scaffold/crux.py" "$@"
