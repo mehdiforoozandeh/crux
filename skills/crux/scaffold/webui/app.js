@@ -57,10 +57,12 @@ function computeGeom() {
       w = Math.max(120, Math.round(lines[0].length * 8.8 + 34));
       h = 42;
     } else if (state.density === "compact" || n.type === "synthesis") {
-      w = k.cw; h = k.ch; lines = [trunc(n.title, k.ctrunc)];
+      lines = [trunc(n.title, k.ctrunc)];
+      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 11 : 0;   // bottom badge row
+      w = k.cw; h = k.ch + dotsPad;
     } else {
       lines = wrapLines(n.title, k.cpl);
-      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 13 : 0;
+      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 16 : 0;   // bottom badge row
       w = k.dw; h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
     }
     g[id] = { w, h, rx: k.pill ? h / 2 : k.rx, lines, lh: k.lh, dotsPad, kind: n.type };
@@ -205,11 +207,10 @@ function vBadgeClass(v, n) {
 function verifDots(n, g) {
   const vs = (n.verifiables || []).slice(0, 8);
   if (!vs.length) return "";
-  if (state.density === "compact") {
-    const r = 3.2, gap = 9, x0 = g.w - 11;
-    return vs.map((v, i) => `<circle class="vdot ${vBadgeClass(v, n)}" cx="${x0 - i * gap}" cy="0" r="${r}"/>`).join("");
-  }
-  const r = 4.2, gap = 12.5, y = g.h / 2 - r - 4, x0 = 12 + r;
+  const compact = state.density === "compact";
+  const r = compact ? 4 : 5, gap = compact ? 12 : 15;
+  const x0 = g.w / 2 - ((vs.length - 1) * gap) / 2;   // centre the row on the box
+  const y = g.h / 2 - r - 4;                            // bottom
   return vs.map((v, i) => `<circle class="vdot ${vBadgeClass(v, n)}" cx="${x0 + i * gap}" cy="${y}" r="${r}"/>`).join("");
 }
 
@@ -672,6 +673,14 @@ $("legend").addEventListener("click", (e) => {
 });
 $("legend-btn").addEventListener("click", () => setLegendHidden(false));
 setLegendHidden(localStorage.getItem("crux-legend-hidden") === "1");
+
+// controls-help hint: the ? button shows/hides it (persisted)
+$("help-btn").addEventListener("click", () => {
+  const hint = document.querySelector("#help .hint");
+  hint.hidden = !hint.hidden;
+  localStorage.setItem("crux-help-hidden", hint.hidden ? "1" : "0");
+});
+document.querySelector("#help .hint").hidden = localStorage.getItem("crux-help-hidden") === "1";
 
 // theme: resolve saved preference (else system) once at boot, then the button toggles
 function applyTheme(t) {
