@@ -6,29 +6,26 @@
   --bg: #161616; --panel: #1f1f1f; --panel2: #262626; --line: #333333;
   --ink: #dadada; --ink-dim: #9e9e9e; --ink-mute: #6f6f6f;
   --edge: #3d3d3d; --edge-dash: #4c4c4c;
-  --accent: #a888f0; --focus: #e0b866;
+  --accent: #a882ff; --focus: #d9a13b;
   --brand: #c99219;
   --shadow: 0 4px 14px rgba(0, 0, 0, .45);
-  /* pastel status palette — every concept a UNIQUE hue. Questions use a cool grey/violet/teal
-     family; hypothesis verdicts keep the conventional green/amber/red, so nothing collides:
-     resolved(teal) != supported(green), review(violet) != partial(amber). */
-  --q-open: #9aa6bb; --q-review: #c0a4e6; --q-resolved: #6ec7b8;
-  --h-idea: #99a0ac; --h-staged: #99a9db; --h-running: #82b4ea;
-  --v-supported: #86cd94; --v-partial: #e6c778; --v-refuted: #e79494; --v-inconclusive: #b1a8c2;
-  --root: #9aa0ab; --synth: #57c8c0;
+  /* status palette */
+  --q-open: #5a6470; --q-review: #d9a13b; --q-resolved: #4a8a63;
+  --h-idea: #6a7280; --h-staged: #4f74c8; --h-running: #4f9fe0;
+  --v-supported: #3fa06a; --v-partial: #d9a13b; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
+  --root: #8a8f98; --synth: #57c8c0;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
   --bg: #f2f3f5; --panel: #ffffff; --panel2: #f0f1f3; --line: #e1e2e6;
   --ink: #1f2328; --ink-dim: #57606a; --ink-mute: #8b949e;
   --edge: #c9ccd3; --edge-dash: #b8bcc6;
-  --accent: #7b5bd6; --focus: #c9962a;
+  --accent: #7b5bd6; --focus: #c08a1e;
   --shadow: 0 4px 14px rgba(30, 35, 40, .12);
-  /* same unique-hue mapping, a touch deeper so pastels stay legible on white */
-  --q-open: #7a8aa1; --q-review: #9776cc; --q-resolved: #3fa695;
-  --h-idea: #7c8593; --h-staged: #6d88c8; --h-running: #4f92d8;
-  --v-supported: #4faf68; --v-partial: #cc9a3a; --v-refuted: #d76b6b; --v-inconclusive: #8a819e;
-  --root: #8a909c; --synth: #2fa39a;
+  --q-open: #6e7a86; --q-review: #c08a1e; --q-resolved: #3f7d5a;
+  --h-idea: #7a8290; --h-staged: #3f63c0; --h-running: #2f87cf;
+  --v-supported: #2f8a57; --v-partial: #c08a1e; --v-refuted: #d14b4b; --v-inconclusive: #77839a;
+  --root: #9aa0a8; --synth: #2fa39a;
   color-scheme: light;
 }
 
