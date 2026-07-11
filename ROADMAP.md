@@ -47,7 +47,36 @@ clean and prevents the self-ingestion failure mode). Instantiates Karpathy's LLM
 
 *Delivered as the `crux-wiki` skill + engine `ingest`/`WIKI.md`/wiki-lint (ENGINE_VERSION 1.1).*
 
+## Epic 4 — ERA: empirical program search  `era`
+
+**Goal:** a sibling that evolves whole programs toward a **scalar objective** (Google's ERA /
+Flat UCB Tree Search) — an LLM writes and rewrites complete candidate programs, a sandbox scores
+each, and a flat PUCT bandit (FUTS) keeps a diverse population and picks what to improve next.
+Where crux *organizes* a research program, ERA *optimizes* the cases inside it: point it at a
+hypothesis with a measurable bar and it searches for a program that clears it, escaping local
+optima and returning a portfolio of winners.
+
+- ☐ **ERA ↔ crux contract** — how a hypothesis's verifiable / metric becomes an ERA scalar objective + sandboxed scorer, and how results return as `## Findings` + a headline metric.
+- ☐ **Search loop** — the `generate_fn` / `execute_fn` interface, sandboxed scoring, and the FUTS / flat-UCB bandit over a program population (exploration vs. exploitation).
+- ☐ **Portfolio output** — return a *diverse* set of high-scoring programs (not just the argmax) with scores + lineage, so the PI can choose.
+- ☐ **Wire into the loop** — launch a search from a `running` hypothesis; record the winning program + metric back through `crux close`; running and the verdict stay under the PI's OK.
+- ☐ **Package as the `era` skill.**
+
+## Epic 5 — Autoresearch: autonomous experiment loops  `autoresearch`
+
+**Goal:** drive the crux loop with far less turn-taking — an agent that proposes the next
+question / hypothesis, registers verifiables, runs experiments, reads results, and rolls up the
+ledger, iterating largely unattended — while the **human-in-charge gates stay intact** (the PI
+still approves running an experiment and recording a verdict, and clears the review gate).
+
+- ☐ **Autonomy envelope** — pin exactly which loop steps run unattended vs. still require PI approval (running + verdicts stay gated); a clear, auditable leash.
+- ☐ **Proposer** — generate the next question / hypothesis + pre-registered verifiables from the current tree + wiki, prioritized by what most reduces uncertainty.
+- ☐ **Runner** — launch and track experiments (local / SLURM), attach run links, detect completion.
+- ☐ **Closer** — read results, tick verifiables, derive the verdict, roll up; surface to the PI at the review gate rather than self-answering.
+- ☐ **Budget & stop** — per-round cost / compute caps and an explicit stopping condition so a loop can't run away.
+- ☐ **Package as the `autoresearch` skill.**
+
 ---
 
 > Mirroring to GitHub Issues later: each epic → one `epic`-labeled issue with the checklist
-> as sub-issues (labels `ui` / `marketing` / `wiki`). This file stays the high-level source of truth.
+> as sub-issues (labels `ui` / `marketing` / `wiki` / `era` / `autoresearch`). This file stays the high-level source of truth.
