@@ -12,11 +12,14 @@ const VERDICTS = ["supported", "partial", "refuted", "inconclusive"];
 // the root is a colorless pill carrying the Crux mark.
 //   cw/ch = compact box   dw = detail width (height follows the wrapped text)
 //   cpl   = chars per wrapped line (detail)   ctrunc = truncation (compact)
+//   shape: questions are sharp-cornered rectangles (container/"header" look); hypotheses and
+//   the root are full pills/stadiums (rx = half-height). That shape split — plus the width and
+//   font gap — is what tells the two kinds apart at a glance in either density.
 const KIND = {
-  project:   { cw: 210, ch: 38, dw: 260, rx: 19, lbl: "t-root", lh: 16,   cpl: 28, ctrunc: 24 },
-  question:  { cw: 196, ch: 32, dw: 250, rx: 7,  lbl: "t-q",    lh: 15,   cpl: 32, ctrunc: 25 },
-  idea:      { cw: 156, ch: 22, dw: 224, rx: 11, lbl: "t-h",    lh: 13.5, cpl: 33, ctrunc: 17 },
-  synthesis: { cw: 172, ch: 26, dw: 172, rx: 0,  lbl: "t-s",    lh: 14,   cpl: 23, ctrunc: 23 },
+  project:   { cw: 210, ch: 36, dw: 250, pill: true, lbl: "t-root", lh: 16,   cpl: 28, ctrunc: 24 },
+  question:  { cw: 202, ch: 34, dw: 270, rx: 4,      lbl: "t-q",    lh: 15.5, cpl: 34, ctrunc: 26 },
+  idea:      { cw: 150, ch: 24, dw: 206, pill: true, lbl: "t-h",    lh: 13.5, cpl: 30, ctrunc: 17 },
+  synthesis: { cw: 172, ch: 26, dw: 172, rx: 0,      lbl: "t-s",    lh: 14,   cpl: 23, ctrunc: 23 },
 };
 const MAX_LINES = 4;
 const geomOf = (id) => state.nodeGeom[id];
@@ -47,14 +50,15 @@ function computeGeom() {
   const g = {};
   for (const [id, n] of Object.entries(state.snap.nodes)) {
     const k = KIND[n.type] || KIND.question;
+    let w, h, lines, dotsPad;
     if (state.density === "compact" || n.type === "synthesis") {
-      g[id] = { w: k.cw, h: k.ch, rx: k.rx, lines: [trunc(n.title, k.ctrunc)], lh: k.lh, dotsPad: 0 };
+      w = k.cw; h = k.ch; lines = [trunc(n.title, k.ctrunc)]; dotsPad = 0;
     } else {
-      const lines = wrapLines(n.title, k.cpl);
-      const dotsPad = n.type === "idea" && (n.verifiables || []).length ? 10 : 0;
-      const h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
-      g[id] = { w: k.dw, h, rx: k.rx, lines, lh: k.lh, dotsPad };
+      lines = wrapLines(n.title, k.cpl);
+      dotsPad = n.type === "idea" && (n.verifiables || []).length ? 10 : 0;
+      w = k.dw; h = Math.max(k.ch, 9 + lines.length * k.lh + 9 + dotsPad);
     }
+    g[id] = { w, h, rx: k.pill ? h / 2 : k.rx, lines, lh: k.lh, dotsPad, kind: n.type };
   }
   return g;
 }
@@ -208,9 +212,12 @@ function nodeSVG(n, p) {
   const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
   const wrap = "node" + (n.status === "running" ? " running" : "") +
     (dimmed ? " dim" : "") + (matches ? " hit" : "");
-  const shape = `<rect class="box ${esc(cls)}${sel}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
+  const shape = `<rect class="box k-${n.type} ${esc(cls)}${sel}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
+  // questions get a bold left accent stripe (in their status colour) so they read as containers
+  const qbar = n.type === "question"
+    ? `<rect class="qbar ${esc(cls)}" x="0" y="${-g.h / 2 + 3}" width="4" height="${g.h - 6}" rx="2"/>` : "";
   const mark = n.type === "project" ? ROOT_MARK : "";
-  const pad = n.type === "project" ? 32 : 12;
+  const pad = n.type === "project" ? 32 : n.type === "question" ? 15 : 12;
   const y0 = -g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;   // centred wrapped block
   const glyph = n.type === "idea" && n.verdict
     ? `<text class="glyph" x="${pad}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
@@ -229,7 +236,7 @@ function nodeSVG(n, p) {
   const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
   const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
   return `<g class="${wrap}" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">` +
-    `${tip}${shape}${mark}${glyph}${lbl}${dots}${toggle}</g>`;
+    `${tip}${shape}${qbar}${mark}${glyph}${lbl}${dots}${toggle}</g>`;
 }
 
 // `fromPos`, when given, is the previous position map; surviving nodes animate from there to

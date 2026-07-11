@@ -60,6 +60,12 @@ verdict/roll-up/view logic changes.
     **dismissable** — an × collapses it to a small "Key" button (state persists) so it never
     blocks the tree. The zoom in/out/fit buttons are ~30% smaller, with the fit glyph enlarged
     relative to its button.
+  - **Round 5 — kind legibility + slimmer bar.** Questions and hypotheses are now obviously
+    different in full-text mode: questions are sharp-cornered "container" boxes with a bold left
+    accent stripe, a heavier border and larger bold text; hypotheses are lighter, thinner pills
+    (fully rounded) with smaller dimmer text and their verdict glyph. Fixed the Review button
+    wrapping onto two lines (nowrap, no shrink). Slimmed the whole top bar (less padding, 28px
+    controls).
 - **Engine JSON API (`engine.snapshot`).** New read-only `snapshot(vault) -> dict`
   — the single machine-readable view of a vault (`engine_version`, `project`,
   `nodes`, `tree`, `queue`), serialized as `/snapshot.json`. Pure-read, stdlib-only,
