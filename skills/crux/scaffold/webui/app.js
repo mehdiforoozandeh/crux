@@ -1069,9 +1069,23 @@ function hash32(s) {
   return h;
 }
 const hash01 = (s) => hash32(s) / 4294967296;
-const WIKI_COLORS = ["#4f9fe0", "#3fa06a", "#8b5cf6", "#d9a13b", "#d75a5a",
-                     "#2f9e8f", "#c66bb0", "#7a9e3f", "#5b74c8", "#b98050"];
-const catColor = (c) => WIKI_COLORS[hash32(String(c)) % WIKI_COLORS.length];
+// Category colors: assigned by SORTED category order, not by hash — hashing let
+// near-identical hues land on different categories (two greens + a teal). The palette
+// alternates warm/cool around the wheel, so the first N categories are maximally
+// distinct for any N. Hash only as fallback for a category missing from the index.
+const WIKI_COLORS = ["#e0524f", "#3fa2e8", "#d9a13b", "#8b5cf6", "#3fa06a",
+                     "#d456a2", "#2f9e8f", "#e0823c", "#5b74c8", "#b98050"];
+let _catMap = {}, _catKey = "";
+function catColor(c) {
+  const cats = [...new Set(wikiPages().map((p) => p.category))].sort();
+  const key = cats.join("|");
+  if (key !== _catKey) {
+    _catKey = key;
+    _catMap = {};
+    cats.forEach((cat, i) => (_catMap[cat] = WIKI_COLORS[i % WIKI_COLORS.length]));
+  }
+  return _catMap[c] || WIKI_COLORS[hash32(String(c)) % WIKI_COLORS.length];
+}
 
 function wikiEdges(pages) {
   const have = new Set(pages.map((p) => p.slug));
@@ -1155,6 +1169,7 @@ function wikiSimLoop() {
     while (WSIM.alpha > 0.006 && guard++ < 600) wikiSimTick();
     WSIM.alpha = 0;
     wikiSimDraw();
+    wikiMaybeRestore();
     return;
   }
   const step = () => {
@@ -1162,6 +1177,7 @@ function wikiSimLoop() {
     wikiSimTick();
     wikiSimDraw();
     if (WSIM.alpha > 0.006 || WSIM.alphaTarget > 0) WSIM.raf = requestAnimationFrame(step);
+    else wikiMaybeRestore();
   };
   WSIM.raf = requestAnimationFrame(step);
 }
@@ -1169,6 +1185,24 @@ function wikiSimLoop() {
 function wikiReheat(alpha) {
   WSIM.alpha = Math.max(WSIM.alpha, alpha);
   wikiSimLoop();
+}
+
+// "Spread": switch the system to pure like-charge repulsion — springs off, charge
+// doubled — and let the ions push each other apart until equilibrium (the soft
+// centering force is the bounding field). Normal physics resume at the new positions
+// once the system cools; the web only re-contracts through later interactions.
+function wikiSpread() {
+  if (!WSIM._restore) WSIM._restore = { SPRING: WSIM.SPRING, CHARGE: WSIM.CHARGE };
+  WSIM.SPRING = 0;
+  WSIM.CHARGE = WSIM._restore.CHARGE * 2;
+  wikiReheat(1);
+}
+function wikiMaybeRestore() {
+  if (WSIM._restore && WSIM.alpha <= 0.006) {
+    Object.assign(WSIM, WSIM._restore);
+    WSIM._restore = null;
+    fitWikiGraph();   // the expansion usually outgrows the viewport — reframe it
+  }
 }
 
 // Sync the sim to the polled index. Surviving nodes KEEP their positions (the graph
@@ -1411,6 +1445,7 @@ function wikiCenterZoom(factor) {
 $("wgraph-in").addEventListener("click", () => wikiCenterZoom(1.35));
 $("wgraph-out").addEventListener("click", () => wikiCenterZoom(1 / 1.35));
 $("wgraph-fit").addEventListener("click", fitWikiGraph);
+$("wgraph-spread").addEventListener("click", wikiSpread);
 
 // ------------------------------------------------------------------ reader (lazy page fetch)
 function openWikiPage(slug) {
