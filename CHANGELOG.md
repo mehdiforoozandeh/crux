@@ -4,7 +4,7 @@ All notable changes to crux. Format loosely follows [Keep a Changelog](https://k
 the engine version (`ENGINE_VERSION`, stamped into every vault) bumps when the vault format or
 verdict/roll-up/view logic changes.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-12
 
 ### Added
 
@@ -22,7 +22,9 @@ verdict/roll-up/view logic changes.
   by an additive `wiki` key in `engine.snapshot()` (index only — no page bodies in the
   1s poll) and a lazy, read-only, traversal-safe `/wiki/<slug>.json` route (body +
   server-computed backlinks; reserved slugs `_index`/`_log`/`_schema` serve the
-  specials). Wiki search also filters the rail's sources, and the crux-wiki ingest
+  specials). Categories get maximally-distinct colors (sorted-order assignment over a
+  warm/cool-alternating palette), and a ⚛ button spreads the constellation to a
+  pure-repulsion "ion" equilibrium. Wiki search also filters the rail's sources, and the crux-wiki ingest
   convention now carries the full author list in source titles — papers are findable by
   any co-author's name. One vendored static asset — `webui/vendor/motion.js` (motion.dev
   browser build, MIT) — as progressive-enhancement animation only: the UI is fully
@@ -103,4 +105,5 @@ Two headline additions — a **browser GUI** (Epic 1) and a **literature wiki** 
   read-only snapshot API). Pre-wiki vaults load unchanged and stand up the wiki lazily on first
   ingest; no migration required. `crux validate` now also runs the wiki structural lint.
 
+[0.4.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.3.0
