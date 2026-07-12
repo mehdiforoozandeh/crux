@@ -32,10 +32,13 @@ with a bar you set in advance (*"ADE20K mIoU ≥ supervised + 2.0"*); your agent
 back; **you** sign off on the verdict. Nothing counts until you do.
 
 <p align="center">
-  <img src="assets/crux-schematic.svg" alt="Crux schematic — a vault tree of Questions and Hypotheses; the ask → hypothesize → test → close → review → answer loop; and the PI / Agent / Engine roles" width="820">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-schematic-dark.svg">
+    <img src="assets/crux-schematic-light.svg" width="820" alt="Crux schematic: a vault tree — a Project holds Questions, and each Question holds falsifiable Hypotheses that are approved (green check) or rejected (red cross) by their verifiables — beside the ask → hypothesize → test → close → review → answer loop, with the Human / Agent / Engine roles.">
+  </picture>
 </p>
 
-<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Color here marks <b>role</b> (project · question · hypothesis); in the cockpit below it marks <b>status</b>.</sub></p>
+<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Green ✓ / red ✗ mark met / unmet — the same reading as the status-colored cockpit below.</sub></p>
 
 ## Install
 

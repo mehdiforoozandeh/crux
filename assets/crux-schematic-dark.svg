@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux schematic. Left, the crux-tree: a Project holds Questions, and each Question holds falsifiable Hypotheses that are approved (green check) or rejected (red cross) by their verifiables. Right, the loop: ask, hypothesize, test, close, review (human), answer or pursue, with findings feeding new questions. Roles: the Human decides, the Agent drafts, the Engine records deterministically.">
+  <style>
+    .brand{fill:#d9a13b}.brands{stroke:#d9a13b}
+    .ink{fill:#e8e3d9}
+    .mut{fill:#9aa0a6}
+    .boxs{stroke:#7c7568}
+    .conns{stroke:#7c7568;fill:none}
+    .arrow{fill:#7c7568}
+    .ok{fill:#3fb950}.no{fill:#f0645a}
+    rect{fill:none}
+  </style>
+  <defs>
+    <marker id="a" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
+      <path d="M0,0 L5,2.5 L0,5 Z" class="arrow"/>
+    </marker>
+  </defs>
+
+  <!-- logo: Crux / Southern Cross -->
+  <g class="brands" stroke-opacity=".75" stroke-width="1.1">
+    <line x1="70" y1="30" x2="65" y2="98"/>
+    <line x1="40" y1="66" x2="92" y2="60"/>
+  </g>
+  <g class="brand">
+    <circle cx="70" cy="30" r="2.7"/>
+    <circle cx="65" cy="98" r="3.6"/>
+    <circle cx="40" cy="66" r="2.7"/>
+    <circle cx="92" cy="60" r="2.3"/>
+    <circle cx="77" cy="82" r="1.6"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="120" y="80" class="brand" font-size="46" font-weight="700">Crux</text>
+
+  <!-- zone labels -->
+  <text x="48" y="173" class="mut" font-size="16.5" letter-spacing="2.5" font-weight="600">CRUX-TREE</text>
+  <text x="735" y="173" class="mut" font-size="16.5" letter-spacing="2.5" font-weight="600">THE LOOP</text>
+  <line x1="600" y1="160" x2="600" y2="500" class="conns" stroke-opacity=".3"/>
+
+  <!-- CRUX-TREE connectors -->
+  <g class="conns" stroke-opacity=".85">
+    <line x1="310" y1="242" x2="200" y2="292"/>
+    <line x1="310" y1="242" x2="420" y2="292"/>
+    <line x1="420" y1="340" x2="335" y2="392"/>
+    <line x1="420" y1="340" x2="505" y2="392"/>
+  </g>
+
+  <!-- project (root) -->
+  <rect x="240" y="196" width="140" height="46" rx="10" class="boxs" stroke-width="1.7"/>
+  <text x="310" y="226" text-anchor="middle" class="ink" font-size="20" font-weight="700">Project</text>
+
+  <!-- questions -->
+  <rect x="118" y="292" width="164" height="48" rx="10" class="boxs" stroke-width="1.5"/>
+  <text x="200" y="323" text-anchor="middle" class="ink" font-size="20" font-weight="600">Question</text>
+  <rect x="338" y="292" width="164" height="48" rx="10" class="boxs" stroke-width="1.5"/>
+  <text x="420" y="323" text-anchor="middle" class="ink" font-size="20" font-weight="600">Question</text>
+
+  <!-- hypotheses: approved / rejected -->
+  <rect x="256" y="392" width="158" height="46" rx="10" class="boxs" stroke-width="1.5"/>
+  <text x="272" y="422" font-size="17.5" font-weight="600"><tspan class="ok">✓</tspan><tspan class="ink" dx="7">Hypothesis</tspan></text>
+  <rect x="426" y="392" width="158" height="46" rx="10" class="boxs" stroke-width="1.5"/>
+  <text x="442" y="422" font-size="17.5" font-weight="600"><tspan class="no">✕</tspan><tspan class="ink" dx="7">Hypothesis</tspan></text>
+
+  <text x="420" y="473" text-anchor="middle" class="mut" font-size="15.5">approved or rejected by its verifiables</text>
+
+  <!-- THE LOOP arrows -->
+  <g class="conns" stroke-opacity=".9" marker-end="url(#a)">
+    <line x1="840" y1="236" x2="840" y2="247"/>
+    <line x1="840" y1="292" x2="840" y2="303"/>
+    <line x1="840" y1="348" x2="840" y2="359"/>
+    <line x1="840" y1="404" x2="840" y2="415"/>
+    <line x1="840" y1="460" x2="840" y2="471"/>
+  </g>
+
+  <!-- pills -->
+  <g font-size="20" font-weight="600" text-anchor="middle">
+    <rect x="730" y="192" width="220" height="44" rx="22" class="boxs" stroke-width="1.4"/>
+    <text x="840" y="221" class="ink">ask</text>
+    <rect x="730" y="248" width="220" height="44" rx="22" class="boxs" stroke-width="1.4"/>
+    <text x="840" y="277" class="ink">hypothesize</text>
+    <rect x="730" y="304" width="220" height="44" rx="22" class="boxs" stroke-width="1.4"/>
+    <text x="840" y="333" class="ink">test</text>
+    <rect x="730" y="360" width="220" height="44" rx="22" class="boxs" stroke-width="1.4"/>
+    <text x="840" y="389" class="ink">close</text>
+    <rect x="730" y="416" width="220" height="44" rx="22" class="brands" stroke-width="1.9"/>
+    <text x="840" y="445"><tspan class="brand">review</tspan><tspan class="mut" dx="5" font-size="17.5" font-weight="400">· human</tspan></text>
+    <rect x="730" y="472" width="220" height="44" rx="22" class="boxs" stroke-width="1.4"/>
+    <text x="840" y="501" class="ink">answer / pursue</text>
+  </g>
+
+  <!-- loop-back: findings spawn new questions -->
+  <path d="M950,494 C1013,494 1013,214 956,214" class="conns" stroke-opacity=".65" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a)"/>
+  <text x="1005" y="354" class="mut" font-size="14.5" text-anchor="middle" transform="rotate(90 1005 354)">findings → new questions</text>
+
+  <!-- roles -->
+  <line x1="48" y1="514" x2="1072" y2="514" class="conns" stroke-opacity=".3"/>
+  <text x="560" y="545" text-anchor="middle" font-size="17.5">
+    <tspan class="brand" font-weight="700">Human</tspan><tspan class="mut" dx="4">decides</tspan>
+    <tspan class="mut" dx="18">·</tspan>
+    <tspan class="ink" font-weight="700" dx="18">Agent</tspan><tspan class="mut" dx="4">drafts</tspan>
+    <tspan class="mut" dx="18">·</tspan>
+    <tspan class="ink" font-weight="700" dx="18">Engine</tspan><tspan class="mut" dx="4">records (deterministic)</tspan>
+  </text>
+</svg>
