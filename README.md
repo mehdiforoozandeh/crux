@@ -110,7 +110,7 @@ your program; the agent is how you *fly* it.
 - **Migrate an existing repo** — code and results, months of work already on disk? It *reads* them and reconstructs what was **asked, tested, and found** into a crux-tree, pinning already-run hypotheses with the verdicts they earned. It only ever writes under `cruxvault/` and **never touches your files**.
 
 Either way it drafts **one seed outline**, you approve it, and the engine materializes the whole
-notebook atomically. The seed carries both a **fresh** hypothesis (an idea to run) and a
+notebook all at once. The seed carries both a **fresh** hypothesis (an idea to run) and a
 **migrated** `[tested]` one (already-run, with its finding):
 
 ```
