@@ -164,7 +164,7 @@ crux serve                                                                      
 
 **The verdict is mechanical.** `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine **never reads your run logs** — you supply the per-box judgment and a headline metric; the bar itself was fixed before the run, so there's no goalpost left to move. h1 ticked all three and landed **supported**; MAE's migrated h2 met one of three (+1.8 full-FT, −6.7 frozen) → **partial**, not a rounded-up win. And crux keeps the losers — h3's DenseCL came back **refuted** at −1.3 mIoU, recorded so you never re-run a dead end.
 
-The human cost is bounded: you sign off **exactly twice** per hypothesis — before it runs, and before its verdict is recorded — **and never more**. crux sits beside you at the bench, not in the way. Full seed-spec reference in [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
+The human cost is bounded and predictable: you sign off **twice per hypothesis** — before it runs and before its verdict is recorded — plus once **per question** at the **review gate**, where you choose `answer` or `pursue` (the gate the cockpit's *Review* queue and the schematic's *review · human* step both show). crux sits beside you at the bench, not in the way. Full seed-spec reference in [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
 
 ## License
 
