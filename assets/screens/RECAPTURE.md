@@ -7,9 +7,11 @@ light/dark pairs via `<picture>` so each matches the reader's GitHub theme.
 
 | file | tab | state |
 |------|-----|-------|
-| `cockpit-tree-{light,dark}` | Tree | `h1` selected → evidence ledger |
+| `cockpit-tree-{light,dark}` | Tree | `q3`/`q4`/`q5` collapsed, `h1` selected → evidence ledger |
 | `wiki-graph-{light,dark}`   | Wiki | knowledge graph + `_index` page |
-| `question-rollup-{light,dark}` | Tree | `q2` selected → resolved-question roll-up |
+
+The tree shots collapse the deeper branches (and hide the color-key legend + help
+hint) so the remaining boxes render **large and legible** at README width.
 
 ## Recipe
 
@@ -37,6 +39,6 @@ for p in glob.glob(f"{SRC}/*.png"):
 PY
 ```
 
-Node ids (`h1`, `q2`) come from the vault's `META.md`; change them in
-`recapture.js` if you shoot a different vault. Keep captures **read-only** and the
-`View-only` pill in frame — the cockpit never writes.
+Node ids (`h1`, and the collapsed `q3`/`q4`/`q5`) come from the vault's `META.md`;
+change them in `recapture.js` if you shoot a different vault. Keep captures
+**read-only** and the `View-only` pill in frame — the cockpit never writes.

@@ -4,15 +4,6 @@
 
 > *Crux* (the Southern Cross) is the sky's smallest constellation and its most reliable signpost — for centuries it's how navigators found their bearings. `crux` does the same for a research program: it keeps you oriented through a growing tree of open questions and the hypotheses that resolve them, and helps you get to the **crux** of each one.
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/cockpit-tree-dark.webp">
-    <img src="assets/screens/cockpit-tree-light.webp" width="900" alt="The crux serve cockpit (read-only): a real research program (SegSSL) as a status-colored question/hypothesis tree on the left, and one hypothesis's evidence ledger on the right — its pre-registered verifiables (all met), headline metric (+3.3 mIoU on ADE20K), run link, and finding. Served locally over 127.0.0.1; every edit goes through your agent or the crux CLI.">
-  </picture>
-</p>
-
-<p align="center"><sub><b><code>crux serve</code></b> gives you a dependency-free, <b>read-only</b> browser cockpit over the vault — the status-colored tree on the left, a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding) on the right. It only reads the vault; edits go through your agent or the <code>crux</code> CLI. <em>(Real screenshot — the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example.)</em></sub></p>
-
 ## What it is
 
 `crux` organizes a research program the way the scientific method actually works:
@@ -26,18 +17,7 @@
   <img src="assets/crux-schematic.svg" alt="Crux schematic — a vault tree of Questions and Hypotheses; the ask → hypothesize → test → close → review → answer loop; and the PI / Agent / Engine roles" width="820">
 </p>
 
-<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Here color marks <b>role</b> (project · question · hypothesis); in the cockpit above, color marks <b>status</b>.</sub></p>
-
-Everything is plain markdown in an **Obsidian-graphable vault**: open it and the question/hypothesis tree *is* the graph — or run **`crux serve`** for a dependency-free, status-colored **browser cockpit** over the same vault (read-only: pan / zoom / search the tree, watch the review gate). A parallel **literature wiki** (the `crux-wiki` skill) compiles PI-curated sources into an interlinked knowledge base the agent draws on, cross-linked with the tree.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/wiki-graph-dark.webp">
-    <img src="assets/screens/wiki-graph-light.webp" width="900" alt="The cockpit's Wiki tab: the SegSSL literature wiki drawn as a force-directed knowledge graph — nodes are wiki pages colored by category (concept, method, dataset, comparison, entity) and sized by number of links; a left explorer lists the pages and the 15 curated sources; the right pane renders the selected page. Read-only and served locally.">
-  </picture>
-</p>
-
-<p align="center"><sub>The <b>literature wiki</b> as a live knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources; knowledge flows literature → wiki → tree, never back.</sub></p>
+<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Color here marks <b>role</b> (project · question · hypothesis); in the cockpit below it marks <b>status</b>.</sub></p>
 
 ## Install
 
@@ -58,6 +38,37 @@ cd crux && ./install.sh
 
 The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
 root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`).
+
+## The cockpit
+
+The vault is just plain markdown, so you can open it in **Obsidian** if you like — the
+question/hypothesis tree and `[[wikilinks]]` work out of the box. But crux has its **own**
+home for it: run **`crux serve`** for a dependency-free, **read-only** browser **cockpit** —
+pan / zoom / search the live, status-colored tree, watch the review gate, and read each
+node's evidence ledger. It's what we recommend; Obsidian stays available for editing.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/cockpit-tree-dark.webp">
+    <img src="assets/screens/cockpit-tree-light.webp" width="900" alt="The crux serve cockpit (read-only) over the SegSSL example: the question/hypothesis tree colored by status — a couple of branches expanded, the rest collapsed — with hypothesis h1's evidence ledger on the right: its pre-registered verifiables (all met), headline metric (+3.3 mIoU on ADE20K), run link, and finding. Served locally over 127.0.0.1; edits go through your agent or the crux CLI.">
+  </picture>
+</p>
+
+<p align="center"><sub>The <b>cockpit</b> over the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example — the status-colored tree (branches collapse/expand) and a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding). Read-only; every edit goes through your agent or the <code>crux</code> CLI. <em>(Real screenshot; it matches your GitHub light/dark theme.)</em></sub></p>
+
+It also gives the **literature wiki** its own home — a knowledge-graph view that's crux's, not
+Obsidian's. The `crux-wiki` skill compiles PI-curated sources into interlinked pages; the
+cockpit draws them as a graph colored by category and sized by links, cross-linked with the
+tree (knowledge flows literature → wiki → tree, never back).
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/wiki-graph-dark.webp">
+    <img src="assets/screens/wiki-graph-light.webp" width="900" alt="The cockpit's Wiki tab: the SegSSL literature wiki drawn as a force-directed knowledge graph — nodes are wiki pages colored by category (concept, method, dataset, comparison, entity) and sized by number of links; a left explorer lists the pages and the 15 curated sources; the right pane renders the selected page. This is crux's own view, not Obsidian's graph.">
+  </picture>
+</p>
+
+<p align="center"><sub>The <b>literature wiki</b> as crux's own knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources.</sub></p>
 
 ## Setting up in your project
 
@@ -101,35 +112,6 @@ researcher opens a question and designs the first hypothesis:
 </p>
 
 The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine never reads your run logs — you supply the per-box judgment and a headline metric. That keeps it domain-agnostic. Running an experiment and recording a verdict are always **your** call — crux is human-in-charge by default.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/question-rollup-dark.webp">
-    <img src="assets/screens/question-rollup-light.webp" width="900" alt="The cockpit showing a resolved question — 'Which SSL objective family transfers best to dense prediction?' — with its framing and a synthesized 'Answer so far' that aggregates the verdicts of the hypotheses beneath it. Read-only; the answer is recorded through your agent or the crux CLI.">
-  </picture>
-</p>
-
-<p align="center"><sub>A <b>resolved question</b> in the cockpit: its standing answer, rolled up from the verdicts of the hypotheses beneath it. You decide when a question is truly answered — the cockpit only shows the state.</sub></p>
-
-## How it's built
-
-`crux` is a **collection of skills** under `skills/`:
-
-- [`skills/crux/`](skills/crux) — the tool itself: `SKILL.md` (the PI ⇄ Agent ⇄ Engine playbook) + `scaffold/` (the engine: `crux.py`, `engine.py`, `render.py`, `templates/`, `selftest.py` — see [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md)) + `examples/`.
-- [`skills/crux-wiki/`](skills/crux-wiki) — the literature-wiki layer: compile PI-curated sources under `raw/` into interlinked `wiki/` pages the agent draws on (knowledge flows literature → wiki → tree; findings never flow back).
-- [`skills/crux-cockpit/`](skills/crux-cockpit) — the GUI launcher: the agent playbook that runs `crux serve` beginning to finish — locate the vault, start fresh on localhost, verify, hand you one clickable URL; plus status / stop / restart.
-- [`skills/evolve-crux/`](skills/evolve-crux) — the playbook for evolving crux itself (ideate → build → validate → ship).
-
-Validate the engine end-to-end (no GPU/tokens/SLURM):
-
-```bash
-python skills/crux/scaffold/selftest.py            # builds a dummy vault, asserts every invariant
-python skills/crux/scaffold/selftest.py --keep ./v # …and keep it to open in Obsidian
-```
-
-## Roadmap
-
-A read-only **browser cockpit** (`crux serve`) and a **literature wiki** (`crux-wiki`) both landed in **0.3.0** — see [`ROADMAP.md`](ROADMAP.md) and the [changelog](CHANGELOG.md). `crux` is the home for a small constellation of agentic-research tools; planned siblings under the same roof: **era** (whole-program search toward a score) and **autoresearch** (autonomous experiment loops).
 
 ## License
 

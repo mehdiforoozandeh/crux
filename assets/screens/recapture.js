@@ -3,7 +3,7 @@
 //   node assets/screens/recapture.js        # captures 2x PNGs into /tmp/crux-shots
 //
 // Drives the *installed* Chrome via puppeteer-core (no bundled browser download):
-//   npm i -g puppeteer-core           # or: npm i puppeteer-core in a scratch dir
+//   npm i puppeteer-core              # in a scratch dir, or -g
 // Point CRUX_URL at a running `crux serve` over the vault you want to shoot
 // (default http://localhost:8896 — the segssl_vault example makes good material).
 // Then convert the PNGs to .webp (RECAPTURE.md has the one-liner).
@@ -18,16 +18,11 @@ const URL = process.env.CRUX_URL || 'http://localhost:8896';
 const OUT = process.env.OUT || '/tmp/crux-shots';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Which node to select for each tree shot (ids from the vault's META.md).
-// h1 = a clean "supported" hypothesis (rich ledger); q2 = a resolved question (roll-up).
-const SHOTS = [
-  { name: 'cockpit-tree-dark',      theme: 'dark',  tab: 'tree', node: 'h1' },
-  { name: 'cockpit-tree-light',     theme: 'light', tab: 'tree', node: 'h1' },
-  { name: 'wiki-graph-dark',        theme: 'dark',  tab: 'wiki' },
-  { name: 'wiki-graph-light',       theme: 'light', tab: 'wiki' },
-  { name: 'question-rollup-dark',   theme: 'dark',  tab: 'tree', node: 'q2' },
-  { name: 'question-rollup-light',  theme: 'light', tab: 'tree', node: 'q2' },
-];
+// For a legible tree, collapse the deeper/later branches so the remaining nodes
+// render large, and select one hypothesis to show its evidence ledger.
+// Ids come from the vault's META.md — change them if you shoot a different vault.
+const COLLAPSE = ['q3', 'q4', 'q5'];   // keep q1 + q2 expanded
+const LEDGER_NODE = 'h1';              // a clean "supported" hypothesis
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
@@ -35,38 +30,50 @@ async function main() {
     executablePath: CHROME,
     headless: 'new',
     args: ['--no-sandbox', '--hide-scrollbars', '--force-color-profile=srgb'],
-    defaultViewport: { width: 1360, height: 812, deviceScaleFactor: 2 },
+    defaultViewport: { width: 1440, height: 940, deviceScaleFactor: 2 },
   });
   const page = await browser.newPage();
+  // legend + controls-help hint off, so nothing overlaps the tree
+  await page.evaluateOnNewDocument(() => {
+    try {
+      localStorage.setItem('crux-legend-hidden', '1');
+      localStorage.setItem('crux-help-hidden', '1');
+    } catch (e) {}
+  });
   await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
-  await page.waitForSelector('#tree, #cockpit', { timeout: 15000 });
+  await page.waitForSelector('#tree', { timeout: 15000 });
   await sleep(1200);
 
-  for (const s of SHOTS) {
-    await page.evaluate((t) => {
-      document.documentElement.dataset.theme = t;
-      try { localStorage.setItem('crux-theme', t); } catch (e) {}
-      const hint = document.querySelector('#help .hint'); if (hint) hint.hidden = true;
-    }, s.theme);
-    await page.evaluate((tab) => {
-      const b = document.querySelector(`#tabs [data-tab="${tab}"]`);
-      if (b) b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    }, s.tab);
-    await sleep(300);
-    if (s.tab === 'wiki') {
-      await sleep(1900); // let the force graph settle
-    } else if (s.node) {
-      await page.evaluate((id) => {
-        const g = document.querySelector(`g.node[data-id="${id}"]`);
-        if (g) g.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      }, s.node);
-      await sleep(700);
-    }
-    await sleep(250);
-    const p = path.join(OUT, s.name + '.png');
-    await page.screenshot({ path: p });
-    console.log('saved', p);
+  const theme = (t) => page.evaluate((t) => { document.documentElement.dataset.theme = t; }, t);
+  const click = (sel) => page.evaluate((s) => {
+    const e = document.querySelector(s);
+    if (e) e.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  }, sel);
+  const toggle = async (ids) => { for (const id of ids) { await click(`[data-toggle="${id}"]`); await sleep(120); } };
+
+  async function treeShot(name, t) {
+    await click('#tabs [data-tab="tree"]'); await sleep(200);
+    await theme(t);
+    await toggle(COLLAPSE);                          // collapse deeper branches
+    await click(`g.node[data-id="${LEDGER_NODE}"]`); await sleep(200);
+    await click('#zoom-fit'); await sleep(500);      // fit the (smaller) tree large
+    await page.screenshot({ path: path.join(OUT, name + '.png') });
+    console.log('saved', name);
+    await toggle(COLLAPSE);                           // re-expand for the next shot
   }
+  async function wikiShot(name, t) {
+    await theme(t);
+    await click('#tabs [data-tab="wiki"]'); await sleep(1900); // let the force graph settle
+    await page.screenshot({ path: path.join(OUT, name + '.png') });
+    console.log('saved', name);
+    await click('#tabs [data-tab="tree"]'); await sleep(200);
+  }
+
+  await treeShot('cockpit-tree-light', 'light');
+  await treeShot('cockpit-tree-dark', 'dark');
+  await wikiShot('wiki-graph-light', 'light');
+  await wikiShot('wiki-graph-dark', 'dark');
+
   await browser.close();
   console.log('DONE — now convert to .webp (see RECAPTURE.md)');
 }
