@@ -23,13 +23,13 @@ each question is actually settled? `crux` makes that explicit and keeps it that 
 a research program the way the scientific method actually works:
 
 - **Questions** — what you don't know. They carry no answer of their own; they're resolved by aggregating the findings beneath them. Questions nest.
-- **Hypotheses** — falsifiable, testable leaves under a question. Each carries **pre-registered verifiables** — the concrete pass/fail checks you write down *before* running (like *"test accuracy ≥ +2% vs baseline, held-out"*) — plus its **findings**. Hypotheses are the only things actually tested.
+- **Hypotheses** — falsifiable, testable leaves under a question. Each carries **pre-registered verifiables** — the concrete pass/fail checks you write down *before* running (like *"ADE20K val mIoU ≥ supervised + 2.0, 3-seed mean"*) — plus its **findings**. Hypotheses are the only things actually tested.
 - A plain-Python **engine** does the bookkeeping so you don't: it assigns IDs, keeps the tree consistent, tallies the evidence upward, pauses at a human **review gate** for your sign-off before anything counts as final, and regenerates a navigable `META.md` map + `EXPERIMENTS.md` registry.
 - An **LLM agent** drives it conversationally; **you (the PI)** make the judgment calls — which questions matter, the verifiable bar, and when a question is truly answered.
 
-For example: you ask *"Does data augmentation improve test accuracy?"*; crux pins a hypothesis
-with a bar you set in advance (*"+2% held-out"*); your agent runs it and reports back; **you**
-sign off on the verdict. Nothing counts until you do.
+For example: you ask *"Does SSL pretraining beat supervised ImageNet init?"*; crux pins a hypothesis
+with a bar you set in advance (*"ADE20K mIoU ≥ supervised + 2.0"*); your agent runs it and reports
+back; **you** sign off on the verdict. Nothing counts until you do.
 
 <p align="center">
   <img src="assets/crux-schematic.svg" alt="Crux schematic — a vault tree of Questions and Hypotheses; the ask → hypothesize → test → close → review → answer loop; and the PI / Agent / Engine roles" width="820">
@@ -90,59 +90,76 @@ That's structure Obsidian's undifferentiated graph doesn't capture.
 
 <p align="center"><sub>The <b>literature wiki</b> as crux's own knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources.</sub></p>
 
-## Setting up in your project
+## Driving crux
 
-Once the skill is installed, just tell your agent to **set up crux in your repo**. It runs
-a short interview — *you only think about the science* — and stands up the vault for you:
+The cockpit above **shows**; the agent **drives**. Everything above is the read-only instrument
+panel — you watch it. This is the other side of the glass, where the vault actually gets written.
+You never edit `cruxvault/` by hand and you never memorize the engine's verbs — you **talk to your
+agent** in plain language, it runs the engine, and **you approve**. The cockpit is how you *read*
+your program; the agent is how you *fly* it.
 
-- **Have a proposal, notes, or a draft paper?** Point the agent at it; it drafts your setup from it.
-- **Already have a working repo** (code, results, months of work)? It reads it and *migrates*
-  it into an organized crux-tree — reconstructing what was asked, tested, and found. It only
-  ever writes under `cruxvault/` and never touches your existing files.
-- **Nothing written down yet?** It figures the project out with you, one question at a time.
+**Two ways in.** Tell your agent to **set up crux in your repo**. It runs a short interview —
+*you only think about the science* — and stands up the vault one of two ways:
 
-Either way it drafts one **seed outline**, you approve it, and the engine materializes the
-whole notebook atomically. The seed shows both a fresh hypothesis and a migrated (already-run) one:
+- **New project** — describe the idea (or point it at a proposal, notes, or a draft paper). It asks a few questions, then drafts your first question and a hypothesis or two to run.
+- **Migrate an existing repo** — code and results, months of work already on disk? It *reads* them and reconstructs what was **asked, tested, and found** into a crux-tree, pinning already-run hypotheses with the verdicts they earned. It only ever writes under `cruxvault/` and **never touches your files**.
+
+Either way it drafts **one seed outline**, you approve it, and the engine materializes the whole
+notebook atomically. The seed carries both a **fresh** hypothesis (an idea to run) and a
+**migrated** `[tested]` one (already-run, with its finding):
 
 ```
-- Project: CANDI — self-supervised epigenome imputation
-  - Q: Can JEPA improve CANDI?
-    - H: JEPA pretraining beats supervised init            # fresh — an idea to run
-      - v: imputation Spearman ≥ +0.01 vs baseline
-    - H: [tested] contrastive aux loss lifts peak AUROC    # migrated — already-run work
-      - v: [x] peak AUROC ≥ +0.02 (found: 0.71 → 0.74)
-      - finding: net win on peaks.
+- Project: SegSSL — label-efficient segmentation
+  - Q: Does SSL pretraining beat supervised ImageNet init?
+    - H: iBOT+UPerNet beats supervised init                       # fresh — an idea to run
+      - v: ADE20K val mIoU ≥ supervised + 2.0 (3-seed mean)
+    - H: [tested] MAE beats supervised only under full fine-tuning # migrated — already-run work
+      - v: [x] ADE20K mIoU ≥ +1.5 (found: +1.8 full-FT; −6.7 linear-probe)
+      - finding: partial — wins under full FT, collapses when frozen.
 ```
 ```bash
 crux init --from seed.md --dir cruxvault
 ```
 
-crux is **human-in-charge by default**: you sign off exactly twice per hypothesis — before it
-runs, and before its verdict is recorded — and never more. Full seed-spec reference in
-[`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
+That seed grows into a real, months-long program — the [segssl_vault](skills/crux/examples/segssl_vault)
+example runs **5 questions and 15 hypotheses** deep, with q5 still open (one running, one an idea).
 
-## A minute with crux
+**The loop.** Day to day it's one rhythm: you ask, the agent proposes a hypothesis with a
+**bar locked _before_ the run**, you approve, it runs and reports, you sign off, a verdict lands.
 
-You drive crux by **talking to your agent**. You describe the science; it proposes the concrete
-node and a falsifiable bar; you approve; it runs the engine. You never memorize verbs. Here a
-researcher opens a question and designs the first hypothesis:
-
-<p align="center">
-  <img src="assets/minute-with-crux.svg" alt="A chat: the researcher types /crux to start a project, the agent opens the question 'Does data augmentation improve test accuracy?' (q1), then proposes and pre-registers a hypothesis with a falsifiable verifiable (test accuracy ≥ +2% vs the no-aug baseline, held-out) as h1 — each engine command run only after the researcher approves." width="820">
-</p>
-
-Under the hood, that whole conversation is just a handful of engine commands — you never type
-them, but here they are end to end:
-
-```bash
-crux ask "Does data augmentation improve test accuracy?"                       # opens q1
-crux hypothesize "aug beats no-aug" -p q1 -v "test acc ≥ +2% vs baseline, held-out"  # h1, bar locked
-crux test h1 --run "wandb.ai/…/runs/abc"                                        # idea → running
-crux close h1 -m "acc +2.4%"                                                    # verdict from the ticked checkboxes
-crux serve                                                                      # open the read-only cockpit
+```text
+you    Does self-supervised pretraining beat supervised ImageNet init for
+       segmentation transfer — same encoder, same decoder, full labels?
+crux   That's your open question q1. Pinning one hypothesis under it —
+       "iBOT+UPerNet beats supervised init" — and locking the bar before we run:
+         • ADE20K val mIoU ≥ supervised + 2.0     (3-seed mean)
+         • Cityscapes val mIoU ≥ supervised + 1.0 (3-seed mean)
+         • gain holds in all 3 seeds
+       Register it as h1?
+you    Yes.                        ← sign-off 1 · the bar, before it runs
+crux   Kicked off — slurm 83612 (wandb segssl/q1-ibot-vs-sup). h1 is running.
+       …
+crux   Back: +3.3 mIoU ADE20K (49.6 vs 46.3), +1.5 Cityscapes (80.6 vs 79.1),
+       and the gain held across all three seeds. All three bars met. Record it?
+you    Signed off.                 ← sign-off 2 · the verdict, before it counts
+crux   h1 → supported. iBOT/DINO is now the SegSSL default.
 ```
 
-The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine never reads your run logs — you supply the per-box judgment and a headline metric. That keeps it domain-agnostic and keeps you honest: the bar was set before the run.
+You never type the engine yourself, but under the hood that whole exchange is a handful of
+commands, here end to end:
+
+```bash
+crux ask "Does SSL pretraining beat supervised ImageNet init for segmentation transfer?"  # opens q1
+crux hypothesize "iBOT+UPerNet beats supervised init" -p q1 \
+     -v "ADE20K val mIoU ≥ supervised + 2.0 (3-seed mean)"                                 # h1, bar locked
+crux test h1 --run "slurm 83612 (wandb segssl/q1-ibot-vs-sup)"                             # idea → running
+crux close h1 -m "+3.3 mIoU ADE20K, +1.5 mIoU Cityscapes"                                  # verdict from ticked boxes
+crux serve                                                                                 # open the read-only cockpit
+```
+
+**The verdict is mechanical.** `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine **never reads your run logs** — you supply the per-box judgment and a headline metric; the bar itself was fixed before the run, so there's no goalpost left to move. h1 ticked all three and landed **supported**; MAE's migrated h2 met one of three (+1.8 full-FT, −6.7 frozen) → **partial**, not a rounded-up win. And crux keeps the losers — h3's DenseCL came back **refuted** at −1.3 mIoU, recorded so you never re-run a dead end.
+
+The human cost is bounded: you sign off **exactly twice** per hypothesis — before it runs, and before its verdict is recorded — **and never more**. crux sits beside you at the bench, not in the way. Full seed-spec reference in [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
 
 ## License
 
