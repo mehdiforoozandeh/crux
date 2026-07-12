@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 576" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Crux schematic. Left, the crux-tree: a Project holds Questions, and each Question holds falsifiable Hypotheses that are approved (green check) or rejected (red cross) by their verifiables. Right, the loop: ask, hypothesize, test, close, review (human), answer or pursue, with findings feeding new questions. Roles: the Human decides, the Agent drafts, the Engine records deterministically.">
   <style>
-    .brand{fill:#d9a13b}.brands{stroke:#d9a13b}
+    .brand{fill:#c99219}.brands{stroke:#c99219}
     .ink{fill:#e8e3d9}
     .mut{fill:#9aa0a6}
     .boxs{stroke:#7c7568}
