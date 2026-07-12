@@ -684,6 +684,32 @@ svg.addEventListener("pointerdown", (e) => {
   window.addEventListener("pointercancel", onPanEnd);
 });
 
+// Hover spotlight — parity with the wiki graph's responsiveness: the touched node
+// lights up, its edges heat, everything unrelated cools. A CSS-only brightness change
+// was imperceptible at tree zoom levels; the spotlight is what reads as "responsive".
+svg.addEventListener("pointerover", (e) => {
+  const node = e.target.closest(".node");
+  if (!node || pan) return;
+  const id = node.getAttribute("data-id");
+  const nb = new Set([id]);
+  svg.querySelectorAll(".edge").forEach((el) => {
+    const p = el.getAttribute("data-p"), c = el.getAttribute("data-c");
+    if (p === id) nb.add(c);
+    if (c === id) nb.add(p);
+    el.classList.toggle("hot", p === id || c === id);
+  });
+  node.classList.add("hov");
+  svg.querySelectorAll(".node").forEach((el) =>
+    el.classList.toggle("cold", !nb.has(el.getAttribute("data-id"))));
+});
+svg.addEventListener("pointerout", (e) => {
+  if (!e.target.closest(".node")) return;
+  if (e.relatedTarget && e.relatedTarget.closest &&
+      e.relatedTarget.closest(".node") === e.target.closest(".node")) return;
+  svg.querySelectorAll(".hot, .cold, .hov").forEach((el) =>
+    el.classList.remove("hot", "cold", "hov"));
+});
+
 svg.addEventListener("click", (e) => {
   if (moved) return;   // the pointer travelled — this was a pan, not a click
   const tog = e.target.closest("[data-toggle]");
@@ -995,22 +1021,24 @@ $("wiki-rail-btn").addEventListener("click", () => {
   state.wiki.railKey = ""; renderWikiRail();
 });
 
-// the rail's own divider — draggable like the main splitter; width persists
+// the rail's own divider — draggable like the main splitter; width persists.
+// Width is computed from the GRAB point, not read back per-frame: the rail's
+// flex-basis transition lags live reads and would eat the increments.
 (function () {
   const rail = $("wiki-rail"), div = $("wiki-rail-divider");
   function setW(px) { rail.style.flex = `0 0 ${clamp(px, 130, 420)}px`; }
   const saved = parseInt(localStorage.getItem("crux-wiki-rail-w") || "", 10);
   if (saved) setW(saved);
-  let dragging = false, x0 = 0;
+  let dragging = false, sx = 0, w0 = 0;
   function onMove(e) {
     if (!dragging) return;
-    setW(rail.getBoundingClientRect().width + (e.clientX - x0));
-    x0 = e.clientX;
+    setW(w0 + (e.clientX - sx));
   }
   function onUp() {
     dragging = false;
     document.body.style.cursor = "";
     div.classList.remove("active");
+    rail.classList.remove("resizing");
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
     localStorage.setItem("crux-wiki-rail-w", String(Math.round(rail.getBoundingClientRect().width)));
@@ -1018,7 +1046,8 @@ $("wiki-rail-btn").addEventListener("click", () => {
   div.addEventListener("pointerdown", (e) => {
     if (state.wiki.railHidden) return;   // nothing to resize while collapsed
     e.preventDefault();
-    dragging = true; x0 = e.clientX;
+    dragging = true; sx = e.clientX; w0 = rail.getBoundingClientRect().width;
+    rail.classList.add("resizing");      // suspend the flex transition while dragging
     document.body.style.cursor = "col-resize";
     div.classList.add("active");
     window.addEventListener("pointermove", onMove);
@@ -1067,7 +1096,9 @@ const WSIM = {
   els: {},            // slug -> <g> DOM cache; only transforms update per frame
   edgeEls: [],        // [{el, a, b}]
   alpha: 0, alphaTarget: 0, raf: 0,
-  CHARGE: 1400, SPRING: 0.055, REST: 130, CENTER: 0.012, DAMP: 0.62,
+  // tuned for an airy constellation: strong repulsion + long rest length spread the
+  // web out (labels breathe, no node overlap); the soft center keeps it bounded
+  CHARGE: 14000, SPRING: 0.025, REST: 280, CENTER: 0.003, DAMP: 0.62,
 };
 
 function wikiSimTick() {

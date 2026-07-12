@@ -221,9 +221,12 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .node .qbar.q-open { fill: var(--q-open); }
 .node .qbar.q-review { fill: var(--q-review); }
 .node .qbar.q-resolved { fill: var(--q-resolved); }
-/* hover parity with the wiki graph: a node visibly lights up before you commit to a
-   click — brightness + a heavier stroke, same responsive feel as the wiki's circles */
-.node:hover .box { filter: brightness(1.22) saturate(1.12); stroke-width: 2.6; }
+/* hover parity with the wiki graph: the touched node lights up, its edges heat, and
+   everything unrelated cools — app.js drives the .hov/.cold/.hot spotlight classes */
+.node { transition: opacity .18s ease; }
+.node:hover .box, .node.hov .box { filter: brightness(1.3) saturate(1.15); stroke-width: 3; }
+.node.cold { opacity: .38; }
+.edge.hot { stroke: var(--accent); stroke-width: 2; }
 .node .lbl { fill: var(--ink); pointer-events: none; }
 /* type hierarchy: root >> question > hypothesis — size + weight is the kind signal */
 .node .lbl.t-root { font-size: 16.5px; font-weight: 780; letter-spacing: .3px; }
@@ -356,7 +359,8 @@ body[data-tab="wiki"] .viewctl { display: none; }
 .wr-empty { color: var(--ink-mute); font-size: 11.5px; font-style: italic; padding: 6px 8px; }
 
 /* the rail's own divider — same affordance as the main splitter */
-#wiki-rail-divider { flex: 0 0 5px; cursor: col-resize; background: transparent;
+#wiki-rail.resizing { transition: none; }   /* live drag must not fight the flex ease */
+#wiki-rail-divider { flex: 0 0 5px; cursor: col-resize; background: transparent; z-index: 2;
   border-left: 1px solid var(--line); transition: background-color .15s ease; touch-action: none; position: relative; }
 #wiki-rail-divider::before { content: ""; position: absolute; inset: 0 -4px; }   /* fat hit area */
 #wiki-rail-divider:hover, #wiki-rail-divider.active { background: var(--accent); }
