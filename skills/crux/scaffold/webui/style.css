@@ -221,7 +221,9 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .node .qbar.q-open { fill: var(--q-open); }
 .node .qbar.q-review { fill: var(--q-review); }
 .node .qbar.q-resolved { fill: var(--q-resolved); }
-.node:hover .box { filter: brightness(1.12) saturate(1.04); }
+/* hover parity with the wiki graph: a node visibly lights up before you commit to a
+   click — brightness + a heavier stroke, same responsive feel as the wiki's circles */
+.node:hover .box { filter: brightness(1.22) saturate(1.12); stroke-width: 2.6; }
 .node .lbl { fill: var(--ink); pointer-events: none; }
 /* type hierarchy: root >> question > hypothesis — size + weight is the kind signal */
 .node .lbl.t-root { font-size: 16.5px; font-weight: 780; letter-spacing: .3px; }
@@ -353,10 +355,18 @@ body[data-tab="wiki"] .viewctl { display: none; }
 .wr-date { margin-left: auto; font-size: 9.5px; opacity: .75; flex: 0 0 auto; }
 .wr-empty { color: var(--ink-mute); font-size: 11.5px; font-style: italic; padding: 6px 8px; }
 
-/* the link graph — color = category, size = degree, deterministic force layout */
+/* the rail's own divider — same affordance as the main splitter */
+#wiki-rail-divider { flex: 0 0 5px; cursor: col-resize; background: transparent;
+  border-left: 1px solid var(--line); transition: background-color .15s ease; touch-action: none; position: relative; }
+#wiki-rail-divider::before { content: ""; position: absolute; inset: 0 -4px; }   /* fat hit area */
+#wiki-rail-divider:hover, #wiki-rail-divider.active { background: var(--accent); }
+
+/* the link graph — color = category, size = degree, living force layout */
 #wiki-canvas { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
 #wiki-graph { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; background: var(--bg); }
 #wiki-graph.panning { cursor: grabbing; }
+#wiki-graph.dragging { cursor: grabbing; }
+#wiki-graph.dragging .wnode { cursor: grabbing; }
 .wedge { stroke: var(--edge); stroke-width: 1.2; opacity: .75;
   transition: stroke .16s ease, opacity .16s ease; }
 .wedge.hot { stroke: var(--accent); stroke-width: 1.8; opacity: 1; }
@@ -378,10 +388,24 @@ body[data-tab="wiki"] .viewctl { display: none; }
 #wiki-legend { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap;
   gap: 4px 10px; max-width: 70%; padding: 5px 9px; border-radius: 9px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(3px); }
-#wiki-legend:empty { display: none; }
+#wiki-legend:empty, #wiki-legend[hidden] { display: none; }
 .wlg { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--ink-dim); }
 .wlg .sw { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .wlg.dim-note { color: var(--ink-mute); font-style: italic; }
+.wlg-hide { width: 15px; height: 15px; border: none; background: none; color: var(--ink-mute);
+  cursor: pointer; font-size: 13px; line-height: 1; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
+.wlg-hide:hover { color: var(--ink); background: var(--panel2); }
+/* the small "Key" button shown (bottom-left) when the category key is hidden */
+#wiki-legend-btn { position: absolute; left: 12px; bottom: 12px; height: 24px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink-dim);
+  font-size: 11px; font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  backdrop-filter: blur(3px); box-shadow: var(--shadow); transition: border-color .16s ease, color .16s ease; }
+#wiki-legend-btn::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: linear-gradient(135deg, #3fa06a 50%, #8b5cf6 50%); }
+#wiki-legend-btn:hover { border-color: var(--accent); color: var(--accent); }
+#wiki-legend-btn[hidden] { display: none; }
 #wiki-zoom { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 #wiki-zoom button { width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);

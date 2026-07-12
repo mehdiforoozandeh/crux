@@ -303,6 +303,32 @@ derivation, roll-up, and generated views are untouched — `ENGINE_VERSION` stay
 existing vaults load unchanged, and a wiki-less vault simply shows no Wiki tab.
 No migration.
 
+## Amendments (post-signoff, user-directed — 2026-07-11)
+
+After hands-on use of the shipped tab, the PI directed five changes; they supersede the
+matching passages above:
+
+1. **Living force graph (supersedes the wiki graph's determinism).** The wiki graph is
+   now a continuously-simulated physical system — Obsidian-like: it settles with visible
+   ease, nodes are draggable (the neighborhood tugs along and springs back on release),
+   and structure changes morph the existing constellation instead of re-laying it out.
+   Rationale: determinism serves the *hierarchy* (the tree keeps its stable tidy layout,
+   unchanged); the wiki is a web, and the PI explicitly chose liveliness over
+   reproducible positions for it. The "identical positions across three reloads" manual
+   criterion is superseded by: *grab-drag a node → neighbors follow, network springs
+   back on release, system settles and sleeps (no idle CPU); `prefers-reduced-motion`
+   gets an instant, static settle.* Initial positions remain slug-hash-seeded.
+2. **Draggable rail divider** — the explorer rail resizes like the main splitter
+   (drag; double-click resets; width persists; collapse still available).
+3. **Minimizable category key** — the wiki legend hides/shows like the tree's color key
+   (persisted).
+4. **Tree hover parity** — tree nodes light up on hover with the same responsiveness as
+   wiki nodes (brightness + stroke emphasis before you commit to a click).
+5. **Author-bearing source titles** — the crux-wiki ingest convention now puts the full
+   author list + year in `--title` (registry/`WIKI.md`/log all line-based, one line), and
+   the wiki tab's search also filters the rail's `sources/` rows, so papers are findable
+   by any co-author's name.
+
 ## Build sequencing (informative, not part of the gate)
 
 Tests-first, two natural stages: **(1)** engine + server — the `wiki` snapshot key and

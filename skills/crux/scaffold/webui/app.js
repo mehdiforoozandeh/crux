@@ -902,6 +902,7 @@ function setTab(tab) {
   if (tab === "wiki") {
     renderWiki();
     if (!state.wiki.centered && fitWikiGraph()) state.wiki.centered = true;
+    wikiReheat(0.1);   // a gentle settle-in breath; resumes any pending motion
     animateIn([$("wiki-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
   } else if (state.snap) {
     retryFit();
@@ -940,7 +941,12 @@ function renderWikiRail() {
     w.specials, [...state.wiki.folds], state.wiki.selected, state.search, state.wiki.railHidden]);
   if (key === state.wiki.railKey) return;
   state.wiki.railKey = key;
-  $("wiki-rail").classList.toggle("hidden", state.wiki.railHidden);
+  const rail = $("wiki-rail");
+  rail.classList.toggle("hidden", state.wiki.railHidden);
+  // the divider sets an inline flex width; it must yield to collapse and come back after
+  const savedW = parseInt(localStorage.getItem("crux-wiki-rail-w") || "", 10);
+  rail.style.flex = state.wiki.railHidden ? "" : (savedW ? `0 0 ${savedW}px` : "");
+  $("wiki-rail-divider").style.display = state.wiki.railHidden ? "none" : "";
   $("wiki-rail-btn").textContent = state.wiki.railHidden ? "⟩" : "⟨";
   $("wiki-rail-btn").title = state.wiki.railHidden ? "Expand the explorer" : "Collapse the explorer";
   const q = state.search;
@@ -958,10 +964,14 @@ function renderWikiRail() {
   let html = Object.keys(cats).sort().map((c) => folder(c, cats[c].map(item).join(""), cats[c].length)).join("");
   if (q && !shown.length) html += `<div class="wr-empty">no pages match</div>`;
   const sp = w.specials || {};
-  const srcRows = (w.sources || []).map((s) =>
-    `<div class="wr-src" title="${esc(s.path)} — ingested ${esc(s.date)}">${esc(s.title)}<span class="wr-date">${esc(s.date)}</span></div>`).join("");
+  // sources filter too — titles carry the full author list, so "yann lecun" finds papers
+  const ql = q.toLowerCase();
+  const srcs = (w.sources || []).filter((s) =>
+    !q || s.title.toLowerCase().includes(ql) || s.path.toLowerCase().includes(ql));
+  const srcRows = srcs.map((s) =>
+    `<div class="wr-src" title="${esc(s.title)} — ${esc(s.path)} — ingested ${esc(s.date)}">${esc(s.title)}<span class="wr-date">${esc(s.date)}</span></div>`).join("");
   html += `<div class="wr-specials">` +
-    ((w.sources || []).length ? folder("sources", srcRows, w.sources.length) : "") +
+    (srcs.length ? folder("sources", srcRows, srcs.length) : "") +
     (sp.schema ? `<button class="wr-item wr-special${state.wiki.selected === "_schema" ? " on" : ""}" data-wiki="_schema">schema</button>` : "") +
     (sp.log ? `<button class="wr-item wr-special${state.wiki.selected === "_log" ? " on" : ""}" data-wiki="_log">log</button>` : "") +
     (sp.index ? `<button class="wr-item wr-special${state.wiki.selected === "_index" || state.wiki.selected == null ? " on" : ""}" data-wiki="_index">index</button>` : "") +
@@ -985,11 +995,45 @@ $("wiki-rail-btn").addEventListener("click", () => {
   state.wiki.railKey = ""; renderWikiRail();
 });
 
-// ------------------------------------------------------------------ deterministic force graph
-// Obsidian's organic look without its jumpiness: initial positions are seeded from a hash of
-// each slug, the simulation runs a FIXED iteration budget over nodes in sorted order, and
-// nothing anywhere draws on randomness — the same vault renders the same constellation on
-// every load. Node color = category, node radius = wiki-to-wiki link degree.
+// the rail's own divider — draggable like the main splitter; width persists
+(function () {
+  const rail = $("wiki-rail"), div = $("wiki-rail-divider");
+  function setW(px) { rail.style.flex = `0 0 ${clamp(px, 130, 420)}px`; }
+  const saved = parseInt(localStorage.getItem("crux-wiki-rail-w") || "", 10);
+  if (saved) setW(saved);
+  let dragging = false, x0 = 0;
+  function onMove(e) {
+    if (!dragging) return;
+    setW(rail.getBoundingClientRect().width + (e.clientX - x0));
+    x0 = e.clientX;
+  }
+  function onUp() {
+    dragging = false;
+    document.body.style.cursor = "";
+    div.classList.remove("active");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    localStorage.setItem("crux-wiki-rail-w", String(Math.round(rail.getBoundingClientRect().width)));
+  }
+  div.addEventListener("pointerdown", (e) => {
+    if (state.wiki.railHidden) return;   // nothing to resize while collapsed
+    e.preventDefault();
+    dragging = true; x0 = e.clientX;
+    document.body.style.cursor = "col-resize";
+    div.classList.add("active");
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+  div.addEventListener("dblclick", () => { localStorage.removeItem("crux-wiki-rail-w"); rail.style.flex = ""; });
+})();
+
+// ------------------------------------------------------------------ living force graph
+// Obsidian-like physics: the graph is a continuously-simulated system — it settles with
+// a visible ease, wakes when you grab a node (the neighborhood springs along), and
+// morphs organically when the vault changes. Initial positions are still seeded from a
+// hash of each slug (a stable starting shape), but the layout is deliberately NOT
+// deterministic — the wiki is a web, not a hierarchy; the tree keeps determinism.
+// Node color = category, node radius = wiki-to-wiki link degree.
 function hash32(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
@@ -1005,61 +1049,122 @@ function wikiEdges(pages) {
   const seen = new Set(), edges = [];
   for (const p of pages) for (const t of p.links) {
     if (!have.has(t) || t === p.slug) continue;
-    const key = p.slug < t ? p.slug + " " + t : t + " " + p.slug;
+    const key = p.slug < t ? p.slug + " " + t : t + " " + p.slug;
     if (!seen.has(key)) { seen.add(key); edges.push([p.slug, t].sort()); }
   }
   edges.sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1));
   return edges;
 }
 
+// The simulation (d3-force style, hand-rolled): many-body repulsion + link springs +
+// a soft centering pull, integrated with velocity damping. `alpha` is the system's
+// heat — it eases toward `alphaTarget` and the loop sleeps once cool, so an idle
+// graph costs nothing. Dragging a node pins it (fx/fy) and reheats the system, so
+// the neighborhood tugs along and the network springs back on release.
+const WSIM = {
+  nodes: new Map(),   // slug -> {x, y, vx, vy, fx, fy}
+  edges: [],          // [a, b] slug pairs
+  els: {},            // slug -> <g> DOM cache; only transforms update per frame
+  edgeEls: [],        // [{el, a, b}]
+  alpha: 0, alphaTarget: 0, raf: 0,
+  CHARGE: 1400, SPRING: 0.055, REST: 130, CENTER: 0.012, DAMP: 0.62,
+};
+
+function wikiSimTick() {
+  const ns = [...WSIM.nodes.values()], n = ns.length, a = WSIM.alpha;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const p = ns[i], q = ns[j];
+    let dx = p.x - q.x, dy = p.y - q.y;
+    const d2 = Math.max(dx * dx + dy * dy, 64);
+    const d = Math.sqrt(d2);
+    const f = (WSIM.CHARGE * a) / d2;
+    dx = (dx / d) * f; dy = (dy / d) * f;
+    p.vx += dx; p.vy += dy; q.vx -= dx; q.vy -= dy;
+  }
+  for (const [ea, eb] of WSIM.edges) {
+    const p = WSIM.nodes.get(ea), q = WSIM.nodes.get(eb);
+    if (!p || !q) continue;
+    let dx = q.x - p.x, dy = q.y - p.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
+    const f = (d - WSIM.REST) * WSIM.SPRING * a;
+    dx = (dx / d) * f; dy = (dy / d) * f;
+    p.vx += dx; p.vy += dy; q.vx -= dx; q.vy -= dy;
+  }
+  for (const p of ns) {
+    p.vx -= p.x * WSIM.CENTER * a; p.vy -= p.y * WSIM.CENTER * a;
+    p.vx *= WSIM.DAMP; p.vy *= WSIM.DAMP;
+    if (p.fx != null) { p.x = p.fx; p.y = p.fy; p.vx = 0; p.vy = 0; }
+    else { p.x += p.vx; p.y += p.vy; }
+  }
+  WSIM.alpha += (WSIM.alphaTarget - WSIM.alpha) * 0.035;
+}
+
+function wikiSimDraw() {
+  const pos = {};
+  for (const [s, p] of WSIM.nodes) {
+    pos[s] = p;
+    const el = WSIM.els[s];
+    if (el) el.setAttribute("transform", `translate(${p.x},${p.y})`);
+  }
+  for (const { el, a, b } of WSIM.edgeEls) {
+    const p = pos[a], q = pos[b];
+    if (p && q) {
+      el.setAttribute("x1", p.x); el.setAttribute("y1", p.y);
+      el.setAttribute("x2", q.x); el.setAttribute("y2", q.y);
+    }
+  }
+  state.wiki.positions = pos;   // fit / centering read the live positions
+}
+
+function wikiSimLoop() {
+  cancelAnimationFrame(WSIM.raf);
+  if (state.tab !== "wiki") return;   // a hidden graph burns no physics
+  if (REDUCED_MOTION) {               // settle instantly — no animation
+    let guard = 0;
+    while (WSIM.alpha > 0.006 && guard++ < 600) wikiSimTick();
+    WSIM.alpha = 0;
+    wikiSimDraw();
+    return;
+  }
+  const step = () => {
+    if (state.tab !== "wiki") return;   // tab switched away mid-flight: sleep
+    wikiSimTick();
+    wikiSimDraw();
+    if (WSIM.alpha > 0.006 || WSIM.alphaTarget > 0) WSIM.raf = requestAnimationFrame(step);
+  };
+  WSIM.raf = requestAnimationFrame(step);
+}
+
+function wikiReheat(alpha) {
+  WSIM.alpha = Math.max(WSIM.alpha, alpha);
+  wikiSimLoop();
+}
+
+// Sync the sim to the polled index. Surviving nodes KEEP their positions (the graph
+// morphs, never resets); a new node seeds next to a linked neighbor and flies in.
 function layoutWikiGraph() {
   const pages = wikiPages();
   const edges = wikiEdges(pages);
   const key = JSON.stringify([pages.map((p) => p.slug), edges]);
-  if (key === state.wiki.layoutKey) { renderWikiGraph(); return; }
+  if (key === state.wiki.layoutKey) return;
+  const first = !state.wiki.layoutKey;
   state.wiki.layoutKey = key;
-  const slugs = pages.map((p) => p.slug).sort();
-  const n = slugs.length;
-  const pos = {};
-  if (n) {
-    const R = 90 * Math.sqrt(n);
-    slugs.forEach((s, i) => {
-      const a = hash01(s) * Math.PI * 2, r = R * (0.25 + 0.75 * hash01(s + " r"));
-      pos[s] = { x: Math.cos(a) * r + i * 1e-3, y: Math.sin(a) * r };  // ε breaks exact overlaps
-    });
-    // Fruchterman–Reingold with a fixed budget and a linear cool-down — fully deterministic
-    const area = (2 * R) * (2 * R), k = Math.sqrt(area / n), ITER = 220;
-    const nbr = {};
-    for (const [a, b] of edges) { (nbr[a] = nbr[a] || []).push(b); (nbr[b] = nbr[b] || []).push(a); }
-    for (let it = 0; it < ITER; it++) {
-      const t = (R / 4) * (1 - it / ITER) + 1;
-      const disp = {};
-      for (const s of slugs) disp[s] = { x: 0, y: 0 };
-      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-        const a = slugs[i], b = slugs[j];
-        let dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
-        const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
-        const f = (k * k) / d / d;
-        dx *= f; dy *= f;
-        disp[a].x += dx; disp[a].y += dy; disp[b].x -= dx; disp[b].y -= dy;
-      }
-      for (const [a, b] of edges) {
-        let dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
-        const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
-        const f = (d * d) / k / d;
-        dx *= f; dy *= f;
-        disp[a].x -= dx; disp[a].y -= dy; disp[b].x += dx; disp[b].y += dy;
-      }
-      for (const s of slugs) {
-        const d = Math.sqrt(disp[s].x * disp[s].x + disp[s].y * disp[s].y) || 1e-4;
-        const lim = Math.min(d, t);
-        pos[s].x += (disp[s].x / d) * lim - pos[s].x * 0.002;  // slight centering pull
-        pos[s].y += (disp[s].y / d) * lim - pos[s].y * 0.002;
-      }
-    }
+  const live = new Set(pages.map((p) => p.slug));
+  for (const s of [...WSIM.nodes.keys()]) if (!live.has(s)) WSIM.nodes.delete(s);
+  const R = 90 * Math.sqrt(Math.max(pages.length, 1));
+  for (const p of pages) {
+    if (WSIM.nodes.has(p.slug)) continue;
+    const nb = edges.find((e) => e.includes(p.slug));
+    const anchor = nb && WSIM.nodes.get(nb[0] === p.slug ? nb[1] : nb[0]);
+    const th = hash01(p.slug) * Math.PI * 2, rr = 0.25 + 0.75 * hash01(p.slug + " r");
+    const seed = anchor
+      ? { x: anchor.x + Math.cos(th) * 60, y: anchor.y + Math.sin(th) * 60 }
+      : { x: Math.cos(th) * R * rr, y: Math.sin(th) * R * rr };
+    WSIM.nodes.set(p.slug, { ...seed, vx: 0, vy: 0, fx: null, fy: null });
   }
-  state.wiki.positions = pos;
-  renderWikiGraph(true);
+  WSIM.edges = edges;
+  renderWikiGraph(first);
+  wikiReheat(first ? 1 : 0.5);
 }
 
 function wikiDegree() {
@@ -1070,28 +1175,30 @@ function wikiDegree() {
 }
 const nodeR = (d) => clamp(7 + 3.2 * Math.sqrt(d), 7, 26);
 
+// (Re)build the graph DOM when the structure changes; per-frame motion only touches
+// the cached transforms/endpoints in wikiSimDraw — never innerHTML.
 function renderWikiGraph(entering) {
-  if (state.tab !== "wiki" || !state.wiki.positions) return;
-  const pages = wikiPages(), pos = state.wiki.positions, deg = wikiDegree();
-  const edges = wikiEdges(pages);
+  if (state.tab !== "wiki") return;
+  const pages = wikiPages(), deg = wikiDegree();
   let lines = "", nodes = "";
-  for (const [a, b] of edges) {
-    if (pos[a] && pos[b])
-      lines += `<line class="wedge" data-a="${esc(a)}" data-b="${esc(b)}" x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}"/>`;
-  }
+  for (const [a, b] of WSIM.edges)
+    lines += `<line class="wedge" data-a="${esc(a)}" data-b="${esc(b)}"/>`;
   for (const p of pages) {
-    const q = pos[p.slug];
-    if (!q) continue;
     const r = nodeR(deg[p.slug] || 0);
     const on = state.wiki.selected === p.slug ? " on" : "";
     const orphan = (deg[p.slug] || 0) === 0 ? " orphan" : "";
-    nodes += `<g class="wnode${on}${orphan}" data-slug="${esc(p.slug)}" transform="translate(${q.x},${q.y})">` +
-      `<title>${esc(p.title || p.slug)} — ${esc(p.category)} · ${deg[p.slug] || 0} links</title>` +
+    nodes += `<g class="wnode${on}${orphan}" data-slug="${esc(p.slug)}">` +
+      `<title>${esc(p.title || p.slug)} — ${esc(p.category)} · ${deg[p.slug] || 0} links · drag me</title>` +
       `<circle r="${r}" style="--wc:${catColor(p.category)}"/>` +
       `<text y="${r + 12}">${esc(trunc(p.slug, 24))}</text></g>`;
   }
   const v = state.wiki.view;
   wsvg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${lines}${nodes}</g>`;
+  WSIM.els = {};
+  wsvg.querySelectorAll(".wnode").forEach((el) => (WSIM.els[el.getAttribute("data-slug")] = el));
+  WSIM.edgeEls = [...wsvg.querySelectorAll(".wedge")].map((el) =>
+    ({ el, a: el.getAttribute("data-a"), b: el.getAttribute("data-b") }));
+  wikiSimDraw();
   renderWikiLegend(pages);
   dimWikiGraph();
   if (entering) animateIn(wsvg.querySelectorAll(".wnode"), { opacity: [0, 1] },
@@ -1100,10 +1207,22 @@ function renderWikiGraph(entering) {
 
 function renderWikiLegend(pages) {
   const cats = [...new Set(pages.map((p) => p.category))].sort();
+  const head = `<button type="button" class="wlg-hide" data-wlg-hide title="Hide the category key" aria-label="Hide the category key">×</button>`;
   $("wiki-legend").innerHTML = cats.map((c) =>
     `<span class="wlg"><span class="sw" style="background:${catColor(c)}"></span>${esc(c)}</span>`).join("") +
-    (pages.length ? `<span class="wlg dim-note">size = links</span>` : "");
+    (pages.length ? `<span class="wlg dim-note">size = links</span>` : "") + head;
 }
+// the category key is minimizable, like the tree's color key (persisted)
+function setWikiLegendHidden(hidden) {
+  $("wiki-legend").hidden = hidden;
+  $("wiki-legend-btn").hidden = !hidden;
+  localStorage.setItem("crux-wiki-legend-hidden", hidden ? "1" : "0");
+}
+$("wiki-legend").addEventListener("click", (e) => {
+  if (e.target.closest("[data-wlg-hide]")) setWikiLegendHidden(true);
+});
+$("wiki-legend-btn").addEventListener("click", () => setWikiLegendHidden(false));
+setWikiLegendHidden(localStorage.getItem("crux-wiki-legend-hidden") === "1");
 
 // search dims non-matching nodes (and their labels/edges) without a relayout
 function dimWikiGraph() {
@@ -1197,11 +1316,54 @@ function onWikiPanEnd() {
   wsvg.classList.remove("panning");
   wpan = null;
 }
+// Grabbing a NODE drags it through the simulation (the neighborhood tugs along and
+// springs back on release — the Obsidian joy); grabbing empty canvas pans the camera.
+// A sub-threshold grab on a node is still a click (opens the page in the reader).
+let wdrag = null;   // { node: sim entry, sx, sy }
+function wikiWorldOf(e) {
+  const r = wsvg.getBoundingClientRect(), v = state.wiki.view;
+  return { x: (e.clientX - r.left - v.tx) / v.k, y: (e.clientY - r.top - v.ty) / v.k };
+}
+function onWikiDragMove(e) {
+  if (!wdrag) return;
+  const dx = e.clientX - wdrag.sx, dy = e.clientY - wdrag.sy;
+  if (!wmoved && dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+    wmoved = true;
+    wsvg.classList.add("dragging");
+    WSIM.alphaTarget = 0.3;   // hold the system warm while the pointer leads it
+    wikiReheat(0.3);
+  }
+  if (wmoved) {
+    const w = wikiWorldOf(e);
+    wdrag.node.fx = w.x; wdrag.node.fy = w.y;
+    wdrag.node.x = w.x; wdrag.node.y = w.y;
+    wikiSimDraw();   // the grabbed node tracks the pointer with zero frame lag
+    if (REDUCED_MOTION) wikiSimLoop();   // static mode: re-settle synchronously
+  }
+}
+function onWikiDragEnd() {
+  window.removeEventListener("pointermove", onWikiDragMove);
+  window.removeEventListener("pointerup", onWikiDragEnd);
+  window.removeEventListener("pointercancel", onWikiDragEnd);
+  wsvg.classList.remove("dragging");
+  if (wdrag) { wdrag.node.fx = null; wdrag.node.fy = null; }
+  wdrag = null;
+  WSIM.alphaTarget = 0;   // release: the network springs back, settles, sleeps
+}
 wsvg.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   e.preventDefault();
-  wpan = { x: e.clientX, y: e.clientY, tx: state.wiki.view.tx, ty: state.wiki.view.ty };
   wmoved = false;
+  const nodeEl = e.target.closest(".wnode");
+  const sim = nodeEl && WSIM.nodes.get(nodeEl.getAttribute("data-slug"));
+  if (sim) {
+    wdrag = { node: sim, sx: e.clientX, sy: e.clientY };
+    window.addEventListener("pointermove", onWikiDragMove);
+    window.addEventListener("pointerup", onWikiDragEnd);
+    window.addEventListener("pointercancel", onWikiDragEnd);
+    return;
+  }
+  wpan = { x: e.clientX, y: e.clientY, tx: state.wiki.view.tx, ty: state.wiki.view.ty };
   window.addEventListener("pointermove", onWikiPanMove);
   window.addEventListener("pointerup", onWikiPanEnd);
   window.addEventListener("pointercancel", onWikiPanEnd);
@@ -1234,9 +1396,9 @@ function openWikiPage(slug) {
 // what the open page's content is *supposed* to be, per the polled index (specials aren't
 // indexed — key on the whole index instead, since WIKI.md is derived from it)
 function pageKeyOf(slug) {
-  if (slug in RESERVED) return slug + " " + JSON.stringify([wikiPages(), (state.snap.wiki || {}).sources]);
+  if (slug in RESERVED) return slug + " " + JSON.stringify([wikiPages(), (state.snap.wiki || {}).sources]);
   const p = wikiPages().find((x) => x.slug === slug);
-  return p ? slug + " " + p.hash : null;
+  return p ? slug + " " + p.hash : null;
 }
 
 // on each snapshot: default the reader to the index, drop a selection that no longer
@@ -1402,6 +1564,10 @@ function retryFit() {
   if (!state.centered && state.snap && fitToView()) { state.centered = true; applyTransform(); }
 }
 window.addEventListener("resize", () => { retryFit(); applyTransform(); });
-document.addEventListener("visibilitychange", retryFit);
+document.addEventListener("visibilitychange", () => {
+  retryFit();
+  // an occluded page suspends rAF, freezing any pending physics — resume on return
+  if (!document.hidden && state.tab === "wiki" && WSIM.alpha > 0.006) wikiSimLoop();
+});
 
 poll();

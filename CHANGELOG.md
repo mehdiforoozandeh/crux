@@ -10,18 +10,25 @@ verdict/roll-up/view logic changes.
 
 - **Wiki tab in the cockpit (Epic 1 × Epic 3).** `crux serve` grows a `Tree | Wiki`
   switcher (shown only on wiki-bearing vaults): an explorer rail with virtual category
-  folders + pinned index / log / schema / sources, a **deterministic force-directed
-  wikilink graph** (color = category, size = link degree, hover-highlighted neighborhoods,
-  identical constellation on every load), and a markdown **reader** with a
-  backlinks-with-snippets section; `[[wiki/slug]]` citations in the tree's detail pane are
-  now live and jump straight into the Wiki tab. Backed by an additive `wiki` key in
-  `engine.snapshot()` (index only — no page bodies in the 1s poll) and a lazy, read-only,
-  traversal-safe `/wiki/<slug>.json` route (body + server-computed backlinks; reserved
-  slugs `_index`/`_log`/`_schema` serve the specials). One vendored static asset —
-  `webui/vendor/motion.js` (motion.dev browser build, MIT) — as progressive-enhancement
-  animation only: the UI is fully functional without it, the engine stays stdlib-only, and
-  the GUI stays write-free. No vault-format change (`ENGINE_VERSION` stays 1.1).
-  PRD: `docs/prd/gui-wiki-tab.md`.
+  folders + pinned index / log / schema / sources (rail resizable via its own draggable
+  divider), a **living force-directed wikilink graph** — Obsidian-like physics: it
+  settles with visible ease, nodes are grab-draggable (the neighborhood tugs along and
+  springs back), vault changes morph the constellation organically, and the simulation
+  sleeps when idle (color = category, size = link degree, hover-highlighted
+  neighborhoods, minimizable category key; the tree keeps its deterministic layout) —
+  and a markdown **reader** with a backlinks-with-snippets section; `[[wiki/slug]]`
+  citations in the tree's detail pane are now live and jump straight into the Wiki tab.
+  Tree nodes also light up on hover with the same responsiveness as wiki nodes. Backed
+  by an additive `wiki` key in `engine.snapshot()` (index only — no page bodies in the
+  1s poll) and a lazy, read-only, traversal-safe `/wiki/<slug>.json` route (body +
+  server-computed backlinks; reserved slugs `_index`/`_log`/`_schema` serve the
+  specials). Wiki search also filters the rail's sources, and the crux-wiki ingest
+  convention now carries the full author list in source titles — papers are findable by
+  any co-author's name. One vendored static asset — `webui/vendor/motion.js` (motion.dev
+  browser build, MIT) — as progressive-enhancement animation only: the UI is fully
+  functional without it, the engine stays stdlib-only, and the GUI stays write-free.
+  No vault-format change (`ENGINE_VERSION` stays 1.1). PRD: `docs/prd/gui-wiki-tab.md`
+  (incl. post-signoff amendments).
 
 - **`./crux`** — a root-level executable wrapper that forwards every argument to the
   engine (`skills/crux/scaffold/crux.py`), so a clone runs `./crux <verb>` directly and
