@@ -5,18 +5,16 @@
 silently p-hacked or forgotten across dozens of experiments. The agent runs the loop;
 **you make the calls.**
 
-**Why not just a doc, Notion, or W&B?** Those hold notes, a graph, and run logs. crux adds the part they don't:
-
-| Your current setup | What crux adds on top |
-|---|---|
-| **Obsidian / Notion** — notes + a link graph | a **question → hypothesis** structure the engine keeps consistent, and rolls findings up automatically |
-| **A spreadsheet / lab notebook** | **pass/fail bars you lock in _before_ the run**, and a **mechanical verdict** derived from them — no post-hoc goalpost-moving |
-| **W&B / MLflow** — run logs & metrics | a human **review gate** and evidence roll-up across many parallel hypotheses; crux sits **beside** your tracker, not on top of it |
-
-It's all plain markdown that only ever writes under `cruxvault/` — non-destructive,
-Obsidian-compatible, and it can migrate a repo you already have.
-
 ## What it is
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-schematic-dark.svg">
+    <img src="assets/crux-schematic-light.svg" width="820" alt="Crux schematic: a vault tree — a Project holds Questions, and each Question holds falsifiable Hypotheses that are approved (green check) or rejected (red cross) by their verifiables — beside the ask → hypothesize → test → close → review → answer loop, with the Human / Agent / Engine roles.">
+  </picture>
+</p>
+
+<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Green ✓ / red ✗ mark met / unmet — the same reading as the status-colored cockpit below.</sub></p>
 
 Months into a project, can you still say exactly what you asked, what you tested, and whether
 each question is actually settled? `crux` makes that explicit and keeps it that way — organizing
@@ -30,15 +28,6 @@ a research program the way the scientific method actually works:
 For example: you ask *"Does SSL pretraining beat supervised ImageNet init?"*; crux pins a hypothesis
 with a bar you set in advance (*"ADE20K mIoU ≥ supervised + 2.0"*); your agent runs it and reports
 back; **you** sign off on the verdict. Nothing counts until you do.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-schematic-dark.svg">
-    <img src="assets/crux-schematic-light.svg" width="820" alt="Crux schematic: a vault tree — a Project holds Questions, and each Question holds falsifiable Hypotheses that are approved (green check) or rejected (red cross) by their verifiables — beside the ask → hypothesize → test → close → review → answer loop, with the Human / Agent / Engine roles.">
-  </picture>
-</p>
-
-<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Green ✓ / red ✗ mark met / unmet — the same reading as the status-colored cockpit below.</sub></p>
 
 ## Install
 
@@ -59,6 +48,19 @@ cd crux && ./install.sh
 
 The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
 root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`).
+
+## Why not just a doc, Notion, or W&B?
+
+Those hold notes, a graph, and run logs. crux adds the part they don't:
+
+| Your current setup | What crux adds on top |
+|---|---|
+| **Obsidian / Notion** — notes + a link graph | a **question → hypothesis** structure the engine keeps consistent, and rolls findings up automatically |
+| **A spreadsheet / lab notebook** | **pass/fail bars you lock in _before_ the run**, and a **mechanical verdict** derived from them — no post-hoc goalpost-moving |
+| **W&B / MLflow** — run logs & metrics | a human **review gate** and evidence roll-up across many parallel hypotheses; crux sits **beside** your tracker, not on top of it |
+
+It's all plain markdown that only ever writes under `cruxvault/` — non-destructive,
+Obsidian-compatible, and it can migrate a repo you already have.
 
 ## The cockpit
 
