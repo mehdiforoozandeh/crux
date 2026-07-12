@@ -74,11 +74,12 @@ Obsidian stays available for hands-on editing.
 
 <p align="center"><sub>The <b>cockpit</b> over the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example — the status-colored tree (branches collapse/expand) and a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding). Read-only; every edit goes through your agent or the <code>crux</code> CLI. <em>(Real screenshot; it matches your GitHub light/dark theme.)</em></sub></p>
 
-It also gives the **literature wiki** its own view — one Obsidian can't. The `crux-wiki` skill
-compiles PI-curated sources into interlinked pages; the cockpit draws them as a knowledge graph
-**colored by literature category, sized by links, and cross-linked into the live question tree**,
-with a one-way literature → wiki → tree flow. That's structure Obsidian's undifferentiated graph
-doesn't capture.
+It also gives the **literature wiki** its own view — one Obsidian can't. The `crux-wiki` skill —
+inspired by [Karpathy's LLM-wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+(immutable curated sources an agent compiles into interlinked pages) — compiles PI-curated sources
+into a knowledge base; the cockpit draws it as a graph **colored by literature category, sized by
+links, and cross-linked into the live question tree**, with a one-way literature → wiki → tree flow.
+That's structure Obsidian's undifferentiated graph doesn't capture.
 
 <p align="center">
   <picture>
