@@ -103,6 +103,20 @@ const state = {
   search: "",
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
+  tab: "tree",              // "tree" | "wiki" — applied from localStorage once wiki.active is known
+  wiki: {
+    selected: localStorage.getItem("crux-wiki-slug") || null,  // slug, or null => the _index page
+    page: null,             // fetched /wiki/<slug>.json payload for the reader
+    pageKey: "",            // slug+hash of the fetched page — refetch when the index says it changed
+    readerKey: "",          // last-rendered reader signature — re-render only on change
+    positions: null,        // slug -> {x, y} (deterministic force layout)
+    layoutKey: "",          // page-set + edge signature — relayout only when the graph changed
+    railKey: "",            // last-rendered rail signature
+    view: { tx: 40, ty: 40, k: 1 },
+    centered: false,        // one-time graph fit on first show
+    folds: new Set(),       // collapsed rail folders (category names, or "sources")
+    railHidden: localStorage.getItem("crux-wiki-rail") === "1",
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -132,6 +146,7 @@ function onSnapshot() {
   $("project-title").textContent = snap.project.title || "";
   // drop selection if the node disappeared
   if (state.selected && !(state.selected in snap.nodes)) state.selected = null;
+  updateTabs();
   updateReviewBtn();
   layout();
   // One-time fit — but a tab opened in the background has a 0×0 rect until it's shown,
@@ -139,6 +154,7 @@ function onSnapshot() {
   if (!state.centered && fitToView()) state.centered = true;
   renderLegend();
   renderTree();
+  renderWiki();
   renderDetail();
 }
 
@@ -477,6 +493,7 @@ function selectNode(id, opts) {
 }
 
 function showQueue() {
+  if (state.tab !== "tree") setTab("tree");   // the review gate lives in the tree view
   state.selected = null;
   updateReviewBtn();
   renderTree();
@@ -487,7 +504,7 @@ function updateReviewBtn() {
   const n = state.snap ? state.snap.queue.length : 0;
   const b = $("review-btn");
   b.textContent = `Review (${n})`;
-  b.classList.toggle("active", state.selected === null);
+  b.classList.toggle("active", state.tab === "tree" && state.selected === null);
   b.classList.toggle("has-queue", n > 0);
 }
 
@@ -498,12 +515,20 @@ function badge(text, varName, cls) {
 
 function section(title, html) { return `<div class="sec"><h4>${title}</h4>${html}</div>`; }
 function bodyOr(text, empty) {
-  return text && text.trim() ? `<div class="body">${esc(text)}</div>` : `<div class="body muted">${empty}</div>`;
+  if (!(text && text.trim())) return `<div class="body muted">${empty}</div>`;
+  // tree nodes may cite the wiki as [[wiki/slug]] (never the reverse) — make those live:
+  // click one and the cockpit switches to the Wiki tab with that page open in the reader
+  const html = esc(text).replace(
+    /\[\[\s*wiki\/([^\]|#\\]+?)\s*(?:(?:\\\||\||#)([^\]]*))?\]\]/g,
+    (m, t, alias) => wikiLink("wiki/" + t, alias));
+  return `<div class="body">${html}</div>`;
 }
 
 function renderDetail() {
   const pane = $("detail-content");
   if (!state.snap) { pane.innerHTML = ""; return; }
+  if (state.tab === "wiki") { renderWikiReader(); return; }
+  state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
   const n = state.selected ? state.snap.nodes[state.selected] : null;
   pane.innerHTML = n ? nodeDetail(n) : queueDetail();
 }
@@ -680,6 +705,8 @@ $("detail-pane").addEventListener("click", (e) => {
   // content — including the review-queue rows and child links — and their data-go never fires.
   const fbtn = e.target.closest("#detail-fontctl [data-font]");
   if (fbtn) { setDetailFont(fbtn.getAttribute("data-font")); return; }
+  const wl = e.target.closest("[data-wiki]");
+  if (wl) { openWikiPage(wl.getAttribute("data-wiki")); return; }   // [[wiki/…]] citations + reader links
   const go = e.target.closest("[data-go]");
   if (go) selectNode(go.getAttribute("data-go"), { center: true });
 });
@@ -794,16 +821,545 @@ $("zoom-in").addEventListener("click", () => centerZoom(1.35));
 $("zoom-out").addEventListener("click", () => centerZoom(1 / 1.35));
 $("zoom-fit").addEventListener("click", () => { if (state.snap) fitToView(true); });
 
+// the one search box is scoped to the active tab: tree nodes, or wiki pages (rail + graph)
+function applySearch() {
+  if (!state.snap) return;
+  if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
+  else renderTree();
+}
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
-  if (state.snap) renderTree();
+  applySearch();
 });
 $("search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { e.target.value = ""; state.search = ""; if (state.snap) renderTree(); return; }
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; applySearch(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
+  if (state.tab === "wiki") {
+    const hit = wikiPages().find(matchWiki);
+    if (hit) openWikiPage(hit.slug);
+    return;
+  }
   const hit = Object.keys(state.positions).find((id) => matchNode(state.snap.nodes[id]));
   if (hit) selectNode(hit, { center: true });
 });
+
+// ================================================================== wiki tab
+// A read-only browser over the vault's literature layer (docs/prd/gui-wiki-tab.md):
+// explorer rail + deterministic force-directed link graph on the left, a stable
+// markdown reader on the right. The index rides the snapshot poll; page bodies are
+// fetched lazily from /wiki/<slug>.json. Motion (vendor/motion.js) is progressive
+// enhancement — everything works, just unanimated, if the file is absent.
+const wsvg = $("wiki-graph");
+const RESERVED = { _index: "index", _log: "log", _schema: "schema" };
+const M = window.Motion || null;
+// `keyframes` uses Motion's [from, to] array form, e.g. { opacity: [0, 1], y: [6, 0] }.
+// SVG caveat: never animate transform/scale on a <g> positioned by its transform
+// ATTRIBUTE — Motion writes style.transform, which overrides it. Opacity only there.
+function animateIn(els, keyframes, opts) {
+  els = [...(els || [])];
+  if (!M || REDUCED_MOTION || document.hidden || !els.length) return;
+  try { M.animate(els, keyframes, { duration: 0.3, ease: [0.22, 0.61, 0.36, 1], ...opts }); }
+  catch (e) { /* animation is decoration — never let it break the cockpit */ }
+}
+
+function wikiPages() { return (state.snap && state.snap.wiki && state.snap.wiki.pages) || []; }
+function wikiActive() { return !!(state.snap && state.snap.wiki && state.snap.wiki.active); }
+function wikiHasSlug(slug) {
+  return slug in RESERVED || wikiPages().some((p) => p.slug === slug);
+}
+function matchWiki(p) {
+  const q = state.search.toLowerCase();
+  return q && (p.slug.toLowerCase().includes(q)
+    || String(p.title || "").toLowerCase().includes(q)
+    || String(p.summary || "").toLowerCase().includes(q));
+}
+
+// a live wikilink (or a visibly-broken one, when no such page exists). `target` may carry a
+// dir prefix / .md — resolved the way the engine's link parser does.
+function wikiLink(target, alias) {
+  const slug = String(target).trim().split("/").pop().replace(/\.md$/, "");
+  const label = String(alias == null ? "" : alias).trim() || String(target).trim();
+  return wikiHasSlug(slug)
+    ? `<a class="wl" data-wiki="${slug}">${label}</a>`
+    : `<span class="wl broken" title="no wiki page named ‘${slug}’">${label}</span>`;
+}
+
+// ------------------------------------------------------------------ tabs
+function setTab(tab) {
+  if (tab === "wiki" && !wikiActive()) tab = "tree";
+  state.tab = tab;
+  localStorage.setItem("crux-tab", tab);
+  document.body.dataset.tab = tab;
+  $("tree-pane").hidden = tab !== "tree";
+  $("wiki-pane").hidden = tab !== "wiki";
+  document.querySelectorAll("#tabs [data-tab]").forEach((b) =>
+    b.classList.toggle("on", b.getAttribute("data-tab") === tab));
+  $("search").placeholder = tab === "wiki" ? "Search wiki pages — Enter to open"
+                                           : "Search nodes — Enter to jump";
+  updateReviewBtn();
+  applySearch();
+  renderDetail();
+  if (tab === "wiki") {
+    renderWiki();
+    if (!state.wiki.centered && fitWikiGraph()) state.wiki.centered = true;
+    animateIn([$("wiki-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
+  } else if (state.snap) {
+    retryFit();
+    animateIn([$("tree-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
+  }
+}
+let _tabsBooted = false;
+function updateTabs() {
+  const active = wikiActive();
+  $("tabs").hidden = !active;
+  if (!active && state.tab === "wiki") { setTab("tree"); return; }
+  if (!_tabsBooted && active) {
+    _tabsBooted = true;
+    if (localStorage.getItem("crux-tab") === "wiki") { setTab("wiki"); return; }
+  }
+  if (active && state.tab === "wiki") renderWiki();
+}
+$("tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (b) setTab(b.getAttribute("data-tab"));
+});
+
+function renderWiki() {
+  if (!wikiActive() || state.tab !== "wiki") return;
+  renderWikiRail();
+  layoutWikiGraph();
+  refreshWikiPage();
+}
+
+// ------------------------------------------------------------------ explorer rail
+// wiki/ is flat by convention; the folders are *virtual* — the raw `category:` frontmatter
+// values (exactly WIKI.md's grouping, `uncategorized` included), plus the pinned specials.
+function renderWikiRail() {
+  const w = state.snap.wiki;
+  const key = JSON.stringify([w.pages.map((p) => [p.slug, p.category]), w.sources,
+    w.specials, [...state.wiki.folds], state.wiki.selected, state.search, state.wiki.railHidden]);
+  if (key === state.wiki.railKey) return;
+  state.wiki.railKey = key;
+  $("wiki-rail").classList.toggle("hidden", state.wiki.railHidden);
+  $("wiki-rail-btn").textContent = state.wiki.railHidden ? "⟩" : "⟨";
+  $("wiki-rail-btn").title = state.wiki.railHidden ? "Expand the explorer" : "Collapse the explorer";
+  const q = state.search;
+  const shown = q ? w.pages.filter(matchWiki) : w.pages;
+  const cats = {};
+  for (const p of shown) (cats[p.category] = cats[p.category] || []).push(p);
+  const item = (p) => `<button class="wr-item${state.wiki.selected === p.slug ? " on" : ""}"` +
+    ` data-wiki="${esc(p.slug)}" title="${esc(p.title || p.slug)} — ${esc(p.summary || "")}">${esc(p.slug)}</button>`;
+  const folder = (name, inner, count) => {
+    const open = !state.wiki.folds.has(name);
+    return `<div class="wr-folder"><button class="wr-fold" data-fold="${esc(name)}">` +
+      `<span class="wr-arrow">${open ? "▾" : "▸"}</span>${esc(name)}/<span class="wr-count">${count}</span></button>` +
+      (open ? `<div class="wr-items">${inner}</div>` : "") + `</div>`;
+  };
+  let html = Object.keys(cats).sort().map((c) => folder(c, cats[c].map(item).join(""), cats[c].length)).join("");
+  if (q && !shown.length) html += `<div class="wr-empty">no pages match</div>`;
+  const sp = w.specials || {};
+  const srcRows = (w.sources || []).map((s) =>
+    `<div class="wr-src" title="${esc(s.path)} — ingested ${esc(s.date)}">${esc(s.title)}<span class="wr-date">${esc(s.date)}</span></div>`).join("");
+  html += `<div class="wr-specials">` +
+    ((w.sources || []).length ? folder("sources", srcRows, w.sources.length) : "") +
+    (sp.schema ? `<button class="wr-item wr-special${state.wiki.selected === "_schema" ? " on" : ""}" data-wiki="_schema">schema</button>` : "") +
+    (sp.log ? `<button class="wr-item wr-special${state.wiki.selected === "_log" ? " on" : ""}" data-wiki="_log">log</button>` : "") +
+    (sp.index ? `<button class="wr-item wr-special${state.wiki.selected === "_index" || state.wiki.selected == null ? " on" : ""}" data-wiki="_index">index</button>` : "") +
+    `</div>`;
+  $("wiki-rail-body").innerHTML = html;
+}
+$("wiki-rail").addEventListener("click", (e) => {
+  const fold = e.target.closest("[data-fold]");
+  if (fold) {
+    const name = fold.getAttribute("data-fold");
+    state.wiki.folds.has(name) ? state.wiki.folds.delete(name) : state.wiki.folds.add(name);
+    state.wiki.railKey = ""; renderWikiRail();
+    return;
+  }
+  const it = e.target.closest("[data-wiki]");
+  if (it) openWikiPage(it.getAttribute("data-wiki"));
+});
+$("wiki-rail-btn").addEventListener("click", () => {
+  state.wiki.railHidden = !state.wiki.railHidden;
+  localStorage.setItem("crux-wiki-rail", state.wiki.railHidden ? "1" : "0");
+  state.wiki.railKey = ""; renderWikiRail();
+});
+
+// ------------------------------------------------------------------ deterministic force graph
+// Obsidian's organic look without its jumpiness: initial positions are seeded from a hash of
+// each slug, the simulation runs a FIXED iteration budget over nodes in sorted order, and
+// nothing anywhere draws on randomness — the same vault renders the same constellation on
+// every load. Node color = category, node radius = wiki-to-wiki link degree.
+function hash32(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+const hash01 = (s) => hash32(s) / 4294967296;
+const WIKI_COLORS = ["#4f9fe0", "#3fa06a", "#8b5cf6", "#d9a13b", "#d75a5a",
+                     "#2f9e8f", "#c66bb0", "#7a9e3f", "#5b74c8", "#b98050"];
+const catColor = (c) => WIKI_COLORS[hash32(String(c)) % WIKI_COLORS.length];
+
+function wikiEdges(pages) {
+  const have = new Set(pages.map((p) => p.slug));
+  const seen = new Set(), edges = [];
+  for (const p of pages) for (const t of p.links) {
+    if (!have.has(t) || t === p.slug) continue;
+    const key = p.slug < t ? p.slug + " " + t : t + " " + p.slug;
+    if (!seen.has(key)) { seen.add(key); edges.push([p.slug, t].sort()); }
+  }
+  edges.sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1));
+  return edges;
+}
+
+function layoutWikiGraph() {
+  const pages = wikiPages();
+  const edges = wikiEdges(pages);
+  const key = JSON.stringify([pages.map((p) => p.slug), edges]);
+  if (key === state.wiki.layoutKey) { renderWikiGraph(); return; }
+  state.wiki.layoutKey = key;
+  const slugs = pages.map((p) => p.slug).sort();
+  const n = slugs.length;
+  const pos = {};
+  if (n) {
+    const R = 90 * Math.sqrt(n);
+    slugs.forEach((s, i) => {
+      const a = hash01(s) * Math.PI * 2, r = R * (0.25 + 0.75 * hash01(s + " r"));
+      pos[s] = { x: Math.cos(a) * r + i * 1e-3, y: Math.sin(a) * r };  // ε breaks exact overlaps
+    });
+    // Fruchterman–Reingold with a fixed budget and a linear cool-down — fully deterministic
+    const area = (2 * R) * (2 * R), k = Math.sqrt(area / n), ITER = 220;
+    const nbr = {};
+    for (const [a, b] of edges) { (nbr[a] = nbr[a] || []).push(b); (nbr[b] = nbr[b] || []).push(a); }
+    for (let it = 0; it < ITER; it++) {
+      const t = (R / 4) * (1 - it / ITER) + 1;
+      const disp = {};
+      for (const s of slugs) disp[s] = { x: 0, y: 0 };
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const a = slugs[i], b = slugs[j];
+        let dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
+        const f = (k * k) / d / d;
+        dx *= f; dy *= f;
+        disp[a].x += dx; disp[a].y += dy; disp[b].x -= dx; disp[b].y -= dy;
+      }
+      for (const [a, b] of edges) {
+        let dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
+        const f = (d * d) / k / d;
+        dx *= f; dy *= f;
+        disp[a].x -= dx; disp[a].y -= dy; disp[b].x += dx; disp[b].y += dy;
+      }
+      for (const s of slugs) {
+        const d = Math.sqrt(disp[s].x * disp[s].x + disp[s].y * disp[s].y) || 1e-4;
+        const lim = Math.min(d, t);
+        pos[s].x += (disp[s].x / d) * lim - pos[s].x * 0.002;  // slight centering pull
+        pos[s].y += (disp[s].y / d) * lim - pos[s].y * 0.002;
+      }
+    }
+  }
+  state.wiki.positions = pos;
+  renderWikiGraph(true);
+}
+
+function wikiDegree() {
+  const deg = {};
+  for (const p of wikiPages()) deg[p.slug] = 0;
+  for (const [a, b] of wikiEdges(wikiPages())) { deg[a]++; deg[b]++; }
+  return deg;
+}
+const nodeR = (d) => clamp(7 + 3.2 * Math.sqrt(d), 7, 26);
+
+function renderWikiGraph(entering) {
+  if (state.tab !== "wiki" || !state.wiki.positions) return;
+  const pages = wikiPages(), pos = state.wiki.positions, deg = wikiDegree();
+  const edges = wikiEdges(pages);
+  let lines = "", nodes = "";
+  for (const [a, b] of edges) {
+    if (pos[a] && pos[b])
+      lines += `<line class="wedge" data-a="${esc(a)}" data-b="${esc(b)}" x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}"/>`;
+  }
+  for (const p of pages) {
+    const q = pos[p.slug];
+    if (!q) continue;
+    const r = nodeR(deg[p.slug] || 0);
+    const on = state.wiki.selected === p.slug ? " on" : "";
+    const orphan = (deg[p.slug] || 0) === 0 ? " orphan" : "";
+    nodes += `<g class="wnode${on}${orphan}" data-slug="${esc(p.slug)}" transform="translate(${q.x},${q.y})">` +
+      `<title>${esc(p.title || p.slug)} — ${esc(p.category)} · ${deg[p.slug] || 0} links</title>` +
+      `<circle r="${r}" style="--wc:${catColor(p.category)}"/>` +
+      `<text y="${r + 12}">${esc(trunc(p.slug, 24))}</text></g>`;
+  }
+  const v = state.wiki.view;
+  wsvg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${lines}${nodes}</g>`;
+  renderWikiLegend(pages);
+  dimWikiGraph();
+  if (entering) animateIn(wsvg.querySelectorAll(".wnode"), { opacity: [0, 1] },
+    { duration: 0.35, delay: M && M.stagger ? M.stagger(0.012) : 0 });
+}
+
+function renderWikiLegend(pages) {
+  const cats = [...new Set(pages.map((p) => p.category))].sort();
+  $("wiki-legend").innerHTML = cats.map((c) =>
+    `<span class="wlg"><span class="sw" style="background:${catColor(c)}"></span>${esc(c)}</span>`).join("") +
+    (pages.length ? `<span class="wlg dim-note">size = links</span>` : "");
+}
+
+// search dims non-matching nodes (and their labels/edges) without a relayout
+function dimWikiGraph() {
+  if (state.tab !== "wiki") return;
+  const q = state.search;
+  const hit = new Set(q ? wikiPages().filter(matchWiki).map((p) => p.slug) : []);
+  wsvg.querySelectorAll(".wnode").forEach((el) => {
+    const s = el.getAttribute("data-slug");
+    el.classList.toggle("dim", !!q && !hit.has(s));
+    el.classList.toggle("hit", !!q && hit.has(s));
+  });
+  wsvg.querySelectorAll(".wedge").forEach((el) => {
+    const a = el.getAttribute("data-a"), b = el.getAttribute("data-b");
+    el.classList.toggle("dim", !!q && !(hit.has(a) && hit.has(b)));
+  });
+}
+
+// hover: spotlight a node's neighborhood (its edges + direct neighbors)
+wsvg.addEventListener("pointerover", (e) => {
+  const node = e.target.closest(".wnode");
+  if (!node) return;
+  const s = node.getAttribute("data-slug");
+  const nb = new Set([s]);
+  wsvg.querySelectorAll(".wedge").forEach((el) => {
+    const a = el.getAttribute("data-a"), b = el.getAttribute("data-b");
+    if (a === s) nb.add(b);
+    if (b === s) nb.add(a);
+    el.classList.toggle("hot", a === s || b === s);
+  });
+  wsvg.querySelectorAll(".wnode").forEach((el) =>
+    el.classList.toggle("cold", !nb.has(el.getAttribute("data-slug"))));
+});
+wsvg.addEventListener("pointerout", (e) => {
+  if (e.target.closest(".wnode") && !e.relatedTarget?.closest?.(".wnode")) {
+    wsvg.querySelectorAll(".hot").forEach((el) => el.classList.remove("hot"));
+    wsvg.querySelectorAll(".cold").forEach((el) => el.classList.remove("cold"));
+  }
+});
+
+// pan / zoom — the tree's gestures, on the wiki camera
+function applyWikiTransform() {
+  const g = wsvg.firstChild;
+  const v = state.wiki.view;
+  if (g) g.setAttribute("transform", `translate(${v.tx},${v.ty}) scale(${v.k})`);
+}
+function fitWikiGraph() {
+  const pos = state.wiki.positions;
+  const slugs = pos ? Object.keys(pos) : [];
+  if (!slugs.length) return false;
+  const r = wsvg.getBoundingClientRect();
+  if (r.width < 80 || r.height < 80) return false;
+  const deg = wikiDegree();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const s of slugs) {
+    const m = nodeR(deg[s] || 0) + 26;
+    minX = Math.min(minX, pos[s].x - m); maxX = Math.max(maxX, pos[s].x + m);
+    minY = Math.min(minY, pos[s].y - m); maxY = Math.max(maxY, pos[s].y + m);
+  }
+  const k = clamp(Math.min(1.2, (r.width - 40) / (maxX - minX || 1), (r.height - 40) / (maxY - minY || 1)), 0.08, 1.2);
+  state.wiki.view = { k, tx: (r.width - (maxX - minX) * k) / 2 - minX * k,
+                      ty: (r.height - (maxY - minY) * k) / 2 - minY * k };
+  applyWikiTransform();
+  return true;
+}
+function wikiZoomAt(cx, cy, factor) {
+  const v = state.wiki.view, r = wsvg.getBoundingClientRect();
+  const k2 = clamp(v.k * factor, 0.06, 3);
+  if (k2 === v.k) return;
+  const mx = cx - r.left, my = cy - r.top;
+  v.tx = mx - (mx - v.tx) * (k2 / v.k);
+  v.ty = my - (my - v.ty) * (k2 / v.k);
+  v.k = k2;
+  applyWikiTransform();
+}
+wsvg.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const dy = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
+  wikiZoomAt(e.clientX, e.clientY, Math.exp(-dy * (e.ctrlKey ? 0.012 : 0.0028)));
+}, { passive: false });
+let wpan = null, wmoved = false;
+function onWikiPanMove(e) {
+  if (!wpan) return;
+  const dx = e.clientX - wpan.x, dy = e.clientY - wpan.y;
+  if (!wmoved && dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) { wmoved = true; wsvg.classList.add("panning"); }
+  if (wmoved) { state.wiki.view.tx = wpan.tx + dx; state.wiki.view.ty = wpan.ty + dy; applyWikiTransform(); }
+}
+function onWikiPanEnd() {
+  window.removeEventListener("pointermove", onWikiPanMove);
+  window.removeEventListener("pointerup", onWikiPanEnd);
+  window.removeEventListener("pointercancel", onWikiPanEnd);
+  wsvg.classList.remove("panning");
+  wpan = null;
+}
+wsvg.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  wpan = { x: e.clientX, y: e.clientY, tx: state.wiki.view.tx, ty: state.wiki.view.ty };
+  wmoved = false;
+  window.addEventListener("pointermove", onWikiPanMove);
+  window.addEventListener("pointerup", onWikiPanEnd);
+  window.addEventListener("pointercancel", onWikiPanEnd);
+});
+wsvg.addEventListener("click", (e) => {
+  if (wmoved) return;
+  const node = e.target.closest(".wnode");
+  if (node) openWikiPage(node.getAttribute("data-slug"));
+});
+function wikiCenterZoom(factor) {
+  const r = wsvg.getBoundingClientRect();
+  wikiZoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+}
+$("wgraph-in").addEventListener("click", () => wikiCenterZoom(1.35));
+$("wgraph-out").addEventListener("click", () => wikiCenterZoom(1 / 1.35));
+$("wgraph-fit").addEventListener("click", fitWikiGraph);
+
+// ------------------------------------------------------------------ reader (lazy page fetch)
+function openWikiPage(slug) {
+  if (state.tab !== "wiki") setTab("wiki");
+  state.wiki.selected = slug;
+  localStorage.setItem("crux-wiki-slug", slug);
+  state.wiki.railKey = "";
+  renderWikiRail();
+  wsvg.querySelectorAll(".wnode").forEach((el) =>
+    el.classList.toggle("on", el.getAttribute("data-slug") === slug));
+  fetchWikiPage(slug);
+}
+
+// what the open page's content is *supposed* to be, per the polled index (specials aren't
+// indexed — key on the whole index instead, since WIKI.md is derived from it)
+function pageKeyOf(slug) {
+  if (slug in RESERVED) return slug + " " + JSON.stringify([wikiPages(), (state.snap.wiki || {}).sources]);
+  const p = wikiPages().find((x) => x.slug === slug);
+  return p ? slug + " " + p.hash : null;
+}
+
+// on each snapshot: default the reader to the index, drop a selection that no longer
+// resolves, and refetch the open page when the poll says its content changed
+function refreshWikiPage() {
+  let slug = state.wiki.selected || "_index";
+  if (pageKeyOf(slug) == null) { slug = "_index"; state.wiki.selected = null; }
+  if (pageKeyOf(slug) !== state.wiki.pageKey) fetchWikiPage(slug);
+  else renderWikiReader();
+}
+
+async function fetchWikiPage(slug) {
+  const key = pageKeyOf(slug);
+  try {
+    const r = await fetch("/wiki/" + encodeURIComponent(slug) + ".json", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    state.wiki.page = await r.json();
+    state.wiki.pageKey = key;
+  } catch (e) {
+    state.wiki.page = { slug, title: null, summary: null, category: null, sources: [],
+                        updated: null, body: "_could not load this page (" + e.message + ")_",
+                        backlinks: [], error: true };
+    state.wiki.pageKey = key;
+  }
+  renderWikiReader();
+}
+
+function renderWikiReader() {
+  if (state.tab !== "wiki") return;
+  const pane = $("detail-content"), pg = state.wiki.page;
+  if (!pg) { pane.innerHTML = `<div class="d-kind">wiki</div><p class="d-empty">loading…</p>`; return; }
+  const key = JSON.stringify([pg.slug, state.wiki.pageKey, pg.body, pg.backlinks]);
+  if (key === state.wiki.readerKey) return;   // steady state: don't stomp selection/animation
+  state.wiki.readerKey = key;
+  const special = pg.slug in RESERVED;
+  const kind = special ? "wiki · " + RESERVED[pg.slug] : "wiki · " + (pg.category || "page");
+  let badges = "";
+  if (!special && pg.category)
+    badges += `<span class="badge dot" style="--b:${catColor(pg.category)}">${esc(pg.category)}</span>`;
+  if (pg.updated) badges += `<span class="badge">updated <span class="inline">${esc(pg.updated)}</span></span>`;
+  const srcs = (pg.sources || []).length
+    ? section("Sources", `<ul class="linklist">` +
+        pg.sources.map((s) => `<li><span class="inline">${esc(s)}</span></li>`).join("") + `</ul>`)
+    : "";
+  // snippets render INERT (mention highlighted, not linkified): the row itself is the link
+  // to the citing page — a live link inside it would nest interactives and point back here
+  const snip = (s) => esc(s).replace(/\[\[[^\]]*\]\]/g, (m) => `<span class="wl-mark">${m}</span>`);
+  const backs = special ? "" : section(`Linked from — ${pg.backlinks.length} page${pg.backlinks.length === 1 ? "" : "s"}`,
+    pg.backlinks.length
+      ? pg.backlinks.map((b) =>
+          `<button class="rowlink" data-wiki="${esc(b.slug)}"><span class="rid">${esc(b.slug)}</span>${esc(b.title || "")}` +
+          `<span class="rsum">${snip(b.snippet || "")}</span></button>`).join("")
+      : `<div class="body muted">nothing links here yet — an orphan by wiki-graph degree</div>`);
+  pane.innerHTML = `<div class="d-kind">${esc(kind)}</div>` +
+    `<div class="d-title">${esc(pg.title || pg.slug)}</div>` +
+    (badges ? `<div class="badges">${badges}</div>` : "") +
+    `<div class="wiki-body">${mdRender(pg.body)}</div>` + backs + srcs;
+  animateIn(pane.children, { opacity: [0, 1], y: [6, 0] },
+    { duration: 0.28, delay: M && M.stagger ? M.stagger(0.03) : 0 });
+}
+
+// ------------------------------------------------------------------ markdown (hand-rolled subset)
+// Renders the subset crux wiki pages use: headings, paragraphs, bold/italic, inline +
+// fenced code, lists, blockquotes, tables, rules, external links, and wikilinks —
+// [[slug]] / [[slug|alias]] / [[slug\|alias]] (the escaped-pipe form the generated
+// WIKI.md emits). Every fragment is HTML-escaped BEFORE any markup is added: page text
+// is data, never injected as markup.
+function mdInline(s) {
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\[\[\s*([^\]|#\\]+?)\s*(?:(?:\\\||\||#)([^\]]*))?\]\]/g, (m, t, a) => wikiLink(t, a));
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    `<a class="ext" href="$2" target="_blank" rel="noopener">$1</a>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[\s(])_([^_\s][^_]*)_/g, "$1<em>$2</em>");
+  return s;
+}
+function mdRender(md) {
+  const lines = String(md || "").split("\n");
+  const out = [];
+  let para = [], list = null, quote = [], code = null, table = null;
+  const flush = () => {
+    if (para.length) { out.push(`<p>${mdInline(esc(para.join(" ")))}</p>`); para = []; }
+    if (list) { out.push(`<${list.tag}>` + list.items.map((i) => `<li>${mdInline(esc(i))}</li>`).join("") + `</${list.tag}>`); list = null; }
+    if (quote.length) { out.push(`<blockquote>${mdInline(esc(quote.join(" ")))}</blockquote>`); quote = []; }
+    if (table) {
+      const row = (cells, tag) => `<tr>` + cells.map((c) => `<${tag}>${mdInline(esc(c))}</${tag}>`).join("") + `</tr>`;
+      out.push(`<table>` + row(table.head, "th") + table.rows.map((r) => row(r, "td")).join("") + `</table>`);
+      table = null;
+    }
+  };
+  const cells = (l) => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (code) {
+      if (/^\s*```/.test(l)) { out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); code = null; }
+      else code.push(l);
+      continue;
+    }
+    let m;
+    if (/^\s*```/.test(l)) { flush(); code = []; }
+    else if ((m = l.match(/^(#{1,6})\s+(.*)$/))) { flush(); const h = Math.min(m[1].length + 1, 5); out.push(`<h${h}>${mdInline(esc(m[2]))}</h${h}>`); }
+    else if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(l)) { flush(); out.push("<hr>"); }
+    else if ((m = l.match(/^\s*>\s?(.*)$/))) { if (para.length || list || table) flush(); quote.push(m[1]); }
+    else if ((m = l.match(/^\s*[-*+]\s+(.*)$/))) {
+      if (para.length || quote.length || table || (list && list.tag !== "ul")) flush();
+      (list = list || { tag: "ul", items: [] }).items.push(m[1]);
+    }
+    else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      if (para.length || quote.length || table || (list && list.tag !== "ol")) flush();
+      (list = list || { tag: "ol", items: [] }).items.push(m[1]);
+    }
+    else if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || "")) {
+      flush(); table = { head: cells(l), rows: [] }; i++;   // skip the |---| separator
+    }
+    else if (table && /^\s*\|.*\|\s*$/.test(l)) table.rows.push(cells(l));
+    else if (!l.trim()) flush();
+    else { if (list || quote.length || table) flush(); para.push(l.trim()); }
+  }
+  flush();
+  if (code) out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);   // unclosed fence
+  return out.join("\n");
+}
 
 // ------------------------------------------------------------------ movable pane splitter
 // Drag the divider to resize the detail pane; the tree pane takes the rest. Width persists.

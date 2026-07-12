@@ -8,6 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Wiki tab in the cockpit (Epic 1 × Epic 3).** `crux serve` grows a `Tree | Wiki`
+  switcher (shown only on wiki-bearing vaults): an explorer rail with virtual category
+  folders + pinned index / log / schema / sources, a **deterministic force-directed
+  wikilink graph** (color = category, size = link degree, hover-highlighted neighborhoods,
+  identical constellation on every load), and a markdown **reader** with a
+  backlinks-with-snippets section; `[[wiki/slug]]` citations in the tree's detail pane are
+  now live and jump straight into the Wiki tab. Backed by an additive `wiki` key in
+  `engine.snapshot()` (index only — no page bodies in the 1s poll) and a lazy, read-only,
+  traversal-safe `/wiki/<slug>.json` route (body + server-computed backlinks; reserved
+  slugs `_index`/`_log`/`_schema` serve the specials). One vendored static asset —
+  `webui/vendor/motion.js` (motion.dev browser build, MIT) — as progressive-enhancement
+  animation only: the UI is fully functional without it, the engine stays stdlib-only, and
+  the GUI stays write-free. No vault-format change (`ENGINE_VERSION` stays 1.1).
+  PRD: `docs/prd/gui-wiki-tab.md`.
+
 - **`./crux`** — a root-level executable wrapper that forwards every argument to the
   engine (`skills/crux/scaffold/crux.py`), so a clone runs `./crux <verb>` directly and
   the repo front page leads with the product's name. Pure delegation; skills installers

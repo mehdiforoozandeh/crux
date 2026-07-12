@@ -19,6 +19,10 @@
       <span class="divider"></span>
       <span id="project-title"></span>
       <span class="ro-badge" title="This cockpit is read-only — it shows the crux tree but never changes it. Edits (open a question, record a verdict, resolve a question) go through your agent, or the crux CLI.">View-only</span>
+      <nav id="tabs" role="tablist" aria-label="Cockpit views" hidden>
+        <button data-tab="tree" type="button" role="tab" class="on">Tree</button>
+        <button data-tab="wiki" type="button" role="tab">Wiki</button>
+      </nav>
     </div>
     <div class="tools">
       <div class="viewctl" role="group" aria-label="Tree view controls">
@@ -46,6 +50,24 @@
         <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse</span>
       </div>
     </section>
+    <section id="wiki-pane" hidden>
+      <aside id="wiki-rail">
+        <div class="wr-head">
+          <span class="wr-title">Explorer</span>
+          <button id="wiki-rail-btn" type="button" title="Collapse the explorer" aria-label="Toggle the explorer rail">⟨</button>
+        </div>
+        <div id="wiki-rail-body"></div>
+      </aside>
+      <div id="wiki-canvas">
+        <svg id="wiki-graph" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="wiki link graph"></svg>
+        <div id="wiki-legend" title="Node color = page category · node size = number of wiki links"></div>
+        <div id="wiki-zoom">
+          <button id="wgraph-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="wgraph-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="wgraph-fit" type="button" title="Fit graph to view" aria-label="Fit graph to view">⤢</button>
+        </div>
+      </div>
+    </section>
     <div id="splitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
     <aside id="detail-pane">
       <div id="detail-fontctl" title="Text size" aria-label="Detail text size">
@@ -60,6 +82,7 @@
     </aside>
   </main>
   <div id="offline" hidden>server disconnected — showing last known state</div>
+  <script src="vendor/motion.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

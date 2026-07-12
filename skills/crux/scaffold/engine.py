@@ -585,6 +585,76 @@ def scan_wiki_pages(root):
     pages.sort(key=lambda p: p["slug"])
     return pages
 
+WIKI_SPECIALS = {"_index": WIKI_INDEX, "_log": WIKI_LOG, "_schema": WIKI_SCHEMA}
+
+def _wiki_snapshot(root):
+    """The `wiki` block of snapshot(): the index only — public per-page fields plus a
+    content hash for change detection, never a body or a filesystem path."""
+    if not wiki_active(root):
+        return {"active": False, "pages": [], "sources": [],
+                "specials": {"index": False, "log": False, "schema": False}}
+    return {
+        "active": True,
+        "pages": [{"slug": p["slug"], "title": p["title"], "summary": p["summary"],
+                   "category": p["category"], "links": p["links"], "sources": p["sources"],
+                   "hash": _sha256_file(p["path"])[:16]}
+                  for p in scan_wiki_pages(root)],
+        "sources": [{"date": r["date"], "path": rel, "title": r["title"]}
+                    for rel, r in sorted(load_sources(root).items())],
+        "specials": {"index": os.path.isfile(os.path.join(root, WIKI_INDEX)),
+                     "log": os.path.isfile(os.path.join(root, WIKI_LOG)),
+                     "schema": os.path.isfile(os.path.join(root, WIKI_SCHEMA))},
+    }
+
+def _mention_snippet(body, slug, width=140):
+    """The first line of `body` whose wikilinks mention `slug`, trimmed to ~width chars
+    around the mention (the canonical link parser decides what counts as a mention)."""
+    for line in body.splitlines():
+        if slug not in link_targets(line):
+            continue
+        line = line.strip()
+        if len(line) <= width:
+            return line
+        pos = line.find(slug)
+        br = line.rfind("[[", 0, pos)
+        anchor = br if br != -1 else max(pos, 0)
+        start = max(0, anchor - width // 3)
+        end = min(len(line), start + width)
+        return ("…" if start else "") + line[start:end] + ("…" if end < len(line) else "")
+    return ""
+
+def wiki_page_payload(root, slug):
+    """Payload for /wiki/<slug>.json: a scanned page (with backlinks) or a reserved
+    special; None for unknown or traversal-shaped slugs. The slug is only ever matched
+    against the scan + reserved names — never used as a filesystem path — and rejection
+    happens before any file is read. Duplicate slugs resolve deterministically: reserved
+    names always win, then the first page by sorted path."""
+    if not wiki_active(root):
+        return None
+    if slug in WIKI_SPECIALS:
+        path = os.path.join(root, WIKI_SPECIALS[slug])
+        if not os.path.isfile(path):
+            return None
+        fm, body = parse_doc(read(path))
+        return {"slug": slug, "title": fm.get("title") or None,
+                "summary": fm.get("summary") or None, "category": fm.get("category") or None,
+                "sources": [], "updated": fm.get("updated") or None,
+                "body": body, "backlinks": []}
+    if not slug or "/" in slug or "\\" in slug or ".." in slug or slug.startswith("."):
+        return None
+    pages = scan_wiki_pages(root)
+    matches = [p for p in pages if p["slug"] == slug]
+    if not matches:
+        return None
+    page = min(matches, key=lambda p: p["path"])
+    backlinks = [{"slug": q["slug"], "title": q["title"],
+                  "snippet": _mention_snippet(q["body"], slug)}
+                 for q in pages if q["slug"] != slug and slug in q["links"]]
+    return {"slug": page["slug"], "title": page["title"], "summary": page["summary"],
+            "category": page["category"], "sources": page["sources"],
+            "updated": page["fm"].get("updated") or None,
+            "body": page["body"], "backlinks": backlinks}
+
 def ensure_wiki(root):
     """Lazily stand up the wiki subsystem (idempotent, safe on a pre-wiki vault)."""
     os.makedirs(wiki_dir(root), exist_ok=True)
@@ -1126,7 +1196,8 @@ def _subtree(v, nid):
 def snapshot(vault):
     """Read-only JSON snapshot of a vault. `vault` is a Vault or a root path.
     Keys: engine_version, project, nodes (flat map by id), tree (parent-link hierarchy
-    from the root; synthesis nodes are excluded — they attach via `related`), queue."""
+    from the root; synthesis nodes are excluded — they attach via `related`), queue,
+    wiki (index of the literature layer — page bodies stay behind /wiki/<slug>.json)."""
     v = vault if isinstance(vault, Vault) else Vault(vault)
     root_id = v.cfg["root_id"]
     root = v.get(root_id)
@@ -1138,4 +1209,5 @@ def snapshot(vault):
         "tree": _subtree(v, root_id),
         "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
+        "wiki": _wiki_snapshot(v.root),
     }

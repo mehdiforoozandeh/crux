@@ -432,7 +432,10 @@ def run_snapshot():
 
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
-          set(snap.keys()) == {"engine_version", "project", "nodes", "tree", "queue"})
+          set(snap.keys()) == {"engine_version", "project", "nodes", "tree", "queue", "wiki"})
+    _w = snap.get("wiki") or {}
+    check("snapshot: wiki inactive + empty on a wiki-less vault",
+          _w.get("active") is False and _w.get("pages") == [] and _w.get("sources") == [])
     check("snapshot: engine_version stamped", snap["engine_version"] == E.ENGINE_VERSION)
     dumped = json.dumps(snap)
     check("snapshot: JSON-serializable + round-trips", json.loads(dumped) == snap)
@@ -496,6 +499,179 @@ def run_snapshot():
     edit(node_path(root, h1), "verdict: supported", "verdict: bogus")
     check("snapshot: non-VERDICT verdict is clamped to None",
           E.snapshot(E.Vault(root))["nodes"][h1]["verdict"] is None)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_wiki_gui():
+    """Wiki tab contract (docs/prd/gui-wiki-tab.md): snapshot `wiki` key (index only,
+    no bodies) + lazy /wiki/<slug>.json route (body + backlinks, reserved slugs,
+    traversal-safe, pure read)."""
+    print("\n# wiki GUI contract (snapshot wiki key + /wiki/<slug>.json route)")
+    import json, threading, urllib.request, urllib.error, builtins
+    import serve as S
+
+    # a wiki-bearing vault with real, asymmetric inter-page links:
+    # alpha -> {beta, gamma}, beta -> {alpha}, gamma -> {alpha}  (alpha has 2 inbound)
+    root = tempfile.mkdtemp(prefix="crux_wgui_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("WikiGui", root, goal="Exercise the wiki GUI contract.")
+    E.cmd_ask(root, "What is known?")
+    write(os.path.join(root, "raw", "paper.txt"), "A paper.\n")
+    E.cmd_ingest(root, "raw/paper.txt", title="A Paper")
+    wiki_page(root, "alpha", "Alpha", "First concept.", sources="raw/paper.txt",
+              category="concept", extra="See [[beta]] and [[gamma]].")
+    wiki_page(root, "beta", "Beta", "Second concept.", sources="raw/paper.txt",
+              category="method", extra="Builds on [[alpha]].")
+    wiki_page(root, "gamma", "Gamma", "Third concept.", sources="raw/paper.txt",
+              category="concept", extra="Contrast with [[alpha]].")
+    E.refresh(root)
+    pages = E.scan_wiki_pages(root)
+
+    # -- snapshot: wiki index rides the poll — public fields only, never a body or path
+    snap = E.snapshot(root)
+    w = snap.get("wiki") or {}
+    check("wiki-gui: snapshot carries an active wiki", isinstance(w, dict) and w.get("active") is True)
+    got = {p.get("slug"): p for p in w.get("pages") or []}
+    check("wiki-gui: one index entry per scanned page", sorted(got) == [p["slug"] for p in pages])
+    PUBLIC = {"slug", "title", "summary", "category", "links", "sources", "hash"}
+    check("wiki-gui: page entries carry exactly the public keys (no body/path/fm/fn)",
+          bool(got) and all(set(p.keys()) == PUBLIC for p in got.values()))
+    check("wiki-gui: page entry fields match the scan",
+          bool(got) and all(got.get(p["slug"], {}).get(k) == p[k] for p in pages
+                            for k in ("title", "summary", "category", "links", "sources")))
+    check("wiki-gui: page hash is a non-empty string",
+          bool(got) and all(isinstance(p.get("hash"), str) and p["hash"] for p in got.values()))
+    reg = E.load_sources(root)
+    check("wiki-gui: sources are the {date,path,title} projection of the registry",
+          w.get("sources") == [{"date": r["date"], "path": rel, "title": r["title"]}
+                               for rel, r in sorted(reg.items())])
+    check("wiki-gui: specials flags present",
+          w.get("specials") == {"index": True, "log": True, "schema": True})
+    check("wiki-gui: snapshot with wiki round-trips through JSON",
+          json.loads(json.dumps(snap)) == snap)
+
+    # -- hash tracks content: editing one page moves only that page's hash
+    edit(os.path.join(root, "wiki", "beta.md"), "Second concept.", "Second concept, edited.")
+    got2 = {p.get("slug"): p for p in (E.snapshot(root).get("wiki") or {}).get("pages") or []}
+    check("wiki-gui: editing a page changes its hash (others stable)",
+          bool(got) and bool(got2)
+          and got2.get("beta", {}).get("hash") not in (None, got.get("beta", {}).get("hash"))
+          and got2.get("alpha", {}).get("hash") == got.get("alpha", {}).get("hash"))
+    pages = E.scan_wiki_pages(root)  # re-scan after the edit; the route asserts compare to this
+
+    # -- engine additions stay stdlib-only (top-level import statements only, so prose
+    #    inside docstrings that happens to start with "from …" never counts)
+    mods = set()
+    for line in read(os.path.join(HERE, "engine.py")).splitlines():
+        m = re.match(r"(?:import|from)\s+([a-zA-Z0-9_.]+)", line)
+        if m:
+            mods.add(m.group(1).split(".")[0])
+    stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
+        "os", "sys", "json", "re", "hashlib", "datetime", "shutil", "tempfile", "argparse"}
+    check("wiki-gui: engine.py stdlib-only imports", not (mods - stdlib))
+
+    # -- the lazy route, on a live server
+    free = S.find_free_port("127.0.0.1", 9020)
+    httpd = S.make_server(root, port=free)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+    base = f"http://127.0.0.1:{free}"
+
+    def get(path):
+        """(status, body_bytes, content_type) — HTTP errors surface as the status."""
+        try:
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                return r.status, r.read(), r.headers.get("Content-Type") or ""
+        except urllib.error.HTTPError as e:
+            body = b""
+            try:
+                body = e.read() or b""
+            except Exception:
+                pass
+            return e.code, body, ""
+        except Exception:
+            return -1, b"", ""
+
+    write(os.path.join(root, "secret_sentinel.txt"), "SENTINEL-DO-NOT-SERVE\n")
+    before = _dir_bytes(root)
+    try:
+        st, body, ctype = get("/wiki/alpha.json")
+        page = json.loads(body) if st == 200 else {}
+        check("wiki-gui: /wiki/alpha.json returns 200 application/json",
+              st == 200 and "application/json" in ctype)
+        ROUTE = {"slug", "title", "summary", "category", "sources", "updated", "body", "backlinks"}
+        check("wiki-gui: route payload carries exactly the contract keys",
+              bool(page) and set(page.keys()) == ROUTE)
+        alpha = next((p for p in pages if p["slug"] == "alpha"), {})
+        check("wiki-gui: route body equals the page's markdown body (frontmatter stripped)",
+              bool(page) and page.get("body") == alpha.get("body"))
+        check("wiki-gui: route metadata matches the scan",
+              bool(page) and all(page.get(k) == alpha.get(k)
+                                 for k in ("title", "summary", "category", "sources")))
+        check("wiki-gui: updated comes from frontmatter", page.get("updated") == "x" if page else False)
+
+        # backlinks: equal the pages whose links contain the slug, each with a mention snippet
+        def backs(slug):
+            s, b, _ = get(f"/wiki/{slug}.json")
+            return json.loads(b).get("backlinks") if s == 200 else None
+        want = {p["slug"]: sorted(q["slug"] for q in pages if p["slug"] in q["links"] and q["slug"] != p["slug"])
+                for p in pages}
+        got_bl = {s: backs(s) for s in want}
+        check("wiki-gui: backlinks equal the pages that link each slug",
+              all(isinstance(got_bl[s], list) and sorted(b["slug"] for b in got_bl[s]) == want[s]
+                  for s in want))
+        check("wiki-gui: asymmetric fixture degrees (alpha 2 inbound, beta 1)",
+              isinstance(got_bl.get("alpha"), list) and len(got_bl["alpha"]) == 2
+              and isinstance(got_bl.get("beta"), list) and len(got_bl["beta"]) == 1)
+        check("wiki-gui: every backlink carries slug+title+snippet containing the [[mention]]",
+              any(got_bl.values())
+              and all(set(b.keys()) == {"slug", "title", "snippet"} and f"[[{s}" in b["snippet"]
+                      for s in want for b in (got_bl[s] or [])))
+
+        # reserved slugs serve the specials through the same shape: null metadata, no backlinks
+        for slug, relpath in (("_index", "WIKI.md"), ("_log", os.path.join("wiki", "log.md")),
+                              ("_schema", os.path.join("wiki", "SCHEMA.md"))):
+            s, b, _ = get(f"/wiki/{slug}.json")
+            sp = json.loads(b) if s == 200 else {}
+            want_body = E.parse_doc(read(os.path.join(root, relpath)))[1]
+            check(f"wiki-gui: {slug} serves {relpath.replace(os.sep, '/')} (same shape, empty backlinks)",
+                  s == 200 and sp.get("body") == want_body and sp.get("backlinks") == []
+                  and set(sp.keys()) == ROUTE)
+        s_i, b_i, _ = get("/wiki/_index.json")
+        check("wiki-gui: _index has null metadata (WIKI.md has no frontmatter)",
+              s_i == 200 and json.loads(b_i).get("title") is None
+              and json.loads(b_i).get("category") is None)
+
+        # unknown + traversal-shaped slugs through the /wiki/ route specifically
+        check("wiki-gui: unknown slug -> 404", get("/wiki/nope.json")[0] == 404)
+        opened = []
+        real_open = builtins.open
+        def spy(f, *a, **kw):
+            if isinstance(f, (str, bytes, os.PathLike)):
+                try:
+                    opened.append(os.path.abspath(os.fsdecode(f)))
+                except Exception:
+                    pass
+            return real_open(f, *a, **kw)
+        builtins.open = spy
+        try:
+            trav = ["/wiki/../secret_sentinel.json", "/wiki/..%2Fsecret_sentinel.json",
+                    "/wiki/%2e%2e%2fsecret_sentinel.json", "/wiki//etc/hosts.json",
+                    "/wiki/....//secret_sentinel.json"]
+            results = [get(p) for p in trav]
+        finally:
+            builtins.open = real_open
+        check("wiki-gui: traversal-shaped slugs -> 404", all(s == 404 for s, _, _ in results))
+        check("wiki-gui: no traversal response leaks the sentinel",
+              all(b"SENTINEL-DO-NOT-SERVE" not in b for _, b, _ in results))
+        absroot = os.path.abspath(root)
+        allowed = (os.path.join(absroot, "wiki") + os.sep, os.path.join(absroot, "WIKI.md"))
+        vault_opens = [p for p in opened if p.startswith(absroot + os.sep)]
+        check("wiki-gui: traversal requests open nothing outside the wiki layer",
+              all(p.startswith(allowed[0]) or p == allowed[1] for p in vault_opens))
+    finally:
+        httpd.shutdown(); httpd.server_close()
+    check("wiki-gui: pure read — vault byte-identical after all wiki routes",
+          _dir_bytes(root) == before)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -629,7 +805,8 @@ def run_webui():
     t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
     try:
         base = f"http://127.0.0.1:{free}"
-        for path, ctype in (("/app.js", "javascript"), ("/style.css", "css")):
+        for path, ctype in (("/app.js", "javascript"), ("/style.css", "css"),
+                            ("/vendor/motion.js", "javascript")):
             try:
                 with urllib.request.urlopen(base + path, timeout=5) as r:
                     ok = ctype in (r.headers.get("Content-Type") or "")
@@ -640,10 +817,27 @@ def run_webui():
         httpd.shutdown(); httpd.server_close()
     shutil.rmtree(root, ignore_errors=True)
 
-    # -- pure-read at the browser layer: the cockpit only ever GETs the snapshot, never mutates
-    #    the vault (single read endpoint, no fetch method override). Mirrors the engine invariant.
-    check("webui: app.js is pure-read (one GET of snapshot.json, no write verbs)",
-          app_js.count("fetch(") == 1 and 'fetch("snapshot.json"' in app_js and "method:" not in app_js)
+    # -- pure-read at the browser layer: the cockpit only ever GETs (the snapshot poll plus
+    #    the lazy wiki-page route — relaxation pre-registered in docs/prd/gui-wiki-tab.md),
+    #    never mutates the vault (no fetch method override). Mirrors the engine invariant.
+    check("webui: app.js is pure-read (two GETs: snapshot + wiki page, no write verbs)",
+          app_js.count("fetch(") == 2 and 'fetch("snapshot.json"' in app_js
+          and "/wiki/" in app_js and "method:" not in app_js)
+
+    # -- no external assets: every src/href in webui/ is local (SVG xmlns namespace
+    #    identifiers are not fetched assets and are exempt); the vendored motion file is
+    #    the single allowed third-party JS, served locally.
+    ext = []
+    for dp, _, fns in os.walk(os.path.join(HERE, "webui")):
+        for fn in fns:
+            for m in re.finditer(r"(?:src|href)\s*=\s*[\"']([^\"']+)[\"']",
+                                 read(os.path.join(dp, fn))):
+                if m.group(1).startswith(("http://", "https://", "//")):
+                    ext.append(f"{fn}: {m.group(1)}")
+    check("webui: no external src/href assets", not ext)
+    check("webui: vendored motion file exists and is referenced",
+          os.path.exists(os.path.join(HERE, "webui", "vendor", "motion.js"))
+          and "vendor/motion.js" in read(os.path.join(HERE, "webui", "index.html")))
 
     # -- issue #1 regression guard: capturing the pointer on the tree <svg> retargets the
     #    follow-up `click` to the svg itself, so node/toggle hit-testing (e.target.closest)
@@ -671,6 +865,7 @@ def main():
     run_version()
     run_integrity()
     run_snapshot()
+    run_wiki_gui()
     run_serve()
     run_webui()
     run_cli_help()
