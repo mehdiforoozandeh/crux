@@ -5,8 +5,13 @@
 > *Crux* (the Southern Cross) is the sky's smallest constellation and its most reliable signpost — for centuries it's how navigators found their bearings. `crux` does the same for a research program: it keeps you oriented through a growing tree of open questions and the hypotheses that resolve them, and helps you get to the **crux** of each one.
 
 <p align="center">
-  <img src="assets/crux-schematic.svg" alt="Crux schematic — a vault tree of Questions and Hypotheses; the ask → hypothesize → test → close → review → answer loop; and the PI / Agent / Engine roles" width="920">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/cockpit-tree-dark.webp">
+    <img src="assets/screens/cockpit-tree-light.webp" width="900" alt="The crux serve cockpit (read-only): a real research program (SegSSL) as a status-colored question/hypothesis tree on the left, and one hypothesis's evidence ledger on the right — its pre-registered verifiables (all met), headline metric (+3.3 mIoU on ADE20K), run link, and finding. Served locally over 127.0.0.1; every edit goes through your agent or the crux CLI.">
+  </picture>
 </p>
+
+<p align="center"><sub><b><code>crux serve</code></b> gives you a dependency-free, <b>read-only</b> browser cockpit over the vault — the status-colored tree on the left, a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding) on the right. It only reads the vault; edits go through your agent or the <code>crux</code> CLI. <em>(Real screenshot — the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example.)</em></sub></p>
 
 ## What it is
 
@@ -17,7 +22,22 @@
 - A deterministic **engine** does the bookkeeping — IDs, the parent tree, validators, the evidence-ledger roll-up, a human **review gate**, and regenerating a navigable `META.md` map + `EXPERIMENTS.md` registry.
 - An **LLM agent** drives it conversationally; **you (the PI)** make the judgment calls — which questions matter, the verifiable bar, and when a question is truly answered.
 
+<p align="center">
+  <img src="assets/crux-schematic.svg" alt="Crux schematic — a vault tree of Questions and Hypotheses; the ask → hypothesize → test → close → review → answer loop; and the PI / Agent / Engine roles" width="820">
+</p>
+
+<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Here color marks <b>role</b> (project · question · hypothesis); in the cockpit above, color marks <b>status</b>.</sub></p>
+
 Everything is plain markdown in an **Obsidian-graphable vault**: open it and the question/hypothesis tree *is* the graph — or run **`crux serve`** for a dependency-free, status-colored **browser cockpit** over the same vault (read-only: pan / zoom / search the tree, watch the review gate). A parallel **literature wiki** (the `crux-wiki` skill) compiles PI-curated sources into an interlinked knowledge base the agent draws on, cross-linked with the tree.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/wiki-graph-dark.webp">
+    <img src="assets/screens/wiki-graph-light.webp" width="900" alt="The cockpit's Wiki tab: the SegSSL literature wiki drawn as a force-directed knowledge graph — nodes are wiki pages colored by category (concept, method, dataset, comparison, entity) and sized by number of links; a left explorer lists the pages and the 15 curated sources; the right pane renders the selected page. Read-only and served locally.">
+  </picture>
+</p>
+
+<p align="center"><sub>The <b>literature wiki</b> as a live knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources; knowledge flows literature → wiki → tree, never back.</sub></p>
 
 ## Install
 
@@ -81,6 +101,15 @@ researcher opens a question and designs the first hypothesis:
 </p>
 
 The verdict is **mechanical**: `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine never reads your run logs — you supply the per-box judgment and a headline metric. That keeps it domain-agnostic. Running an experiment and recording a verdict are always **your** call — crux is human-in-charge by default.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screens/question-rollup-dark.webp">
+    <img src="assets/screens/question-rollup-light.webp" width="900" alt="The cockpit showing a resolved question — 'Which SSL objective family transfers best to dense prediction?' — with its framing and a synthesized 'Answer so far' that aggregates the verdicts of the hypotheses beneath it. Read-only; the answer is recorded through your agent or the crux CLI.">
+  </picture>
+</p>
+
+<p align="center"><sub>A <b>resolved question</b> in the cockpit: its standing answer, rolled up from the verdicts of the hypotheses beneath it. You decide when a question is truly answered — the cockpit only shows the state.</sub></p>
 
 ## How it's built
 
