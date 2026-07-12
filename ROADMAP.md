@@ -44,6 +44,7 @@ clean and prevents the self-ingestion failure mode). Instantiates Karpathy's LLM
 - ☑ **Agent reads the wiki for context** — `WIKI.md` index + pages consulted when proposing questions/hypotheses; tree nodes may cite `[[wiki/page]]` (the crux-wiki skill).
 - ☑ **Agent compiles the wiki from literature** — `crux ingest` registers a source; the agent compiles/updates pages that cite `raw/`. *(Amended: knowledge comes from curated literature, not from distilling the project's own findings — findings never enter the wiki.)*
 - ☑ **Index & render** — engine-generated `WIKI.md` at the vault root (pages by category + source registry), byte-stable, without polluting the question/hypothesis tree; structural lint via `crux validate`.
+- ☑ **Browse the wiki in the cockpit** — a `Wiki` tab in `crux serve`: explorer rail (virtual category folders + pinned index/log/schema/sources) + deterministic force-directed link graph (color = category, size = degree) + markdown reader with backlinks; `[[wiki/…]]` citations in the tree's detail pane jump straight into it. *(PRD: [`docs/prd/gui-wiki-tab.md`](docs/prd/gui-wiki-tab.md); `wiki` snapshot key + `/wiki/<slug>.json`.)*
 
 *Delivered as the `crux-wiki` skill + engine `ingest`/`WIKI.md`/wiki-lint (ENGINE_VERSION 1.1).*
 

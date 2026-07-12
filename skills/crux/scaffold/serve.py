@@ -11,7 +11,7 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, webbrowser, http.server
+import os, sys, json, socket, webbrowser, http.server, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
@@ -74,7 +74,8 @@ def find_free_port(host, start):
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     """Serves the static webui, plus a live /snapshot.json regenerated per request
-    (a poll picks up on-disk changes). Read-only: only GET, and no route ever writes."""
+    (a poll picks up on-disk changes) and /wiki/<slug>.json for lazy wiki page bodies.
+    Read-only: only GET, and no route ever writes."""
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WEBUI, **kw)
 
@@ -86,8 +87,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] == "/snapshot.json":
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
+        if path == "/snapshot.json":
             return self._snapshot()
+        if path.startswith("/wiki/") and path.endswith(".json"):
+            return self._wiki(path[len("/wiki/"):-len(".json")])
         return super().do_GET()
 
     def _snapshot(self):
@@ -96,6 +100,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error(500, f"snapshot failed: {e}")
             return
+        self._send_json(data)
+
+    def _wiki(self, slug):
+        """Lazy wiki page body + backlinks. The slug never touches the filesystem —
+        engine.wiki_page_payload matches it against the scan + reserved names only."""
+        try:
+            payload = engine.wiki_page_payload(self.server.root, slug)
+        except Exception as e:
+            self.send_error(500, f"wiki page failed: {e}")
+            return
+        if payload is None:
+            self.send_error(404, "no such wiki page")
+            return
+        self._send_json(json.dumps(payload).encode("utf-8"))
+
+    def _send_json(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))

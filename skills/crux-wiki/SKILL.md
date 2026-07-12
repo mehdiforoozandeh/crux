@@ -71,7 +71,17 @@ command. It is your entry point for a query.
 
 The PI drops a source into `raw/`. You run `crux ingest` — the engine (○) records its
 sha256 in the registry, appends a `## [YYYY-MM-DD] ingest | <title>` line to `wiki/log.md`,
-and re-renders `WIKI.md`. Then **you** (◆) do the reading and synthesis the engine can't:
+and re-renders `WIKI.md`.
+
+**Title convention:** the `--title` carries the paper title **plus the full author list
+and year** — e.g. `"Masked Autoencoders Are Scalable Vision Learners — Kaiming He,
+Xinlei Chen, Saining Xie, Yanghao Li, Piotr Dollár, Ross Girshick (2021)"`. The registry
+title is the only author-bearing field in the vault, so this is what makes sources
+findable by author (in the cockpit's wiki search, in `WIKI.md`, and by grep); a bare
+"He et al" hides every co-author. Keep it on one line (the registry and log are
+line-based).
+
+Then **you** (◆) do the reading and synthesis the engine can't:
 
 1. Read the source in `raw/`.
 2. Compile it into the wiki — **update existing pages** where the source touches known
