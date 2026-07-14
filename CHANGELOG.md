@@ -4,6 +4,15 @@ All notable changes to crux. Format loosely follows [Keep a Changelog](https://k
 the engine version (`ENGINE_VERSION`, stamped into every vault) bumps when the vault format or
 verdict/roll-up/view logic changes.
 
+## [Unreleased]
+
+### Added
+
+- **`crux serve --dir <vault>`.** Point the cockpit at any vault without `cd`-ing into
+  it (resolves upward from the given directory, same as the cwd default). Powers the
+  README's new zero-setup **Try it in 60 seconds** path over the bundled
+  `segssl_vault` example.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added

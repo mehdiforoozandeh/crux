@@ -34,10 +34,10 @@ def _vault():
     return root
 
 
-def _vault_ro():
+def _vault_ro(start=None):
     """Resolve the vault WITHOUT stamping — for read-only verbs (serve). Warns on drift but
     never writes, so the GUI honors its no-write invariant even on a pre-versioned/drifted vault."""
-    root = E.find_vault()
+    root = E.find_vault(start)
     stamped = E.yaml_load(E.read(os.path.join(root, E.VAULT_MARKER))).get("engine_version")
     if stamped is not None and str(stamped) != E.ENGINE_VERSION:
         print(f"crux: ⚠ engine drift: vault v{stamped} vs engine v{E.ENGINE_VERSION} "
@@ -91,6 +91,7 @@ def main(argv=None):
     sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki)")
 
     s = sub.add_parser("serve", aliases=["gui", "ui", "cockpit"], help="open the read-only browser cockpit over this vault")
+    s.add_argument("--dir", default=None, help="vault directory (default: resolve upward from the current directory)")
     s.add_argument("--port", type=int, default=None, help="pin a port (default: auto from 8787)")
     s.set_defaults(open=None)
     g = s.add_mutually_exclusive_group()
@@ -165,7 +166,7 @@ def dispatch(a):
         return 1
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
-        SV.serve(_vault_ro(), port=a.port, force_open=a.open)
+        SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)
     return 0
 
 

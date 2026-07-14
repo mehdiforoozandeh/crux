@@ -49,6 +49,22 @@ cd crux && ./install.sh
 The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
 root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`).
 
+## Try it in 60 seconds
+
+No agent, no dependencies, nothing to configure — open the cockpit over the bundled
+example vault right from a fresh clone:
+
+```bash
+git clone https://github.com/mehdiforoozandeh/crux
+cd crux && ./crux serve --dir skills/crux/examples/segssl_vault
+```
+
+That's the [segssl_vault](skills/crux/examples/segssl_vault) example (**5 questions,
+15 hypotheses** — the vault behind the screenshots below): pan the status-colored tree,
+open a hypothesis's evidence ledger, and flip to the **Wiki** tab for the literature
+graph. When you're ready to run your own program, install the skills above and tell
+your agent to set up crux in your repo.
+
 ## Why not just a doc, Notion, or W&B?
 
 Those hold notes, a graph, and run logs. crux adds the part they don't:
