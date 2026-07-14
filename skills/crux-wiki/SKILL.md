@@ -15,7 +15,7 @@ license: MIT
 metadata:
   author: Mehdi Foroozandeh
   version: "1.0"
-  requires: "the crux skill (shares its engine at skills/crux/scaffold/)"
+  requires: "the crux skill, installed as a sibling of this one (shares its engine at <crux skill>/scaffold/)"
   notice: "Instantiates Karpathy's LLM-wiki pattern on crux; bundled engine is original MIT work; no third-party code."
 ---
 
@@ -28,9 +28,12 @@ definitions — that you maintain and draw on. It is [Andrej Karpathy's LLM-wiki
 every query) instantiated on crux, so crux's deterministic engine does the bookkeeping the
 pattern needs.
 
-It rides on the **crux** skill and its engine (`skills/crux/scaffold/`). crux tracks the
-*new* knowledge you're producing (the Question→Hypothesis tree); crux-wiki tracks the
-*existing* knowledge you're building on. They are cross-linked but separate.
+It rides on the **crux** skill and its engine (`<crux skill>/scaffold/` — the crux skill
+is this skill's sibling directory in your skills dir; in a repo clone, `skills/crux`).
+If the engine is missing, install the crux skill first
+(`npx skills add mehdiforoozandeh/crux --all`, or the repo's `./install.sh`). crux
+tracks the *new* knowledge you're producing (the Question→Hypothesis tree); crux-wiki
+tracks the *existing* knowledge you're building on. They are cross-linked but separate.
 
 ## The one-way flow rule (hard, load-bearing)
 
@@ -155,7 +158,7 @@ Two tiers, split exactly along crux's engine/agent line:
   short (a paragraph each), prefer 2–3 synthesis pages over one page per named method. The win
   is compressing facts scattered across many sources; a page that mirrors one source 1:1 adds
   negative value.
-- **Start the template** from `skills/crux/scaffold/templates/wiki.md`.
+- **Start the template** from `<crux skill>/scaffold/templates/wiki.md`.
 
 ## Setup
 
@@ -189,10 +192,10 @@ emphasis) or in a batch, then open `WIKI.md` in Obsidian to see the graph.
 
 ## The engine (shared with crux)
 
-crux-wiki drives the same engine the `crux` skill ships (`skills/crux/scaffold/`):
+crux-wiki drives the same engine the `crux` skill ships (`<crux skill>/scaffold/`):
 `crux ingest` (register a source), `crux validate` (tree + wiki structural lint), and
 `crux status`. Pages are plain markdown you write per the template; the engine scans them,
 never generates their content. Validate the install with
-`python skills/crux/scaffold/selftest.py` — its `# wiki layer` section asserts every wiki
-invariant (ingest, index render, idempotency, structural lint, backward-compat) with no
-GPU/tokens.
+`python <crux skill>/scaffold/crux.py selftest` — its `# wiki layer` section asserts every
+wiki invariant (ingest, index render, idempotency, structural lint, backward-compat) with
+no GPU/tokens.

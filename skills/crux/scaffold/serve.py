@@ -11,7 +11,7 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, webbrowser, http.server, urllib.parse
+import os, sys, json, socket, webbrowser, http.server, urllib.parse, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
@@ -100,7 +100,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error(500, f"snapshot failed: {e}")
             return
-        self._send_json(data)
+        # The UI polls ~1/s; an unchanged vault answers 304 with no body. The validator
+        # travels in the ETag header and the client echoes it back itself (If-None-Match),
+        # so this works alongside Cache-Control: no-store — no browser cache involved.
+        etag = '"%s"' % hashlib.sha256(data).hexdigest()[:32]
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        self._send_json(data, etag)
 
     def _wiki(self, slug):
         """Lazy wiki page body + backlinks. The slug never touches the filesystem —
@@ -115,10 +124,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self._send_json(json.dumps(payload).encode("utf-8"))
 
-    def _send_json(self, data):
+    def _send_json(self, data, etag=None):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         self.wfile.write(data)
 

@@ -15,7 +15,7 @@ license: MIT
 metadata:
   author: Mehdi Foroozandeh
   version: "1.0"
-  requires: "the crux skill (drives its engine at skills/crux/scaffold/)"
+  requires: "the crux skill, installed as a sibling of this one (drives its engine at <crux skill>/scaffold/)"
   notice: "Playbook only — operates the bundled crux engine's `serve` verb; no engine changes, no third-party code."
 ---
 
@@ -30,7 +30,11 @@ manage the server's lifecycle. The user should never have to touch a terminal **
 machine you run on** — the one thing you can't do for them is start a local `ssh -L`
 tunnel (plain-SSH contexts only; see **Local vs remote**).
 
-The engine rides in the **crux** skill: `ENGINE = <crux skill>/scaffold/crux.py`.
+The engine rides in the **crux** skill: `ENGINE = <crux skill>/scaffold/crux.py` — the
+crux skill is this skill's sibling directory in your skills dir (in a repo clone,
+`skills/crux`). If that engine file is missing, the crux skill isn't installed: install
+it first (`npx skills add mehdiforoozandeh/crux --all`, or the repo's `./install.sh`)
+before continuing.
 
 ## Ground rules (load-bearing)
 

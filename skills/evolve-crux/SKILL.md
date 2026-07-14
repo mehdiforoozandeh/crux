@@ -20,8 +20,8 @@ metadata:
 
 # evolve-crux — ship a change to crux, rigorously
 
-This skill is for working **on crux the tool** (the repo at `~/crux`), not on a research
-project that *uses* crux. It carries one change — a new capability or a fix for something
+This skill is for working **on crux the tool** (your clone of the crux repo), not on a
+research project that *uses* crux. It carries one change — a new capability or a fix for something
 crux keeps getting wrong — through a strictly gated arc:
 
 ```
@@ -39,9 +39,10 @@ auto-detection of who you are, no privileged branch. The maintainer is just the
 contributor who can **self-merge** their own PR, plus a small, separate **release** step
 (below). This keeps one code path and makes third-party PRs first-class.
 
-Work in a dedicated session **inside `~/crux`** (a fresh chat, not the project you were
-researching). For a large build you may dispatch a worktree sub-agent, but the default is
-the main thread.
+Work in a dedicated session **inside your crux clone** (a fresh chat, not the project you
+were researching). No clone yet — e.g. you installed the skills via `npx skills add`?
+`git clone https://github.com/mehdiforoozandeh/crux` first. For a large build you may
+dispatch a worktree sub-agent, but the default is the main thread.
 
 ---
 
@@ -156,8 +157,9 @@ The maintainer runs the **identical** arc, then:
 - **Self-merge** their own PR once the gate is green (they may push/merge to `main`).
 - **Cut a release** as a *separate, occasional* action — decoupled from any single feature,
   not once per PR: roll the accumulated `## [Unreleased]` CHANGELOG entries into a version
-  section, `git tag vX.Y.Z`, push tags. Because `/crux` is installed as a **symlink** to
-  `~/crux`, merging already updates the live skill — no reinstall.
+  section, `git tag vX.Y.Z`, push tags. Where `/crux` is installed as a **symlink** into a
+  clone (`./install.sh`), merging already updates the live skill — no reinstall;
+  npx-installed copies are frozen and update via `npx skills update`.
 
 ---
 
@@ -170,5 +172,5 @@ The maintainer runs the **identical** arc, then:
 - **Don't hand-edit generated views** in the fixtures (`META.md`, `EXPERIMENTS.md`, ledger
   blocks) — regenerate them via the engine so the fixture stays honest.
 - **One change per PR.** A feature and an unrelated fix are two arcs, two PRDs, two PRs.
-- **Scope is crux the tool.** This skill edits `~/crux`. It never touches a user's research
-  vault or project code — those are what crux (and this change) serve.
+- **Scope is crux the tool.** This skill edits the crux repo clone. It never touches a
+  user's research vault or project code — those are what crux (and this change) serve.
