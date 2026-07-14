@@ -677,7 +677,7 @@ def run_wiki_gui():
 
 def run_serve():
     print("\n# serve (crux serve — stdlib browser cockpit host)")
-    import json, socket, threading, urllib.request
+    import json, socket, threading, urllib.request, urllib.error
     try:
         import serve as S
     except Exception as e:
@@ -755,6 +755,24 @@ def run_serve():
         with urllib.request.urlopen(base + "/", timeout=5) as r2:
             html = r2.read().decode("utf-8", "replace").lower()
         check("serve: serves the cockpit HTML at /", "<html" in html or "crux" in html)
+
+        # -- conditional polling: an unchanged vault answers a matching If-None-Match
+        #    with 304 (no body); a vault change flips the ETag and re-serves 200
+        with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as r3:
+            etag = r3.headers.get("ETag"); r3.read()
+        check("serve: /snapshot.json carries an ETag", bool(etag))
+        req = urllib.request.Request(base + "/snapshot.json", headers={"If-None-Match": etag or ""})
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                check("serve: matching If-None-Match → 304", False)
+        except urllib.error.HTTPError as he:
+            check("serve: matching If-None-Match → 304", he.code == 304)
+        E.cmd_ask(root, "a second question")
+        req = urllib.request.Request(base + "/snapshot.json", headers={"If-None-Match": etag or ""})
+        with urllib.request.urlopen(req, timeout=5) as r4:
+            fresh = r4.headers.get("ETag"); r4.read()
+        check("serve: stale If-None-Match re-serves 200 with a new ETag",
+              r4.status == 200 and bool(fresh) and fresh != etag)
     finally:
         httpd.shutdown(); httpd.server_close()
 

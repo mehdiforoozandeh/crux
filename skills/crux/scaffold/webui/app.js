@@ -91,6 +91,7 @@ function computeGeom() {
 const state = {
   snap: null,
   lastJSON: "",
+  etag: "",                 // /snapshot.json validator — echoed as If-None-Match; 304 = unchanged
   collapsed: new Set(),     // node ids whose subtree is hidden (client-only)
   selected: null,           // node id, or null => review queue
   view: { tx: 60, ty: 40, k: 1 },
@@ -125,8 +126,12 @@ const svg = $("tree");
 // ------------------------------------------------------------------ polling
 async function poll() {
   try {
-    const r = await fetch("snapshot.json", { cache: "no-store" });
-    if (r.ok) {
+    const r = await fetch("snapshot.json", { cache: "no-store",
+      headers: state.etag ? { "If-None-Match": state.etag } : {} });
+    if (r.status === 304) {
+      $("offline").hidden = true;    // unchanged vault — nothing to re-parse
+    } else if (r.ok) {
+      state.etag = r.headers.get("ETag") || "";
       const txt = await r.text();
       $("offline").hidden = true;
       if (txt !== state.lastJSON) {
