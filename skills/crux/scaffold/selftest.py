@@ -848,10 +848,21 @@ def run_webui():
 
 def run_cli_help():
     print("\n# CLI --help smoke")
-    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"]):
+    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
+                 ["selftest", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True)
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
+
+    # -- the post-init hint must work from where the user just ran init: the vault is
+    #    created *below* the cwd, so the hint carries the cd into it
+    tmp = tempfile.mkdtemp(prefix="crux-hint-")
+    try:
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "init", "Hint Project"],
+                           capture_output=True, text=True, cwd=tmp)
+        check("init hint: includes `cd cruxvault`", r.returncode == 0 and "cd cruxvault" in r.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():

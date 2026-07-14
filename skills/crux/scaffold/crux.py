@@ -22,6 +22,9 @@ all `- [x]` -> supported · any `- [ ]` -> refuted/partial · `- [-]` -> inconcl
 """
 import argparse, sys, os
 
+if sys.version_info < (3, 8):
+    sys.exit("crux: needs Python >= 3.8 (found %d.%d)" % sys.version_info[:2])
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine as E
 
@@ -90,6 +93,9 @@ def main(argv=None):
 
     sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki)")
 
+    s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
+    s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
+
     s = sub.add_parser("serve", aliases=["gui", "ui", "cockpit"], help="open the read-only browser cockpit over this vault")
     s.add_argument("--dir", default=None, help="vault directory (default: resolve upward from the current directory)")
     s.add_argument("--port", type=int, default=None, help="pin a port (default: auto from 8787)")
@@ -114,11 +120,13 @@ def dispatch(a):
     if c in ("init", "start", "new"):
         if a.seed:
             root, fn = E.cmd_init_from(a.seed, a.dir)
+            cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ materialized vault at {root} from {a.seed}\n  root node: {fn}\n"
-                  f"  next: crux status   — review the tree, then crux review for questions awaiting you")
+                  f"  next: {cd}crux status   — review the tree, then crux review for questions awaiting you")
         elif a.title:
             root, fn = E.cmd_init(a.title, a.dir, a.goal)
-            print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: crux ask \"your first question\"")
+            cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
+            print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: {cd}crux ask \"your first question\"")
         else:
             print("crux: init needs a project title, or --from <seed.md>", file=sys.stderr); return 1
     elif c in ("ask", "question", "q", "meta"):
@@ -167,6 +175,10 @@ def dispatch(a):
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)
+    elif c == "selftest":
+        import subprocess
+        st = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selftest.py")
+        return subprocess.call([sys.executable, st] + (["--keep", a.keep] if a.keep else []))
     return 0
 
 
