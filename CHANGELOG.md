@@ -12,6 +12,36 @@ verdict/roll-up/view logic changes.
   it (resolves upward from the given directory, same as the cwd default). Powers the
   README's new zero-setup **Try it in 60 seconds** path over the bundled
   `segssl_vault` example.
+- **`crux selftest`.** The engine's test suite is now a first-class verb (it forwards
+  to `scaffold/selftest.py`, `--keep` included) — the post-install check is
+  `./crux selftest` instead of knowing the script path.
+- **Python floor.** The engine states and enforces its requirement: Python ≥ 3.8, with
+  a clear message instead of a raw `SyntaxError` on older interpreters.
+
+### Fixed
+
+- **Post-`init` hint.** `crux init` now prints `next: cd cruxvault && crux ask …` — the
+  vault is created *below* the cwd, so the old hint failed with "not inside a crux
+  vault" when run verbatim from where the user just ran `init`.
+- **`install.sh` cross-agent + portability.** The installer now links skills into both
+  `~/.claude/skills` (Claude Code) and `~/.agents/skills` (the shared dir Cursor, Codex,
+  Windsurf, and Copilot CLI read); `SKILLS_DIR` still overrides to a single custom dir.
+  It fails fast with a clear message under non-bash `sh` (dash), and its final output
+  warns that the skills are symlinks into the clone.
+- **SKILL.md paths that broke after installation.** `crux-wiki` and `crux-cockpit`
+  referenced the engine via repo-root-relative paths (`skills/crux/scaffold/…`) that
+  don't exist once skills are installed as siblings; both now use the
+  `<crux skill>/scaffold/…` placeholder and tell the agent to install the `crux` skill
+  first if the engine is missing. `evolve-crux` no longer hardcodes the maintainer's
+  `~/crux` checkout.
+
+### Docs
+
+- **Install section rewritten for accuracy.** Requirements stated (Python ≥ 3.8, git,
+  Node.js for the npx path); the npx command gains `--all` (without it the interactive
+  picker starts with zero skills selected); all four skills are named; project-vs-global
+  scope, updating (`git pull` vs `npx skills update`), uninstalling, the keep-the-clone
+  warning, and the restart-your-agent step are documented.
 
 ## [0.4.0] - 2026-07-12
 

@@ -31,23 +31,40 @@ back; **you** sign off on the verdict. Nothing counts until you do.
 
 ## Install
 
-`crux` is a small collection of skills under [`skills/`](skills). Install them all with any
-[skills.sh](https://www.skills.sh)-compatible agent (Claude Code and others):
+Requirements: Python ≥ 3.8 (stdlib only) and `git`; the `npx` path also needs Node.js.
+(Fresh macOS: `xcode-select --install` provides git.)
+
+`crux` is four skills under [`skills/`](skills) — `crux` (the engine + lab-notebook
+skill), `crux-wiki` (literature wiki), `crux-cockpit` (GUI launcher), and `evolve-crux`
+(contributing to crux). Install them all with any
+[skills.sh](https://www.skills.sh)-compatible agent — Claude Code, Cursor, Codex,
+Windsurf, Copilot CLI, and others:
 
 ```bash
-npx skills add mehdiforoozandeh/crux
+npx skills add mehdiforoozandeh/crux --all
 ```
 
-Or clone and run the installer — it symlinks every crux skill into your Claude Code skills
-dir (the `crux` tool skill, `evolve-crux`, and any future crux skills):
+`--all` selects all four skills — without it, a picker opens with none pre-selected, and
+`crux-wiki` / `crux-cockpit` need the `crux` skill installed beside them. This installs
+into the current project; add `-g` to install user-wide instead.
+
+Or clone and run the installer — it symlinks all four skills into your agent's skills
+dirs (`~/.claude/skills` for Claude Code and `~/.agents/skills`, shared by Cursor, Codex,
+Windsurf, and Copilot CLI; set `SKILLS_DIR` to target somewhere else):
 
 ```bash
 git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./install.sh
 ```
 
+Keep the clone in place — the skills are symlinks into it — and restart / reload your
+agent after installing either way. **Updating:** clone path, `git pull` (the symlinks
+stay live); npx path, `npx skills update` (installs are a copy, frozen at install time).
+**Uninstalling:** delete the four symlinks, or `npx skills remove`.
+
 The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
-root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`).
+root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`), and
+check the install with `./crux selftest` — the engine's full test suite, no GPU or tokens.
 
 ## Try it in 60 seconds
 
@@ -62,8 +79,8 @@ cd crux && ./crux serve --dir skills/crux/examples/segssl_vault
 That's the [segssl_vault](skills/crux/examples/segssl_vault) example (**5 questions,
 15 hypotheses** — the vault behind the screenshots below): pan the status-colored tree,
 open a hypothesis's evidence ledger, and flip to the **Wiki** tab for the literature
-graph. When you're ready to run your own program, install the skills above and tell
-your agent to set up crux in your repo.
+graph. (Port taken? Pin one with `--port 8890`.) When you're ready to run your own
+program, install the skills above and tell your agent to set up crux in your repo.
 
 ## Why not just a doc, Notion, or W&B?
 
