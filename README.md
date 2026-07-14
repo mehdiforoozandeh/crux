@@ -31,12 +31,8 @@ back; **you** sign off on the verdict. Nothing counts until you do.
 
 ## Install
 
-Requirements: Python ≥ 3.8 (stdlib only) and `git`; the `npx` path also needs Node.js.
-(Fresh macOS: `xcode-select --install` provides git.)
-
-`crux` is four skills under [`skills/`](skills) — `crux` (the engine + lab-notebook
-skill), `crux-wiki` (literature wiki), `crux-cockpit` (GUI launcher), and `evolve-crux`
-(contributing to crux). Install them all with any
+Needs Python ≥ 3.8 (the engine is stdlib-only — no packages) and `git`; the `npx` path
+also needs Node.js. Install all four crux skills with any
 [skills.sh](https://www.skills.sh)-compatible agent — Claude Code, Cursor, Codex,
 Windsurf, Copilot CLI, and others:
 
@@ -44,31 +40,16 @@ Windsurf, Copilot CLI, and others:
 npx skills add mehdiforoozandeh/crux --all
 ```
 
-`--all` selects all four skills — without it, a picker opens with none pre-selected, and
-`crux-wiki` / `crux-cockpit` need the `crux` skill installed beside them. This installs
-into the current project; add `-g` to install user-wide instead. How you *invoke* a skill
-varies by agent — Claude Code picks them up automatically, Cursor exposes them as `/crux`,
-Windsurf as `@crux`, Codex via `/skills`. A project-scope install also drops agent dirs
-into your repo (`.agents/`, `.claude/`, `skills-lock.json`, for some agents a non-hidden
-`agent/` folder) — commit them deliberately or `.gitignore` them.
-
-Or clone and run the installer — it symlinks all four skills into your agent's skills
-dirs (`~/.claude/skills` for Claude Code and `~/.agents/skills`, shared by Cursor, Codex,
-Windsurf, and Copilot CLI; set `SKILLS_DIR` to target somewhere else):
+Or clone and symlink them into your agent's skills dirs:
 
 ```bash
 git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./install.sh
 ```
 
-Keep the clone in place — the skills are symlinks into it — and restart / reload your
-agent after installing either way. **Updating:** clone path, `git pull` (the symlinks
-stay live); npx path, `npx skills update` (installs are a copy, frozen at install time).
-**Uninstalling:** delete the four symlinks, or `npx skills remove`.
-
-The engine is Python 3, stdlib only — no dependencies. From a clone, run it with the
-root-level wrapper: `./crux --help` (it forwards to `skills/crux/scaffold/crux.py`), and
-check the install with `./crux selftest` — the engine's full test suite, no GPU or tokens.
+Restart / reload your agent and you're set — `./crux selftest` checks the install.
+Scopes, per-agent notes, updating, uninstalling, and troubleshooting live in the
+**[installation guide](INSTALL.md)**.
 
 ## Try it in 60 seconds
 

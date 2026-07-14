@@ -44,6 +44,9 @@ verdict/roll-up/view logic changes.
 
 ### Docs
 
+- **Install docs split.** README's Install section is now a two-command quick install;
+  the detail (what gets installed, per-agent notes, scopes, lifecycle, troubleshooting)
+  moved to a dedicated [`INSTALL.md`](INSTALL.md).
 - **Install section rewritten for accuracy.** Requirements stated (Python ≥ 3.8, git,
   Node.js for the npx path); the npx command gains `--all` (without it the interactive
   picker starts with zero skills selected); all four skills are named; project-vs-global
