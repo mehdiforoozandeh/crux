@@ -17,6 +17,13 @@ verdict/roll-up/view logic changes.
   `./crux selftest` instead of knowing the script path.
 - **Python floor.** The engine states and enforces its requirement: Python ≥ 3.8, with
   a clear message instead of a raw `SyntaxError` on older interpreters.
+- **Conditional cockpit polling.** `/snapshot.json` now carries an `ETag`; the webui
+  echoes it back and an unchanged vault answers `304` with no body — the ~1/s poll stops
+  re-sending the full snapshot when nothing changed (matters for big vaults and battery).
+- **`AGENTS.md` + `CONTRIBUTING.md`.** Repo-root orientation for coding agents (layout,
+  `./crux` wrapper, the selftest/stdlib-only/read-only gates) — Codex, Cursor, and
+  Copilot read `AGENTS.md` natively — plus a thin CONTRIBUTING pointing at the
+  `evolve-crux` workflow.
 
 ### Fixed
 
@@ -42,6 +49,10 @@ verdict/roll-up/view logic changes.
   picker starts with zero skills selected); all four skills are named; project-vs-global
   scope, updating (`git pull` vs `npx skills update`), uninstalling, the keep-the-clone
   warning, and the restart-your-agent step are documented.
+- **Per-agent invocation notes.** README says how skills surface per agent (`/crux` in
+  Cursor, `@crux` in Windsurf, `/skills` in Codex, automatic in Claude Code) and warns
+  that project-scope `npx` installs drop agent dirs into the repo (`.gitignore` or
+  commit deliberately).
 
 ## [0.4.0] - 2026-07-12
 

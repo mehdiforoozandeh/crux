@@ -46,7 +46,11 @@ npx skills add mehdiforoozandeh/crux --all
 
 `--all` selects all four skills — without it, a picker opens with none pre-selected, and
 `crux-wiki` / `crux-cockpit` need the `crux` skill installed beside them. This installs
-into the current project; add `-g` to install user-wide instead.
+into the current project; add `-g` to install user-wide instead. How you *invoke* a skill
+varies by agent — Claude Code picks them up automatically, Cursor exposes them as `/crux`,
+Windsurf as `@crux`, Codex via `/skills`. A project-scope install also drops agent dirs
+into your repo (`.agents/`, `.claude/`, `skills-lock.json`, for some agents a non-hidden
+`agent/` folder) — commit them deliberately or `.gitignore` them.
 
 Or clone and run the installer — it symlinks all four skills into your agent's skills
 dirs (`~/.claude/skills` for Claude Code and `~/.agents/skills`, shared by Cursor, Codex,
