@@ -580,6 +580,8 @@ function treeSimLoop() {
       treeSimTick(now / 1000);
       treeSimDraw();
     }
+    // a mass morph ran label-less; the glide is over — bring the text back
+    if (TSIM.heat <= 0.02 && svg.classList.contains("morph")) svg.classList.remove("morph");
     TSIM.raf = requestAnimationFrame(step);
   };
   TSIM.raf = requestAnimationFrame(step);
@@ -596,11 +598,17 @@ function treeSimBind() {
   // Warm the sim iff these fresh anchors actually moved something (a relayout / view switch /
   // structure change), so repulsion cushions the glide; a pure re-render (selection, filter,
   // search) leaves live ≈ anchor and stays cool — the tree keeps resting on its anchors.
+  // A MASS glide additionally morphs label-less (svg.morph): Safari re-rasterizes SVG text
+  // on every repaint, so ~n moving labels turn a big vault's morph into a slideshow — the
+  // pills carry the motion and the text pops back once the sim cools (see treeSimLoop).
+  // Single-node moves (a drag) stay under the threshold and keep their labels.
   const pos = state.positions;
+  let movers = 0;
   for (const [id, p] of TSIM.nodes) {
     const a = pos[id], dx = p.x - a.x, dy = p.y - a.y;
-    if (dx * dx + dy * dy > 4) { TSIM.heat = 1; break; }
+    if (dx * dx + dy * dy > 4) { TSIM.heat = 1; movers++; }
   }
+  if (movers > 12) svg.classList.add("morph");
   treeSimDraw(true);   // restore live positions (nodes + edges) over the anchor-drawn frame
   treeSimLoop();
 }

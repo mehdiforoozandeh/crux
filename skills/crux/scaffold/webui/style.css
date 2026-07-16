@@ -119,6 +119,10 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
    at the RENDERED size, so zoomed-out labels paint wider than their geometry and eat the
    box padding that was measured for them (the root pill's symmetric caps, most visibly) */
 #tree text { text-rendering: geometricPrecision; }
+/* mass relayouts (view switch, big refresh) glide label-less: Safari re-rasterizes SVG
+   text on every repaint, so ~n moving labels would make the morph a slideshow on big
+   vaults; the status-coloured pills carry the motion, the text returns at settle */
+#tree.morph .lbl, #tree.morph .glyph, #tree.morph .vdot, #tree.morph .code-div { display: none; }
 #detail-pane { position: relative; flex: 1 1 38%; min-width: 280px; max-width: 560px; overflow: hidden;
   background: var(--panel); display: flex; flex-direction: column; }
 /* the scrolling content; its base font-size drives everything inside (children use em) */

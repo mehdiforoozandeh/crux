@@ -15,8 +15,9 @@ verdict/roll-up/view logic changes.
   questions and hypotheses on depth rings; the orientation toggle applies to the tidy
   view only. Reduced-motion renders the exact static tree as before. Hardened for
   Safari/WebKit (which re-rasterizes SVG text on every repaint): radial spokes are
-  trimmed to the pill rims and per-frame writes touch only elements that visibly moved —
-  measured 14→60fps on a radial drag.
+  trimmed to the pill rims, per-frame writes touch only elements that visibly moved
+  (measured 14→60fps on a radial drag), and mass relayouts — a view switch on a big
+  vault — glide label-less, the text returning at settle (20→58fps at ~90 nodes).
   (PRD: [`docs/prd/gui-living-tree.md`](docs/prd/gui-living-tree.md).)
 - **`crux serve --dir <vault>`.** Point the cockpit at any vault without `cd`-ing into
   it (resolves upward from the given directory, same as the cwd default). Powers the
