@@ -520,6 +520,7 @@ function treeSimTick(t) {
     }
   }
   const pos = state.positions;
+  let maxSpeed = 0;
   for (const [id, p] of TSIM.nodes) {
     const a = pos[id];
     p.vx += (a.x - p.x) * TSIM.SPRING; p.vy += (a.y - p.y) * TSIM.SPRING;
@@ -528,8 +529,18 @@ function treeSimTick(t) {
     p.vx *= TSIM.DAMP; p.vy *= TSIM.DAMP;
     if (p.fx != null) { p.x = p.fx; p.y = p.fy; p.vx = 0; p.vy = 0; }
     else { p.x += p.vx; p.y += p.vy; }
+    const sp = Math.abs(p.vx) + Math.abs(p.vy);
+    if (sp > maxSpeed) maxSpeed = sp;
   }
-  TSIM.heat *= TSIM.COOL;                       // cool toward rest; the breath never cools
+  // Heat is HELD while anything is still flying and DECAYS when the motion stops — it is
+  // never re-set from position error. A fixed-timer decay froze edges (and restored the
+  // morph's labels) mid-flight on big vaults, the misaligned-arrows bug; but re-warming on
+  // off-anchor DISTANCE deadlocks dense layouts, where full repulsion holds packed nodes
+  // off their anchors forever. Velocity has neither problem: a glide holds heat to its
+  // last few px; at a repulsion equilibrium speeds are ~0, so heat decays, the (heat-
+  // scaled) repulsion fades, and the springs walk everyone home without a re-push. The
+  // breath's terminal speed is ~0.7px/frame, safely under the hold bar.
+  if (!drag && maxSpeed <= 1.5) TSIM.heat *= TSIM.COOL;
 }
 
 function treeSimDraw(force) {
@@ -568,7 +579,7 @@ function treeSimDraw(force) {
 function treeSimLoop() {
   cancelAnimationFrame(TSIM.raf);
   if (!treePhysicsOn() || state.tab !== "tree" || document.hidden) return;
-  let frame = 0;
+  let frame = 0, wasWarm = false;
   const step = (now) => {
     if (state.tab !== "tree" || document.hidden) return;
     // Full 60fps while WARM — a drag or a relayout settling, where responsiveness matters.
@@ -580,8 +591,15 @@ function treeSimLoop() {
       treeSimTick(now / 1000);
       treeSimDraw();
     }
-    // a mass morph ran label-less; the glide is over — bring the text back
-    if (TSIM.heat <= 0.02 && svg.classList.contains("morph")) svg.classList.remove("morph");
+    const warm = TSIM.heat > 0.02;
+    if (wasWarm && !warm) {
+      // just settled: one exact full draw so nodes AND edges land precisely aligned
+      // (dirty-gating may have left either a fraction of a pixel behind), and a
+      // label-less mass morph gets its text back — at true rest, not on a timer
+      treeSimDraw(true);
+      svg.classList.remove("morph");
+    }
+    wasWarm = warm;
     TSIM.raf = requestAnimationFrame(step);
   };
   TSIM.raf = requestAnimationFrame(step);
