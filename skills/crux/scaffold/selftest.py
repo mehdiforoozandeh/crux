@@ -773,6 +773,20 @@ def run_serve():
             fresh = r4.headers.get("ETag"); r4.read()
         check("serve: stale If-None-Match re-serves 200 with a new ETag",
               r4.status == 200 and bool(fresh) and fresh != etag)
+
+        # -- living tree (docs/prd/gui-living-tree.md): the served webui carries the
+        #    view-mode toggle, the radial anchor layout, and the anchored physics sim.
+        #    These asserts register the wiring; the feel (breathing, drag-settle,
+        #    glide-on-refresh) is walked by hand per the PRD's manual checklist.
+        with urllib.request.urlopen(base + "/index.html", timeout=5) as r5:
+            idx = r5.read().decode("utf-8", "replace")
+        check("webui: view-mode button in the tree toolbar (id=\"view-btn\")",
+              'id="view-btn"' in idx)
+        with urllib.request.urlopen(base + "/app.js", timeout=5) as r6:
+            appjs = r6.read().decode("utf-8", "replace")
+        check("webui: view mode persisted under crux-view", '"crux-view"' in appjs)
+        check("webui: radial anchor layout (layoutRadial)", "layoutRadial" in appjs)
+        check("webui: anchored tree physics (TSIM)", "TSIM" in appjs)
     finally:
         httpd.shutdown(); httpd.server_close()
 

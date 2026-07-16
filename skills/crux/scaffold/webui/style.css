@@ -86,6 +86,11 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 }
 .viewctl button .ic { font-size: 13px; }
 .viewctl button .tb-label { font-weight: 550; white-space: nowrap; }
+.viewctl button[hidden] { display: none; }
+.viewctl button.na { visibility: hidden; }   /* radial retires left-right but keeps its slot */
+/* fixed width so "Tidy" and "Radial" render the same size — the right-anchored toolbar would
+   otherwise slide when the label's width changes on toggle (widest state ≈ 71px) */
+#view-btn { min-width: 78px; justify-content: center; }
 .viewctl button:hover { border-color: var(--accent); color: var(--accent); }
 .viewctl button:active { transform: translateY(1px); }
 .viewctl button.on { border-color: var(--accent); color: var(--accent);
@@ -110,6 +115,10 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   overflow: hidden; user-select: none; -webkit-user-select: none; }
 #tree { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; background: var(--bg); }
 #tree.panning { cursor: grabbing; }
+/* exact fractional glyph advances at every zoom — by default WebKit pixel-snaps SVG text
+   at the RENDERED size, so zoomed-out labels paint wider than their geometry and eat the
+   box padding that was measured for them (the root pill's symmetric caps, most visibly) */
+#tree text { text-rendering: geometricPrecision; }
 #detail-pane { position: relative; flex: 1 1 38%; min-width: 280px; max-width: 560px; overflow: hidden;
   background: var(--panel); display: flex; flex-direction: column; }
 /* the scrolling content; its base font-size drives everything inside (children use em) */
@@ -239,7 +248,7 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .node .lbl.t-code-q { font-size: 15px; font-weight: 700; }
 .node .lbl.t-code-h { font-size: 12.5px; font-weight: 650; }
 .node .code-div { stroke: var(--ink-mute); stroke-width: 2; opacity: .32; pointer-events: none; }
-.node .rootmark .mk-l { stroke: var(--brand); stroke-opacity: .55; stroke-width: 2.6; }
+.node .rootmark .mk-l { stroke: var(--brand); stroke-opacity: .85; stroke-width: 3.8; }
 .node .rootmark .mk-s { fill: var(--brand); }
 .node .glyph { font-size: 10px; font-weight: 700; pointer-events: none; }
 /* verifiable badges: met = solid green (approved) · unmet-on-closed = solid red (rejected) ·

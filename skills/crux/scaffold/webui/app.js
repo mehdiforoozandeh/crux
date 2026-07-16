@@ -59,9 +59,13 @@ function computeGeom() {
     const code = codeOf(id, n.type);        // "Q10" / "H13" — questions & hypotheses only
     let w, h, lines, dotsPad = 0, gutter = 0;
     if (n.type === "project") {
-      // snug pill sized to the Crux mark + centred title — no empty slack
-      lines = [trunc(n.title, 42)];
-      w = Math.round(ROOT_PAD * 2 + ROOT_MARK_W + ROOT_MARK_GAP + measure(lines[0], ROOT_FONT));
+      // Adaptive pill: sized to the Crux mark + the whole title, plus room for the ± toggle
+      // the root shows when it has children. rootLabel centres [mark + title] with the SAME
+      // corrected width used here, so the empty space left of the mark always equals the
+      // space right of the title.
+      lines = [trunc(n.title, 64)];
+      const togglePad = (state.snap.tree.children || []).length ? 20 : 0;
+      w = Math.round(ROOT_PAD * 2 + ROOT_MARK_W + ROOT_MARK_GAP + rootTextW(lines[0]) + togglePad);
       h = 42;
     } else if (n.type === "synthesis") {
       lines = [trunc(n.title, k.ctrunc)];   // (never drawn, but keep geometry defined)
@@ -98,7 +102,8 @@ const state = {
   positions: {},            // id -> {x, y, depth}
   childCount: {},           // id -> number of tree children (drives the ± toggle)
   nodeGeom: {},             // id -> {w, h, rx, lines, lh, dotsPad} for the current density
-  orient: localStorage.getItem("crux-orient") || "lr",       // "lr" | "td"
+  orient: localStorage.getItem("crux-orient") || "lr",       // "lr" | "td" (tidy view only)
+  viewMode: localStorage.getItem("crux-view") === "radial" ? "radial" : "tidy",
   density: localStorage.getItem("crux-density") || "detail", // "detail" | "compact"
   focused: false,           // focus-open mode: all non-open questions collapsed
   search: "",
@@ -170,6 +175,7 @@ function onSnapshot() {
 // same positions, so nodes never jump on auto-refresh; collapsed nodes lay out as leaves.
 // pos[id] = { x: left edge, y: vertical center }.
 function layout() {
+  if (state.viewMode === "radial") { layoutRadial(); return; }
   const snap = state.snap, geom = (state.nodeGeom = computeGeom());
   const pos = {}, kids = {};
   const GAP = 14, CROSS_GAP = state.orient === "td" ? 56 : 70;
@@ -211,6 +217,62 @@ function layout() {
   state.childCount = kids;
 }
 
+// Radial anchors (docs/prd/gui-living-tree.md): the project at the origin, each depth on a
+// ring. Same determinism contract as the tidy layout — leaves get equal angular slots in
+// tree order, an internal node sits at the middle of its children, so same structure =>
+// same positions. RAD_SQUASH flattens the circle toward the typical wide tree pane;
+// fitView supplies the final uniform scale. Orientation does not apply here (the orient
+// toggle is hidden in radial view). pos keeps the tidy contract: x = left edge, y = centre.
+const ARC_GAP = 26, RING_GAP = 56, RAD_SQUASH = 0.8;
+function layoutRadial() {
+  const snap = state.snap, geom = (state.nodeGeom = computeGeom());
+  const kids = {}, depthOf = {}, mid = {}, ringHalf = [], ringIds = [];
+  let leaves = 0;
+  (function measure(node, depth) {
+    kids[node.id] = node.children ? node.children.length : 0;
+    depthOf[node.id] = depth;
+    const g = geom[node.id];
+    ringHalf[depth] = Math.max(ringHalf[depth] || 0, Math.hypot(g.w, g.h) / 2);
+    (ringIds[depth] || (ringIds[depth] = [])).push(node.id);
+    const shown = state.collapsed.has(node.id) ? [] : node.children;
+    if (!shown.length) { mid[node.id] = leaves + 0.5; leaves++; }
+    else {
+      for (const c of shown) measure(c, depth + 1);
+      mid[node.id] = (mid[shown[0].id] + mid[shown[shown.length - 1].id]) / 2;
+    }
+  })(snap.tree, 0);
+  const L = Math.max(leaves, 1);
+  const ang = (id) => (mid[id] / L) * 2 * Math.PI - Math.PI / 2;   // slot 0 at 12 o'clock
+  // Ring radii from the WORST case, not a ring average (the average lets a wide, small-span
+  // node stack on its neighbour). Each ring clears the neighbouring rings' widest boxes; and
+  // every pair of angularly-adjacent boxes — sorted by angle, INCLUDING the pair across the
+  // 12-o'clock seam — is pushed out until it clears on EITHER axis. Two axis-aligned boxes
+  // miss if they're apart in x OR in y, so we take the cheaper axis: nodes are wide but short,
+  // so east/west neighbours (stacked vertically) need only a little radius, not the full width.
+  // That keeps the ring tight — a fat bounding-circle radius would balloon the whole layout
+  // (and, on Safari, the per-frame repaint cost with it). Reduces to even spacing when uniform.
+  const rad = [0];
+  for (let d = 1; d < ringIds.length; d++) {
+    let r = rad[d - 1] + ringHalf[d - 1] + ringHalf[d] + RING_GAP;
+    const ids = ringIds[d].slice().sort((a, b) => mid[a] - mid[b]);
+    for (let i = 0; ids.length > 1 && i < ids.length; i++) {
+      const a = ids[i], b = ids[(i + 1) % ids.length];   // wrap: last↔first across the seam
+      const ta = ang(a), tb = ang(b), ga = geom[a], gb = geom[b];
+      const rH = (ga.w / 2 + gb.w / 2 + ARC_GAP) / Math.max(Math.abs(Math.cos(ta) - Math.cos(tb)), 1e-4);
+      const rV = (ga.h / 2 + gb.h / 2 + ARC_GAP) / Math.max(RAD_SQUASH * Math.abs(Math.sin(ta) - Math.sin(tb)), 1e-4);
+      r = Math.max(r, Math.min(rH, rV));
+    }
+    rad[d] = r;
+  }
+  const pos = {};
+  for (const id in depthOf) {
+    const g = geom[id], r = rad[depthOf[id]], th = ang(id);
+    pos[id] = { x: Math.cos(th) * r - g.w / 2, y: Math.sin(th) * r * RAD_SQUASH };
+  }
+  state.positions = pos;
+  state.childCount = kids;
+}
+
 // ------------------------------------------------------------------ tree render
 function statusClass(n) {
   if (n.type === "project") return "n-project";
@@ -224,6 +286,25 @@ function statusClass(n) {
 // animating a relayout). Left-right: right edge -> left edge. Top-down: bottom -> top centre.
 function edgeD(paId, chId, pos) {
   const pa = pos[paId], pb = pos[chId], ga = geomOf(paId), gb = geomOf(chId);
+  if (state.viewMode === "radial") {
+    // Straight spokes, trimmed to the pill rims. Center-to-center spokes all run UNDER the
+    // boxes they meet (and every spoke converges beneath the root), and Safari repaints a
+    // box's whole overlap region whenever either party is touched — measured at 14fps with
+    // untrimmed spokes vs 60 without the overlap. The covered run was invisible anyway;
+    // trimming it removes the overlap structurally. Falls back to centers if boxes touch.
+    const px = pa.x + ga.w / 2, py = pa.y, cx = pb.x + gb.w / 2, cy = pb.y;
+    let dx = cx - px, dy = cy - py;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+    const rim = (g, ux, uy, pad) => Math.min(
+      ux ? (g.w / 2 + pad) / Math.abs(ux) : Infinity,
+      uy ? (g.h / 2 + pad) / Math.abs(uy) : Infinity);
+    // child side gets extra clearance: its ± toggle sits on the inner rim, facing this spoke
+    const tp = rim(ga, dx, dy, 6), tc = rim(gb, dx, dy, 16);
+    if (tp + tc < len - 4)
+      return `M${px + dx * tp},${py + dy * tp} L${cx - dx * tc},${cy - dy * tc}`;
+    return `M${px},${py} L${cx},${cy}`;
+  }
   if (state.orient !== "td") {
     const x1 = pa.x + ga.w, y1 = pa.y, x2 = pb.x, y2 = pb.y, mx = (x1 + x2) / 2;
     return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
@@ -270,8 +351,17 @@ function nodeSVG(n, p) {
   const inner = n.type === "project" ? rootLabel(n, g, k) : bodyLabel(n, g, k);
   const dots = n.type === "idea" ? verifDots(n, g) : "";
   const hasKids = (state.childCount && state.childCount[n.id]) || 0;
-  const tcx = state.orient !== "td" ? g.w : g.w / 2;
-  const tcy = state.orient !== "td" ? 0 : g.h / 2;
+  let tcx, tcy;
+  if (state.viewMode === "radial") {
+    // radial: children fan OUTWARD (several output edges) while the one parent edge arrives
+    // from the inner side (toward the centre at world x=0). Sit the ± toggle on that inner
+    // side, by the single input — never buried under the outgoing fan on the far edge.
+    tcx = (p.x + g.w / 2 >= 0) ? 0 : g.w;
+    tcy = 0;
+  } else {
+    tcx = state.orient !== "td" ? g.w : g.w / 2;
+    tcy = state.orient !== "td" ? 0 : g.h / 2;
+  }
   const toggle = hasKids
     ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${tcx}" cy="${tcy}" r="7.5"/>` +
       `<text x="${tcx}" y="${tcy + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
@@ -290,16 +380,19 @@ function measure(text, font) { _mctx.font = font; return _mctx.measureText(text)
 
 // the Crux constellation mark, drawn at local x (vertically centred on the node anchor)
 function rootMark(x) {
-  return `<g class="rootmark" transform="translate(${x},-8) scale(0.19)">` +
+  return `<g class="rootmark" transform="translate(${x},-9) scale(0.22)">` +
     `<g class="mk-l"><line x1="38" y1="8" x2="33" y2="76"/><line x1="8" y1="44" x2="60" y2="38"/></g>` +
     `<g class="mk-s"><circle cx="38" cy="8" r="4"/><circle cx="33" cy="76" r="5"/>` +
     `<circle cx="8" cy="44" r="4"/><circle cx="60" cy="38" r="3.4"/><circle cx="45" cy="60" r="2.4"/></g></g>`;
 }
-const ROOT_MARK_W = 14, ROOT_MARK_GAP = 7, ROOT_PAD = 15;
+const ROOT_MARK_W = 16, ROOT_MARK_GAP = 7, ROOT_PAD = 15;
+// canvas measureText runs ~3.5% under the SVG paint; both the pill width and the label
+// centring use this corrected width, so the title never eats one side's padding
+const rootTextW = (t) => measure(t, ROOT_FONT) * 1.035 + 2;
 
 // project root: the Crux mark next to the centred title, in a snug pill
 function rootLabel(n, g, k) {
-  const nameW = measure(g.lines[0], ROOT_FONT);
+  const nameW = rootTextW(g.lines[0]);
   const startX = (g.w - (ROOT_MARK_W + ROOT_MARK_GAP + nameW)) / 2;
   const tx = startX + ROOT_MARK_W + ROOT_MARK_GAP;
   return rootMark(startX) + `<text class="lbl ${k.lbl}" x="${tx}" y="4">${esc(g.lines[0])}</text>`;
@@ -329,9 +422,10 @@ function bodyLabel(n, g, k) {
   return codeEl + divEl + glyph + lbl;
 }
 
-// `fromPos`, when given, is the previous position map; surviving nodes animate from there to
-// their new spots (and entrants fade in). Synthesis nodes are never in `positions`, so never drawn.
-function renderTree(fromPos) {
+// Synthesis nodes are never in `positions`, so never drawn. Relayout motion is the sim's
+// job now: surviving nodes glide to fresh anchors on their springs, entrants fly out of
+// their parent — whatever triggered the change (toolbar, collapse, or the snapshot poll).
+function renderTree() {
   const snap = state.snap, pos = state.positions;
   let edges = "", nodes = "";
   (function walk(node) {
@@ -344,7 +438,16 @@ function renderTree(fromPos) {
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
   svg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
-  if (fromPos && !REDUCED_MOTION) animateLayout(fromPos);
+  // The DOM above is drawn at the deterministic anchors; the living-tree sim then takes
+  // over the transforms (docs/prd/gui-living-tree.md). Surviving nodes keep their live
+  // positions and glide to any fresh anchors via their springs — the sim replaced the old
+  // one-shot relayout tween. Reduced motion: no sim, the static anchor render stands.
+  if (treePhysicsOn()) {
+    const entrants = treeSimSync();
+    treeSimBind();
+    for (const id of entrants) if (TSIM.els[id])
+      animateIn([TSIM.els[id]], { opacity: [0, 1] }, { duration: 0.4 });   // entrants fade in
+  }
 }
 
 // Pan/zoom only mutate the group transform — one cheap attribute write; the browser batches
@@ -359,40 +462,147 @@ function applyTransform() {
 const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 
-// Tween nodes from their previous positions to the freshly-rendered ones, redrawing edges each
-// frame so they stay attached. Surviving nodes glide; new nodes fade in place.
-let _layoutRAF = 0;
-function animateLayout(fromPos) {
-  cancelAnimationFrame(_layoutRAF);
-  // renderTree already drew nodes at their FINAL positions; only animate if rAF will actually
-  // run. In a hidden/background tab rAF is paused, so skipping leaves the correct final state
-  // (rather than the synchronous first frame stranding nodes at their old positions).
-  if (document.hidden) return;
-  const vp = svg.firstChild;
-  if (!vp) return;
+// ------------------------------------------------------------------ living tree (TSIM)
+// The tree pane's force sim (docs/prd/gui-living-tree.md) — same architecture as the wiki
+// tab's WSIM: per-frame work touches only the cached transforms and edge paths, never
+// innerHTML. Unlike WSIM there is no free equilibrium: every node is spring-anchored to
+// its deterministic layout position (tidy or radial), so the layout promise survives —
+// the sim adds a gentle breath at rest, a fly-back after drag, and the glide to fresh
+// anchors on any relayout. Pair repulsion is HEAT-scaled (like WSIM's alpha-scaled charge):
+// a drag or relayout warms the sim so the O(n²) push keeps a moving crowd from tunnelling,
+// then it cools to zero and the tree rests on its anchors ± the breath — the O(n²) pass is
+// skipped entirely once cool, so at rest only the O(n) breath/spring runs. The breath phase
+// comes from hash01(id), so each node's wobble is deterministic. Reduced motion: no sim.
+const TSIM = {
+  nodes: new Map(),        // id -> {x, y, vx, vy, fx, fy, ph}  (fx/fy = drag pin)
+  els: {}, edgeEls: [],
+  raf: 0, heat: 0,         // 0 = rest (repulsion off); a drag/relayout sets it to 1
+  SPRING: 0.03, DAMP: 0.85, REPEL: 900, BREATH: 0.05, COOL: 0.9,
+};
+const treePhysicsOn = () => !REDUCED_MOTION;
+
+// Sync the sim to freshly-computed anchors; returns the entrant ids (for the fade-in).
+// Survivors keep their live positions (their springs re-target automatically); on a grown
+// sim an entrant seeds at its parent's live position and flies outward to its slot. The
+// boot render (empty sim) seeds everything at its anchor instead — a background tab gets
+// no frames, so it must be drawn settled from the first paint.
+function treeSimSync() {
   const pos = state.positions;
-  const nodeEls = {};
-  vp.querySelectorAll(".node").forEach((el) => (nodeEls[el.getAttribute("data-id")] = el));
-  const edgeEls = [...vp.querySelectorAll(".edge")].map((el) =>
-    ({ el, p: el.getAttribute("data-p"), c: el.getAttribute("data-c") }));
-  const DUR = 400, t0 = performance.now();
-  function frame(now) {
-    const e = easeOutCubic(Math.min(1, (now - t0) / DUR));
-    const ip = {};
-    for (const id in pos) {
-      const np = pos[id], op = fromPos[id] || np;
-      ip[id] = { x: op.x + (np.x - op.x) * e, y: op.y + (np.y - op.y) * e };
+  for (const id of [...TSIM.nodes.keys()]) if (!(id in pos)) TSIM.nodes.delete(id);
+  const grown = TSIM.nodes.size > 0, entrants = [];
+  let parentOf = null;
+  for (const id in pos) {
+    if (TSIM.nodes.has(id)) continue;
+    if (!parentOf) {   // built lazily — only a render with entrants pays for the walk
+      parentOf = {};
+      (function walk(n) { for (const c of n.children || []) { parentOf[c.id] = n.id; walk(c); } })(state.snap.tree);
     }
-    for (const id in nodeEls) {
-      const q = ip[id];
-      if (q) nodeEls[id].setAttribute("transform", `translate(${q.x},${q.y})`);
-      if (!fromPos[id]) nodeEls[id].style.opacity = String(e);   // entrants fade in
-    }
-    for (const { el, p, c } of edgeEls) if (ip[p] && ip[c]) el.setAttribute("d", edgeD(p, c, ip));
-    if (e < 1) _layoutRAF = requestAnimationFrame(frame);
-    else for (const id in nodeEls) if (!fromPos[id]) nodeEls[id].style.opacity = "";
+    const pa = grown && parentOf[id] && TSIM.nodes.get(parentOf[id]);
+    const seed = pa ? { x: pa.x, y: pa.y } : pos[id];
+    TSIM.nodes.set(id, { x: seed.x, y: seed.y, vx: 0, vy: 0, fx: null, fy: null,
+                         ph: hash01(id) * Math.PI * 2 });
+    if (grown) entrants.push(id);
   }
-  frame(t0);
+  return entrants;
+}
+
+function treeSimTick(t) {
+  if (drag) TSIM.heat = 1;                    // a live drag keeps the crowd warm
+  if (TSIM.heat > 0.02) {                      // repulsion only while something is moving
+    const ns = [...TSIM.nodes.values()], h = TSIM.heat;
+    for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+      const p = ns[i], q = ns[j];
+      let dx = p.x - q.x, dy = p.y - q.y, d2 = dx * dx + dy * dy;
+      if (d2 < 1) d2 = 1;
+      const d = Math.sqrt(d2), f = Math.min(TSIM.REPEL / d2, 3) * h;
+      dx = (dx / d) * f; dy = (dy / d) * f;
+      p.vx += dx; p.vy += dy; q.vx -= dx; q.vy -= dy;
+    }
+  }
+  const pos = state.positions;
+  for (const [id, p] of TSIM.nodes) {
+    const a = pos[id];
+    p.vx += (a.x - p.x) * TSIM.SPRING; p.vy += (a.y - p.y) * TSIM.SPRING;
+    p.vx += Math.sin(t * 0.9 + p.ph) * TSIM.BREATH;          // the breath
+    p.vy += Math.cos(t * 0.7 + p.ph * 1.7) * TSIM.BREATH;
+    p.vx *= TSIM.DAMP; p.vy *= TSIM.DAMP;
+    if (p.fx != null) { p.x = p.fx; p.y = p.fy; p.vx = 0; p.vy = 0; }
+    else { p.x += p.vx; p.y += p.vy; }
+  }
+  TSIM.heat *= TSIM.COOL;                       // cool toward rest; the breath never cools
+}
+
+function treeSimDraw(force) {
+  // Write ONLY what visibly moved (≥ ~a third of a screen pixel). This is load-bearing on
+  // Safari, not just tidiness: WebKit invalidates and repaints on EVERY attribute write —
+  // even one that sets the same value — and with the radial geometry that repaint is
+  // expensive enough to drop a drag from 60fps to ~20 (measured; Chromium is unaffected).
+  // Skipping no-op writes keeps a warm frame down to the handful of nodes actually in
+  // motion. _wx/_wy on the sim node = its last written position; e.px/… likewise per edge.
+  const eps = 0.35 / state.view.k;
+  for (const [id, p] of TSIM.nodes) {
+    const el = TSIM.els[id];
+    if (!el) continue;
+    if (!force && p._wx !== undefined &&
+        Math.abs(p.x - p._wx) < eps && Math.abs(p.y - p._wy) < eps) continue;
+    el.setAttribute("transform", `translate(${p.x},${p.y})`);
+    p._wx = p.x; p._wy = p.y;
+  }
+  // Edges: skip entirely while cool (the idle breath's wobble is invisible on a spoke);
+  // while warm redraw only those whose endpoints moved — the dragged node's few.
+  if (!force && TSIM.heat <= 0.02) return;
+  for (const e of TSIM.edgeEls) {
+    const p = TSIM.nodes.get(e.p), c = TSIM.nodes.get(e.c);
+    if (!p || !c) continue;
+    if (!force &&
+        Math.abs(p.x - e.px) < eps && Math.abs(p.y - e.py) < eps &&
+        Math.abs(c.x - e.cx) < eps && Math.abs(c.y - e.cy) < eps) continue;
+    e.el.setAttribute("d", edgeD(e.p, e.c, { [e.p]: p, [e.c]: c }));
+    e.px = p.x; e.py = p.y; e.cx = c.x; e.cy = c.y;
+  }
+}
+
+// The breath never cools, so the loop runs whenever the tree is actually on screen —
+// and only then: a hidden tab or the wiki tab burns no frames (setTab / visibilitychange
+// restart it). renderTree rebuilds the DOM, so it re-binds the element caches here.
+function treeSimLoop() {
+  cancelAnimationFrame(TSIM.raf);
+  if (!treePhysicsOn() || state.tab !== "tree" || document.hidden) return;
+  let frame = 0;
+  const step = (now) => {
+    if (state.tab !== "tree" || document.hidden) return;
+    // Full 60fps while WARM — a drag or a relayout settling, where responsiveness matters.
+    // While cool (just the idle breath) render every OTHER frame: the breath is a slow
+    // oscillation that reads fine at 30fps, and halving the SVG mutation rate roughly halves
+    // the per-frame repaint Safari does over the whole tree bounds (Chromium composites it
+    // for free; Safari does not). The rAF still fires at 60fps — only the paint is skipped.
+    if (TSIM.heat > 0.02 || (frame++ & 1) === 0) {
+      treeSimTick(now / 1000);
+      treeSimDraw();
+    }
+    TSIM.raf = requestAnimationFrame(step);
+  };
+  TSIM.raf = requestAnimationFrame(step);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) treeSimLoop(); });
+
+function treeSimBind() {
+  const vp = svg.firstChild;
+  TSIM.els = {}; TSIM.edgeEls = [];
+  if (!vp) return;
+  vp.querySelectorAll(".node").forEach((el) => (TSIM.els[el.getAttribute("data-id")] = el));
+  TSIM.edgeEls = [...vp.querySelectorAll(".edge")].map((el) =>
+    ({ el, p: el.getAttribute("data-p"), c: el.getAttribute("data-c") }));
+  // Warm the sim iff these fresh anchors actually moved something (a relayout / view switch /
+  // structure change), so repulsion cushions the glide; a pure re-render (selection, filter,
+  // search) leaves live ≈ anchor and stays cool — the tree keeps resting on its anchors.
+  const pos = state.positions;
+  for (const [id, p] of TSIM.nodes) {
+    const a = pos[id], dx = p.x - a.x, dy = p.y - a.y;
+    if (dx * dx + dy * dy > 4) { TSIM.heat = 1; break; }
+  }
+  treeSimDraw(true);   // restore live positions (nodes + edges) over the anchor-drawn frame
+  treeSimLoop();
 }
 
 // Glide the camera (pan + zoom together) to a target view. Used for programmatic moves —
@@ -633,7 +843,7 @@ function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 // node click / ± toggle would no-op. Instead, while a pan is live we listen on `window`, so the
 // drag keeps tracking even when the cursor leaves the svg and always ends cleanly.
 const DRAG_THRESHOLD = 5;
-let pan = null, moved = false;
+let pan = null, moved = false, drag = null;
 
 // cursor-anchored zoom by `factor` about viewport point (cx, cy)
 function zoomAt(cx, cy, factor) {
@@ -678,12 +888,43 @@ function onPanEnd() {
   svg.classList.remove("panning");
   pan = null;   // `moved` stays set until the trailing click reads it; next pointerdown clears it
 }
+// Dragging a NODE (living tree): the grab pins it under the cursor (fx/fy), the release
+// hands it back to its anchor spring — it always flies home. A press that never travels
+// past DRAG_THRESHOLD is still a click (select / ± toggle), same contract as the pan.
+function onNodeDrag(e) {
+  if (!drag) return;
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if (!moved && dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) moved = true;
+  if (!moved) return;
+  const r = svg.getBoundingClientRect(), v = state.view;
+  drag.p.fx = (e.clientX - r.left - v.tx) / v.k - drag.gx;
+  drag.p.fy = (e.clientY - r.top - v.ty) / v.k - drag.gy;
+}
+function onNodeDragEnd() {
+  if (drag) { drag.p.fx = drag.p.fy = null; }
+  window.removeEventListener("pointermove", onNodeDrag);
+  window.removeEventListener("pointerup", onNodeDragEnd);
+  window.removeEventListener("pointercancel", onNodeDragEnd);
+  drag = null;   // `moved` stays set until the trailing click reads it
+}
 svg.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;
-  e.preventDefault();   // a drag on the canvas must never start a text selection
+  if (e.button !== 0 || drag || pan) return;   // one interaction owns the canvas: a second
+  e.preventDefault();   // pointer (multi-touch) must not clobber a live drag and strand its pin
   stopViewTween();      // grabbing the canvas cancels any running camera glide
-  pan = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
   moved = false;
+  const nodeEl = treePhysicsOn() ? e.target.closest(".node") : null;
+  const p = nodeEl && TSIM.nodes.get(nodeEl.getAttribute("data-id"));
+  if (p) {
+    const r = svg.getBoundingClientRect(), v = state.view;
+    drag = { p, x0: e.clientX, y0: e.clientY,   // gx/gy: grab point inside the node, so it
+      gx: (e.clientX - r.left - v.tx) / v.k - p.x,   // doesn't jump to snap its anchor
+      gy: (e.clientY - r.top - v.ty) / v.k - p.y };  // point under the cursor
+    window.addEventListener("pointermove", onNodeDrag);
+    window.addEventListener("pointerup", onNodeDragEnd);
+    window.addEventListener("pointercancel", onNodeDragEnd);
+    return;
+  }
+  pan = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty };
   window.addEventListener("pointermove", onPanMove);
   window.addEventListener("pointerup", onPanEnd);
   window.addEventListener("pointercancel", onPanEnd);
@@ -694,7 +935,7 @@ svg.addEventListener("pointerdown", (e) => {
 // was imperceptible at tree zoom levels; the spotlight is what reads as "responsive".
 svg.addEventListener("pointerover", (e) => {
   const node = e.target.closest(".node");
-  if (!node || pan) return;
+  if (!node || pan || drag) return;
   const id = node.getAttribute("data-id");
   const nb = new Set([id]);
   svg.querySelectorAll(".edge").forEach((el) => {
@@ -719,11 +960,10 @@ svg.addEventListener("click", (e) => {
   if (moved) return;   // the pointer travelled — this was a pan, not a click
   const tog = e.target.closest("[data-toggle]");
   if (tog) {
-    const from = state.positions;             // animate the subtree collapse/expand
     const id = tog.getAttribute("data-toggle");
     state.collapsed.has(id) ? state.collapsed.delete(id) : state.collapsed.add(id);
     if (state.focused) { state.focused = false; updateToolbar(); }   // manual toggle leaves focus mode
-    layout(); renderTree(from);
+    layout(); renderTree();
     return;
   }
   const node = e.target.closest(".node");
@@ -793,15 +1033,22 @@ $("theme-btn").addEventListener("click", () => {
 // the camera holds still and only the nodes glide (for local changes: focus, collapse).
 function relayout(refit) {
   if (!state.snap) return;
-  const from = state.positions;
   layout();
-  renderTree(from);
+  renderTree();
   if (refit) { const v = fitView(); if (v) tweenView(v.tx, v.ty, v.k); }
 }
 // each toolbar button shows an icon AND a text label of its CURRENT mode
 function iconLabel(icon, label) { return `<span class="ic">${icon}</span><span class="tb-label">${label}</span>`; }
 function updateToolbar() {
+  const vb = $("view-btn");
+  vb.innerHTML = state.viewMode === "radial" ? iconLabel("✳", "Radial") : iconLabel("⊢", "Tidy");
+  vb.title = state.viewMode === "radial"
+    ? "View: radial — the project at the centre; click for the tidy tree"
+    : "View: tidy tree — click for the radial view";
   const ob = $("orient-btn");
+  // orientation is meaningless on a ring — hide left-right in radial, but keep its slot so the
+  // view / density / focus buttons never shift position when you toggle the view mode
+  ob.classList.toggle("na", state.viewMode === "radial");
   ob.innerHTML = state.orient === "td" ? iconLabel("⇅", "Top-down") : iconLabel("⇄", "Left-right");
   ob.title = state.orient === "td" ? "Layout: top-down — click for left-to-right" : "Layout: left-to-right — click for top-down";
   const db = $("density-btn");
@@ -816,6 +1063,11 @@ function updateToolbar() {
     ? "Focus on — showing only open questions; click to show everything"
     : "Focus — collapse every non-open question, keep what still needs work";
 }
+$("view-btn").addEventListener("click", () => {
+  state.viewMode = state.viewMode === "radial" ? "tidy" : "radial";
+  localStorage.setItem("crux-view", state.viewMode);
+  updateToolbar(); relayout(true);
+});
 $("orient-btn").addEventListener("click", () => {
   state.orient = state.orient === "td" ? "lr" : "td";
   localStorage.setItem("crux-orient", state.orient);
@@ -937,6 +1189,7 @@ function setTab(tab) {
     animateIn([$("wiki-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
   } else if (state.snap) {
     retryFit();
+    treeSimLoop();   // the living tree resumes; it slept while the wiki tab was up
     animateIn([$("tree-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
   }
 }
