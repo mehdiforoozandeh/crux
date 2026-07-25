@@ -2,6 +2,7 @@
 id: <<id>>
 type: synthesis
 title: <<title>>
+approved:
 created: <<now>>
 updated: <<now>>
 ---

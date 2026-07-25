@@ -19,6 +19,7 @@
       <span class="divider"></span>
       <span id="project-title"></span>
       <span class="ro-badge" title="This cockpit is read-only — it shows the crux tree but never changes it. Edits (open a question, record a verdict, resolve a question) go through your agent, or the crux CLI.">View-only</span>
+      <span id="version-chip" title="crux version"></span>
       <nav id="tabs" role="tablist" aria-label="Cockpit views" hidden>
         <button data-tab="tree" type="button" role="tab" class="on">Tree</button>
         <button data-tab="wiki" type="button" role="tab">Wiki</button>
@@ -31,7 +32,7 @@
         <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
         <button id="focus-btn" type="button" aria-label="Focus open questions"></button>
       </div>
-      <input id="search" type="search" placeholder="Search nodes — Enter to jump" autocomplete="off" spellcheck="false">
+      <input id="search" type="search" placeholder="Search nodes · ↵ jump" title="Search the tree — Enter jumps to the first match, Esc clears" autocomplete="off" spellcheck="false">
       <button id="review-btn" type="button">Review (0)</button>
       <button id="theme-btn" type="button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
     </div>
@@ -41,7 +42,9 @@
       <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
       <button id="legend-btn" type="button" title="Show the color key" aria-label="Show the color key" hidden>Key</button>
       <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
+      <div id="focus-crumb" hidden></div>
       <div id="zoom-ctl">
+        <button data-max="left" type="button" title="Full-screen this panel ( [ )" aria-label="Full-screen the tree panel">⛶</button>
         <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
         <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
         <button id="zoom-fit" type="button" title="Fit tree to view" aria-label="Fit tree to view">⤢</button>
@@ -65,6 +68,7 @@
         <div id="wiki-legend" title="Node color = page category · node size = number of wiki links"></div>
         <button id="wiki-legend-btn" type="button" title="Show the category key" aria-label="Show the category key" hidden>Key</button>
         <div id="wiki-zoom">
+          <button data-max="left" type="button" title="Full-screen this panel ( [ )" aria-label="Full-screen the wiki panel">⛶</button>
           <button id="wgraph-spread" type="button" title="Spread the nodes — like ions repelling to equilibrium" aria-label="Spread the nodes apart">⚛</button>
           <button id="wgraph-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
           <button id="wgraph-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
@@ -78,6 +82,7 @@
         <button data-font="small" type="button" aria-label="Small text">A</button>
         <button data-font="medium" type="button" aria-label="Medium text">A</button>
         <button data-font="large" type="button" aria-label="Large text">A</button>
+        <button data-max="right" type="button" class="fc-max" title="Full-screen this panel ( ] )" aria-label="Full-screen the detail panel">⛶</button>
       </div>
       <div id="detail-content"></div>
       <div id="ro-footer" title="The cockpit never writes to the vault. To change the tree, ask your agent (it drives the crux engine) or run the crux CLI.">

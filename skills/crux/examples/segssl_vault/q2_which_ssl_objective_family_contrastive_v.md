@@ -6,7 +6,8 @@ parent: root
 status: resolved
 stale: false
 created: "2026-07-11T19:38:54"
-updated: "2026-07-11T19:38:54"
+updated: "2026-07-24T15:26:44"
+synthesis: s2
 ---
 
 # q2 — Which SSL objective family (contrastive vs masked-image-modeling vs self-distillation) transfers best to dense prediction?

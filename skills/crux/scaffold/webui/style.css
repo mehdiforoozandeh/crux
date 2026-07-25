@@ -53,13 +53,17 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   padding: 5px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
   flex: 0 0 auto; user-select: none; -webkit-user-select: none;
 }
-.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+/* When the bar runs out of room the PROJECT TITLE is what gives (it ellipsizes, keeps a
+   tooltip, and is repeated in the browser tab) — not the search box and not the tab
+   switcher. That's why .brand shrinks and .tools doesn't. */
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 0 1 auto; }
 .brand .mark { height: 22px; width: auto; flex: 0 0 auto; }
 .brand .mark .mk-l { stroke: var(--brand); stroke-opacity: .8; stroke-width: 3.6; stroke-linecap: round; }
 .brand .mark .mk-s { fill: var(--brand); }
 .brand .wordmark { color: var(--brand); font-weight: 800; font-size: 15.5px; letter-spacing: .2px; }
 .brand .divider { width: 1px; height: 16px; background: var(--line); }
-#project-title { font-size: 12.5px; color: var(--ink-dim); font-weight: 500; min-width: 0;
+#project-title { font-size: 12.5px; color: var(--ink-dim); font-weight: 500;
+  flex: 0 1 auto; min-width: 48px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* read-only reminder: an always-visible "View-only" pill in the header (the cockpit never
    writes — edits go through the agent/CLI). The full explanation lives in its tooltip and in
@@ -68,9 +72,14 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   font-size: 10.5px; font-weight: 600; letter-spacing: .2px; color: var(--ink-dim); white-space: nowrap;
   padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); }
 .ro-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--q-resolved); flex: 0 0 auto; }
-.tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* .tools must GROW (not just sit at content width) — the search is the only growing child
+   inside it, so free bar space reaches the search only through this. */
+.tools { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+/* a bit roomier than the old fixed 230px, but it does NOT grow to fill the bar — a
+   search field spanning half the toolbar reads as a mistake */
 #search {
-  flex: 0 1 230px; min-width: 120px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line);
+  flex: 0 1 290px; min-width: 190px; max-width: 320px;
+  padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--ink); font-size: 12.5px;
   user-select: text; -webkit-user-select: text;
 }
@@ -95,6 +104,14 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .viewctl button:active { transform: translateY(1px); }
 .viewctl button.on { border-color: var(--accent); color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
+/* Below a wide window the view controls drop to icons only. Their labels are the single
+   widest thing in the toolbar (~375px of the bar), and this is what buys the search box a
+   usable width instead of collapsing it to its 200px floor. */
+@media (max-width: 1400px) {
+  .viewctl button .tb-label { display: none; }
+  #view-btn { min-width: 0; }
+  .viewctl button { padding: 0 8px; }
+}
 #review-btn {
   flex: 0 0 auto; white-space: nowrap; height: 28px; padding: 0 12px; border-radius: 7px;
   border: 1px solid var(--q-review); background: transparent; color: var(--ink);
@@ -109,8 +126,30 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 }
 #theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 
+/* release version, and the once-a-day update notice when there is one (the CLI fills that
+   cache; the server never fetches) */
+#version-chip { flex: 0 0 auto; font-size: 10.5px; font-weight: 600; color: var(--ink-mute);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: default; white-space: nowrap;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid transparent; }
+#version-chip:empty { display: none; }
+#version-chip.has-update { color: var(--q-review); border-color: var(--q-review); cursor: help; }
+
 /* main split */
 #cockpit { flex: 1 1 auto; display: flex; min-height: 0; }
+
+/* full-screen panes: either side can take the whole window, in either tab. The maximized
+   pane's flex is !important because the draggable splitter leaves an inline flex-basis on
+   #detail-pane, and an inline style would otherwise win. */
+body[data-pane="left"] #detail-pane,
+body[data-pane="left"] #splitter,
+body[data-pane="right"] #tree-pane,
+body[data-pane="right"] #wiki-pane,
+body[data-pane="right"] #splitter { display: none !important; }
+body[data-pane="left"] #tree-pane,
+body[data-pane="left"] #wiki-pane { flex: 1 1 100% !important; border-right: none; }
+body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: none !important; }
+[data-max] { flex: 0 0 auto; }
+[data-max].on { color: var(--accent); border-color: var(--accent); }
 #tree-pane { position: relative; flex: 1 1 62%; min-width: 0; border-right: 1px solid var(--line);
   overflow: hidden; user-select: none; -webkit-user-select: none; }
 #tree { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; background: var(--bg); }
@@ -142,6 +181,9 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 #detail-fontctl button[data-font="large"]  { font-size: 16px; }
 #detail-fontctl button:hover { color: var(--ink); }
 #detail-fontctl button.on { background: var(--panel2); color: var(--accent); }
+/* the detail pane's own full-screen toggle, set off from the three text sizes */
+#detail-fontctl .fc-max { font-size: 11px; margin-left: 3px; padding-left: 4px;
+  border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; width: 24px; }
 /* detail content eases in whenever it changes (new selection / queue) */
 @media (prefers-reduced-motion: no-preference) {
   #detail-content > * { animation: d-in .28s cubic-bezier(.22,.61,.36,1) both; }
@@ -208,6 +250,25 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 #legend .lg:hover { border-color: var(--line); color: var(--ink); }
 #legend .lg.on { border-color: var(--c); color: var(--ink); background: color-mix(in srgb, var(--c) 16%, transparent); }
 #legend .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--c); flex: 0 0 auto; }
+
+/* focus breadcrumb — shown over the tree while a question is focused; the path back to the
+   root is clickable, so you can widen the focus one level at a time */
+#focus-crumb { position: absolute; left: 12px; top: 10px; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 2px; max-width: 60%; padding: 3px 5px 3px 9px; border-radius: 999px;
+  border: 1px solid var(--accent); background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(3px); box-shadow: var(--shadow); }
+#focus-crumb[hidden] { display: none; }
+.fc-label { font-size: 8.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); margin-right: 4px; }
+.fc-step { border: none; background: none; font-family: inherit; cursor: pointer; color: var(--ink-dim);
+  font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-step:hover { color: var(--ink); background: var(--panel2); }
+.fc-step.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.fc-sep { color: var(--ink-mute); font-size: 10px; }
+.fc-clear { border: none; background: none; cursor: pointer; color: var(--ink-mute); font-size: 12px;
+  line-height: 1; width: 18px; height: 18px; border-radius: 50%; margin-left: 3px;
+  display: flex; align-items: center; justify-content: center; }
+.fc-clear:hover { color: var(--ink); background: var(--panel2); }
 
 /* the small "Key" button shown (top-right) when the legend is hidden */
 #legend-btn {
@@ -298,6 +359,8 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .sec { margin: 16px 0; }
 .sec h4 { margin: 0 0 6px; font-size: .86em; text-transform: uppercase; letter-spacing: .6px; color: var(--ink-dim); }
 .sec .body { white-space: pre-wrap; color: var(--ink); }
+/* rendered markdown supplies its own block structure — pre-wrap would double every gap */
+.sec .body.md-body { white-space: normal; }
 .sec .muted { color: var(--ink-mute); font-style: italic; }
 .verif { list-style: none; padding: 0; margin: 0; }
 .verif li { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
@@ -433,26 +496,62 @@ body[data-tab="wiki"] .viewctl { display: none; }
 #wiki-zoom button:active { transform: translateY(1px); }
 #wiki-zoom #wgraph-fit { font-size: 15px; }
 
-/* the reader — rendered markdown in the detail pane */
-.wiki-body { line-height: 1.6; }
-.wiki-body h2, .wiki-body h3, .wiki-body h4, .wiki-body h5 { margin: 1.1em 0 .45em; line-height: 1.3; }
-.wiki-body h2 { font-size: 1.24em; border-bottom: 1px solid var(--line); padding-bottom: .25em; }
-.wiki-body h3 { font-size: 1.1em; }
-.wiki-body h4, .wiki-body h5 { font-size: 1em; }
-.wiki-body p { margin: .55em 0; }
-.wiki-body ul, .wiki-body ol { margin: .5em 0; padding-left: 1.5em; }
-.wiki-body li { margin: .2em 0; }
-.wiki-body blockquote { margin: .7em 0; padding: .35em .9em; border-left: 3px solid var(--accent);
+/* rendered markdown in the detail pane — the wiki reader, node prose, and
+   artifact reports all share this one typography block */
+.md-body { line-height: 1.6; }
+.md-body h2, .md-body h3, .md-body h4, .md-body h5 { margin: 1.1em 0 .45em; line-height: 1.3; }
+.md-body h2 { font-size: 1.24em; border-bottom: 1px solid var(--line); padding-bottom: .25em; }
+.md-body h3 { font-size: 1.1em; }
+.md-body h4, .md-body h5 { font-size: 1em; }
+.md-body p { margin: .55em 0; }
+.md-body ul, .md-body ol { margin: .5em 0; padding-left: 1.5em; }
+.md-body li { margin: .2em 0; }
+.md-body blockquote { margin: .7em 0; padding: .35em .9em; border-left: 3px solid var(--accent);
   background: var(--panel2); border-radius: 0 6px 6px 0; color: var(--ink-dim); }
-.wiki-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em;
+.md-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
-.wiki-body pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+.md-body pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
   padding: 10px 13px; overflow-x: auto; margin: .7em 0; }
-.wiki-body pre code { background: none; border: none; padding: 0; font-size: .86em; line-height: 1.5; }
-.wiki-body hr { border: none; border-top: 1px solid var(--line); margin: 1.1em 0; }
-.wiki-body table { border-collapse: collapse; margin: .7em 0; font-size: .93em; }
-.wiki-body th, .wiki-body td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
-.wiki-body th { background: var(--panel2); font-weight: 600; }
+.md-body pre code { background: none; border: none; padding: 0; font-size: .86em; line-height: 1.5; }
+.md-body hr { border: none; border-top: 1px solid var(--line); margin: 1.1em 0; }
+.md-body table { border-collapse: collapse; margin: .7em 0; font-size: .93em; }
+.md-body th, .md-body td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+.md-body th { background: var(--panel2); font-weight: 600; }
+/* the report a hypothesis produced, as a primary action right under the headline */
+.report-open { display: flex; align-items: center; gap: 9px; width: 100%; margin: 0 0 14px;
+  padding: 10px 13px; border-radius: 9px; cursor: pointer; font-family: inherit; font-size: .95em;
+  color: var(--ink); border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: background-color .16s ease, border-color .16s ease, transform .1s ease; }
+.report-open:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.report-open:active { transform: translateY(1px); }
+.report-open .ro-ic { color: var(--accent); font-size: 1.1em; }
+.report-open .ro-txt { font-weight: 650; }
+.report-open .ro-sub2 { margin-left: auto; color: var(--ink-mute); font-size: .85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* figures inside a rendered report / an image artifact — never wider than the pane, and
+   clickable to open full size (the pane is narrow; a dense chart needs room) */
+.md-img { display: block; max-width: 100%; height: auto; margin: .8em 0; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel2); cursor: zoom-in; }
+.md-img:hover { border-color: var(--accent); }
+.md-body table { display: block; overflow-x: auto; max-width: 100%; }
+
+/* artifact rows: a report opens in this pane, a figure renders inline, anything else
+   downloads; a link whose file has gone missing is shown, not silently dropped */
+.art-fig { margin: 10px 0; }
+.art-fig figcaption { color: var(--ink-mute); font-size: .82em; margin-top: 4px; }
+.art { display: flex; align-items: center; gap: 8px; padding: 8px 11px; margin: 6px 0;
+  border-radius: 8px; border: 1px dashed var(--v-refuted); color: var(--ink-dim); font-size: .93em; }
+.art-kind { font-size: .78em; text-transform: uppercase; letter-spacing: .6px; color: var(--v-refuted); }
+/* recorded but not servable: real, just not something the cockpit will open */
+.art.inert { border-color: var(--line); border-style: solid; cursor: default; }
+.art.inert .art-kind { color: var(--ink-mute); }
+.art-path { margin-left: auto; color: var(--ink-mute); font-size: .85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+a.rowlink { text-decoration: none; }
+.rowlink.back { background: none; border-style: dashed; margin-bottom: 12px; }
+
 /* wikilinks: live = accent + dashed underline (in-app navigation); broken = visibly dead */
 .wl { color: var(--accent); cursor: pointer; text-decoration: none;
   border-bottom: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); }

@@ -6,7 +6,8 @@ parent: root
 status: resolved
 stale: false
 created: "2026-07-11T19:38:54"
-updated: "2026-07-11T19:38:54"
+updated: "2026-07-24T15:26:44"
+synthesis: s1
 ---
 
 # q1 — Does self-supervised pretraining beat supervised ImageNet pretraining for downstream segmentation transfer (same encoder, same decoder, full labels)?

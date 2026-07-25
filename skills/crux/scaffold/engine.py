@@ -14,7 +14,8 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+CRUX_VERSION = "0.5.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
@@ -27,6 +28,20 @@ SOURCES_FILE = os.path.join(WIKI_DIR, ".sources.tsv")   # engine-owned source re
 WIKI_LOG     = os.path.join(WIKI_DIR, "log.md")          # append-only chronological log (Karpathy's log.md)
 WIKI_SCHEMA  = os.path.join(WIKI_DIR, "SCHEMA.md")       # per-vault conventions the agent + PI co-evolve
 GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX) # root .md views the node scan must never treat as nodes
+
+# evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
+# Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
+# The engine only does bookkeeping here too — it classifies by extension and checks the
+# paths resolve; it never opens an artifact, and never judges one.
+RESULTS_DIR      = "results"
+ARTIFACT_KINDS   = {"report": (".md",),
+                    "image":  (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"),
+                    "data":   (".csv", ".tsv", ".json", ".txt")}
+# What the cockpit's read-only file route is willing to hand back. Declared HERE, and keyed
+# to content types in serve.py, so the UI can tell in advance which artifacts it may offer as
+# links — an artifact outside this set is shown, but inert, instead of linking to a 404.
+SERVABLE_EXT     = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".pdf",
+                              ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 
 TYPES            = ["project", "question", "idea", "synthesis"]
 QUESTION_STATUS  = ["open", "review", "resolved"]
@@ -231,6 +246,12 @@ _(how this hypothesis will be tested)_
 
 _(none yet)_
 
+## Artifacts
+
+<!-- what the run produced. Keep files under results/<<id>>/ and link at least the report:
+     - [Report](results/<<id>>/report.md)   - results/<<id>>/curve.png -->
+_(none yet)_
+
 ## Findings
 
 _(written by the PI/agent when the case is closed)_
@@ -239,6 +260,7 @@ _(written by the PI/agent when the case is closed)_
 id: <<id>>
 type: synthesis
 title: <<title>>
+approved:
 created: <<now>>
 updated: <<now>>
 ---
@@ -393,6 +415,97 @@ def derive_verdict(met, unmet, na):
     if met == 0 and unmet > 0:     return "refuted"
     return "partial"
 
+# ----------------------------------------------------------------------------- artifacts
+def artifact_kind(path):
+    ext = os.path.splitext(path)[1].lower()
+    for kind, exts in ARTIFACT_KINDS.items():
+        if ext in exts:
+            return kind
+    return "other"
+
+def parse_artifacts(body):
+    """Bullets under `## Artifacts` as [{label, path, kind}], in document order. Two forms:
+
+        - [Full report](results/h1/report.md)
+        - results/h1/curve.png the ADE20K curve
+
+    The `_(placeholder)_` line and any prose are ignored. Pure — no filesystem access, so
+    a node body can be parsed without a vault (and a pre-1.2 node with no such section
+    simply yields [])."""
+    out, in_sec, in_comment = [], False, False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "artifacts"
+            continue
+        if not in_sec:
+            continue
+        # HTML comments are guidance, not artifacts — the template's own example links
+        # live in one, and a user may comment a line out. Track the block, skip it whole.
+        if in_comment:
+            in_comment = "-->" not in line
+            continue
+        if "<!--" in line:
+            in_comment = "-->" not in line
+            line = re.sub(r"<!--.*?-->", "", line)
+        m = re.match(r"\s*-\s+(?!_\()(.+)$", line)
+        if not m:
+            continue
+        text = m.group(1).strip()
+        link = re.match(r"\[([^\]]*)\]\(\s*([^)\s]+)\s*\)\s*$", text)
+        if link:
+            label, path = link.group(1).strip(), link.group(2).strip()
+        else:
+            parts = text.split(None, 1)
+            path, label = parts[0], (parts[1].strip() if len(parts) > 1 else "")
+        if not path:
+            continue
+        out.append({"label": label or os.path.basename(path), "path": path,
+                    "kind": artifact_kind(path)})
+    return out
+
+def artifact_escapes(path):
+    """True if a recorded path could reach outside the vault (absolute, drive-letter, or
+    containing a `..` segment). Checked lexically, before anything touches the disk."""
+    if not path or path.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:", path):
+        return True
+    return ".." in path.replace("\\", "/").split("/")
+
+def results_files(root, hid):
+    """Every non-hidden file under results/<hid>/ (recursive). The signal for 'this
+    hypothesis has produced something on disk'."""
+    d = os.path.join(root, RESULTS_DIR, hid)
+    out = []
+    if not os.path.isdir(d):
+        return out
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = [x for x in dirnames if not x.startswith(".")]
+        out += [os.path.join(dirpath, fn) for fn in sorted(filenames) if not fn.startswith(".")]
+    return out
+
+def artifact_problems(root, n):
+    """Lint for one idea node: paths must stay in the vault and resolve, and a hypothesis
+    that has produced files must link a report among them."""
+    problems, arts = [], parse_artifacts(n["body"])
+    for a in arts:
+        if artifact_escapes(a["path"]):
+            problems.append((n.id, f"hypothesis '{n.id}': artifact path must be inside the "
+                                   f"vault: '{a['path']}'"))
+        elif not os.path.isfile(os.path.join(root, a["path"])):
+            problems.append((n.id, f"hypothesis '{n.id}': links missing artifact '{a['path']}'"))
+    files = results_files(root, n.id)
+    if files and not any(a["kind"] == "report" and not artifact_escapes(a["path"]) for a in arts):
+        problems.append((n.id, f"hypothesis '{n.id}': {RESULTS_DIR}/{n.id}/ holds {len(files)} "
+                               f"file(s) but no report is linked under '## Artifacts'"))
+    return problems
+
+def artifact_warnings(root, nid):
+    """The same 'files on disk, no report linked' signal as a WARNING, for `crux close`.
+    Closing must stay possible for a hypothesis that genuinely produced no files."""
+    n = Vault(root).get(nid)
+    if n.type != "idea":
+        return []
+    return [m for _, m in artifact_problems(root, n) if "no report is linked" in m]
+
 # ----------------------------------------------------------------------------- ledger / gate / refresh
 def ledger_counts(v, qid):
     """Pure roll-up of a question's direct children into JSON-able counts. Single source
@@ -499,6 +612,10 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
+        # produced files links a report among them
+        if t == "idea":
+            problems += artifact_problems(v.root, n)
         # ledger markers present in questions
         if t == "question" and (LEDGER_START not in n["body"] or LEDGER_END not in n["body"]):
             problems.append((nid, "missing ledger markers"))
@@ -973,6 +1090,29 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
 def _bump(node):
     node["fm"]["updated"] = now()
 
+def append_bullet(body, heading, text):
+    """Append `- text` to the `## heading` section, dropping that section's `_(placeholder)_`
+    line if it still has one. Everything here is scoped to the section on purpose: a
+    body-wide placeholder test silently dropped every run link after the first once a second
+    section (`## Artifacts`) shipped with a placeholder of its own. Non-bullet lines in the
+    section (an HTML comment, say) are preserved in place."""
+    lines = body.splitlines()
+    start = None
+    for i, l in enumerate(lines):
+        if l.startswith("## ") and l[3:].strip().lower() == heading.lower():
+            start = i
+            break
+    if start is None:
+        return body
+    end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+    seg = [l for l in lines[start + 1:end] if not re.match(r"\s*_\(.*\)_\s*$", l)]
+    while seg and not seg[-1].strip():
+        seg.pop()
+    if not seg or seg[0].strip():
+        seg.insert(0, "")
+    seg.append(f"- {text}")
+    return "\n".join(lines[:start + 1] + seg + [""] + lines[end:])
+
 def cmd_test(root, nid, to=None, run=None):
     v = Vault(root)
     n = v.get(nid)
@@ -986,10 +1126,7 @@ def cmd_test(root, nid, to=None, run=None):
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
     n["fm"]["status"] = target
     if run:
-        n["body"] = re.sub(r"## Run Links\n\n_\(none yet\)_",
-                           f"## Run Links\n\n- {run}",
-                           n["body"]) if "_(none yet)_" in n["body"] else \
-                    re.sub(r"(## Run Links\n\n)", rf"\1- {run}\n", n["body"])
+        n["body"] = append_bullet(n["body"], "Run Links", run)
     _bump(n)
     write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
     refresh(root)
@@ -1026,12 +1163,50 @@ def cmd_review(root):
     return [(n.id, n.title) for n in v.nodes.values()
             if n.type == "question" and n.status == "review"]
 
+def approved_synthesis(v, qid):
+    """The approved synthesis that closes `qid`, or None. Deterministic when several
+    relate to the same question: the lowest id wins."""
+    cands = [n for n in v.nodes.values()
+             if n.type == "synthesis" and n["fm"].get("approved")
+             and qid in _related_ids(v, n["body"])]
+    return min(cands, key=lambda n: natkey(n.id)).id if cands else None
+
+def cmd_approve(root, sid):
+    """The PI's sign-off on a synthesis — the second human touchpoint of the close
+    sequence, and the thing `answer` checks for. Idempotent: the first approval's
+    timestamp is the record, so re-approving never rewrites history."""
+    v = Vault(root)
+    n = v.get(sid)
+    if n.type != "synthesis":
+        raise CruxError(f"approve applies to a synthesis (got a '{n.type}' for '{sid}'); "
+                        f"draft one with `crux synthesize \"…\" --for <question-id>`")
+    existing = n["fm"].get("approved")
+    if existing:
+        return str(existing)
+    stamp = now()
+    n["fm"]["approved"] = stamp
+    _bump(n)
+    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
+    refresh(root)
+    return stamp
+
 def cmd_answer(root, qid, text=None):
     v = Vault(root)
     n = v.get(qid)
     if n.type != "question":
         raise CruxError("answer applies to questions")
+    # v0.5 close-gate: a question is closed by an APPROVED synthesis, never by a bare
+    # status flip. Questions already resolved by a pre-1.2 engine are grandfathered —
+    # this gate applies to new closes only (see docs/prd/v0.5-cockpit-evidence.md §I).
+    sid = approved_synthesis(v, qid)
+    if not sid:
+        raise CruxError(
+            f"cannot resolve {qid}: a question closes only on an approved synthesis.\n"
+            f"    1. crux synthesize \"what {qid} settled\" --for {qid}\n"
+            f"    2. the PI reads it, then: crux approve <sid>\n"
+            f"    3. crux answer {qid}")
     n["fm"]["status"] = "resolved"
+    n["fm"]["synthesis"] = sid
     n["fm"]["stale"] = False
     if text:
         n["body"] = re.sub(r"## Answer so far\n\n.*?\n\n(?=<!-- crux:ledger:start)",
@@ -1174,6 +1349,7 @@ def _node_json(v, n):
         d["stale"] = bool(n["fm"].get("stale"))
         d["detail"] = _section(pre, "Question")
         d["answer"] = _section(pre, "Answer so far")
+        d["synthesis"] = n["fm"].get("synthesis") or None   # the approved synthesis that closed it
         d["ledger"] = ledger_counts(v, n.id)
         d["children"] = list(v.children[n.id])
     elif n.type == "idea":
@@ -1185,24 +1361,51 @@ def _node_json(v, n):
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
         d["verifiables"] = _verifiables(n["body"])
         d["run_links"] = _run_links(n["body"])
+        d["artifacts"] = [dict(a,
+                               exists=(not artifact_escapes(a["path"])
+                                       and os.path.isfile(os.path.join(v.root, a["path"]))),
+                               servable=os.path.splitext(a["path"])[1].lower() in SERVABLE_EXT)
+                          for a in parse_artifacts(n["body"])]
         d["findings"] = _section(n["body"], "Findings")
     elif n.type == "synthesis":
         d["related"] = _related_ids(v, n["body"])
+        d["approved"] = n["fm"].get("approved") or None
+        # the written verdict itself — a synthesis is what closes a question, so the cockpit
+        # has to be able to show it. The `Related::` line is dropped: it's already `related`.
+        d["body"] = "\n".join(l for l in n["body"].splitlines()
+                              if not l.strip().startswith("Related::")).strip()
     return d
 
 def _subtree(v, nid):
     return {"id": nid, "children": [_subtree(v, c) for c in v.children[nid]]}
 
+def _update_snapshot():
+    """The `update` block: read from the update cache ONLY. `serve` must never touch the
+    network, so the cockpit reports whatever the last CLI invocation happened to learn — and
+    it stays silent when the user has opted out, so switching the check off silences the GUI
+    chip too, not just the CLI line."""
+    try:
+        import update as _u
+        if os.environ.get(_u.OPT_OUT):
+            return {"latest": None, "available": False}
+        latest = _u.read_cache().get("latest")
+        return {"latest": latest, "available": bool(latest and _u.is_newer(latest, CRUX_VERSION))}
+    except Exception:
+        return {"latest": None, "available": False}
+
 def snapshot(vault):
     """Read-only JSON snapshot of a vault. `vault` is a Vault or a root path.
-    Keys: engine_version, project, nodes (flat map by id), tree (parent-link hierarchy
-    from the root; synthesis nodes are excluded — they attach via `related`), queue,
-    wiki (index of the literature layer — page bodies stay behind /wiki/<slug>.json)."""
+    Keys: engine_version + crux_version, update (from the cache; never a live fetch),
+    project, nodes (flat map by id), tree (parent-link hierarchy from the root; synthesis
+    nodes are excluded — they attach via `related`), queue, wiki (index of the literature
+    layer — page bodies stay behind /wiki/<slug>.json)."""
     v = vault if isinstance(vault, Vault) else Vault(vault)
     root_id = v.cfg["root_id"]
     root = v.get(root_id)
     return {
         "engine_version": ENGINE_VERSION,
+        "crux_version": CRUX_VERSION,
+        "update": _update_snapshot(),
         "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
                     "status": root.status, "goal": _section(root["body"], "Goal")},
         "nodes": {nid: _node_json(v, n) for nid, n in v.nodes.items()},

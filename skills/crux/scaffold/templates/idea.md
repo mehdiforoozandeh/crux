@@ -35,6 +35,12 @@ _(how this hypothesis will be tested)_
 
 _(none yet)_
 
+## Artifacts
+
+<!-- what the run produced. Keep files under results/<<id>>/ and link at least the report:
+     - [Report](results/<<id>>/report.md)   - results/<<id>>/curve.png -->
+_(none yet)_
+
 ## Findings
 
 _(written by the PI/agent when the case is closed)_

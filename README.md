@@ -1,8 +1,8 @@
 # Crux
 
 **A scientific-method lab notebook your AI agent drives.** `crux` keeps a falsifiable
-**question → hypothesis → evidence** tree for your research project — so nothing gets
-silently p-hacked or forgotten across dozens of experiments. The agent runs the loop;
+**question → hypothesis → evidence** tree for your project, so nothing gets silently
+p-hacked or forgotten across dozens of experiments. The agent runs the loop;
 **you make the calls.**
 
 ## What it is
@@ -16,25 +16,21 @@ silently p-hacked or forgotten across dozens of experiments. The agent runs the 
 
 <p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, resolved through the ask → hypothesize → test → close → review → answer loop. Green ✓ / red ✗ mark met / unmet — the same reading as the status-colored cockpit below.</sub></p>
 
-Months into a project, can you still say exactly what you asked, what you tested, and whether
-each question is actually settled? `crux` makes that explicit and keeps it that way — organizing
-a research program the way the scientific method actually works:
+Months in, can you still say what you asked, what you tested, and whether each question is
+settled? `crux` keeps that explicit:
 
-- **Questions** — what you don't know. They carry no answer of their own; they're resolved by aggregating the findings beneath them. Questions nest.
-- **Hypotheses** — falsifiable, testable leaves under a question. Each carries **pre-registered verifiables** — the concrete pass/fail checks you write down *before* running (like *"ADE20K val mIoU ≥ supervised + 2.0, 3-seed mean"*) — plus its **findings**. Hypotheses are the only things actually tested.
-- A plain-Python **engine** does the bookkeeping so you don't: it assigns IDs, keeps the tree consistent, tallies the evidence upward, pauses at a human **review gate** for your sign-off before anything counts as final, and regenerates a navigable `META.md` map + `EXPERIMENTS.md` registry.
-- An **LLM agent** drives it conversationally; **you (the PI)** make the judgment calls — which questions matter, the verifiable bar, and when a question is truly answered.
+- **Questions** — what you don't know. They carry no answer of their own; they resolve by aggregating the findings beneath them, and they nest.
+- **Hypotheses** — falsifiable leaves under a question, each with **pre-registered verifiables** (pass/fail checks written down *before* running: *"ADE20K val mIoU ≥ supervised + 2.0, 3-seed mean"*), its findings, and the report and figures the run produced. Only hypotheses are tested.
+- A plain-Python **engine** does the bookkeeping: IDs, tree consistency, evidence tallied upward, a human **review gate**, a regenerated `META.md` + `EXPERIMENTS.md`.
+- An **LLM agent** drives it; **you (the PI)** make the calls — which questions matter, where the bar sits, when a question is answered.
 
-For example: you ask *"Does SSL pretraining beat supervised ImageNet init?"*; crux pins a hypothesis
-with a bar you set in advance (*"ADE20K mIoU ≥ supervised + 2.0"*); your agent runs it and reports
-back; **you** sign off on the verdict. Nothing counts until you do.
+Nothing counts until you sign off.
 
 ## Install
 
-Needs Python ≥ 3.8 (the engine is stdlib-only — no packages) and `git`; the `npx` path
-also needs Node.js. Install all four crux skills with any
-[skills.sh](https://www.skills.sh)-compatible agent — Claude Code, Cursor, Codex,
-Windsurf, Copilot CLI, and others:
+Needs Python ≥ 3.8 (the engine is stdlib-only) and `git`; the `npx` path also needs
+Node.js. Install all four crux skills with any [skills.sh](https://www.skills.sh)-compatible
+agent — Claude Code, Cursor, Codex, Windsurf, Copilot CLI, and others:
 
 ```bash
 npx skills add mehdiforoozandeh/crux --all
@@ -47,29 +43,27 @@ git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./install.sh
 ```
 
-Restart / reload your agent and you're set — `./crux selftest` checks the install.
-Scopes, per-agent notes, updating, uninstalling, and troubleshooting live in the
-**[installation guide](INSTALL.md)**.
+Restart your agent and you're set — `./crux selftest` checks the install. Scopes,
+per-agent notes, updating, and troubleshooting: **[installation guide](INSTALL.md)**.
 
 ## Try it in 60 seconds
 
 No agent, no dependencies, nothing to configure — open the cockpit over the bundled
-example vault right from a fresh clone:
+example vault from a fresh clone:
 
 ```bash
 git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./crux serve --dir skills/crux/examples/segssl_vault
 ```
 
-That's the [segssl_vault](skills/crux/examples/segssl_vault) example (**5 questions,
-15 hypotheses** — the vault behind the screenshots below): pan the status-colored tree,
-open a hypothesis's evidence ledger, and flip to the **Wiki** tab for the literature
-graph. (Port taken? Pin one with `--port 8890`.) When you're ready to run your own
-program, install the skills above and tell your agent to set up crux in your repo.
+That's [segssl_vault](skills/crux/examples/segssl_vault) (**5 questions, 16 hypotheses** —
+the vault behind the screenshots below): pan the status-colored tree, open h1's evidence
+ledger and its rendered **report with figures**, flip to the **Wiki** tab for the literature
+graph. (Port taken? `--port 8890`.)
 
 ## Why not just a doc, Notion, or W&B?
 
-Those hold notes, a graph, and run logs. crux adds the part they don't:
+Those hold notes, a graph, and run logs. crux adds what they don't:
 
 | Your current setup | What crux adds on top |
 |---|---|
@@ -77,16 +71,16 @@ Those hold notes, a graph, and run logs. crux adds the part they don't:
 | **A spreadsheet / lab notebook** | **pass/fail bars you lock in _before_ the run**, and a **mechanical verdict** derived from them — no post-hoc goalpost-moving |
 | **W&B / MLflow** — run logs & metrics | a human **review gate** and evidence roll-up across many parallel hypotheses; crux sits **beside** your tracker, not on top of it |
 
-It's all plain markdown that only ever writes under `cruxvault/` — non-destructive,
-Obsidian-compatible, and it can migrate a repo you already have.
+It's plain markdown, written only under `cruxvault/` — non-destructive, Obsidian-compatible,
+and able to migrate a repo you already have.
 
 ## The cockpit
 
-Your vault is plain markdown you can open in **Obsidian** — but crux has its own purpose-built
-home for it. Run **`crux serve`** for a dependency-free, **read-only** browser **cockpit**:
-pan / zoom / search the live, status-colored tree, watch the review gate, and read each node's
-evidence ledger. It's a viewer, so every edit still goes through your agent or the `crux` CLI —
-Obsidian stays available for hands-on editing.
+Your vault opens in **Obsidian**, but crux has a purpose-built home for it. **`crux serve`**
+is a dependency-free, **read-only** browser **cockpit**: pan / zoom / search the live tree,
+focus one question, watch the review gate, read any node's evidence ledger, and open a
+hypothesis's **report — rendered markdown, figures and all — beside the tree**. Edits still
+go through your agent or the CLI.
 
 <p align="center">
   <picture>
@@ -97,12 +91,11 @@ Obsidian stays available for hands-on editing.
 
 <p align="center"><sub>The <b>cockpit</b> over the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example — the status-colored tree (branches collapse/expand) and a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding). Read-only; every edit goes through your agent or the <code>crux</code> CLI. <em>(Real screenshot; it matches your GitHub light/dark theme.)</em></sub></p>
 
-It also gives the **literature wiki** its own view — one Obsidian can't. The `crux-wiki` skill —
-inspired by [Karpathy's LLM-wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-(immutable curated sources an agent compiles into interlinked pages) — compiles PI-curated sources
-into a knowledge base; the cockpit draws it as a graph **colored by literature category, sized by
-links, and cross-linked into the live question tree**, with a one-way literature → wiki → tree flow.
-That's structure Obsidian's undifferentiated graph doesn't capture.
+The **literature wiki** gets its own view too. The `crux-wiki` skill — inspired by
+[Karpathy's LLM-wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) —
+compiles PI-curated sources into a knowledge base, drawn here as a graph **colored by
+category, sized by links, cross-linked into the question tree**, flowing one way:
+literature → wiki → tree.
 
 <p align="center">
   <picture>
@@ -115,21 +108,17 @@ That's structure Obsidian's undifferentiated graph doesn't capture.
 
 ## Driving crux
 
-The cockpit above **shows**; the agent **drives**. Everything above is the read-only instrument
-panel — you watch it. This is the other side of the glass, where the vault actually gets written.
-You never edit `cruxvault/` by hand and you never memorize the engine's verbs — you **talk to your
-agent** in plain language, it runs the engine, and **you approve**. The cockpit is how you *read*
-your program; the agent is how you *fly* it.
+The cockpit **shows**; the agent **drives**. You never edit `cruxvault/` by hand or memorize
+the engine's verbs — you talk to your agent, it runs the engine, and **you approve**.
 
-**Two ways in.** Tell your agent to **set up crux in your repo**. It runs a short interview —
-*you only think about the science* — and stands up the vault one of two ways:
+**Two ways in.** Tell your agent to set up crux in your repo; a short interview stands up
+the vault one of two ways:
 
-- **New project** — describe the idea (or point it at a proposal, notes, or a draft paper). It asks a few questions, then drafts your first question and a hypothesis or two to run.
-- **Migrate an existing repo** — code and results, months of work already on disk? It *reads* them and reconstructs what was **asked, tested, and found** into a crux-tree, pinning already-run hypotheses with the verdicts they earned. It only ever writes under `cruxvault/` and **never touches your files**.
+- **New project** — describe the idea (or point it at a proposal or draft paper). It drafts your first question and a hypothesis or two.
+- **Migrate an existing repo** — months of code and results on disk? It *reads* them and reconstructs what was **asked, tested, and found**, pinning already-run hypotheses with the verdicts they earned. It writes only under `cruxvault/` and **never touches your files**.
 
-Either way it drafts **one seed outline**, you approve it, and the engine materializes the whole
-notebook all at once. The seed carries both a **fresh** hypothesis (an idea to run) and a
-**migrated** `[tested]` one (already-run, with its finding):
+Either way you approve **one seed outline** and the engine materializes the whole notebook
+at once — here with a **fresh** hypothesis and a **migrated** `[tested]` one:
 
 ```
 - Project: SegSSL — label-efficient segmentation
@@ -144,11 +133,11 @@ notebook all at once. The seed carries both a **fresh** hypothesis (an idea to r
 crux init --from seed.md --dir cruxvault
 ```
 
-That seed grows into a real, months-long program — the [segssl_vault](skills/crux/examples/segssl_vault)
-example runs **5 questions and 15 hypotheses** deep, with q5 still open (one running, one an idea).
+That seed grows into a months-long program — [segssl_vault](skills/crux/examples/segssl_vault)
+runs **5 questions and 16 hypotheses** deep.
 
-**The loop.** Day to day it's one rhythm: you ask, the agent proposes a hypothesis with a
-**bar locked _before_ the run**, you approve, it runs and reports, you sign off, a verdict lands.
+**The loop.** One rhythm: you ask, the agent proposes a hypothesis with a **bar locked
+_before_ the run**, you approve, it runs and reports, you sign off, a verdict lands.
 
 ```text
 you    Does self-supervised pretraining beat supervised ImageNet init for
@@ -168,8 +157,7 @@ you    Signed off.                 ← sign-off 2 · the verdict, before it coun
 crux   h1 → supported. iBOT/DINO is now the SegSSL default.
 ```
 
-You never type the engine yourself, but under the hood that whole exchange is a handful of
-commands, here end to end:
+You never type the engine yourself, but that exchange is a handful of commands end to end:
 
 ```bash
 crux ask "Does SSL pretraining beat supervised ImageNet init for segmentation transfer?"  # opens q1
@@ -180,9 +168,19 @@ crux close h1 -m "+3.3 mIoU ADE20K, +1.5 mIoU Cityscapes"                       
 crux serve                                                                                 # open the read-only cockpit
 ```
 
-**The verdict is mechanical.** `crux close` reads the verifiable checkboxes (`[x]` met · `[ ]` unmet · `[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine **never reads your run logs** — you supply the per-box judgment and a headline metric; the bar itself was fixed before the run, so there's no goalpost left to move. h1 ticked all three and landed **supported**; MAE's migrated h2 met one of three (+1.8 full-FT, −6.7 frozen) → **partial**, not a rounded-up win. And crux keeps the losers — h3's DenseCL came back **refuted** at −1.3 mIoU, recorded so you never re-run a dead end.
+**The verdict is mechanical.** `crux close` reads the checkboxes (`[x]` met · `[ ]` unmet ·
+`[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine
+**never reads your run logs**, and the bar was fixed before the run, so there's no goalpost
+left to move: h1 ticked all three → **supported**; MAE's h2 met one of three → **partial**,
+not a rounded-up win; h3's DenseCL landed **refuted**, recorded so you never re-run a dead
+end. What the run produced goes under `## Artifacts` (`results/<id>/`), and `crux validate`
+speaks up when results sit on disk with no report linked.
 
-The human cost is bounded and predictable: you sign off **twice per hypothesis** — before it runs and before its verdict is recorded — plus once **per question** at the **review gate**, where you choose `answer` or `pursue` (the gate the cockpit's *Review* queue and the schematic's *review · human* step both show). crux sits beside you at the bench, not in the way. Full seed-spec reference in [`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
+**A question closes on a synthesis, not a status flip.** Once every child is terminal the
+question trips the **review gate**: the agent drafts a synthesis, *you* approve it
+(`crux approve`), and only then can `crux answer` resolve the question. Two sign-offs per
+hypothesis, one per question. Seed spec:
+[`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
 
 ## License
 

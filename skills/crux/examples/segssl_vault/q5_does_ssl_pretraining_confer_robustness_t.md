@@ -22,9 +22,10 @@ SegSSL encoders are pretrained on unlabeled clear-weather data and fine-tuned fo
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 1/3 done (supported 0, partial 0, refuted 1, inconclusive 0)
+**4 children** · ideas 2/4 done (supported 0, partial 0, refuted 1, inconclusive 1)
 
 - `h13` [[h13_mae_pretraining_reduces_the_cityscapes_a|MAE pretraining reduces the Cityscapes→ACDC mIoU drop vs. the supervised baseline]] — *done* — verdict **refuted**, metric `+0.4 mIoU ACDC-mean (ns); −0.5 mIoU ACDC-night vs. supervised`
 - `h14` [[h14_dinov2_self_distillation_confers_stronge|DINOv2 self-distillation confers stronger Cityscapes→ACDC robustness than MoCo/MAE]] — *running*
 - `h15` [[h15_dense_contrastive_densecl_pixpro_segment|Dense contrastive (DenseCL/PixPro) + Segmenter decoder improves ACDC robustness]] — *idea*
+- `h16` [[h16_dinov2_pretraining_preserves_its_low_lab|DINOv2 pretraining preserves its low-label advantage under ACDC-fog domain shift]] — *done* — verdict **inconclusive**, metric `n/a — no scored submission returned`
 <!-- crux:ledger:end -->

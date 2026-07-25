@@ -48,6 +48,20 @@ def _vault_ro(start=None):
     return root
 
 
+def _update_notice():
+    """Tell the user once a day that a newer crux exists. Reads the answer from a cache
+    (so it never blocks) and refreshes that cache in a daemon thread. Any failure at all —
+    no network, no home directory, a corrupt cache — is silence, never a broken command.
+    Set CRUX_NO_UPDATE_CHECK=1 to switch it off."""
+    try:
+        import update as U
+        msg = U.maybe_check(E.CRUX_VERSION)
+        if msg:
+            print(msg, file=sys.stderr)
+    except Exception:
+        pass
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="crux", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,8 +98,12 @@ def main(argv=None):
     s = sub.add_parser("status", aliases=["map", "tree", "where", "show"], help="print the tree, or one node's ledger")
     s.add_argument("id", nargs="?", default=None)
 
-    s = sub.add_parser("synthesize", aliases=["weave", "rollup"], help="create a horizontal synthesis across questions")
-    s.add_argument("title"); s.add_argument("-q", "--questions", required=True, help="comma-separated question ids")
+    s = sub.add_parser("synthesize", aliases=["weave", "rollup"], help="draft the synthesis that closes a question (or weaves several)")
+    s.add_argument("title"); s.add_argument("-q", "--questions", "--for", required=True,
+                                            help="comma-separated question ids (--for reads better for a single question)")
+
+    s = sub.add_parser("approve", aliases=["sign-off", "signoff"], help="PI signs off a synthesis — required before `answer` can resolve its question")
+    s.add_argument("id")
 
     s = sub.add_parser("ingest", aliases=["source", "add-source"], help="register a PI-curated source (under raw/) into the literature wiki")
     s.add_argument("path", help="path (under raw/, relative to the vault) to the source to register")
@@ -107,6 +125,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     if not args.cmd:
         p.print_help(); return 0
+
+    _update_notice()
 
     try:
         return dispatch(args)
@@ -140,8 +160,12 @@ def dispatch(a):
         st = E.cmd_test(_vault(), a.id, a.to or default_to, a.run)
         print(f"✓ {a.id} → {st}")
     elif c in ("close", "record", "conclude", "verdict", "land"):
-        verdict = E.cmd_close(_vault(), a.id, a.metric, a.findings)
+        root = _vault()
+        verdict = E.cmd_close(root, a.id, a.metric, a.findings)
         print(f"✓ {a.id} closed → verdict: {verdict}")
+        # closing is never blocked by missing paperwork — but unlinked results get said out loud
+        for w in E.artifact_warnings(root, a.id):
+            print(f"  ⚠ {w}", file=sys.stderr)
     elif c in ("review", "gate", "decide"):
         pend = E.cmd_review(_vault())
         if not pend:
@@ -151,8 +175,13 @@ def dispatch(a):
             for nid, title in pend:
                 print(f"  ◐ {nid}  {title}")
     elif c in ("answer", "resolve", "settle"):
-        E.cmd_answer(_vault(), a.id, a.text)
-        print(f"✓ {a.id} resolved")
+        root = _vault()
+        E.cmd_answer(root, a.id, a.text)
+        sid = E.Vault(root).get(a.id)["fm"].get("synthesis")
+        print(f"✓ {a.id} resolved (synthesis {sid})")
+    elif c in ("approve", "sign-off", "signoff"):
+        stamp = E.cmd_approve(_vault(), a.id)
+        print(f"✓ {a.id} approved at {stamp}\n  next: crux answer <question-id>")
     elif c in ("pursue", "branch", "extend", "reopen"):
         new = E.cmd_pursue(_vault(), a.id, a.idea)
         print(f"✓ {a.id} reopened" + (f"; spawned {new[0]}" if new else ""))

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" width="460" height="250" role="img"
+     aria-label="ADE20K val mIoU per seed: supervised ImageNet-1k init versus iBOT init, UPerNet decoder, full fine-tuning">
+  <style>
+    text { font: 11px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #9e9e9e; }
+    .v { font-size: 10px; font-weight: 600; fill: #dadada; text-anchor: middle; }
+    .x { text-anchor: middle; } .y { text-anchor: end; }
+    .g { stroke: #3d3d3d; stroke-width: 1; }
+    .t { font-size: 12px; font-weight: 700; fill: #dadada; }
+  </style>
+  <text class="t" x="10" y="18">ADE20K val mIoU by seed</text>
+  <line class="g" x1="60" y1="210.0" x2="450" y2="210.0"/><text class="y" x="54" y="214.0">44</text><line class="g" x1="60" y1="158.6" x2="450" y2="158.6"/><text class="y" x="54" y="162.6">46</text><line class="g" x1="60" y1="107.1" x2="450" y2="107.1"/><text class="y" x="54" y="111.1">48</text><line class="g" x1="60" y1="55.7" x2="450" y2="55.7"/><text class="y" x="54" y="59.7">50</text>
+  <rect x="70" y="156.0" width="38" height="54.0" fill="#8a8f98"/><text class="v" x="89" y="151.0">46.1</text><rect x="114" y="71.1" width="38" height="138.9" fill="#3fa06a"/><text class="v" x="133" y="66.1">49.4</text><text class="x" x="111" y="228">seed 0</text><rect x="200" y="148.3" width="38" height="61.7" fill="#8a8f98"/><text class="v" x="219" y="143.3">46.4</text><rect x="244" y="60.9" width="38" height="149.1" fill="#3fa06a"/><text class="v" x="263" y="55.9">49.8</text><text class="x" x="241" y="228">seed 1</text><rect x="330" y="148.3" width="38" height="61.7" fill="#8a8f98"/><text class="v" x="349" y="143.3">46.4</text><rect x="374" y="63.4" width="38" height="146.6" fill="#3fa06a"/><text class="v" x="393" y="58.4">49.7</text><text class="x" x="371" y="228">seed 2</text>
+  <g transform="translate(300,14)">
+    <rect x="0" y="-8" width="10" height="10" fill="#8a8f98"/><text x="15" y="1">supervised</text>
+    <rect x="86" y="-8" width="10" height="10" fill="#3fa06a"/><text x="101" y="1">iBOT</text>
+  </g>
+</svg>
