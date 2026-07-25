@@ -815,8 +815,9 @@ def run_update():
           U.pending_notice("0.6.0", U.read_cache(cache)) is None)
     res = U.check_now("0.6.0", cache, fetcher=lambda timeout=None: "v0.6.0")
     check("update: same version is not 'available'", res["available"] is False)
-    check("update: cache_path honours XDG_CACHE_HOME",
-          U.cache_path({"XDG_CACHE_HOME": "/tmp/xdg"}) == "/tmp/xdg/crux/update.json")
+    check("update: cache_path honours XDG_CACHE_HOME",   # os.path.join: \ on Windows, / elsewhere
+          U.cache_path({"XDG_CACHE_HOME": os.path.join("tmp", "xdg")})
+          == os.path.join("tmp", "xdg", "crux", "update.json"))
 
     # REGRESSION: the check must not re-hit the network on every single invocation. A short
     # command exits before a background fetch can answer, so if the throttle were only
