@@ -395,7 +395,19 @@ def run_version():
     E.cmd_init("Versioned", root)
     # the RELEASE version (what `npx skills update` ships) is distinct from the vault-format
     # ENGINE_VERSION stamped above — the update check compares the former, never the latter
-    check("version: CRUX_VERSION is the 0.5.0 release", E.CRUX_VERSION == "0.5.0")
+    # CRUX_VERSION must match the newest released section of the CHANGELOG. Pinning it to a
+    # literal here just meant editing two places at release time and silently shipping a
+    # stale version constant if you forgot one — the update check compares against it, so a
+    # stale value tells every user they are up to date when they are not. Skipped when the
+    # changelog isn't reachable (an installed copy of the skill has no repo root above it).
+    _changelog = os.path.join(HERE, "..", "..", "..", "CHANGELOG.md")
+    if os.path.isfile(_changelog):
+        _newest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", read(_changelog), re.M)
+        check(f"version: CRUX_VERSION ({E.CRUX_VERSION}) == newest CHANGELOG release "
+              f"({_newest.group(1) if _newest else 'none'})",
+              bool(_newest) and _newest.group(1) == E.CRUX_VERSION)
+    else:
+        print("  skip   version: CRUX_VERSION vs CHANGELOG (no repo root — installed copy)")
     check("version: release and engine versions are distinct constants",
           E.CRUX_VERSION != E.ENGINE_VERSION)
     check("version: stamped at init", E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)

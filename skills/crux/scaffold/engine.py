@@ -15,7 +15,7 @@ import os, re, sys, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
 ENGINE_VERSION = "1.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
-CRUX_VERSION = "0.5.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
