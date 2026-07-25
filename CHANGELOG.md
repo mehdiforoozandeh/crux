@@ -6,6 +6,10 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+_(nothing yet)_
+
+## [0.5.0] - 2026-07-25
+
 ### Added
 
 - **Evidence artifacts.** A hypothesis now points at what its run actually produced: files
@@ -253,5 +257,6 @@ Two headline additions — a **browser GUI** (Epic 1) and a **literature wiki** 
   read-only snapshot API). Pre-wiki vaults load unchanged and stand up the wiki lazily on first
   ingest; no migration required. `crux validate` now also runs the wiki structural lint.
 
+[0.5.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.3.0
