@@ -1,0 +1,55 @@
+name: selftest
+
+# `crux selftest` is the post-install check the README hands new users, so it has to pass on
+# a machine that is not the author's. v0.5.0 shipped an assert that probed a hardcoded
+# /Users/<author>/crux path: green on one Mac, exit 1 on every Linux and Windows box. There
+# was no CI to catch it. This is that CI.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.9', '3.11', '3.13']
+        include:
+          # the floor the README advertises; 3.8 is EOL and unavailable on newer runners
+          - os: ubuntu-22.04
+            python: '3.8'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: crux selftest
+        run: ./crux selftest
+        env:
+          # the suite must never reach the network: the update check's own logic is
+          # exercised offline with an injected fetcher
+          CRUX_NO_UPDATE_CHECK: '1'
+
+  # Informational until the engine's path handling is actually verified on Windows — the
+  # cockpit's file route and the vault's forward-slash artifact paths are the untested part.
+  # Not a required check; it is here to tell us what breaks, not to block a merge.
+  windows:
+    name: windows-latest · py3.11 (informational)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: crux selftest
+        run: python skills/crux/scaffold/selftest.py
+        env:
+          CRUX_NO_UPDATE_CHECK: '1'

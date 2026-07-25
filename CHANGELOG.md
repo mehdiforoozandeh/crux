@@ -6,7 +6,26 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
-_(nothing yet)_
+### Fixed
+
+- **`crux selftest` failed on every machine that isn't the author's.** A v0.5.0 assert
+  probed a hardcoded `/Users/<author>/crux` path to check that `detect_install` recognises a
+  git checkout — so it tested the *runner's* filesystem, not the function. Green on one Mac,
+  `PASSED 321/322` and exit 1 on any Linux or Windows box, which made v0.5.0's own
+  advertised post-install check fail for new users. The test now builds a throwaway checkout
+  in a temp dir (a `.git` directory is all `detect_install` needs — no git binary, no
+  subprocess) and normalises through `realpath`, since macOS hands out temp dirs under
+  `/var`, itself a symlink to `/private/var`. **The shipped `update.py` was never wrong** —
+  only its test. Reported against v0.5.0 on RHEL 9 / Python 3.11.
+- Added coverage for the symlink resolution `install.sh` depends on (skills symlinked into a
+  clone must resolve to the clone, not the link) and for a copied/npx install — neither had a
+  test.
+
+### Added
+
+- **CI.** `.github/workflows/selftest.yml` runs `./crux selftest` on ubuntu + macOS across
+  Python 3.9/3.11/3.13, plus 3.8 on ubuntu-22.04 (the floor the README advertises), with a
+  non-blocking informational Windows job. The repo had no CI, which is why the above shipped.
 
 ## [0.5.0] - 2026-07-25
 

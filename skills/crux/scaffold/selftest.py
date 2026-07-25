@@ -760,10 +760,37 @@ def run_update():
     # install, and point at the agent as the other way to do it
     check("update: notice offers the agent and a command",
           "agent" in n.lower() and ("git " in n or "npx " in n))
+    # Build the checkout instead of assuming one. This assert used to hardcode the author's
+    # own clone path, which made it a probe of the RUNNER's filesystem rather than a test of
+    # detect_install — it passed on one machine and failed `crux selftest` everywhere else.
+    # detect_install only needs `.git` to be a directory: no git binary, no subprocess.
+    # Paths are realpath-normalised because detect_install resolves symlinks and macOS hands
+    # out temp dirs under /var, which is itself a symlink to /private/var.
+    clone = os.path.join(base, "clone")
+    scaf = os.path.join(clone, "skills", "crux", "scaffold")
+    os.makedirs(os.path.join(clone, ".git")); os.makedirs(scaf)
+    real_clone = os.path.realpath(clone)
     check("update: a git checkout is detected as a clone, with a ff-only pull",
-          U.detect_install("/Users/mforooz/crux/skills/crux/scaffold")[0] == "clone"
-          and U.update_command(*U.detect_install("/Users/mforooz/crux/skills/crux/scaffold"))
-              == "git -C /Users/mforooz/crux pull --ff-only")
+          U.detect_install(scaf) == ("clone", real_clone)
+          and U.update_command(*U.detect_install(scaf)) == f"git -C {real_clone} pull --ff-only")
+
+    # the realpath step is load-bearing for anyone who ran install.sh: the import path is a
+    # symlink in the skills dir, while the thing you'd actually `git pull` is its target
+    link = os.path.join(base, "skills_dir")
+    os.makedirs(link)
+    try:
+        os.symlink(os.path.join(clone, "skills", "crux"), os.path.join(link, "crux"))
+    except (OSError, NotImplementedError):
+        print("  skip   update: symlinked install (this platform disallows symlinks)")
+    else:
+        check("update: a symlinked skills install resolves to its clone target",
+              U.detect_install(os.path.join(link, "crux", "scaffold")) == ("clone", real_clone))
+
+    # a copied install (npx) has no .git anywhere above it -> the skills route
+    copied = os.path.join(base, "home", ".claude", "skills", "crux", "scaffold")
+    os.makedirs(copied)
+    check("update: a copied skills install is detected as a skills install",
+          U.detect_install(copied)[0] == "skills")
     check("update: an installed (copied) skill maps to `npx skills update`",
           U.update_command("skills", "/home/x/.claude/skills/crux") == "npx skills update")
     check("update: an unrecognized layout still names both routes",
