@@ -26,9 +26,10 @@ Root: [[segssl_label_efficient_segmentation]]
   - ✓ `h13` [H] [[h13_mae_pretraining_reduces_the_cityscapes_a|MAE pretraining reduces the Cityscapes→ACDC mIoU drop vs. the supervised baseline]] — *done* — _refuted_ (`+0.4 mIoU ACDC-mean (ns); −0.5 mIoU ACDC-night vs. supervised`)
   - ▶ `h14` [H] [[h14_dinov2_self_distillation_confers_stronge|DINOv2 self-distillation confers stronger Cityscapes→ACDC robustness than MoCo/MAE]] — *running*
   - · `h15` [H] [[h15_dense_contrastive_densecl_pixpro_segment|Dense contrastive (DenseCL/PixPro) + Segmenter decoder improves ACDC robustness]] — *idea*
+  - ✓ `h16` [H] [[h16_dinov2_pretraining_preserves_its_low_lab|DINOv2 pretraining preserves its low-label advantage under ACDC-fog domain shift]] — *done* — _inconclusive_ (`n/a — no scored submission returned`)
 
 ## Dashboard
 
 - **Questions** (5): open 1 · review 0 · resolved 4
-- **Hypotheses** (15): idea 1 · staged 0 · running 1 · done 13
-- **Verdicts**: supported 4 · partial 4 · refuted 5 · inconclusive 0
+- **Hypotheses** (16): idea 1 · staged 0 · running 1 · done 14
+- **Verdicts**: supported 4 · partial 4 · refuted 5 · inconclusive 1

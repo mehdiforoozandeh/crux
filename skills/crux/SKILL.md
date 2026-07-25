@@ -45,7 +45,9 @@ Not for one-off tasks with no hypothesis, and not for launching the runs themsel
 - **Question** (`q*`) — has **no verifiables of its own**; it is resolved by **aggregating
   its children's findings**. Questions nest (a question's parent can be another question).
 - **Hypothesis** (`h*`) — a falsifiable leaf under a question, with `## Verifiables`
-  (pre-registered checks) and `## Findings`. The only thing actually tested by runs.
+  (pre-registered checks), `## Findings`, and `## Artifacts` — what the run produced.
+- **Synthesis** (`s*`) — the written verdict of a question. A question **cannot close
+  without one, approved by the PI** (see Lifecycles).
 
 A hypothesis's `## Findings` can spawn **new** child questions — that's the loop reopening.
 The tree is the `Parent:: [[…]]` wikilink in each file; `META.md`/`EXPERIMENTS.md` are
@@ -57,12 +59,56 @@ skill (**crux-wiki**) sharing this engine; when proposing questions/hypotheses, 
 `WIKI.md` if the vault has one. Knowledge flows one way: literature → wiki → tree; findings
 never enter the wiki.
 
+**Evidence artifacts.** Whatever a run produced — the report, figures, tables — belongs in
+`results/<hid>/` inside the vault, linked from the hypothesis's `## Artifacts`:
+
+```markdown
+## Artifacts
+
+- [Full report](results/h1/report.md)
+- results/h1/miou-by-seed.svg ADE20K val mIoU by seed
+```
+
+Paths are vault-relative (symlink `results/<hid>/` at your real run directory if the files
+live elsewhere). `crux validate` **errors** when `results/<hid>/` holds files but no `.md`
+report is linked, when a linked path doesn't resolve, or when one escapes the vault;
+`crux close` only warns, so a hypothesis with no files still closes. The cockpit renders a
+linked report — markdown, tables, and figures — in its right-hand pane.
+
 **Lifecycles**
 - Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** from the
   verifiable checkboxes: all `- [x]` → `supported`; any unmet → `refuted`/`partial`;
   only `- [-]` (couldn't-evaluate) remaining → `inconclusive`.
 - Question: `open → review → resolved`. The engine trips `open → review` automatically
-  once every direct child is terminal. **Closing it is always the PI's call.**
+  once every direct child is terminal. **Closing it is always the PI's call**, and it now
+  takes a **synthesis the PI has approved**:
+
+  ```bash
+  crux synthesize "what q3 settled" --for q3   # ◆ you draft it (headline conclusions,
+                                               #   cross-run table, implications)
+  crux approve s1                              # ◆ ONLY after the PI has read and OK'd it
+  crux answer q3 -t "the standing answer"      # ◆ now permitted; stamps synthesis: s1
+  ```
+
+  `crux answer` **refuses** a question with no approved synthesis. Never run `approve`
+  on your own judgment — it is the PI's signature, and it is what the engine checks.
+  (Questions resolved by a pre-1.2 vault are grandfathered and stay valid.)
+
+**Updating crux.** Any crux command may print `crux: vX.Y.Z is available …` on stderr (once a
+day, from a cache — it never blocks and never installs anything). If the PI asks you to update:
+
+1. **A clone install** (the notice names it — `git -C <root> pull --ff-only`): check the tree
+   is clean and on the default branch first (`git -C <root> status --short --branch`). If it
+   is dirty, on a feature branch, or the pull is not a fast-forward, **stop and say so** —
+   do not stash, reset, force, or merge to make it apply.
+2. **A skills install**: `npx skills update`.
+3. Then tell the PI to re-run their command; the new engine takes effect on the next
+   invocation, not the one in flight.
+
+A newer engine may carry a newer vault format. The first command against an existing vault
+will warn about **engine drift** and re-stamp it — surface that warning verbatim; if the PI
+needs to reproduce recorded results exactly, the answer is to pin the old engine, not to
+ignore the warning. `CRUX_NO_UPDATE_CHECK=1` switches the whole check off.
 
 ## Three roles — and the leash
 
@@ -78,7 +124,8 @@ never enter the wiki.
   approves → then do**: `ask`, `hypothesize`, **running an experiment (`test --to running`)**,
   `close`, `answer`, `pursue`. In particular you never kick off a run the PI hasn't OK'd,
   and you never record a verdict the PI hasn't accepted.
-- **`review` gate + `answer`**: always the PI's. Surface it; never self-resolve a question.
+- **`review` gate + `synthesize` → `approve` → `answer`**: always the PI's. Surface the
+  gate, draft the synthesis, then stop — `approve` is their signature, not yours.
 
 ## Setting up a vault (first run)
 
@@ -151,12 +198,13 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `test` | experiment, run, stage, launch | ◆ | `idea → staged → running`, attach a run link — **running needs PI's OK** |
 | `close` | record, conclude, verdict, land | ◆ | derive verdict from verifiables + write findings → roll up |
 | `review` | gate, decide | ○ | list questions awaiting the PI's decision |
-| `answer` | resolve, settle | ◆ | PI resolves a question with a standing answer |
+| `answer` | resolve, settle | ◆ | PI resolves a question — **requires an approved synthesis** |
 | `pursue` | branch, extend, reopen | ◆ | keep a question open; optionally spawn a fresh hypothesis |
 | `status` | map, tree, where, show | ○ | print the tree / a node's ledger |
-| `synthesize` | weave, rollup | ◆ | optional horizontal synthesis across questions |
+| `synthesize` | weave, rollup | ◆ | draft the synthesis that closes a question (`--for q3`), or weave several |
+| `approve` | sign-off, signoff | ◆ | **the PI's signature on a synthesis** — never run this on your own judgment |
 | `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
-| `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit over the vault (localhost; view-only — pan/zoom/search the tree + review gate; launch/lifecycle playbook: the **crux-cockpit** skill) |
+| `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit (localhost; view-only — tree, review gate, rendered reports + figures; launch playbook: the **crux-cockpit** skill) |
 | `validate` | lint, check | ○ | integrity checks (tree + wiki structural lint) |
 
 ## How you run a session
@@ -179,11 +227,14 @@ science explicit and falsifiable.
 sub-tree (a question + several hypotheses + verifiables) and let them approve/edit it as one block.
 
 **Closing a case:** read the run results, tick each verifiable in the idea's `## Verifiables`
-(`- [x]`/`- [ ]`/`- [-]`), write a one-paragraph `## Findings`, then `crux close h1 -m "<metric>"`.
-The engine derives the verdict and rolls it up.
+(`- [x]`/`- [ ]`/`- [-]`), write a one-paragraph `## Findings`, link the run's report and figures
+under `## Artifacts`, then `crux close h1 -m "<metric>"`. The engine derives the verdict and rolls
+it up.
 
 **At a `review` gate:** present the question's ledger and your read of the evidence, then let the PI
-choose `answer` (resolve) or `pursue` (keep digging). Never decide for them.
+choose `answer` (resolve) or `pursue` (keep digging). Never decide for them. If they resolve it,
+draft the synthesis (`crux synthesize "…" --for q3`), show it, and wait — `crux approve` is theirs,
+and `crux answer` will refuse until it's signed.
 
 ## Guardrails
 
@@ -204,8 +255,9 @@ cd <vault>                       # or anywhere under it; the engine finds .crux.
 python <skill>/scaffold/crux.py <verb> [...]   # --help on every verb
 ```
 A vault is created by `init` (or `init --from seed.md` at setup) and contains: the project
-node, `q*`/`h*` node files, optional `synthesis_*`, the generated `META.md` + `EXPERIMENTS.md`,
-and `.crux.yaml` (config + ID counters + the `engine_version` stamp). The vault is the only
+node, `q*`/`h*` node files, `s*` synthesis files, `results/<hid>/` evidence artifacts, the
+generated `META.md` + `EXPERIMENTS.md`, and `.crux.yaml` (config + ID counters + the
+`engine_version` stamp). The vault is the only
 thing you write into the user's repo — the engine itself stays in the skill install. On a
 version mismatch the engine warns about drift and re-stamps; surface that warning to the PI.
 

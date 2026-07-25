@@ -23,8 +23,10 @@ metadata:
 
 The **cockpit** is crux's read-only browser GUI: `crux serve` boots a stdlib HTTP server
 on `127.0.0.1`, serves the `webui/` frontend, and exposes the vault as `/snapshot.json`
-(status-colored tree — pan / zoom / collapse / search / re-orient — plus the review queue
-and node detail; live-refreshing, zero writes). The engine does the serving; **you (the
+(status-colored tree — pan / zoom / collapse / search / re-orient / focus one question —
+plus the review queue, node detail with rendered markdown, and a hypothesis's linked report
+and figures; live-refreshing, zero writes). Either panel can go full-screen (`[` / `]`,
+`Esc` restores). The engine does the serving; **you (the
 agent) do the operating**: find the vault, launch clean, verify, hand over one URL, and
 manage the server's lifecycle. The user should never have to touch a terminal **on the
 machine you run on** — the one thing you can't do for them is start a local `ssh -L`

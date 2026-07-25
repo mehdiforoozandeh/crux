@@ -106,6 +106,10 @@ const state = {
   viewMode: localStorage.getItem("crux-view") === "radial" ? "radial" : "tidy",
   density: localStorage.getItem("crux-density") || "detail", // "detail" | "compact"
   focused: false,           // focus-open mode: all non-open questions collapsed
+  focus: null,              // focus-node mode: id whose ancestor path we're isolated on
+  focusSeen: new Set(),     // node ids present when focus was last applied (see applyFocusToNewNodes)
+  pane: localStorage.getItem("crux-pane") || "split",   // "split" | "left" | "right" (full-screen)
+  report: null,             // open artifact report: {path, node, text, error}
   search: "",
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
@@ -154,9 +158,22 @@ async function poll() {
 function onSnapshot() {
   const snap = state.snap;
   $("project-title").textContent = snap.project.title || "";
+  $("project-title").title = snap.project.title || "";   // it ellipsizes first when the bar is tight
+  // the browser tab names the project — several cockpits open at once stay tellable apart
+  document.title = "crux cockpit: " + (snap.project.title || "");
+  updateVersionChip();
   // drop selection if the node disappeared
   if (state.selected && !(state.selected in snap.nodes)) state.selected = null;
+  if (state.report && !(state.report.node in snap.nodes)) state.report = null;
+  // Focus folds nodes that ARRIVE while you're focused — but only those. Re-deriving the
+  // whole set each poll would silently undo any branch you expanded by hand a second later.
+  if (state.focus) {
+    if (state.focus in snap.nodes) applyFocusToNewNodes();
+    else { state.focus = null; state.focusSeen = new Set(); state.collapsed.clear(); }
+  }
+  renderCrumb();
   updateTabs();
+  updateToolbar();     // the focus button's label is contextual — keep it honest
   updateReviewBtn();
   layout();
   // One-time fit — but a tab opened in the background has a 0×0 rect until it's shown,
@@ -467,17 +484,19 @@ const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 // tab's WSIM: per-frame work touches only the cached transforms and edge paths, never
 // innerHTML. Unlike WSIM there is no free equilibrium: every node is spring-anchored to
 // its deterministic layout position (tidy or radial), so the layout promise survives —
-// the sim adds a gentle breath at rest, a fly-back after drag, and the glide to fresh
-// anchors on any relayout. Pair repulsion is HEAT-scaled (like WSIM's alpha-scaled charge):
-// a drag or relayout warms the sim so the O(n²) push keeps a moving crowd from tunnelling,
-// then it cools to zero and the tree rests on its anchors ± the breath — the O(n²) pass is
-// skipped entirely once cool, so at rest only the O(n) breath/spring runs. The breath phase
-// comes from hash01(id), so each node's wobble is deterministic. Reduced motion: no sim.
+// the sim gives a fly-back after drag and the glide to fresh anchors on any relayout.
+// Pair repulsion is HEAT-scaled (like WSIM's alpha-scaled charge): a drag or relayout warms
+// the sim so the O(n²) push keeps a moving crowd from tunnelling, then it cools to zero.
+// AT REST THE TREE IS PERFECTLY STILL and the rAF loop stops outright (it used to run
+// forever to animate an idle "breath" — motion nobody asked for, repainted at 30fps over
+// the whole tree bounds). Anything that moves something restarts the loop; it settles
+// exactly onto the anchors and stops again. Reduced motion: no sim at all.
 const TSIM = {
-  nodes: new Map(),        // id -> {x, y, vx, vy, fx, fy, ph}  (fx/fy = drag pin)
+  nodes: new Map(),        // id -> {x, y, vx, vy, fx, fy}  (fx/fy = drag pin)
   els: {}, edgeEls: [],
   raf: 0, heat: 0,         // 0 = rest (repulsion off); a drag/relayout sets it to 1
-  SPRING: 0.03, DAMP: 0.85, REPEL: 900, BREATH: 0.05, COOL: 0.9,
+  SPRING: 0.03, DAMP: 0.85, REPEL: 900, COOL: 0.9,
+  REST_V: 0.02, REST_D: 0.5,   // below this speed AND this far from anchor => settled
 };
 const treePhysicsOn = () => !REDUCED_MOTION;
 
@@ -499,8 +518,7 @@ function treeSimSync() {
     }
     const pa = grown && parentOf[id] && TSIM.nodes.get(parentOf[id]);
     const seed = pa ? { x: pa.x, y: pa.y } : pos[id];
-    TSIM.nodes.set(id, { x: seed.x, y: seed.y, vx: 0, vy: 0, fx: null, fy: null,
-                         ph: hash01(id) * Math.PI * 2 });
+    TSIM.nodes.set(id, { x: seed.x, y: seed.y, vx: 0, vy: 0, fx: null, fy: null });
     if (grown) entrants.push(id);
   }
   return entrants;
@@ -524,8 +542,6 @@ function treeSimTick(t) {
   for (const [id, p] of TSIM.nodes) {
     const a = pos[id];
     p.vx += (a.x - p.x) * TSIM.SPRING; p.vy += (a.y - p.y) * TSIM.SPRING;
-    p.vx += Math.sin(t * 0.9 + p.ph) * TSIM.BREATH;          // the breath
-    p.vy += Math.cos(t * 0.7 + p.ph * 1.7) * TSIM.BREATH;
     p.vx *= TSIM.DAMP; p.vy *= TSIM.DAMP;
     if (p.fx != null) { p.x = p.fx; p.y = p.fy; p.vx = 0; p.vy = 0; }
     else { p.x += p.vx; p.y += p.vy; }
@@ -538,9 +554,22 @@ function treeSimTick(t) {
   // off-anchor DISTANCE deadlocks dense layouts, where full repulsion holds packed nodes
   // off their anchors forever. Velocity has neither problem: a glide holds heat to its
   // last few px; at a repulsion equilibrium speeds are ~0, so heat decays, the (heat-
-  // scaled) repulsion fades, and the springs walk everyone home without a re-push. The
-  // breath's terminal speed is ~0.7px/frame, safely under the hold bar.
+  // scaled) repulsion fades, and the springs walk everyone home without a re-push.
   if (!drag && maxSpeed <= 1.5) TSIM.heat *= TSIM.COOL;
+}
+
+// Is everything cool, still, and sitting on its anchor? Then there is nothing to animate
+// and the loop can stop — the tree only moves when something actually moved it.
+function treeSimSettled() {
+  if (drag || TSIM.heat > 0.02) return false;
+  const pos = state.positions;
+  for (const [id, p] of TSIM.nodes) {
+    const a = pos[id];
+    if (!a) continue;
+    if (Math.abs(p.vx) + Math.abs(p.vy) > TSIM.REST_V) return false;
+    if (Math.abs(p.x - a.x) + Math.abs(p.y - a.y) > TSIM.REST_D) return false;
+  }
+  return true;
 }
 
 function treeSimDraw(force) {
@@ -573,33 +602,38 @@ function treeSimDraw(force) {
   }
 }
 
-// The breath never cools, so the loop runs whenever the tree is actually on screen —
-// and only then: a hidden tab or the wiki tab burns no frames (setTab / visibilitychange
-// restart it). renderTree rebuilds the DOM, so it re-binds the element caches here.
+// The loop runs only while something is actually in motion, and only while the tree is on
+// screen (a hidden tab or the wiki tab burns no frames — setTab / visibilitychange restart
+// it). It ends by landing every node exactly on its anchor and cancelling itself, so an
+// idle cockpit costs zero frames. renderTree rebuilds the DOM, so it re-binds the caches.
 function treeSimLoop() {
   cancelAnimationFrame(TSIM.raf);
   if (!treePhysicsOn() || state.tab !== "tree" || document.hidden) return;
-  let frame = 0, wasWarm = false;
+  let wasWarm = false;
   const step = (now) => {
-    if (state.tab !== "tree" || document.hidden) return;
-    // Full 60fps while WARM — a drag or a relayout settling, where responsiveness matters.
-    // While cool (just the idle breath) render every OTHER frame: the breath is a slow
-    // oscillation that reads fine at 30fps, and halving the SVG mutation rate roughly halves
-    // the per-frame repaint Safari does over the whole tree bounds (Chromium composites it
-    // for free; Safari does not). The rAF still fires at 60fps — only the paint is skipped.
-    if (TSIM.heat > 0.02 || (frame++ & 1) === 0) {
-      treeSimTick(now / 1000);
-      treeSimDraw();
-    }
+    if (state.tab !== "tree" || document.hidden) { TSIM.raf = 0; return; }
+    treeSimTick(now / 1000);
+    treeSimDraw();
     const warm = TSIM.heat > 0.02;
     if (wasWarm && !warm) {
-      // just settled: one exact full draw so nodes AND edges land precisely aligned
+      // just cooled: one exact full draw so nodes AND edges land precisely aligned
       // (dirty-gating may have left either a fraction of a pixel behind), and a
       // label-less mass morph gets its text back — at true rest, not on a timer
       treeSimDraw(true);
       svg.classList.remove("morph");
     }
     wasWarm = warm;
+    if (treeSimSettled()) {
+      // snap off the last sub-pixel of spring error and stop: at rest the tree is STILL
+      for (const [id, p] of TSIM.nodes) {
+        const a = state.positions[id];
+        if (a) { p.x = a.x; p.y = a.y; p.vx = 0; p.vy = 0; }
+      }
+      treeSimDraw(true);
+      svg.classList.remove("morph");
+      TSIM.raf = 0;
+      return;
+    }
     TSIM.raf = requestAnimationFrame(step);
   };
   TSIM.raf = requestAnimationFrame(step);
@@ -652,17 +686,25 @@ function stopViewTween() { cancelAnimationFrame(_viewRAF); }
 // The legend is the color key for the tree; every chip is also a filter — click one to
 // spotlight only nodes in that state (click again, or another chip, to change/clear).
 // Chip keys match statusClass() outputs so filtering is a straight comparison.
+// The key is the ENGINE'S WHOLE VOCABULARY, not a selection of it: every state a node can
+// be painted in has a chip here (a selftest derives this list from the engine's constants,
+// so the two can't drift again — `inconclusive` once existed on nodes with no key entry).
 const LEGEND = [
   ["questions", [
     ["q-open", "--q-open", "open", "Question — open, still being worked"],
     ["q-review", "--q-review", "review", "Question — awaiting your decision (the review gate)"],
-    ["q-resolved", "--q-resolved", "resolved", "Question — resolved by your decision"],
+    ["q-resolved", "--q-resolved", "resolved", "Question — resolved on an approved synthesis"],
   ]],
   ["hypotheses", [
+    ["h-idea", "--h-idea", "idea", "Hypothesis — proposed, not yet staged to run"],
+    ["h-staged", "--h-staged", "staged", "Hypothesis — queued, waiting to run"],
     ["h-running", "--h-running", "running", "Hypothesis — experiment running now"],
-    ["h-supported", "--v-supported", "supported", "Hypothesis — verdict: supported (approved)"],
-    ["h-partial", "--v-partial", "partial", "Hypothesis — verdict: partially supported"],
-    ["h-refuted", "--v-refuted", "refuted", "Hypothesis — verdict: refuted (rejected)"],
+  ]],
+  ["verdicts", [
+    ["h-supported", "--v-supported", "supported", "Verdict: supported — every verifiable met"],
+    ["h-partial", "--v-partial", "partial", "Verdict: partial — some verifiables met"],
+    ["h-refuted", "--v-refuted", "refuted", "Verdict: refuted — no verifiable met"],
+    ["h-inconclusive", "--v-inconclusive", "inconclusive", "Verdict: inconclusive — verifiables could not be evaluated"],
   ]],
 ];
 
@@ -727,6 +769,8 @@ function centerOn(id, animate) {
 // ------------------------------------------------------------------ selection / detail
 function selectNode(id, opts) {
   state.selected = id;
+  state.report = null;      // picking a node leaves any open report
+  updateToolbar();
   updateReviewBtn();
   renderTree();
   renderDetail();
@@ -736,6 +780,8 @@ function selectNode(id, opts) {
 function showQueue() {
   if (state.tab !== "tree") setTab("tree");   // the review gate lives in the tree view
   state.selected = null;
+  state.report = null;   // an open report otherwise wins the render and Review looks dead
+  updateToolbar();
   updateReviewBtn();
   renderTree();
   renderDetail();
@@ -755,14 +801,31 @@ function badge(text, varName, cls) {
 }
 
 function section(title, html) { return `<div class="sec"><h4>${title}</h4>${html}</div>`; }
+
+// Node prose is MARKDOWN, and is rendered as such — headings, lists, tables, code and all.
+// (It used to be printed as escaped source, so a finding written with any structure at all
+// showed up as literal `**bold**` and `- bullets`.) Wiki citations keep working: the
+// renderer turns [[wiki/slug]] into a live link into the Wiki tab.
 function bodyOr(text, empty) {
   if (!(text && text.trim())) return `<div class="body muted">${empty}</div>`;
-  // tree nodes may cite the wiki as [[wiki/slug]] (never the reverse) — make those live:
-  // click one and the cockpit switches to the Wiki tab with that page open in the reader
-  const html = esc(text).replace(
-    /\[\[\s*wiki\/([^\]|#\\]+?)\s*(?:(?:\\\||\||#)([^\]]*))?\]\]/g,
-    (m, t, alias) => wikiLink("wiki/" + t, alias));
-  return `<div class="body">${html}</div>`;
+  return `<div class="body md-body">${mdRender(text)}</div>`;
+}
+
+// A vault-relative path -> the read-only /file/ route that serves it.
+const fileUrl = (p) => "/file/" + String(p).split("/").filter(Boolean).map(encodeURIComponent).join("/");
+
+// Resolve a link found INSIDE a markdown file against that file's own directory, and
+// normalize it — the server refuses any path still carrying a `..` segment.
+function resolveRel(p, base) {
+  p = String(p || "");
+  if (!base || p.startsWith("/")) return p.replace(/^\/+/, "");
+  const out = [];
+  for (const seg of (base + "/" + p).split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") { out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.join("/");
 }
 
 function renderDetail() {
@@ -770,8 +833,50 @@ function renderDetail() {
   if (!state.snap) { pane.innerHTML = ""; return; }
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
+  if (state.report) { pane.innerHTML = reportDetail(); return; }
   const n = state.selected ? state.snap.nodes[state.selected] : null;
   pane.innerHTML = n ? nodeDetail(n) : queueDetail();
+}
+
+// ------------------------------------------------------------------ artifact report reader
+// The third thing this pane can show (node detail · wiki page · report). The body is fetched
+// lazily from the same read-only /file/ route the figures load through, and rendered with
+// the report's own directory as the base so its relative figures resolve.
+function openReport(path, nodeId) {
+  if (state.tab !== "tree") setTab("tree");
+  state.report = { path, node: nodeId || (state.report && state.report.node) || state.selected, text: null };
+  renderDetail();
+  fetch(fileUrl(path), { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((t) => {
+      if (state.report && state.report.path === path) { state.report.text = t; renderDetail(); }
+    })
+    .catch((e) => {
+      if (state.report && state.report.path === path) { state.report.error = e.message; renderDetail(); }
+    });
+}
+
+function closeReport() {
+  if (!state.report) return;
+  const back = state.report.node;
+  state.report = null;
+  if (back && state.snap.nodes[back]) selectNode(back); else renderDetail();
+}
+
+function reportDetail() {
+  const r = state.report, n = state.snap.nodes[r.node];
+  const base = r.path.split("/").slice(0, -1).join("/");
+  const name = r.path.split("/").pop();
+  const back = n
+    ? `<button class="rowlink back" data-close-report><span class="rid">←</span>${esc(n.id.toUpperCase())} ${esc(n.title)}</button>`
+    : "";
+  const body = r.error
+    ? `<div class="body muted">could not load ${esc(r.path)} — ${esc(r.error)}</div>`
+    : r.text == null
+      ? `<p class="d-empty">loading…</p>`
+      : `<div class="md-body">${mdRender(r.text, base)}</div>`;
+  return back + `<div class="d-kind">report</div><div class="d-title">${esc(name)}</div>` +
+    `<div class="badges"><span class="badge">${esc(r.path)}</span></div>` + body;
 }
 
 function queueDetail() {
@@ -810,11 +915,45 @@ function questionDetail(n) {
   // the question's own framing (## Question); shown only when it adds to the title
   const stmt = n.detail && n.detail.trim() && n.detail.trim() !== n.title.trim()
     ? section("Detail", bodyOr(n.detail, "")) : "";
+  // a resolved question closed on an APPROVED synthesis — surface it, and make it openable
+  const syn = n.synthesis && state.snap.nodes[n.synthesis]
+    ? section("Closed on synthesis", childLink(n.synthesis)) : "";
   return head("question", n.title) + `<div class="badges">${badges}</div>` +
     stmt +
     section("Answer so far", bodyOr(n.answer, "not yet interpreted")) +
+    syn +
     section("Evidence ledger", ledger) +
     (kids ? section("Children", `<div>${kids}</div>`) : "");
+}
+
+// What the run produced. Reports open in the reader (right here in this pane), figures
+// render inline, everything else is a download through the same read-only route. A link
+// whose file is gone is shown as broken rather than silently dropped — `crux validate`
+// flags the same thing.
+function artifactsSection(n) {
+  const arts = n.artifacts || [];
+  if (!arts.length)
+    return section("Artifacts", `<div class="body muted">none linked</div>`);
+  const rows = arts.map((a) => {
+    const name = esc(a.label || a.path);
+    if (!a.exists)
+      return `<div class="art broken" title="${esc(a.path)} — not found in the vault">` +
+             `<span class="art-kind">missing</span>${name}</div>`;
+    // the file route serves an explicit allowlist; anything outside it is shown but inert,
+    // rather than dressed up as a link that can only ever 404
+    if (!a.servable)
+      return `<div class="art inert" title="${esc(a.path)} — recorded, but this file type is not served by the cockpit">` +
+             `<span class="art-kind">${esc(a.kind)}</span>${name}<span class="art-path">${esc(a.path)}</span></div>`;
+    if (a.kind === "image")
+      return `<figure class="art-fig"><img class="md-img" src="${fileUrl(a.path)}" alt="${name}" loading="lazy">` +
+             `<figcaption>${name}</figcaption></figure>`;
+    if (a.kind === "report")
+      return `<button class="rowlink" data-report="${esc(a.path)}"><span class="rid">report</span>${name}` +
+             `<span class="rsum">${esc(a.path)}</span></button>`;
+    return `<a class="rowlink" href="${fileUrl(a.path)}" target="_blank" rel="noopener">` +
+           `<span class="rid">${esc(a.kind)}</span>${name}<span class="rsum">${esc(a.path)}</span></a>`;
+  }).join("");
+  return section("Artifacts", rows);
 }
 
 function ideaDetail(n) {
@@ -830,10 +969,19 @@ function ideaDetail(n) {
   const runs = n.run_links.length
     ? `<ul class="linklist">` + n.run_links.map((r) => `<li>${esc(r)}</li>`).join("") + `</ul>`
     : `<div class="body muted">none</div>`;
-  return head("hypothesis", n.title) + `<div class="badges">${badges}</div>` +
+  // the report is the thing you came for when a hypothesis has one — surface it as a primary
+  // action right under the headline, not only as a row further down the Artifacts list
+  const rep = (n.artifacts || []).find((a) => a.kind === "report" && a.exists && a.servable);
+  const openReportBtn = rep
+    ? `<button class="report-open" data-report="${esc(rep.path)}" title="${esc(rep.path)}">` +
+      `<span class="ro-ic">▤</span><span class="ro-txt">Open report</span>` +
+      `<span class="ro-sub2">${esc(rep.path.split("/").pop())}</span></button>`
+    : "";
+  return head("hypothesis", n.title) + `<div class="badges">${badges}</div>` + openReportBtn +
     section("Problem", bodyOr(n.problem, "—")) +
     section("Verifiables", vs) +
     section("Run links", runs) +
+    artifactsSection(n) +
     section("Findings", bodyOr(n.findings, "not closed yet"));
 }
 
@@ -841,7 +989,13 @@ function synthesisDetail(n) {
   const rel = n.related.length
     ? n.related.map((cid) => childLink(cid)).join("")
     : `<div class="body muted">none</div>`;
-  return head("synthesis", n.title) + section("Related questions", `<div>${rel}</div>`);
+  // a synthesis is what closes a question, so its approval state is the headline fact
+  const badges = n.approved
+    ? badge("approved " + String(n.approved).replace("T", " "), "--q-resolved")
+    : badge("awaiting the PI's approval", "--q-review");
+  return head("synthesis", n.title) + `<div class="badges">${badges}</div>` +
+    bodyOr(n.body, "empty") +
+    section("Related questions", `<div>${rel}</div>`);
 }
 
 function childLink(cid) {
@@ -932,6 +1086,11 @@ function onNodeDragEnd() {
   window.removeEventListener("pointerup", onNodeDragEnd);
   window.removeEventListener("pointercancel", onNodeDragEnd);
   drag = null;   // `moved` stays set until the trailing click reads it
+  // the released node has to fly home, so make sure a loop is running to fly it: the sim
+  // now stops at rest, and a drag that ended while the tab was hidden would otherwise
+  // leave the node parked where the pointer dropped it
+  TSIM.heat = Math.max(TSIM.heat, 1);
+  treeSimLoop();
 }
 svg.addEventListener("pointerdown", (e) => {
   if (e.button !== 0 || drag || pan) return;   // one interaction owns the canvas: a second
@@ -945,6 +1104,7 @@ svg.addEventListener("pointerdown", (e) => {
     drag = { p, x0: e.clientX, y0: e.clientY,   // gx/gy: grab point inside the node, so it
       gx: (e.clientX - r.left - v.tx) / v.k - p.x,   // doesn't jump to snap its anchor
       gy: (e.clientY - r.top - v.ty) / v.k - p.y };  // point under the cursor
+    TSIM.heat = 1; treeSimLoop();   // the sim sleeps at rest — a grab is what wakes it
     window.addEventListener("pointermove", onNodeDrag);
     window.addEventListener("pointerup", onNodeDragEnd);
     window.addEventListener("pointercancel", onNodeDragEnd);
@@ -996,12 +1156,27 @@ svg.addEventListener("click", (e) => {
   if (node) selectNode(node.getAttribute("data-id"));
 });
 
+// double-click a node to focus it: everything off its ancestor path folds away
+svg.addEventListener("dblclick", (e) => {
+  const node = e.target.closest(".node");
+  if (!node) return;
+  e.preventDefault();
+  const id = node.getAttribute("data-id");
+  if (state.focus === id) clearFocus(); else setFocus(id);
+});
+
 $("detail-pane").addEventListener("click", (e) => {
   // Scope to the font BUTTONS: #detail-content also carries a data-font attribute (it drives the
   // text-size CSS), so a bare closest("[data-font]") swallows every click inside the detail
   // content — including the review-queue rows and child links — and their data-go never fires.
   const fbtn = e.target.closest("#detail-fontctl [data-font]");
   if (fbtn) { setDetailFont(fbtn.getAttribute("data-font")); return; }
+  // a figure is width-limited by the pane — click it to open the full-size file
+  const fig = e.target.closest("img.md-img");
+  if (fig) { window.open(fig.getAttribute("src"), "_blank", "noopener"); return; }
+  if (e.target.closest("[data-close-report]")) { closeReport(); return; }
+  const rep = e.target.closest("[data-report]");
+  if (rep) { openReport(rep.getAttribute("data-report"), state.selected); return; }
   const wl = e.target.closest("[data-wiki]");
   if (wl) { openWikiPage(wl.getAttribute("data-wiki")); return; }   // [[wiki/…]] citations + reader links
   const go = e.target.closest("[data-go]");
@@ -1082,12 +1257,24 @@ function updateToolbar() {
   db.title = state.density === "detail"
     ? "Nodes: full text — click for compact one-line nodes"
     : "Nodes: compact — click for full-text nodes you can read without opening";
+  // the focus button is contextual: focus the SELECTION when there is one, otherwise fall
+  // back to the older "collapse every non-open question" mode; clear when already focused
   const fb = $("focus-btn");
-  fb.classList.toggle("on", state.focused);
-  fb.innerHTML = iconLabel("◎", state.focused ? "Focused" : "Focus open");
-  fb.title = state.focused
-    ? "Focus on — showing only open questions; click to show everything"
-    : "Focus — collapse every non-open question, keep what still needs work";
+  const sel = state.snap && state.selected && state.selected !== state.snap.project.id
+    ? state.selected : null;
+  fb.classList.toggle("on", !!state.focus || state.focused);
+  if (state.focus) {
+    fb.innerHTML = iconLabel("◎", "Focused " + String(state.focus).toUpperCase());
+    fb.title = `Focused on ${String(state.focus).toUpperCase()} — everything off its path is folded away; click to clear (Esc)`;
+  } else if (sel) {
+    fb.innerHTML = iconLabel("◎", "Focus " + String(sel).toUpperCase());
+    fb.title = `Focus ${String(sel).toUpperCase()} — fold away every branch off its path (f). Double-click any node to focus it.`;
+  } else {
+    fb.innerHTML = iconLabel("◎", state.focused ? "Focused" : "Focus open");
+    fb.title = state.focused
+      ? "Focus on — showing only open questions; click to show everything"
+      : "Focus — collapse every non-open question. Select a question (or double-click one) to focus it alone.";
+  }
 }
 $("view-btn").addEventListener("click", () => {
   state.viewMode = state.viewMode === "radial" ? "tidy" : "radial";
@@ -1104,8 +1291,82 @@ $("density-btn").addEventListener("click", () => {
   localStorage.setItem("crux-density", state.density);
   updateToolbar(); relayout(true);
 });
+// ------------------------------------------------------------------ focus a question
+// Two focus modes, one button. FOCUS-NODE (the strong one): pick a question and every
+// branch off its ancestor path collapses — the spine from the root stays visible so you
+// keep your bearings, and the question's own subtree stays open. FOCUS-OPEN (the older,
+// weaker one): no selection, so collapse every non-open question instead. They're mutually
+// exclusive, and the breadcrumb over the tree says which is active.
+function ancestorPath(id) {
+  const parent = {};
+  (function walk(n) { for (const c of n.children || []) { parent[c.id] = n.id; walk(c); } })(state.snap.tree);
+  const out = [id];
+  let cur = id;
+  while (parent[cur]) { cur = parent[cur]; out.unshift(cur); }
+  return out;
+}
+
+function focusCollapse(id) {
+  const path = new Set(ancestorPath(id));
+  const collapsed = new Set();
+  (function walk(n) {
+    if (n.id === id) return;                               // the focused subtree stays open
+    if (path.has(n.id)) { for (const c of n.children || []) walk(c); return; }   // spine
+    if ((n.children || []).length) collapsed.add(n.id);    // off-path: fold it away
+  })(state.snap.tree);
+  return collapsed;
+}
+
+function setFocus(id) {
+  if (!state.snap || !(id in state.snap.nodes)) return;
+  state.focus = id;
+  state.focused = false;
+  state.collapsed = focusCollapse(id);
+  state.focusSeen = new Set(Object.keys(state.snap.nodes));
+  updateToolbar(); renderCrumb(); relayout(true);
+}
+
+// Fold only what has appeared since focus was applied. Your own ± toggles stand.
+function applyFocusToNewNodes() {
+  const want = focusCollapse(state.focus);
+  for (const id of want) if (!state.focusSeen.has(id)) state.collapsed.add(id);
+  state.focusSeen = new Set(Object.keys(state.snap.nodes));
+}
+
+function clearFocus() {
+  if (!state.focus) return;
+  state.focus = null;
+  state.focusSeen = new Set();
+  state.collapsed.clear();
+  updateToolbar(); renderCrumb(); relayout(true);
+}
+
+function renderCrumb() {
+  const el = $("focus-crumb");
+  if (!state.focus || !state.snap) { el.hidden = true; el.innerHTML = ""; return; }
+  const path = ancestorPath(state.focus);
+  el.hidden = false;
+  el.innerHTML = `<span class="fc-label">focused</span>` +
+    path.map((id, i) => {
+      const n = state.snap.nodes[id] || {};
+      const label = id === state.snap.project.id ? (n.title || "root") : String(id).toUpperCase();
+      return `<button class="fc-step${i === path.length - 1 ? " on" : ""}" data-focus="${esc(id)}"` +
+        ` title="${esc(n.title || id)}">${esc(trunc(label, 22))}</button>`;
+    }).join(`<span class="fc-sep">›</span>`) +
+    `<button class="fc-clear" data-focus-clear title="Clear focus (Esc)">✕</button>`;
+}
+
+$("focus-crumb").addEventListener("click", (e) => {
+  if (e.target.closest("[data-focus-clear]")) { clearFocus(); return; }
+  const step = e.target.closest("[data-focus]");
+  if (step) setFocus(step.getAttribute("data-focus"));
+});
+
 $("focus-btn").addEventListener("click", () => {
   if (!state.snap) return;
+  if (state.focus) { clearFocus(); return; }
+  // a selected question (not the root) is what you almost always mean by "focus"
+  if (state.selected && state.selected !== state.snap.project.id) { setFocus(state.selected); return; }
   if (!state.focused) {
     state.collapsed = new Set(Object.values(state.snap.nodes)
       .filter((n) => n.type === "question" && n.status !== "open").map((n) => n.id));
@@ -1117,6 +1378,64 @@ $("focus-btn").addEventListener("click", () => {
   updateToolbar(); relayout();
 });
 updateToolbar();
+
+// ------------------------------------------------------------------ full-screen panes
+// Either side can take the whole window, in either tab: split (default) · left (tree or
+// wiki) · right (detail / reader). Persisted, because it's a working preference.
+function setPane(mode) {
+  state.pane = mode;
+  localStorage.setItem("crux-pane", mode);
+  document.body.dataset.pane = mode;
+  document.querySelectorAll("[data-max]").forEach((b) => {
+    const side = b.getAttribute("data-max");
+    b.classList.toggle("on", mode === side);
+    b.title = mode === side ? "Restore the split view (Esc)"
+      : side === "right" ? "Full-screen this panel ( ] )" : "Full-screen this panel ( [ )";
+  });
+  // the visible canvas just changed size — reframe it once the layout has settled
+  requestAnimationFrame(() => {
+    if (!state.snap) return;
+    if (state.tab === "tree") fitToView(true); else fitWikiGraph();
+  });
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-max]");
+  if (!b) return;
+  const side = b.getAttribute("data-max");
+  setPane(state.pane === side ? "split" : side);
+});
+setPane(state.pane);
+
+// keyboard: [ / ] full-screen a side · Esc backs out (split first, then focus) · f focuses
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (e.key === "[") setPane(state.pane === "left" ? "split" : "left");
+  else if (e.key === "]") setPane(state.pane === "right" ? "split" : "right");
+  else if (e.key === "Escape") {
+    if (state.report) closeReport();
+    else if (state.pane !== "split") setPane("split");
+    else clearFocus();
+  } else if (e.key === "f" && state.tab === "tree") {
+    if (state.focus) clearFocus();
+    else if (state.selected) setFocus(state.selected);
+  } else return;
+  e.preventDefault();
+});
+
+// the release version + an update notice, read from the snapshot (the server never
+// fetches; the CLI's once-a-day check is what fills that cache)
+function updateVersionChip() {
+  const el = $("version-chip"), s = state.snap;
+  if (!el || !s) return;
+  const up = s.update || {};
+  el.textContent = up.available ? `v${s.crux_version} → v${up.latest}` : `v${s.crux_version || ""}`;
+  el.classList.toggle("has-update", !!up.available);
+  el.title = up.available
+    ? `crux v${up.latest} is available (you have v${s.crux_version}) — update with \`npx skills update\`, or \`git pull\` in your crux clone`
+    : `crux v${s.crux_version} · engine ${s.engine_version}`;
+}
 
 // on-screen zoom controls — glide to the new zoom about the tree-pane centre
 function centerZoom(factor) {
@@ -1203,8 +1522,10 @@ function setTab(tab) {
   $("wiki-pane").hidden = tab !== "wiki";
   document.querySelectorAll("#tabs [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
-  $("search").placeholder = tab === "wiki" ? "Search wiki pages — Enter to open"
-                                           : "Search nodes — Enter to jump";
+  $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
+  $("search").title = tab === "wiki"
+    ? "Search wiki pages — Enter opens the first match, Esc clears"
+    : "Search the tree — Enter jumps to the first match, Esc clears";
   updateReviewBtn();
   applySearch();
   renderDetail();
@@ -1805,7 +2126,7 @@ function renderWikiReader() {
   pane.innerHTML = `<div class="d-kind">${esc(kind)}</div>` +
     `<div class="d-title">${esc(pg.title || pg.slug)}</div>` +
     (badges ? `<div class="badges">${badges}</div>` : "") +
-    `<div class="wiki-body">${mdRender(pg.body)}</div>` + backs + srcs;
+    `<div class="wiki-body md-body">${mdRender(pg.body)}</div>` + backs + srcs;
   animateIn(pane.children, { opacity: [0, 1], y: [6, 0] },
     { duration: 0.28, delay: M && M.stagger ? M.stagger(0.03) : 0 });
 }
@@ -1816,17 +2137,42 @@ function renderWikiReader() {
 // [[slug]] / [[slug|alias]] / [[slug\|alias]] (the escaped-pipe form the generated
 // WIKI.md emits). Every fragment is HTML-escaped BEFORE any markup is added: page text
 // is data, never injected as markup.
+// The directory the file being rendered lives in — set by mdRender for the duration of one
+// (synchronous) render, so relative images and links inside a report resolve against it.
+let MD_BASE = "";
+
+// Images. Only IN-VAULT sources are rendered, through the /file/ route: a remote <img>
+// would let a vault phone home the moment you opened a report, and the cockpit fetches
+// nothing off-machine. An external image degrades to its link text.
+function mdImage(alt, src) {
+  if (/^(https?:)?\/\//i.test(src))
+    return `<a class="ext" href="${src}" target="_blank" rel="noopener">${alt || src}</a>`;
+  const url = fileUrl(resolveRel(src, MD_BASE));
+  return `<img class="md-img" src="${url}" alt="${alt}" loading="lazy" title="${alt || src}">`;
+}
+
 function mdInline(s) {
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\[\[\s*([^\]|#\\]+?)\s*(?:(?:\\\||\||#)([^\]]*))?\]\]/g, (m, t, a) => wikiLink(t, a));
+  // images before links — otherwise the link rule eats the `![…](…)` and leaves a stray !
+  s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)/g, (m, alt, src) => mdImage(alt, src));
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
     `<a class="ext" href="$2" target="_blank" rel="noopener">$1</a>`);
+  // a relative link inside a report opens the file it points at (another report renders
+  // in place; anything else downloads through the same read-only route)
+  s = s.replace(/\[([^\]]+)\]\(\s*(?!https?:)([^)\s]+)\s*\)/g, (m, label, href) => {
+    const path = resolveRel(href, MD_BASE);
+    return /\.md$/i.test(path)
+      ? `<a class="wl" data-report="${path}">${label}</a>`
+      : `<a class="ext" href="${fileUrl(path)}" target="_blank" rel="noopener">${label}</a>`;
+  });
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
   s = s.replace(/(^|[\s(])_([^_\s][^_]*)_/g, "$1<em>$2</em>");
   return s;
 }
-function mdRender(md) {
+function mdRender(md, base) {
+  MD_BASE = base || "";
   const lines = String(md || "").split("\n");
   const out = [];
   let para = [], list = null, quote = [], code = null, table = null;

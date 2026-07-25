@@ -1,0 +1,7 @@
+seed,init,ade20k_miou,cityscapes_miou
+0,supervised,46.1,79.0
+0,ibot,49.4,80.5
+1,supervised,46.4,79.1
+1,ibot,49.8,80.6
+2,supervised,46.4,79.2
+2,ibot,49.7,80.7

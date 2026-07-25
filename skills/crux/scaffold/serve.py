@@ -11,13 +11,59 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, webbrowser, http.server, urllib.parse, hashlib
+import os, sys, json, socket, shutil, webbrowser, http.server, urllib.parse, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
 
 WEBUI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui")
 DEFAULT_PORT = 8787
+
+# What /file/ is allowed to hand back: an explicit extension -> Content-Type map, so the
+# route can never be talked into serving a shell script, a key, or the vault's own config.
+# Deterministic on purpose (no mimetypes lookup that varies by platform). The extension set
+# is engine.SERVABLE_EXT — declared there so the cockpit knows, before it renders a link,
+# which artifacts this route will actually serve.
+FILE_TYPES = {
+    ".md":   "text/markdown; charset=utf-8",   ".txt":  "text/plain; charset=utf-8",
+    ".csv":  "text/csv; charset=utf-8",        ".tsv":  "text/tab-separated-values; charset=utf-8",
+    ".json": "application/json",               ".pdf":  "application/pdf",
+    ".png":  "image/png",                      ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",                     ".gif":  "image/gif",
+    ".svg":  "image/svg+xml",                  ".webp": "image/webp",
+}
+assert set(FILE_TYPES) == set(engine.SERVABLE_EXT), "serve/engine artifact allowlists drifted"
+
+# An SVG is the one type here that is also a DOCUMENT: navigate to one directly and any
+# <script> inside it runs in the cockpit's own origin, where /snapshot.json (the whole vault)
+# is same-origin readable. A figure can come from anywhere — a paper's supplement, a shared
+# vault, a symlinked collaborator directory — so artifacts are served under a CSP that
+# forbids script and sandboxes the document into an opaque origin. `<img>` rendering, which
+# never executes script anyway, is unaffected.
+FILE_CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"
+
+
+def safe_vault_path(root, rel):
+    """Resolve a /file/ request to a real file inside the vault, or None.
+
+    Everything is decided LEXICALLY first — absolute paths, backslashes, drive letters,
+    empty/dot segments (which covers `..`, already percent-decoded by the caller), dotfiles,
+    and unlisted extensions are all refused before the disk is touched. Only then do we ask
+    whether the file exists.
+
+    Symlinks under the vault ARE followed: pointing `results/<hid>/` at the run directory
+    in your experiment repo is the documented way to keep artifacts where they are produced.
+    That is a deliberate escape hatch the vault owner creates, not one a request can forge.
+    """
+    if not rel or rel.startswith("/") or "\\" in rel or ":" in rel:
+        return None
+    parts = rel.split("/")
+    if any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        return None
+    if os.path.splitext(parts[-1])[1].lower() not in FILE_TYPES:
+        return None
+    path = os.path.join(root, *parts)
+    return path if os.path.isfile(path) else None
 
 
 # ----------------------------------------------------------------------------- context / opening
@@ -92,6 +138,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._snapshot()
         if path.startswith("/wiki/") and path.endswith(".json"):
             return self._wiki(path[len("/wiki/"):-len(".json")])
+        if path.startswith("/file/"):
+            return self._file(path[len("/file/"):])
         return super().do_GET()
 
     def _snapshot(self):
@@ -123,6 +171,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404, "no such wiki page")
             return
         self._send_json(json.dumps(payload).encode("utf-8"))
+
+    def _file(self, rel):
+        """An evidence artifact: the report a hypothesis links, or a figure inside it.
+        Read-only like every other route — and a single 404 for every refusal, so the
+        response never tells a caller *why* a path was rejected."""
+        full = safe_vault_path(self.server.root, rel)
+        if not full:
+            self.send_error(404, "no such file")
+            return
+        try:
+            size = os.path.getsize(full)
+            f = open(full, "rb")
+        except OSError:
+            self.send_error(404, "no such file")
+            return
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", FILE_TYPES[os.path.splitext(full)[1].lower()])
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Security-Policy", FILE_CSP)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            shutil.copyfileobj(f, self.wfile)   # streamed: a large figure never lands in RAM
 
     def _send_json(self, data, etag=None):
         self.send_response(200)

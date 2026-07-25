@@ -6,7 +6,8 @@ parent: root
 status: resolved
 stale: false
 created: "2026-07-11T19:38:54"
-updated: "2026-07-11T19:38:54"
+updated: "2026-07-24T15:26:44"
+synthesis: s3
 ---
 
 # q3 — How far can the labeled-data budget drop (100% -> 10% -> 1%) before fine-tuned segmentation collapses, and does SSL pretraining shift that curve?

@@ -8,9 +8,48 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
-- **The living tree.** The cockpit tree is now a gently breathing organism: every node is
-  spring-anchored to its deterministic layout position, so you can drag one (or watch a
-  refresh reshape the tree) and it always glides home — entrants fly out of their parent.
+- **Evidence artifacts.** A hypothesis now points at what its run actually produced: files
+  live under `results/<hid>/` in the vault and are linked from a new `## Artifacts` section
+  (`[label](path)` or a bare path). `crux validate` errors when a results directory holds
+  files but no `.md` report is linked, when a linked path doesn't resolve, or when a path
+  escapes the vault; `crux close` only warns, so a hypothesis with no files still closes.
+  A hypothesis that has a report shows an **Open report** button under its badges, and the
+  cockpit renders it **in the detail pane** — headings, tables, code, and **figures inline**
+  (click one to open it full size) — served by a new read-only `GET /file/<path>` route
+  (extension allowlist, no traversal, no dot-segments). Symlinking `results/<hid>/` at the
+  run directory in your experiment repo is the supported way to keep files where they land.
+- **A question closes on an approved synthesis.** `crux answer` now refuses a question that
+  has no synthesis node approved by the PI: `crux synthesize "…" --for q3` drafts it,
+  `crux approve s1` is the human signature (timestamped, idempotent), and `answer` then
+  resolves the question and records `synthesis: s1` on it. Questions resolved by an earlier
+  engine are grandfathered — the gate applies to new closes only. **ENGINE_VERSION 1.1 → 1.2.**
+- **Markdown is rendered everywhere in the cockpit.** Problem statements, findings, answers
+  and goals used to print their markdown source verbatim in the detail pane; they now go
+  through the renderer (which gained images and relative-link resolution) — the same one the
+  wiki reader uses.
+- **Full-screen panels.** Either side of the cockpit can take the whole window, in the Tree
+  tab and the Wiki tab: a `⛶` control on each panel, `[` / `]` to maximize, `Esc` to restore.
+  Persisted.
+- **Focus one question.** Double-click a node (or press `f`, or use the toolbar button on a
+  selection) and every branch off its ancestor path folds away — the spine from the root
+  stays for orientation, the question's own subtree stays open. A breadcrumb over the tree
+  shows the path, with clickable ancestors to widen focus and `✕` / `Esc` to clear.
+- **Update check — it tells you, it never installs.** `crux` reports once a day when a newer
+  release exists and hands over the exact command for *your* install (`git -C <root> pull
+  --ff-only` for a clone, resolved through `install.sh`'s symlinks; `npx skills update` for a
+  copied one), plus "ask your agent to update crux" — the `crux` skill now documents the
+  preflight an agent must run first. crux deliberately does **not** update itself: a vault
+  records the engine version its verdicts were produced under, and that should change because
+  someone decided so, not because a background thread did. At most one request per 24h, in a
+  background thread with a 1.5s timeout, printed **from a cache** on stderr so no command's
+  output waits on the network and stdout stays clean for agents parsing it.
+  `CRUX_NO_UPDATE_CHECK=1` disables the whole thing, chip included. The cockpit shows the same
+  state as a topbar chip, read from that cache — `serve` never makes a network request. A new
+  `CRUX_VERSION` constant carries the release version, separate from the vault-format
+  `ENGINE_VERSION`.
+- **The living tree.** Every node is spring-anchored to its deterministic layout position,
+  so you can drag one (or watch a refresh reshape the tree) and it always glides home —
+  entrants fly out of their parent, and the tree comes to rest perfectly still.
   Plus a new **radial view** (toolbar toggle, persisted): the project at the centre,
   questions and hypotheses on depth rings; the orientation toggle applies to the tidy
   view only. Reduced-motion renders the exact static tree as before. Hardened for
@@ -36,8 +75,53 @@ verdict/roll-up/view logic changes.
   Copilot read `AGENTS.md` natively — plus a thin CONTRIBUTING pointing at the
   `evolve-crux` workflow.
 
+### Changed
+
+- **The colour key is the engine's whole vocabulary.** `inconclusive`, `idea` and `staged`
+  were painted on nodes but missing from the legend — `inconclusive` verdicts had no colour
+  to look up at all. All ten states are now listed, and a selftest derives the expected set
+  from the engine's own constants so the two can't drift apart again.
+- **The browser tab names the project** — `crux cockpit: <project>` instead of `crux cockpit`,
+  so several open cockpits stay tellable apart.
+- **A roomier search box** — 290px, up from a fixed 230px, with a shorter placeholder
+  (`Search nodes · ↵ jump`) that fits inside it. It is bounded, not greedy: it never grows
+  to swallow the toolbar. Below 1400px the view controls drop to icons (tooltips kept) so
+  the box keeps its width on a laptop screen.
+- **The tree rests completely still.** The idle "breathing" motion is gone, and the physics
+  loop now *stops* once everything is on its anchor instead of animating forever — an idle
+  cockpit costs zero animation frames. Drag, fly-home, and relayout glides are unchanged.
+- **The bundled `segssl_vault` example** demonstrates the v0.5 model: h1 carries a real
+  report (with an SVG chart, a PNG figure, and a CSV) under `results/h1/`, and each resolved
+  question carries the approved synthesis that closed it.
+
 ### Fixed
 
+- **`crux test --run` kept only the first run link.** The insert point was decided by a
+  whole-body `_(none yet)_` probe, so the moment a second section shipped with a placeholder
+  of its own (`## Artifacts`), every later run link was silently discarded — no error, and
+  the CLI still printed success. Appending is now scoped to the named section, so links
+  accumulate in the order they were recorded. (Caught by the v0.5 review pass; regression
+  test added.)
+- **Artifacts are served under a restrictive CSP.** An SVG is the one allowlisted type that
+  is also a *document*: navigate straight to one and its `<script>` would run in the
+  cockpit's own origin, where `/snapshot.json` — the whole vault — is same-origin readable.
+  `/file/` responses now carry `default-src 'none'; … sandbox` plus `nosniff`, which
+  neuters that without affecting `<img>` rendering. Files are also streamed rather than read
+  into memory whole.
+- **The update check re-hit the network on every command.** Its 24h window was only stamped
+  by a *successful* fetch, on a daemon thread that a short-lived command killed on exit — so
+  the stamp was never written, the notice never appeared, and every invocation fired another
+  abandoned request. The window is now claimed before the request goes out, the worker is no
+  longer a daemon, and cache writes are atomic (`os.replace`) so two concurrent crux
+  processes can't leave a torn file behind.
+- **Artifacts the cockpit can't serve are shown, not linked.** A recorded `.bin`/`.ckpt`
+  used to render as a download link that could only ever 404; the servable extension set now
+  lives in one place (`engine.SERVABLE_EXT`, keyed to `serve.FILE_TYPES`) and the UI marks
+  anything outside it as inert.
+- **`CRUX_NO_UPDATE_CHECK=1` now silences the cockpit chip too**, not just the CLI line.
+- **The Review button did nothing while a report was open**, and a manual branch-expand while
+  focused was undone by the next poll (focus now folds only nodes that *arrive* while it is
+  active). The focus button's contextual label also refreshes when the selection is dropped.
 - **Post-`init` hint.** `crux init` now prints `next: cd cruxvault && crux ask …` — the
   vault is created *below* the cwd, so the old hint failed with "not inside a crux
   vault" when run verbatim from where the user just ran `init`.

@@ -75,6 +75,16 @@ def run_demo(keep_dir=None):
     E.cmd_test(root, h1, to="running", run="job 40012")
     check("test: h1 running", E.Vault(root).get(h1).status == "running")
     check("test: run link recorded", "job 40012" in read(node_path(root, h1)))
+    # REGRESSION: a second --run must APPEND, not vanish. The insert used to be decided by a
+    # whole-body `_(none yet)_` probe, so the moment a second section shipped with a
+    # placeholder of its own (## Artifacts), every run link after the first was silently
+    # dropped — no error, and the CLI still printed success.
+    E.cmd_test(root, h1, to="running", run="job 40013")
+    links = E._run_links(read(node_path(root, h1)).split("---", 2)[-1])
+    check("test: a second --run appends rather than dropping the link",
+          links == ["job 40012", "job 40013"])
+    check("test: the Artifacts placeholder is untouched by a run link",
+          "## Artifacts" in read(node_path(root, h1)))
     E.cmd_test(root, h2, to="running")
 
     # 6. close: h1 all-met -> supported ; h2 one-unmet -> partial
@@ -97,8 +107,18 @@ def run_demo(keep_dir=None):
     check("gate: q1.1 stale flagged", E.Vault(root).get(q11)["fm"]["stale"] is True)
     check("review: queue lists q1.1", q11 in [x[0] for x in E.cmd_review(root)])
 
-    # 9a. answer (resolve) propagates: q1.1 resolved -> q1 trips review
+    # 9a. answer (resolve) is GATED on an approved synthesis (ENGINE 1.2), then propagates:
+    #     q1.1 resolved -> q1 trips review
+    expect_error("gate: answer refused without a synthesis",
+                 lambda: E.cmd_answer(root, q11, text="premature"))
+    syn, _ = E.cmd_synthesize(root, "what q1.1 settled", [q11])
+    expect_error("gate: answer refused while the synthesis is unapproved",
+                 lambda: E.cmd_answer(root, q11, text="still premature"))
+    E.cmd_approve(root, syn)
+    check("gate: approve stamps a timestamp", bool(E.Vault(root).get(syn)["fm"].get("approved")))
     E.cmd_answer(root, q11, text="mask_token is the load-bearing knob; FiLM placement is noise.")
+    check("gate: resolved question records its synthesis",
+          E.Vault(root).get(q11)["fm"].get("synthesis") == syn)
     check("answer: q1.1 resolved", E.Vault(root).get(q11).status == "resolved")
     check("answer: stale cleared", E.Vault(root).get(q11)["fm"]["stale"] is False)
     check("answer: propagates -> q1 review", E.Vault(root).get(q1).status == "review")
@@ -353,7 +373,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.1", E.ENGINE_VERSION == "1.1")
+    check("wmig: ENGINE_VERSION bumped to 1.2", E.ENGINE_VERSION == "1.2")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -362,6 +382,11 @@ def run_version():
     root = tempfile.mkdtemp(prefix="crux_ver_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Versioned", root)
+    # the RELEASE version (what `npx skills update` ships) is distinct from the vault-format
+    # ENGINE_VERSION stamped above — the update check compares the former, never the latter
+    check("version: CRUX_VERSION is the 0.5.0 release", E.CRUX_VERSION == "0.5.0")
+    check("version: release and engine versions are distinct constants",
+          E.CRUX_VERSION != E.ENGINE_VERSION)
     check("version: stamped at init", E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
     check("version: in-sync -> no warning", E.check_and_stamp_version(root) is None)
     edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 0.0")
@@ -432,7 +457,13 @@ def run_snapshot():
 
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
-          set(snap.keys()) == {"engine_version", "project", "nodes", "tree", "queue", "wiki"})
+          set(snap.keys()) == {"engine_version", "crux_version", "update",
+                               "project", "nodes", "tree", "queue", "wiki"})
+    check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
+    check("snapshot: update block is cache-shaped (never a live fetch)",
+          isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
+          and isinstance(snap["update"]["available"], bool))
+    check("snapshot: idea nodes carry an artifacts list", isinstance(snap["nodes"][h1]["artifacts"], list))
     _w = snap.get("wiki") or {}
     check("snapshot: wiki inactive + empty on a wiki-less vault",
           _w.get("active") is False and _w.get("pages") == [] and _w.get("sources") == [])
@@ -500,6 +531,287 @@ def run_snapshot():
     check("snapshot: non-VERDICT verdict is clamped to None",
           E.snapshot(E.Vault(root))["nodes"][h1]["verdict"] is None)
     shutil.rmtree(root, ignore_errors=True)
+
+
+def run_artifacts():
+    """Evidence artifacts (docs/prd/v0.5-cockpit-evidence.md §C): the `## Artifacts`
+    section, the results/<hid>/ convention, and the lint that enforces a linked report
+    once a hypothesis actually has files on disk."""
+    print("\n# artifacts (## Artifacts + results/<hid>/ + lint)")
+    root = tempfile.mkdtemp(prefix="crux_art_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Artifacts", root)
+    q1, _ = E.cmd_ask(root, "does it work")
+    h1, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"])
+
+    # -- parsing is pure: both bullet forms, placeholder ignored, order preserved
+    body = ("## Artifacts\n\n"
+            "- [Full report](results/h1/report.md)\n"
+            "- results/h1/curve.png the ADE20K curve\n"
+            "- results/h1/per-seed.csv\n"
+            "- results/h1/model.bin\n")
+    arts = E.parse_artifacts(body)
+    check("artifacts: parses both bullet forms", [a["path"] for a in arts] ==
+          ["results/h1/report.md", "results/h1/curve.png",
+           "results/h1/per-seed.csv", "results/h1/model.bin"])
+    check("artifacts: markdown-link label kept", arts[0]["label"] == "Full report")
+    check("artifacts: trailing text becomes the label", arts[1]["label"] == "the ADE20K curve")
+    check("artifacts: kind classification (report/image/data/other)",
+          [a["kind"] for a in arts] == ["report", "image", "data", "other"])
+    check("artifacts: placeholder bullet is not an artifact",
+          E.parse_artifacts("## Artifacts\n\n_(none yet)_\n") == [])
+    check("artifacts: absent section parses to an empty list (pre-1.2 nodes)",
+          E.parse_artifacts("## Findings\n\nnothing here\n") == [])
+
+    # -- a hypothesis with no results dir and no links stays clean
+    check("artifacts: clean when there are no files and no links", E.cmd_validate(root) == [])
+
+    # -- results/<hid>/ with files but no linked report -> lint error
+    write(os.path.join(root, E.RESULTS_DIR, h1, "curve.png"), "notreallyapng")
+    probs = [m for _, m in E.cmd_validate(root)]
+    check("artifacts: results dir with files but no linked report -> problem",
+          any("no report is linked" in m for m in probs))
+
+    # -- link a report that does not exist -> different problem
+    def set_artifacts(nid, block):
+        p = node_path(root, nid)
+        t = read(p)
+        t = t.replace("## Findings", "## Artifacts\n\n" + block + "\n\n## Findings", 1) \
+             if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## )",
+                                                    "## Artifacts\n\n" + block + "\n", t, flags=re.S)
+        with open(p, "w") as f: f.write(t)
+    set_artifacts(h1, "- results/h1/report.md")
+    probs = [m for _, m in E.cmd_validate(root)]
+    check("artifacts: linked artifact that does not exist -> problem",
+          any("missing artifact" in m for m in probs))
+
+    # -- an escaping path is refused whether or not the target exists
+    set_artifacts(h1, "- ../../etc/passwd\n- /etc/hosts")
+    probs = [m for _, m in E.cmd_validate(root)]
+    check("artifacts: ../ traversal path -> problem",
+          any("inside the vault" in m and ".." in m for m in probs))
+    check("artifacts: absolute path -> problem",
+          any("inside the vault" in m and "/etc/hosts" in m for m in probs))
+
+    # -- the happy path: a real report under results/<hid>/ linked from the node
+    write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), "# Report\n\n![c](curve.png)\n")
+    set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
+    check("artifacts: results dir + linked report validates clean", E.cmd_validate(root) == [])
+
+    # -- close still WARNS rather than blocking when the report is missing
+    h2, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"])
+    write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
+    E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h2), "- [ ]", "- [x]")
+    verdict = E.cmd_close(root, h2)
+    check("artifacts: close still closes without a report (warn, not block)",
+          verdict == "supported" and E.Vault(root).get(h2).status == "done")
+    check("artifacts: close surfaces a warning about the unlinked results",
+          any("no report" in w for w in E.artifact_warnings(root, h2)))
+    check("artifacts: no warning once a report is linked", E.artifact_warnings(root, h1) == [])
+
+    # -- snapshot carries them, resolved against disk
+    write(os.path.join(root, E.RESULTS_DIR, h1, "curve.png"), "notreallyapng")
+    snap_arts = E.snapshot(root)["nodes"][h1]["artifacts"]
+    check("artifacts: snapshot exposes path/label/kind/exists/servable",
+          len(snap_arts) == 2 and set(snap_arts[0]) == {"path", "label", "kind", "exists", "servable"}
+          and snap_arts[0]["exists"] is True)
+    # the cockpit must not offer a link the file route will refuse: an artifact whose
+    # extension isn't servable is shown, but inert
+    write(os.path.join(root, E.RESULTS_DIR, h1, "model.bin"), "weights")
+    set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/model.bin")
+    arts = {a["path"]: a for a in E.snapshot(root)["nodes"][h1]["artifacts"]}
+    check("artifacts: a non-servable extension is flagged unservable",
+          arts["results/h1/model.bin"]["exists"] is True
+          and arts["results/h1/model.bin"]["servable"] is False
+          and arts["results/h1/report.md"]["servable"] is True)
+    check("artifacts: the servable set is the file route's allowlist, exactly",
+          set(__import__("serve").FILE_TYPES) == set(E.SERVABLE_EXT))
+    set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_close_gate():
+    """The question close-gate (§I): a question resolves only through an APPROVED
+    synthesis, and pre-1.2 vaults that resolved questions the old way still validate."""
+    print("\n# close-gate (synthesize -> approve -> answer)")
+    root = tempfile.mkdtemp(prefix="crux_gate_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Gated", root)
+    q1, _ = E.cmd_ask(root, "the question")
+    q2, _ = E.cmd_ask(root, "another question")
+    h1, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    E.cmd_test(root, h1, to="running")
+    edit(node_path(root, h1), "- [ ]", "- [x]")
+    E.cmd_close(root, h1)
+
+    expect_error("gate: no synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
+    s1, _ = E.cmd_synthesize(root, "s for q1", [q1])
+    expect_error("gate: unapproved synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
+    # the error must be actionable: it names the approve verb
+    try:
+        E.cmd_answer(root, q1)
+        msg = ""
+    except E.CruxError as e:
+        msg = str(e)
+    check("gate: refusal names `crux approve`", "approve" in msg)
+
+    ts = E.cmd_approve(root, s1)
+    check("gate: approve returns/stamps an ISO timestamp",
+          bool(ts) and E.Vault(root).get(s1)["fm"]["approved"] == ts)
+    again = E.cmd_approve(root, s1)
+    check("gate: approve is idempotent (first timestamp stands)", again == ts)
+    expect_error("gate: approve rejects a non-synthesis id", lambda: E.cmd_approve(root, q1))
+    expect_error("gate: approve rejects an unknown id", lambda: E.cmd_approve(root, "s404"))
+
+    E.cmd_answer(root, q1, text="settled")
+    v = E.Vault(root)
+    check("gate: question resolved", v.get(q1).status == "resolved")
+    check("gate: question stamped with its synthesis", v.get(q1)["fm"]["synthesis"] == s1)
+    # the cockpit has to be able to SHOW what closed a question, so the snapshot carries the
+    # link from the question and the synthesis' own text + approval stamp
+    snap = E.snapshot(root)
+    check("gate: snapshot links the question to its synthesis",
+          snap["nodes"][q1]["synthesis"] == s1)
+    check("gate: snapshot carries the synthesis' approval stamp",
+          snap["nodes"][s1]["approved"] == ts)
+    check("gate: snapshot carries the synthesis body without the Related:: line",
+          "Headline conclusions" in snap["nodes"][s1]["body"]
+          and "Related::" not in snap["nodes"][s1]["body"])
+    check("gate: an unresolved question has no synthesis link",
+          snap["nodes"][q2]["synthesis"] is None)
+    check("gate: an approved synthesis for q1 does not unlock q2",
+          _refused(lambda: E.cmd_answer(root, q2)))
+    check("gate: gated vault validates clean", E.cmd_validate(root) == [])
+
+    # -- grandfathering: a question resolved by a pre-1.2 engine has no `synthesis:` field
+    #    and no synthesis node. It must keep its status and never be flagged.
+    old = tempfile.mkdtemp(prefix="crux_gate_old_")
+    shutil.rmtree(old); os.makedirs(old)
+    E.cmd_init("Legacy", old)
+    oq, _ = E.cmd_ask(old, "legacy question")
+    edit(node_path(old, oq), "status: open", "status: resolved")
+    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.1")
+    E.refresh(old)
+    check("gate: pre-1.2 resolved question keeps its status",
+          E.Vault(old).get(oq).status == "resolved")
+    check("gate: pre-1.2 resolved question is not flagged (grandfathered)",
+          E.cmd_validate(old) == [])
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _refused(fn):
+    try:
+        fn(); return False
+    except E.CruxError:
+        return True
+
+
+def run_update():
+    """The update check (§H): every decision is a pure function tested offline with an
+    injected fetcher — the suite must never touch the network."""
+    print("\n# update check (offline: pure functions + injected fetcher)")
+    try:
+        import update as U
+    except Exception as e:
+        check(f"update: update.py imports cleanly (got {e!r})", False)
+        return
+
+    check("update: the suite itself runs with the network check disabled",
+          os.environ.get("CRUX_NO_UPDATE_CHECK") == "1")
+    check("update: parse_version", U.parse_version("v0.5.0") == U.parse_version("0.5.0") == (0, 5, 0))
+    check("update: parse_version rejects junk", U.parse_version("not-a-version") is None)
+    check("update: is_newer patch", U.is_newer("0.5.1", "0.5.0") is True)
+    check("update: is_newer minor", U.is_newer("0.6.0", "0.5.9") is True)
+    check("update: is_newer major", U.is_newer("1.0.0", "0.9.9") is True)
+    check("update: is_newer equal -> False", U.is_newer("0.5.0", "0.5.0") is False)
+    check("update: is_newer older -> False", U.is_newer("0.4.9", "0.5.0") is False)
+    check("update: is_newer malformed -> False",
+          U.is_newer("garbage", "0.5.0") is False and U.is_newer("0.6.0", "garbage") is False)
+
+    base = tempfile.mkdtemp(prefix="crux_upd_")
+    cache = os.path.join(base, "update.json")
+
+    check("update: opt-out env suppresses the check",
+          U.should_check(1000.0, {}, {"CRUX_NO_UPDATE_CHECK": "1"}) is False)
+    check("update: empty cache -> check", U.should_check(1000.0, {}, {}) is True)
+    check("update: inside the 24h window -> skip",
+          U.should_check(1000.0, {"checked": 1000.0 - 60}, {}) is False)
+    check("update: past the 24h window -> check",
+          U.should_check(1000.0, {"checked": 1000.0 - U.INTERVAL - 1}, {}) is True)
+
+    # a fetcher that raises must be swallowed whole — a command never fails on this
+    boom = lambda timeout=None: (_ for _ in ()).throw(RuntimeError("no network"))
+    res = U.check_now("0.5.0", cache, fetcher=boom)
+    check("update: a raising fetcher is swallowed", isinstance(res, dict))
+    check("update: failure records no false 'available'", res.get("available") is False)
+    check("update: fetch_latest never raises on a broken opener",
+          U.fetch_latest(timeout=0.01, opener=boom) is None)
+
+    res = U.check_now("0.5.0", cache, fetcher=lambda timeout=None: "v0.6.0")
+    check("update: a newer release is recorded available",
+          res["latest"] == "0.6.0" and res["available"] is True)
+    check("update: the cache is written and re-read",
+          U.read_cache(cache)["latest"] == "0.6.0")
+    n = U.notice("0.5.0", "0.6.0")
+    check("update: notice names both versions", "0.5.0" in n and "0.6.0" in n)
+    # crux never updates itself: the notice must hand over an actionable command for THIS
+    # install, and point at the agent as the other way to do it
+    check("update: notice offers the agent and a command",
+          "agent" in n.lower() and ("git " in n or "npx " in n))
+    check("update: a git checkout is detected as a clone, with a ff-only pull",
+          U.detect_install("/Users/mforooz/crux/skills/crux/scaffold")[0] == "clone"
+          and U.update_command(*U.detect_install("/Users/mforooz/crux/skills/crux/scaffold"))
+              == "git -C /Users/mforooz/crux pull --ff-only")
+    check("update: an installed (copied) skill maps to `npx skills update`",
+          U.update_command("skills", "/home/x/.claude/skills/crux") == "npx skills update")
+    check("update: an unrecognized layout still names both routes",
+          "npx" in U.update_command("unknown", "/tmp/x") and "git" in U.update_command("unknown", "/tmp/x"))
+    check("update: nothing in update.py runs an installer",
+          not re.search(r"subprocess|os\.system|os\.exec|pip install",
+                        read(os.path.join(HERE, "update.py"))))
+    check("update: pending_notice fires from the cache alone",
+          U.pending_notice("0.5.0", U.read_cache(cache)) is not None)
+    check("update: pending_notice silent when current is latest",
+          U.pending_notice("0.6.0", U.read_cache(cache)) is None)
+    res = U.check_now("0.6.0", cache, fetcher=lambda timeout=None: "v0.6.0")
+    check("update: same version is not 'available'", res["available"] is False)
+    check("update: cache_path honours XDG_CACHE_HOME",
+          U.cache_path({"XDG_CACHE_HOME": "/tmp/xdg"}) == "/tmp/xdg/crux/update.json")
+
+    # REGRESSION: the check must not re-hit the network on every single invocation. A short
+    # command exits before a background fetch can answer, so if the throttle were only
+    # stamped by the fetch's own success, `checked` would never be written and every `crux
+    # status` would fire a request that is then abandoned. The window is claimed FIRST.
+    c2 = os.path.join(base, "throttle.json")
+    hits = []
+    def slow(timeout=None):
+        hits.append(1)
+        return "v9.9.9"
+    U.maybe_check("0.5.0", env={}, path=c2, fetcher=slow)
+    check("update: the 24h window is claimed before the fetch (not by it)",
+          isinstance(U.read_cache(c2).get("checked"), float))
+    U.maybe_check("0.5.0", env={}, path=c2, fetcher=slow)
+    check("update: a second invocation inside the window does not re-fetch", len(hits) <= 1)
+    check("update: opt-out short-circuits maybe_check entirely",
+          U.maybe_check("0.5.0", env={"CRUX_NO_UPDATE_CHECK": "1"}, path=c2, fetcher=slow) is None)
+
+    # and the cockpit chip must respect the same opt-out — a user who switched the check off
+    # should not be nagged by a stale cache through the GUI
+    vroot = tempfile.mkdtemp(prefix="crux_upd_snap_")
+    shutil.rmtree(vroot); os.makedirs(vroot)
+    E.cmd_init("UpdSnap", vroot)
+    os.environ["CRUX_NO_UPDATE_CHECK"] = "1"
+    check("update: snapshot's update block is silent while opted out",
+          E.snapshot(vroot)["update"] == {"latest": None, "available": False})
+    shutil.rmtree(vroot, ignore_errors=True)
+
+    # exactly one endpoint, and it is the releases API — nothing else is ever contacted
+    urls = set(re.findall(r"https?://[^\s\"')]+", read(os.path.join(HERE, "update.py"))))
+    check(f"update: the only URL in update.py is the GitHub releases API (found {urls})",
+          urls == {U.LATEST_URL})
+    shutil.rmtree(base, ignore_errors=True)
 
 
 def run_wiki_gui():
@@ -822,6 +1134,65 @@ def run_serve():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_file_route():
+    """`GET /file/<vault-relative-path>` (§C): the read-only route the report reader and
+    inline figures load through. Serves in-vault files byte-for-byte; refuses everything
+    that could reach outside the vault or hand back an arbitrary file type."""
+    print("\n# /file route (artifact + figure serving)")
+    import threading, urllib.request, urllib.error
+    import serve as S
+    root = tempfile.mkdtemp(prefix="crux_file_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Files", root)
+    q1, _ = E.cmd_ask(root, "q")
+    h1, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"])
+    report = "# Report\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![curve](curve.png)\n"
+    write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), report)
+    png = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(range(256)) * 4
+    with open(os.path.join(root, E.RESULTS_DIR, h1, "curve.png"), "wb") as f:
+        f.write(png)
+    write(os.path.join(root, E.RESULTS_DIR, h1, "secret.env"), "TOKEN=abc\n")
+    write(os.path.join(root, ".hidden", "x.md"), "hidden\n")
+
+    free = S.find_free_port("127.0.0.1", 8960)
+    httpd = S.make_server(root, port=free)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+
+    def get(path):
+        """-> (status, body_bytes, content_type); status is the HTTP code even on error."""
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{free}{path}", timeout=5) as r:
+                return r.status, r.read(), (r.headers.get("Content-Type") or "")
+        except urllib.error.HTTPError as he:
+            return he.code, b"", ""
+        except Exception:
+            return 0, b"", ""
+
+    try:
+        st, body, ctype = get(f"/file/{E.RESULTS_DIR}/{h1}/report.md")
+        check("file: serves an in-vault markdown report", st == 200 and body.decode() == report)
+        check("file: markdown Content-Type", "markdown" in ctype or "text/" in ctype)
+        st, body, ctype = get(f"/file/{E.RESULTS_DIR}/{h1}/curve.png")
+        check("file: serves a binary figure byte-identically", st == 200 and body == png)
+        check("file: png Content-Type", ctype == "image/png")
+        check("file: 404 on a missing file", get(f"/file/{E.RESULTS_DIR}/{h1}/nope.md")[0] == 404)
+        check("file: refuses a non-allowlisted extension",
+              get(f"/file/{E.RESULTS_DIR}/{h1}/secret.env")[0] in (403, 404))
+        check("file: refuses a dot-segment path", get("/file/.hidden/x.md")[0] in (403, 404))
+        check("file: refuses ../ traversal", get("/file/../../etc/hosts")[0] in (400, 403, 404))
+        check("file: refuses an encoded ../ traversal",
+              get("/file/%2e%2e%2f%2e%2e%2fetc%2fhosts")[0] in (400, 403, 404))
+        check("file: refuses an absolute path", get("/file//etc/hosts")[0] in (400, 403, 404))
+        check("file: refuses the vault marker itself", get("/file/.crux.yaml")[0] in (403, 404))
+        # the route is a pure read — serving never touches the vault
+        before = _dir_bytes(root)
+        get(f"/file/{E.RESULTS_DIR}/{h1}/report.md")
+        check("file: pure read (vault byte-for-byte identical)", _dir_bytes(root) == before)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_webui():
     print("\n# webui (frontend cockpit — served assets · pure-read · issue-#1 guard)")
     import threading, urllib.request
@@ -849,12 +1220,82 @@ def run_webui():
         httpd.shutdown(); httpd.server_close()
     shutil.rmtree(root, ignore_errors=True)
 
-    # -- pure-read at the browser layer: the cockpit only ever GETs (the snapshot poll plus
-    #    the lazy wiki-page route — relaxation pre-registered in docs/prd/gui-wiki-tab.md),
-    #    never mutates the vault (no fetch method override). Mirrors the engine invariant.
-    check("webui: app.js is pure-read (two GETs: snapshot + wiki page, no write verbs)",
-          app_js.count("fetch(") == 2 and 'fetch("snapshot.json"' in app_js
-          and "/wiki/" in app_js and "method:" not in app_js)
+    # -- pure-read at the browser layer: the cockpit only ever GETs (the snapshot poll, the
+    #    lazy wiki-page route, and the artifact/report file route — each relaxation
+    #    pre-registered in a PRD), never mutates the vault (no fetch method override).
+    check("webui: app.js is pure-read (three GETs: snapshot + wiki page + file, no write verbs)",
+          app_js.count("fetch(") == 3 and 'fetch("snapshot.json"' in app_js
+          and "/wiki/" in app_js and "/file/" in app_js and "method:" not in app_js)
+
+    # ---------------------------------------------------------------- v0.5 cockpit contract
+    style = read(os.path.join(HERE, "webui", "style.css"))
+    index = read(os.path.join(HERE, "webui", "index.html"))
+
+    # (A) the browser tab names the project, not just the app
+    check("webui: tab title carries the project name",
+          "document.title" in app_js and "crux cockpit: " in app_js)
+
+    # (B) the legend is the engine's FULL vocabulary — the miss that hid `inconclusive`.
+    #     Derived from the engine's own constants so the two can never drift again.
+    m = re.search(r"const LEGEND = \[(.*?)\n\];", app_js, re.S)
+    legend_src = m.group(1) if m else ""
+    expected = (["q-" + s for s in E.QUESTION_STATUS]
+                + ["h-" + s for s in E.IDEA_STATUS if s != E.TERMINAL_IDEA]
+                + ["h-" + x for x in E.VERDICTS])
+    missing = [k for k in expected if f'"{k}"' not in legend_src]
+    check(f"webui: legend covers the engine's whole vocabulary (missing: {missing})", not missing)
+    check("webui: legend includes the inconclusive verdict", '"h-inconclusive"' in legend_src)
+    # every colour the legend names must exist in BOTH themes
+    vars_used = re.findall(r'"(--[a-z-]+)"', legend_src)
+    # match the RULES, not the prose: style.css mentions the light selector in its header
+    # comment too, so a plain split would hand back the comment as the dark theme
+    _blk = lambda sel: (re.search(sel + r"\s*\{(.*?)\n\}", style, re.S | re.M) or [None, ""])[1]
+    dark, light = _blk(r"^:root"), _blk(r'^:root\[data-theme="light"\]')
+    unstyled = [v for v in vars_used if f"{v}:" not in dark or f"{v}:" not in light]
+    check(f"webui: every legend colour is defined in both themes (missing: {unstyled})", not unstyled)
+
+    # (C) markdown is rendered, not printed: node bodies go through the renderer, which
+    #     now emits images resolved through the /file/ route
+    check("webui: node detail bodies render through the markdown renderer",
+          re.search(r"function bodyOr\([^)]*\)\s*\{.*?mdRender\(", app_js, re.S) is not None)
+    check("webui: the markdown renderer emits images", "<img" in app_js)
+    check("webui: images resolve through the file route", "fileUrl(" in app_js)
+    check("webui: idea detail shows an Artifacts section", '"Artifacts"' in app_js)
+    check("webui: a resolved question links the synthesis that closed it",
+          '"Closed on synthesis"' in app_js)
+    check("webui: the synthesis reader renders its body and approval state",
+          re.search(r"function synthesisDetail\([^)]*\)\s*\{.*?bodyOr\(n\.body", app_js, re.S) is not None)
+    check("webui: a .md artifact opens the report reader", "openReport(" in app_js)
+    check("webui: a hypothesis with a report offers it as a primary action",
+          "report-open" in app_js and "report-open" in style)
+    check("webui: figures open full size on click", "img.md-img" in app_js)
+
+    # (D) either pane can take the whole window, in either tab
+    check("webui: pane maximize state is persisted", '"crux-pane"' in app_js)
+    check("webui: pane mode is applied to the body dataset", "dataset.pane" in app_js)
+    check("webui: css hides the other pane in each maximized mode",
+          '[data-pane="left"]' in style and '[data-pane="right"]' in style)
+    check("webui: a maximize control exists for the tree, the wiki, and the detail pane",
+          index.count("data-max=") >= 3)
+
+    # (E) the search box is roomier than the old 230px, but bounded — it must not grow to
+    #     swallow the toolbar, and its placeholder has to fit inside it
+    sm = re.search(r"#search\s*\{[^}]*flex:\s*([\d.]+)\s+[\d.]+\s+(\d+)px", style)
+    basis = int(sm.group(2)) if sm else 0
+    check(f"webui: search basis is 260-320px (found {basis or 'none'})", 260 <= basis <= 320)
+    check("webui: the search box does not flex-grow into the toolbar",
+          bool(sm) and float(sm.group(1)) == 0)
+    for ph in re.findall(r'placeholder="([^"]*)"', index) + re.findall(r'placeholder = [^;]*?"([^"]*)"', app_js):
+        check(f"webui: placeholder fits the box — {ph!r} <= 24 chars", len(ph) <= 24)
+
+    # (F) focus a specific question: collapse everything off its ancestor path
+    check("webui: node focus state exists", "state.focus" in app_js)
+    check("webui: focus collapses off-path branches", "focusCollapse(" in app_js)
+    check("webui: focus breadcrumb is rendered", 'id="focus-crumb"' in index and "focus-crumb" in app_js)
+
+    # (J) the idle breath is gone and the sim actually stops at rest
+    check("webui: the idle breath force is removed", "BREATH" not in app_js)
+    check("webui: the tree sim idles out instead of animating forever", "treeSimSettled(" in app_js)
 
     # -- no external assets: every src/href in webui/ is local (SVG xmlns namespace
     #    identifiers are not fetched assets and are exempt); the vendored motion file is
@@ -881,7 +1322,7 @@ def run_webui():
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"]):
+                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True)
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -901,15 +1342,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
     a = ap.parse_args()
+    # the suite is hermetic: no crux invocation it spawns may reach the network for an
+    # update check (the check's own logic is exercised offline with an injected fetcher).
+    os.environ["CRUX_NO_UPDATE_CHECK"] = "1"
     root = run_demo(a.keep)
     run_seed()
     run_wiki()
     run_wiki_migration()
     run_version()
     run_integrity()
+    run_artifacts()
+    run_close_gate()
+    run_update()
     run_snapshot()
     run_wiki_gui()
     run_serve()
+    run_file_route()
     run_webui()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
