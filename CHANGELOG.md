@@ -6,7 +6,42 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
-_(nothing yet)_
+### Fixed
+
+- **`crux selftest` failed on every machine that isn't the author's.** A v0.5.0 assert
+  probed a hardcoded `/Users/<author>/crux` path to check that `detect_install` recognises a
+  git checkout — so it tested the *runner's* filesystem, not the function. Green on one Mac,
+  `PASSED 321/322` and exit 1 on any Linux or Windows box, which made v0.5.0's own
+  advertised post-install check fail for new users. The test now builds a throwaway checkout
+  in a temp dir (a `.git` directory is all `detect_install` needs — no git binary, no
+  subprocess) and normalises through `realpath`, since macOS hands out temp dirs under
+  `/var`, itself a symlink to `/private/var`. **The shipped `update.py` was never wrong** —
+  only its test. Reported against v0.5.0 on RHEL 9 / Python 3.11.
+- **`crux serve` could stall for seconds before printing its URL.** The stdlib's
+  `HTTPServer.server_bind()` does a reverse-DNS lookup (`socket.getfqdn`) purely to fill in a
+  `server_name` crux never reads — and it sits between the bind and the banner. Instant on a
+  normal machine, >30s on a host with slow or absent DNS (a locked-down cluster node, an
+  offline laptop, GitHub's macOS runners). The cockpit now binds without it.
+- **crux crashed on a Windows console the moment it printed a glyph.** crux writes UTF-8
+  (verdict glyphs, the banner's arrow, the drift warning's ⚠, vault text); a cp1252 console
+  raises `UnicodeEncodeError` on the first one and takes the command with it — `crux serve`
+  died right after the drift warning, before it could print the URL, and `crux --help` failed
+  outright. The CLI now states the encoding it writes in.
+- **The selftest harness assumed one platform's text conventions**: every text open now pins
+  UTF-8 (Windows read UTF-8 vault files as cp1252 and died before the first check), fixtures
+  are written with `newline=""` so they are byte-identical everywhere (Windows turned `\n`
+  into `\r\n` and changed a file's sha256 under the source-registry test), and the
+  `XDG_CACHE_HOME` assert builds its expected path with `os.path.join` instead of hardcoding
+  POSIX separators.
+- Added coverage for the symlink resolution `install.sh` depends on (skills symlinked into a
+  clone must resolve to the clone, not the link) and for a copied/npx install — neither had a
+  test.
+
+### Added
+
+- **CI.** `.github/workflows/selftest.yml` runs `./crux selftest` on ubuntu + macOS across
+  Python 3.9/3.11/3.13, plus 3.8 on ubuntu-22.04 (the floor the README advertises), with a
+  non-blocking informational Windows job. The repo had no CI, which is why the above shipped.
 
 ## [0.5.0] - 2026-07-25
 

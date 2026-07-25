@@ -10,6 +10,10 @@ sys.path.insert(0, HERE)
 import engine as E
 import render as R
 
+# the suite prints → ⚠ ✓ and vault text; a cp1252 console would raise on the first one
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 _PASS, _FAIL = [], []
 def check(name, cond):
     (_PASS if cond else _FAIL).append(name)
@@ -21,12 +25,16 @@ def expect_error(name, fn):
     except E.CruxError:
         check(name, True)
 
+# Vault files, skill sources and the webui are UTF-8 (— · → ✓ ⛶ all appear in them). Never
+# let the platform's locale decide: Windows defaults to cp1252 and blows up on the first
+# byte it has no mapping for, which is how `crux selftest` died there.
 def read(p):
-    with open(p) as f: return f.read()
+    with open(p, encoding="utf-8") as f: return f.read()
 
 def edit(p, old, new, count=-1):
-    with open(p) as f: t = f.read()
-    with open(p, "w") as f: f.write(t.replace(old, new) if count < 0 else t.replace(old, new, count))
+    with open(p, encoding="utf-8") as f: t = f.read()
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(t.replace(old, new) if count < 0 else t.replace(old, new, count))
 
 def node_path(root, nid):
     return E.Vault(root).get(nid)["path"]
@@ -167,7 +175,7 @@ def run_seed():
     print("\n# seed-spec ingest (crux init --from)")
     base = tempfile.mkdtemp(prefix="crux_seed_")
     seed_path = os.path.join(base, "seed.md")
-    with open(seed_path, "w") as f: f.write(SEED)
+    with open(seed_path, "w", encoding="utf-8") as f: f.write(SEED)
     root = os.path.join(base, "vault")
 
     E.cmd_init_from(seed_path, root)
@@ -205,15 +213,17 @@ def run_seed():
     expect_error("seed: malformed outline rejected", lambda: E.parse_seed("- Q: orphan question with no project"))
     expect_error("seed: H under project rejected", lambda: E.parse_seed("- Project: X\n  - H: floating\n    - v: y"))
     bad_seed = os.path.join(base, "bad.md")
-    with open(bad_seed, "w") as f: f.write("- Project: Half\n  - Q: ok\n  - H: floating under project\n    - v: y\n")
+    with open(bad_seed, "w", encoding="utf-8") as f: f.write("- Project: Half\n  - Q: ok\n  - H: floating under project\n    - v: y\n")
     expect_error("seed: malformed seed rejected", lambda: E.cmd_init_from(bad_seed, os.path.join(base, "vault2")))
     check("seed: no partial vault left behind", not os.path.exists(os.path.join(base, "vault2", ".crux.yaml")))
     shutil.rmtree(base, ignore_errors=True)
 
 
 def write(p, text):
+    """newline="" so a fixture is byte-identical on every platform — Windows text mode would
+    otherwise turn every \n into \r\n and change the file's bytes (and its sha256)."""
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
+    with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
 def wiki_page(root, slug, title, summary, sources="", category="concept", extra=""):
@@ -252,7 +262,8 @@ def run_wiki():
     check("wiki: SCHEMA.md seeded", os.path.exists(os.path.join(root, "wiki", "SCHEMA.md")))
     check("wiki: WIKI.md rendered once wiki is active", os.path.exists(os.path.join(root, "WIKI.md")))
     reg = E.load_sources(root)
-    want_sha = hashlib.sha256(read(src1).encode()).hexdigest()
+    with open(src1, "rb") as _f:            # hash the FILE's bytes, not a newline-normalised
+        want_sha = hashlib.sha256(_f.read()).hexdigest()   # decode of them (Windows: \r\n)
     check("wiki: source registered with correct sha256", reg.get("raw/smith2024.txt", {}).get("sha256") == want_sha)
     log = read(os.path.join(root, "wiki", "log.md"))
     check("wiki: log line matches Karpathy grep prefix",
@@ -579,7 +590,7 @@ def run_artifacts():
         t = t.replace("## Findings", "## Artifacts\n\n" + block + "\n\n## Findings", 1) \
              if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## )",
                                                     "## Artifacts\n\n" + block + "\n", t, flags=re.S)
-        with open(p, "w") as f: f.write(t)
+        with open(p, "w", encoding="utf-8") as f: f.write(t)
     set_artifacts(h1, "- results/h1/report.md")
     probs = [m for _, m in E.cmd_validate(root)]
     check("artifacts: linked artifact that does not exist -> problem",
@@ -760,10 +771,37 @@ def run_update():
     # install, and point at the agent as the other way to do it
     check("update: notice offers the agent and a command",
           "agent" in n.lower() and ("git " in n or "npx " in n))
+    # Build the checkout instead of assuming one. This assert used to hardcode the author's
+    # own clone path, which made it a probe of the RUNNER's filesystem rather than a test of
+    # detect_install — it passed on one machine and failed `crux selftest` everywhere else.
+    # detect_install only needs `.git` to be a directory: no git binary, no subprocess.
+    # Paths are realpath-normalised because detect_install resolves symlinks and macOS hands
+    # out temp dirs under /var, which is itself a symlink to /private/var.
+    clone = os.path.join(base, "clone")
+    scaf = os.path.join(clone, "skills", "crux", "scaffold")
+    os.makedirs(os.path.join(clone, ".git")); os.makedirs(scaf)
+    real_clone = os.path.realpath(clone)
     check("update: a git checkout is detected as a clone, with a ff-only pull",
-          U.detect_install("/Users/mforooz/crux/skills/crux/scaffold")[0] == "clone"
-          and U.update_command(*U.detect_install("/Users/mforooz/crux/skills/crux/scaffold"))
-              == "git -C /Users/mforooz/crux pull --ff-only")
+          U.detect_install(scaf) == ("clone", real_clone)
+          and U.update_command(*U.detect_install(scaf)) == f"git -C {real_clone} pull --ff-only")
+
+    # the realpath step is load-bearing for anyone who ran install.sh: the import path is a
+    # symlink in the skills dir, while the thing you'd actually `git pull` is its target
+    link = os.path.join(base, "skills_dir")
+    os.makedirs(link)
+    try:
+        os.symlink(os.path.join(clone, "skills", "crux"), os.path.join(link, "crux"))
+    except (OSError, NotImplementedError):
+        print("  skip   update: symlinked install (this platform disallows symlinks)")
+    else:
+        check("update: a symlinked skills install resolves to its clone target",
+              U.detect_install(os.path.join(link, "crux", "scaffold")) == ("clone", real_clone))
+
+    # a copied install (npx) has no .git anywhere above it -> the skills route
+    copied = os.path.join(base, "home", ".claude", "skills", "crux", "scaffold")
+    os.makedirs(copied)
+    check("update: a copied skills install is detected as a skills install",
+          U.detect_install(copied)[0] == "skills")
     check("update: an installed (copied) skill maps to `npx skills update`",
           U.update_command("skills", "/home/x/.claude/skills/crux") == "npx skills update")
     check("update: an unrecognized layout still names both routes",
@@ -777,8 +815,9 @@ def run_update():
           U.pending_notice("0.6.0", U.read_cache(cache)) is None)
     res = U.check_now("0.6.0", cache, fetcher=lambda timeout=None: "v0.6.0")
     check("update: same version is not 'available'", res["available"] is False)
-    check("update: cache_path honours XDG_CACHE_HOME",
-          U.cache_path({"XDG_CACHE_HOME": "/tmp/xdg"}) == "/tmp/xdg/crux/update.json")
+    check("update: cache_path honours XDG_CACHE_HOME",   # os.path.join: \ on Windows, / elsewhere
+          U.cache_path({"XDG_CACHE_HOME": os.path.join("tmp", "xdg")})
+          == os.path.join("tmp", "xdg", "crux", "update.json"))
 
     # REGRESSION: the check must not re-hit the network on every single invocation. A short
     # command exits before a background fetch can answer, so if the throttle were only
@@ -1109,25 +1148,33 @@ def run_serve():
     edit(cfg_path, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 0.9")
     cfg_before = read(cfg_path)
     cli_port = S.find_free_port("127.0.0.1", 8940)
+    # decode the pipe EXPLICITLY: the banner contains "→", and `text=True` alone decodes with
+    # whatever the runner's locale happens to be. A stray UnicodeDecodeError here kills the
+    # reader thread, leaving an empty buffer and a failure that says nothing about why.
     proc = subprocess.Popen(
         [sys.executable, os.path.join(HERE, "crux.py"), "serve", "--no-open", "--port", str(cli_port)],
-        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace")
     lines = []
     def _read_banner():
-        for line in proc.stdout:
-            lines.append(line)
-            if "http://localhost:" in line:
-                break
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                if "http://localhost:" in line:
+                    break
+        except Exception as e:                      # never die silently — say what happened
+            lines.append(f"<reader thread died: {e!r}>")
     tr = threading.Thread(target=_read_banner, daemon=True); tr.start()
-    tr.join(timeout=10)
+    tr.join(timeout=30)                             # CI runners are slower than a laptop
     try:
         proc.terminate()
         proc.wait(timeout=5)
     except Exception:
         proc.kill()
     buf = "".join(lines)
-    check("serve: `crux serve` CLI prints the URL promptly (flushed to a pipe)",
-          f"http://localhost:{cli_port}" in buf and buf.count("http://localhost:") == 1)
+    ok = f"http://localhost:{cli_port}" in buf and buf.count("http://localhost:") == 1
+    check("serve: `crux serve` CLI prints the URL promptly (flushed to a pipe)"
+          + ("" if ok else f"  [captured: {buf[:300]!r}]"), ok)
     check("serve: read-only on a drifted vault (.crux.yaml never re-stamped)",
           read(cfg_path) == cfg_before)
 

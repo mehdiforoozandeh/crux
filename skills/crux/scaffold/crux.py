@@ -25,6 +25,17 @@ import argparse, sys, os
 if sys.version_info < (3, 8):
     sys.exit("crux: needs Python >= 3.8 (found %d.%d)" % sys.version_info[:2])
 
+# crux speaks UTF-8: verdict glyphs (✓ ○ ◆), the cockpit banner's arrow, the drift warning's
+# ⚠, and vault text itself. A Windows console defaults to cp1252, where printing any of those
+# raises UnicodeEncodeError and takes the whole command down — `crux serve` died right after
+# the drift warning, before it could print the URL. Say what encoding we write in, and never
+# let an unmappable glyph be fatal.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass    # <3.7, or a stream that isn't reconfigurable — output just stays as it was
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine as E
 
