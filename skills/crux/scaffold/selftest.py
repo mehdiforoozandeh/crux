@@ -10,6 +10,10 @@ sys.path.insert(0, HERE)
 import engine as E
 import render as R
 
+# the suite prints → ⚠ ✓ and vault text; a cp1252 console would raise on the first one
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 _PASS, _FAIL = [], []
 def check(name, cond):
     (_PASS if cond else _FAIL).append(name)
@@ -216,8 +220,10 @@ def run_seed():
 
 
 def write(p, text):
+    """newline="" so a fixture is byte-identical on every platform — Windows text mode would
+    otherwise turn every \n into \r\n and change the file's bytes (and its sha256)."""
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
+    with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
 def wiki_page(root, slug, title, summary, sources="", category="concept", extra=""):
@@ -256,7 +262,8 @@ def run_wiki():
     check("wiki: SCHEMA.md seeded", os.path.exists(os.path.join(root, "wiki", "SCHEMA.md")))
     check("wiki: WIKI.md rendered once wiki is active", os.path.exists(os.path.join(root, "WIKI.md")))
     reg = E.load_sources(root)
-    want_sha = hashlib.sha256(read(src1).encode()).hexdigest()
+    with open(src1, "rb") as _f:            # hash the FILE's bytes, not a newline-normalised
+        want_sha = hashlib.sha256(_f.read()).hexdigest()   # decode of them (Windows: \r\n)
     check("wiki: source registered with correct sha256", reg.get("raw/smith2024.txt", {}).get("sha256") == want_sha)
     log = read(os.path.join(root, "wiki", "log.md"))
     check("wiki: log line matches Karpathy grep prefix",

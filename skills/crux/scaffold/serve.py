@@ -11,7 +11,7 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, shutil, webbrowser, http.server, urllib.parse, hashlib
+import os, sys, json, socket, shutil, socketserver, webbrowser, http.server, urllib.parse, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
@@ -208,12 +208,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass  # quiet by default
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer minus the reverse-DNS lookup.
+
+    The stdlib's `HTTPServer.server_bind` calls `socket.getfqdn(host)` purely to fill in
+    `server_name` — which crux never reads. That lookup happens between the bind and the
+    banner, so on any machine with slow or absent DNS (a locked-down cluster, an offline
+    laptop, a CI runner) the URL you are waiting for is held back by a name resolution
+    nobody asked for. Measured: instant on a normal Mac, >30s on GitHub's macOS runners.
+    """
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
 def make_server(root, port=None, host="127.0.0.1"):
     """Bind a threading HTTP server on `host`. `port=None` auto-selects from DEFAULT_PORT;
     a pinned busy port raises CruxError. The vault root is stashed on the server for the handler."""
     port = find_free_port(host, DEFAULT_PORT) if port is None else port
     try:
-        httpd = http.server.ThreadingHTTPServer((host, port), Handler)
+        httpd = _Server((host, port), Handler)
     except OSError as e:
         raise engine.CruxError(f"cannot bind {host}:{port} — {e}")
     httpd.root = os.path.abspath(root)
