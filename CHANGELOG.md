@@ -6,7 +6,23 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
-_(nothing yet)_
+### Added
+
+- **A third example vault, `scaling_vault/`** — *More data, or a better model?* 13 nodes,
+  24 wiki pages, 22 arXiv sources (every id checked against the arXiv API before the page
+  citing it was written). Deliberately small and jargon-free: the shape of a crux vault
+  should be legible before you know the field it sits in, which `segssl_vault` cannot do.
+  `q1` carries the point — a hypothesis comes back *supported* and the answer still
+  contradicts it, because the winning arm had twice the compute.
+- **An animated README hero** (`assets/crux-hero.gif`), replacing the static schematic.
+  It walks the same model the schematic diagrammed — verifiable → hypothesis → question →
+  programme — and ends on the mark. Drawn from `scaling_vault`, so what it shows is in
+  the repo.
+
+### Changed
+
+- The README's opening figure is now that animation rather than
+  `assets/crux-schematic-{light,dark}.svg`. The SVGs are kept; nothing references them.
 
 ## [0.5.1] - 2026-07-25
 
