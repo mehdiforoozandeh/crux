@@ -8,7 +8,10 @@ p-hacked or forgotten across dozens of experiments. The agent runs the loop;
 ## What it is
 
 <p align="center">
-  <img src="assets/crux-hero.gif" width="860" alt="One hypothesis — 'Twice the data beats a better model' — with three pre-registered verifiables ticking off one at a time until the verdict 'supported' falls out of them; a gutter marks who owns each part (you write the hypothesis and the verifiables, the agent runs it and checks each bar, the verdict is derived). The view then pulls back: that hypothesis is one of three under a question, colored supported / partial / refuted, over the caption 'a question holds hypotheses; a hypothesis holds verifiables'. The question is then one of many in a research programme that grows across the frame, and finally the programme's open questions resolve into the Southern Cross of the Crux mark.">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-hero-dark.gif">
+    <img src="assets/crux-hero-light.gif" width="860" alt="One hypothesis — 'Twice the data beats a better model' — with three pre-registered verifiables ticking off one at a time until the verdict 'supported' falls out of them; a gutter marks who owns each part (you write the hypothesis and the verifiables, the agent runs it and checks each bar, the verdict is derived). The view then pulls back: that hypothesis is one of three under a question, colored supported / partial / refuted, over the caption 'a question holds hypotheses; a hypothesis holds verifiables'. The question is then one of many in a research programme that grows across the frame, and finally the programme's open questions resolve into the Southern Cross of the Crux mark.">
+  </picture>
 </p>
 
 <p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, each with verifiables written down <em>before</em> the run — so the verdict is derived from the boxes you set, not argued from the number that came back. You decide what to ask; the agent does the legwork; nothing gets quietly dropped.</sub></p>

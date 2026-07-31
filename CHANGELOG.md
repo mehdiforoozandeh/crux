@@ -14,7 +14,8 @@ verdict/roll-up/view logic changes.
   should be legible before you know the field it sits in, which `segssl_vault` cannot do.
   `q1` carries the point — a hypothesis comes back *supported* and the answer still
   contradicts it, because the winning arm had twice the compute.
-- **An animated README hero** (`assets/crux-hero.gif`), replacing the static schematic.
+- **An animated README hero** (`assets/crux-hero-{light,dark}.gif`), replacing the static
+  schematic, and following your GitHub theme like the screenshots do.
   It walks the same model the schematic diagrammed — verifiable → hypothesis → question →
   programme — and ends on the mark. Drawn from `scaling_vault`, so what it shows is in
   the repo.
