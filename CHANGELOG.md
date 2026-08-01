@@ -18,7 +18,8 @@ verdict/roll-up/view logic changes.
   schematic, and following your GitHub theme like the screenshots do.
   It walks the same model the schematic diagrammed — verifiable → hypothesis → question →
   programme — and ends on the mark. Drawn from `scaling_vault`, so what it shows is in
-  the repo.
+  the repo. It opens on the frame it closes on, held a second at each end, so the loop
+  is seamless and the still shown before it plays carries the name and the URL.
 
 ### Changed
 
