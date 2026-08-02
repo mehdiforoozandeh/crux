@@ -429,6 +429,9 @@ def parse_artifacts(body):
         - [Full report](results/h1/report.md)
         - results/h1/curve.png the ADE20K curve
 
+    Either form may carry a trailing note, so the label comes from the link text when there
+    is one and from the trailing text otherwise.
+
     The `_(placeholder)_` line and any prose are ignored. Pure — no filesystem access, so
     a node body can be parsed without a vault (and a pre-1.2 node with no such section
     simply yields [])."""
@@ -451,7 +454,10 @@ def parse_artifacts(body):
         if not m:
             continue
         text = m.group(1).strip()
-        link = re.match(r"\[([^\]]*)\]\(\s*([^)\s]+)\s*\)\s*$", text)
+        # Deliberately unanchored: a note after the closing paren is prose, not part of the
+        # path. Anchoring here sent `- [Report](p.md) — a note` down the bare-path branch,
+        # which split it on whitespace into the path '[Report'.
+        link = re.match(r"\[([^\]]*)\]\(\s*([^)\s]+)\s*\)", text)
         if link:
             label, path = link.group(1).strip(), link.group(2).strip()
         else:

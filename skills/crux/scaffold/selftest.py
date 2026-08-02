@@ -586,6 +586,32 @@ def run_artifacts():
     check("artifacts: absent section parses to an empty list (pre-1.2 nodes)",
           E.parse_artifacts("## Findings\n\nnothing here\n") == [])
 
+    # -- a markdown link may carry a trailing note after the closing paren. The bare-path
+    # form always allowed a trailing description; the link form used to fail its regex (it
+    # was anchored to end-of-line) and fall through to the bare-path split, yielding
+    # path '[Identification' and a pair of validate errors naming neither cause. The rule:
+    # the label comes from the link text when there is one, the trailing text otherwise.
+    forms = E.parse_artifacts(
+        "## Artifacts\n\n"
+        "- [Full report](results/h1/report.md)\n"
+        "- [Identification census](results/h1/census.md) — the strict tier is empty on both panels\n"
+        "- results/h1/curve.png the ADE20K curve\n"
+        "- results/h1/per-seed.csv\n")
+    check("artifacts: link alone -> path, with the bracket text as the label",
+          forms[0] == {"label": "Full report", "path": "results/h1/report.md", "kind": "report"})
+    check("artifacts: link + trailing prose -> same path, prose dropped from the label",
+          forms[1] == {"label": "Identification census", "path": "results/h1/census.md",
+                       "kind": "report"})
+    check("artifacts: bare path + description -> path first, description as the label",
+          forms[2] == {"label": "the ADE20K curve", "path": "results/h1/curve.png",
+                       "kind": "image"})
+    check("artifacts: bare path alone -> label falls back to the basename",
+          forms[3] == {"label": "per-seed.csv", "path": "results/h1/per-seed.csv",
+                       "kind": "data"})
+    check("artifacts: an empty link label falls back to the basename",
+          E.parse_artifacts("## Artifacts\n\n- [](results/h1/report.md) some prose\n")
+          == [{"label": "report.md", "path": "results/h1/report.md", "kind": "report"}])
+
     # -- a hypothesis with no results dir and no links stays clean
     check("artifacts: clean when there are no files and no links", E.cmd_validate(root) == [])
 
@@ -620,6 +646,14 @@ def run_artifacts():
     write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), "# Report\n\n![c](curve.png)\n")
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
     check("artifacts: results dir + linked report validates clean", E.cmd_validate(root) == [])
+
+    # -- and the same link annotated with a note validates just as clean: the reported bug
+    # raised BOTH "missing artifact '[Report'" and "no report is linked" off this one bullet
+    set_artifacts(h1, "- [Report](results/h1/report.md) — the strict tier is empty on both panels\n"
+                      "- results/h1/curve.png")
+    check("artifacts: a linked report with trailing prose validates clean",
+          E.cmd_validate(root) == [])
+    set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
 
     # -- close still WARNS rather than blocking when the report is missing
     h2, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"])
