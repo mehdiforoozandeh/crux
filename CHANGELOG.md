@@ -26,6 +26,15 @@ verdict/roll-up/view logic changes.
 - The README's opening figure is now that animation rather than
   `assets/crux-schematic-{light,dark}.svg`. The SVGs are kept; nothing references them.
 
+### Fixed
+
+- **An artifact bullet may now carry a note after a markdown link.** `parse_artifacts()`
+  anchored its link regex to end-of-line, so `- [Report](results/h1/report.md) — a note`
+  fell through to the bare-path branch and split into the path `'[Report'` — surfacing as
+  two `crux validate` errors that named neither the bullet nor the cause. The bare-path
+  form always allowed a trailing description; now both do. The rule: the label comes from
+  the link text when there is one, and from the trailing text otherwise.
+
 ## [0.5.1] - 2026-07-25
 
 ### Fixed
