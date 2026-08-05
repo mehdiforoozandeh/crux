@@ -7,10 +7,10 @@ description: >-
   validation gate (selftest green · stdlib-only · existing vaults still load ·
   version/migration), and a pull request. Works for anyone contributing to crux, not
   just the maintainer; the maintainer self-merges and cuts releases. Use when working
-  ON crux — adding to the engine/CLI/skill, picking up a ROADMAP epic (UI, wiki,
-  marketing), or fixing an engine bug. Triggers: "evolve crux", "add a feature to crux",
-  "crux keeps <doing X>", "improve crux", "contribute to crux", "send a crux PR",
-  crux roadmap, wiki/GUI/autoresearch for crux.
+  ON crux — adding to the engine/CLI/skill, picking up a backlog epic from `.spec/`
+  (UI, wiki, marketing), or fixing an engine bug. Triggers: "evolve crux", "add a feature
+  to crux", "crux keeps <doing X>", "improve crux", "contribute to crux", "send a crux PR",
+  crux roadmap, crux backlog, wiki/GUI/autoresearch for crux.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
@@ -29,7 +29,7 @@ ideate → build → validate → ship
 ```
 
 Each stage has an **exit criterion**; you do not advance until it's met. The arc is the
-same whether the change is a one-line bug fix or a ROADMAP epic — only the ceremony scales.
+same whether the change is a one-line bug fix or a `.spec/` epic — only the ceremony scales.
 
 ## Who's driving (contributor-always)
 
@@ -59,16 +59,22 @@ instead of vibes.
 - **Bug** ("crux keeps mis-splitting inline parens") → a one-line PRD: the wrong behavior,
   the correct behavior, and the acceptance criterion = *a failing selftest that asserts the
   correct behavior*.
-- **Feature / ROADMAP epic** (UI, wiki, autoresearch) → a full grilled PRD (skeleton below).
+- **Feature / backlog epic** (UI, wiki, autoresearch) → a full grilled PRD (skeleton below).
 
-Feature ideas frequently come from `ROADMAP.md`; if the change advances an epic, say so and
-flip that item's status when it lands.
+Feature ideas frequently come from the backlog in **`.spec/`** — one spec document per epic,
+indexed by [`.spec/README.md`](../../.spec/README.md). If the change advances an epic, say so,
+work from that spec's **Acceptance criteria**, and flip the item's status when it lands.
+
+A spec is *upstream* of a PRD, not a substitute for one: the spec says what and why for a whole
+epic, the PRD carries one shippable change through the gate. One spec normally becomes several
+PRDs. Check the spec's **Open questions** before writing the PRD — an unresolved one is a
+decision the PI still owes you.
 
 **PRD skeleton** (Markdown; the exact text becomes the PR body):
 
 ```markdown
 # PRD: <short title>
-- **Kind:** feature | fix | refactor        - **Roadmap:** <epic, or —>
+- **Kind:** feature | fix | refactor        - **Spec:** <.spec/NN-name.md, or —>
 - **Problem / motivation:** what's missing or wrong, and why it matters.
 - **Design decision:** the approach chosen (and the main one rejected + why).
 - **Scope:** what this change does *not* do.
