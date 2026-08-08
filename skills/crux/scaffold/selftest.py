@@ -1584,8 +1584,11 @@ def run_agent_cli():
     E.cmd_init("Agent Surface", root)
 
     def cli(*argv):
+        # Decode as UTF-8 explicitly. crux.py reconfigures its own stdout/stderr to UTF-8, so
+        # that is what comes back over the pipe — but `text=True` alone decodes with the
+        # PARENT's locale encoding, which on Windows is cp1252 and turns the ⚠ into mojibake.
         return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(argv),
-                              capture_output=True, text=True, cwd=root)
+                              capture_output=True, cwd=root, encoding="utf-8", errors="replace")
 
     def as_json(r):
         """The parsed stdout, or None. `--json` means stdout is JSON and nothing else —
