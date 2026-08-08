@@ -18,6 +18,7 @@ rationale rather than just checklists.
 | 08 | [Taskhub](08-taskhub.md) | `taskhub` | ☐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☐ |
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
+| 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☐ |
 
 ## Dependency order
 
@@ -29,6 +30,11 @@ Specs 06–10 came out of one design session and are ordered by what unblocks wh
                                      │
                             (09 also needs 06's --json CLI surface)
 ```
+
+11 sits outside that chain. It needs 06's `--json` convention and is *enriched* by 07 (RD
+pages become the methods slides) and 03 (wiki pages become the intro), but blocks on neither —
+it ships reading methodology from the hypothesis node and its linked report, and picks up RDs
+for free when 07 lands.
 
 06 ships first because the 400-word cap is what forces 07 and 08 to exist. Building
 the overflow channels before the thing that overflows is backwards.
