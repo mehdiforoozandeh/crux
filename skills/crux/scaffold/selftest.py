@@ -63,15 +63,15 @@ def run_demo(keep_dir=None):
     check("ask: META lists q1", q1 in read(os.path.join(root, "META.md")))
 
     # 3. hypothesize two leaves with 2 verifiables each
-    h1, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11,
+    h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11,
                               verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"])
-    h2, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
+    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
                               verifiables=["imp-Spearman ≥ +0.005 vs per_conv", "calibration not worse"])
     check("hypothesize: h1 under q1.1", E.Vault(root).get(h1).parent == q11)
     check("hypothesize: 2 verifiables", E.count_verifiables(read(node_path(root, h1)))[1] == 2)
 
     # 4. NEGATIVE: running without verifiables is rejected (on a stripped idea)
-    h_bad, _ = E.cmd_hypothesize(root, "temp bad idea", parent=q11)
+    h_bad, _, _ = E.cmd_hypothesize(root, "temp bad idea", parent=q11)
     bp = node_path(root, h_bad)
     edit(bp, "- [ ] _(state a falsifiable, pre-registered check)_", "(verifiables removed)")
     expect_error("validator: no running without verifiables", lambda: E.cmd_test(root, h_bad, to="running"))
@@ -384,7 +384,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.2", E.ENGINE_VERSION == "1.2")
+    check("wmig: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -426,7 +426,7 @@ def run_integrity():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Integrity", root)
     q1, _ = E.cmd_ask(root, "root q")
-    h1, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
     check("integrity: clean baseline", E.cmd_validate(root) == [])
     # bad parent
     edit(node_path(root, h1), f"parent: {q1}", "parent: q999")
@@ -466,8 +466,8 @@ def run_snapshot():
     E.cmd_init("Snap", root, goal="Test the snapshot contract.")
     q1, _ = E.cmd_ask(root, "Q one")
     q2, _ = E.cmd_ask(root, "Q two", parent=q1)
-    h1, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"])
-    h2, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"])
+    h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"])
+    h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"])
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
     E.cmd_close(root, h1, metric="imp +0.012")
@@ -480,7 +480,7 @@ def run_snapshot():
 
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
-          set(snap.keys()) == {"engine_version", "crux_version", "update",
+          set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
                                "project", "nodes", "tree", "queue", "wiki"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
@@ -565,7 +565,7 @@ def run_artifacts():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Artifacts", root)
     q1, _ = E.cmd_ask(root, "does it work")
-    h1, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"])
+    h1, _, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"])
 
     # -- parsing is pure: both bullet forms, placeholder ignored, order preserved
     body = ("## Artifacts\n\n"
@@ -656,7 +656,7 @@ def run_artifacts():
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
 
     # -- close still WARNS rather than blocking when the report is missing
-    h2, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"])
     write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ]", "- [x]")
@@ -697,7 +697,7 @@ def run_close_gate():
     E.cmd_init("Gated", root)
     q1, _ = E.cmd_ask(root, "the question")
     q2, _ = E.cmd_ask(root, "another question")
-    h1, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
     E.cmd_test(root, h1, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")
     E.cmd_close(root, h1)
@@ -1238,7 +1238,7 @@ def run_file_route():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Files", root)
     q1, _ = E.cmd_ask(root, "q")
-    h1, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"])
     report = "# Report\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![curve](curve.png)\n"
     write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), report)
     png = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(range(256)) * 4
@@ -1411,6 +1411,277 @@ def run_webui():
     check("webui: app.js never setPointerCapture on the tree (issue #1 regression)",
           "setPointerCapture(" not in app_js)
 
+    # -- spec 06: the detail pane leads with the summary pair and folds the long prose. The
+    #    regression this guards is the one the spec diagnosed: `detail` (the whole
+    #    `## Question` section) going back to being the first thing in the pane.
+    css = read(os.path.join(HERE, "webui", "style.css"))
+    check("webui: summaryLead is defined", "function summaryLead(" in app_js)
+    check("webui: the question pane leads with the summary",
+          app_js.index("summaryLead(n)") < app_js.index('foldedSection("Detail"'))
+    check("webui: the hypothesis pane leads with the summary too",
+          'summaryLead(n) +\n    foldedSection("Problem"' in app_js)
+    check("webui: the long question detail is folded, not dumped",
+          'foldedSection("Detail", n.detail' in app_js and 'section("Detail", bodyOr(n.detail' not in app_js)
+    check("webui: the cap comes from the engine, never hardcoded in the UI",
+          "limits || {}).prose_cap" in app_js and "400" not in app_js.split("function economyBadge")[1][:400])
+    check("webui: the summary styles ship", ".summary {" in css and ".sum-k {" in css)
+    check("webui: the fold marker is styled for both themes", ".fold > .fold-h::before" in css)
+
+
+def run_economy():
+    """Spec 06 — node economy. The engine has always pushed toward more rigor and never
+    toward less volume; these are the checks that push back. The negative cases carry the
+    weight: anything can flag everything, so what matters is that a verifiable-heavy node,
+    a fresh node, and a question at exactly the fan-out cap all stay silent."""
+    print("\n# node economy (summary schema · prose cap · fan-out back-pressure)")
+    root = tempfile.mkdtemp(prefix="crux_econ_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Economy", root)
+    q1, _ = E.cmd_ask(root, "Does the cap hold?")
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+
+    # -- 1. the summary schema ships in both templates
+    qtext, htext = read(node_path(root, q1)), read(node_path(root, h1))
+    check("economy: question template carries ## ELI5", "## ELI5" in qtext)
+    check("economy: question template carries ## TL;DR", "## TL;DR" in qtext)
+    check("economy: idea template carries ## ELI5", "## ELI5" in htext)
+    check("economy: idea template carries ## TL;DR", "## TL;DR" in htext)
+    check("economy: ELI5 precedes TL;DR in a question", qtext.index("## ELI5") < qtext.index("## TL;DR"))
+    check("economy: summary sections lead the body (before ## Question)",
+          qtext.index("## TL;DR") < qtext.index("## Question"))
+
+    # -- 2. a fresh node is well under the cap: template placeholders must not eat the budget
+    check("economy: fresh question is under the cap", E.prose_words(qtext, "question") < E.PROSE_CAP)
+    check("economy: fresh idea is under the cap", E.prose_words(htext, "idea") < E.PROSE_CAP)
+    check("economy: a fresh vault raises no warning", E.validation_report(root)["warnings"] == [])
+    check("economy: the cap is 400 words", E.PROSE_CAP == 400)
+
+    # -- 3. prose over the cap warns, exactly once, and never as a hard problem
+    edit(node_path(root, q1), "## Question\n\nDoes the cap hold?",
+         "## Question\n\nDoes the cap hold? " + " ".join(["padding"] * 500))
+    rep = E.validation_report(root)
+    check("economy: over-cap question warns exactly once",
+          len([w for w in rep["warnings"] if w["id"] == q1]) == 1)
+    check("economy: the warning names the actual word count",
+          any("504" in w["message"] for w in rep["warnings"] if w["id"] == q1))
+    check("economy: an over-cap node is a warning, not a problem", rep["problems"] == [])
+    check("economy: cmd_validate still returns a bare problems list (back-compat)",
+          E.cmd_validate(root) == [])
+
+    # -- 4. the generated ledger sits *under* `## Answer so far`; counting it would make
+    #       every busy question over-cap purely for having children
+    ledgery = ("## ELI5\n\nx\n\n## TL;DR\n\ny\n\n## Question\n\nshort\n\n## Answer so far\n\nbrief\n\n"
+               + E.LEDGER_START + "\n" + " ".join(["ledgerword"] * 900) + "\n" + E.LEDGER_END + "\n")
+    check("economy: the generated ledger is excluded from the count",
+          E.prose_words(ledgery, "question") < 20)
+
+    # -- 5. structured sections are free. This is the criterion that keeps the cap from
+    #       punishing thoroughness in the one place crux wants it.
+    heavy = ("## ELI5\n\nshort\n\n## TL;DR\n\nshort\n\n## Problem Statement\n\nshort\n\n"
+             "## Idea / Hypothesis\n\nshort\n\n## Verifiables\n\n"
+             + "\n".join(f"- [ ] check {i} " + " ".join(["tok"] * 20) for i in range(40))
+             + "\n\n## Planned Intervention\n\nshort\n\n## Run Links\n\n_(none yet)_\n\n## Artifacts\n\n"
+             + "\n".join(f"- results/h/f{i}.png figure {i} " + " ".join(["tok"] * 10) for i in range(40))
+             + "\n\n## Findings\n\nshort\n")
+    check("economy: 1000+ words of verifiables and artifacts do not trip the cap",
+          E.prose_words(heavy, "idea") < E.PROSE_CAP)
+
+    # -- 6. fan-out. N=5 unrun hypotheses under one question; the back-pressure fires on the
+    #       call that would breach it, not after.
+    check("economy: the fan-out cap is 5", E.FANOUT_MAX == 5)
+    q2, _ = E.cmd_ask(root, "How many is too many?")
+    ids, quiet = [], True
+    for i in range(5):
+        hid, _, warn = E.cmd_hypothesize(root, f"idea {i}", parent=q2)
+        ids.append(hid); quiet = quiet and warn is None
+    check("economy: no back-pressure while under the cap", quiet)
+    check("economy: exactly 5 unrun hypotheses is within the cap",
+          [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
+    h6, _, warn6 = E.cmd_hypothesize(root, "idea 6", parent=q2)
+    check("economy: hypothesize warns when the new node breaches the cap", warn6 is not None)
+    check("economy: the back-pressure names the cap", warn6 is not None and "5" in warn6)
+    check("economy: 6 unrun hypotheses trips one fan-out warning",
+          len([w for w in E.validation_report(root)["warnings"] if w["id"] == q2]) == 1)
+    E.cmd_test(root, ids[0], "staged")
+    E.cmd_test(root, ids[1], "staged")
+    check("economy: staged children do not count as unrun",
+          [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
+
+    # -- 7. the check selector
+    check("economy: --check=tree skips the economy warning",
+          E.validation_report(root, ["tree"])["warnings"] == [])
+    rep = E.validation_report(root, ["economy"])
+    check("economy: --check=economy reports the cap warning",
+          any(w["id"] == q1 for w in rep["warnings"]))
+    check("economy: --check=economy records the selection", rep["checks"] == ["economy"])
+    check("economy: --check=fanout isolates the fan-out check",
+          all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
+    expect_error("economy: an unknown check name is a CruxError, not a traceback",
+                 lambda: E.validation_report(root, ["nope"]))
+    check("economy: the check registry is the four documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout"))
+
+    # -- 8. the cockpit contract
+    snap = E.snapshot(root)
+    check("economy: snapshot exposes eli5 on a question", "eli5" in snap["nodes"][q1])
+    check("economy: snapshot exposes tldr on a question", "tldr" in snap["nodes"][q1])
+    check("economy: snapshot exposes eli5 on an idea", "eli5" in snap["nodes"][h1])
+    check("economy: snapshot exposes tldr on an idea", "tldr" in snap["nodes"][h1])
+    check("economy: an unwritten summary reads empty, not as the placeholder",
+          snap["nodes"][q1]["eli5"] == "")
+    edit(node_path(root, q1), "_(one sentence, plain language, no jargon)_",
+         "Whether short nodes stay short.")
+    check("economy: a written ELI5 reaches the snapshot",
+          E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
+
+    check("economy: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_economy_migration():
+    """A pre-1.3 vault has no summary sections at all. It must load, validate and render —
+    the cap is a warning, never a wall, and the engine never rewrites an old node."""
+    print("\n# node economy — a pre-1.3 vault still reads")
+    root = tempfile.mkdtemp(prefix="crux_emig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Format", root)
+    q1, _ = E.cmd_ask(root, "an old question")
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    # strip the 1.3 schema back out and stamp the old engine version
+    for nid in (q1, h1):
+        p = node_path(root, nid)
+        with open(p, encoding="utf-8") as f:
+            t = f.read()
+        t = re.sub(r"## ELI5\n\n.*?\n\n## TL;DR\n\n.*?\n\n", "", t, flags=re.S)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(t)
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.2")
+
+    check("emig: the fixture really has no summary sections", "## ELI5" not in read(node_path(root, q1)))
+    check("emig: pre-1.3 vault validates clean", E.cmd_validate(root) == [])
+    check("emig: pre-1.3 vault raises no economy warning", E.validation_report(root)["warnings"] == [])
+    check("emig: prose_words tolerates the missing sections",
+          E.prose_words(read(node_path(root, q1)), "question") > 0)
+    snap = E.snapshot(root)
+    check("emig: a missing ELI5 reads as empty string", snap["nodes"][q1]["eli5"] == "")
+    check("emig: a missing TL;DR reads as empty string", snap["nodes"][h1]["tldr"] == "")
+    check("emig: status still renders the tree", "an old question" in E.status_text(root))
+    check("emig: review still runs", isinstance(E.cmd_review(root), list))
+    warn = E.check_and_stamp_version(root)
+    check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
+    check("emig: drift re-stamps to 1.3", E.Vault(root).cfg.get("engine_version") == "1.3")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_agent_cli():
+    """Spec 06's agent toolbelt: --json on every verb an agent loop drives, plus --strict
+    and --check on validate. In the CLI rather than in agent-private scripts, so this suite
+    can assert it and the PI can run any of it by hand."""
+    print("\n# agent CLI surface (--json · --strict · --check)")
+    import json as J
+    root = tempfile.mkdtemp(prefix="crux_json_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Agent Surface", root)
+
+    def cli(*argv):
+        return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(argv),
+                              capture_output=True, text=True, cwd=root)
+
+    def as_json(r):
+        """The parsed stdout, or None. `--json` means stdout is JSON and nothing else —
+        a stray print alongside it is exactly what breaks an agent's parse."""
+        try:
+            return J.loads(r.stdout)
+        except Exception:
+            return None
+
+    r = cli("ask", "Is the JSON parseable?", "--json")
+    q1 = as_json(r)
+    check("json: ask emits parseable JSON", isinstance(q1, dict) and "id" in q1 and "file" in q1)
+    check("json: ask exits 0", r.returncode == 0)
+
+    r = cli("hypothesize", "it is", "-p", q1["id"], "-v", "stdout parses", "--json")
+    h1 = as_json(r)
+    check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
+    check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
+
+    r = cli("test", h1["id"], "--to", "running", "--json")
+    t = as_json(r)
+    check("json: test emits parseable JSON", isinstance(t, dict) and t.get("status") == "running")
+
+    edit(node_path(root, h1["id"]), "- [ ] stdout parses", "- [x] stdout parses")
+    r = cli("close", h1["id"], "--json")
+    cl = as_json(r)
+    check("json: close emits parseable JSON", isinstance(cl, dict) and cl.get("verdict") == "supported")
+
+    r = cli("review", "--json")
+    rv = as_json(r)
+    check("json: review emits a JSON list", isinstance(rv, list))
+
+    r = cli("synthesize", "what it settled", "--for", q1["id"], "--json")
+    sy = as_json(r)
+    check("json: synthesize emits parseable JSON", isinstance(sy, dict) and "id" in sy)
+
+    r = cli("approve", sy["id"], "--json")
+    ap = as_json(r)
+    check("json: approve emits parseable JSON", isinstance(ap, dict) and "approved" in ap)
+
+    r = cli("answer", q1["id"], "--json")
+    an = as_json(r)
+    check("json: answer emits parseable JSON", isinstance(an, dict) and an.get("status") == "resolved")
+
+    r = cli("pursue", q1["id"], "--json")
+    pu = as_json(r)
+    check("json: pursue emits parseable JSON", isinstance(pu, dict) and pu.get("status") == "open")
+
+    r = cli("status", "--json")
+    st = as_json(r)
+    check("json: status emits the whole snapshot", isinstance(st, dict) and "nodes" in st and "tree" in st)
+    r = cli("status", q1["id"], "--json")
+    st1 = as_json(r)
+    check("json: status <id> emits one node", isinstance(st1, dict) and st1.get("id") == q1["id"])
+    check("json: status <id> carries the summary keys", isinstance(st1, dict) and "eli5" in st1)
+
+    # -- validate: the report shape, the tiers, and the exit codes
+    r = cli("validate", "--json")
+    va = as_json(r)
+    check("json: validate emits the full report shape",
+          isinstance(va, dict) and {"ok", "checks", "problems", "warnings"} <= set(va))
+    check("json: a clean vault reports ok", isinstance(va, dict) and va["ok"] is True)
+    check("json: validate exits 0 on a clean vault", r.returncode == 0)
+
+    # push one node over the cap, then prove the two tiers differ only under --strict
+    edit(node_path(root, q1["id"]), "## Question\n\nIs the JSON parseable?",
+         "## Question\n\nIs the JSON parseable? " + " ".join(["padding"] * 500))
+    r = cli("validate")
+    check("strict: a warning alone still exits 0", r.returncode == 0)
+    check("strict: the warning is printed with a ⚠ marker", "⚠" in r.stdout)
+    r = cli("validate", "--strict")
+    check("strict: --strict turns the same warning into exit 1", r.returncode == 1)
+    r = cli("validate", "--check=tree")
+    check("check: --check=tree exits 0 with the economy warning suppressed",
+          r.returncode == 0 and "⚠" not in r.stdout)
+    r = cli("validate", "--check=economy", "--strict")
+    check("check: --check=economy --strict exits 1", r.returncode == 1)
+    r = cli("validate", "--check=economy", "--json")
+    ve = as_json(r)
+    check("check: the selection is echoed in the report",
+          isinstance(ve, dict) and ve["checks"] == ["economy"])
+    r = cli("validate", "--check=nope")
+    check("check: an unknown check name is a clean error, not a traceback",
+          r.returncode == 1 and "Traceback" not in r.stderr and "nope" in r.stderr)
+
+    # -- ingest goes last on purpose: registering a source that no wiki page cites yet is a
+    #    real `wiki` problem, so it would make every "clean vault" assertion above dirty.
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    with open(os.path.join(root, "raw", "paper.md"), "w", encoding="utf-8") as f:
+        f.write("# A source\n")
+    r = cli("ingest", "raw/paper.md", "--json")
+    ing = as_json(r)
+    check("json: ingest emits parseable JSON", isinstance(ing, dict) and "state" in ing)
+
+    shutil.rmtree(root, ignore_errors=True)
+
 
 def run_cli_help():
     print("\n# CLI --help smoke")
@@ -1452,6 +1723,9 @@ def main():
     run_serve()
     run_file_route()
     run_webui()
+    run_economy()
+    run_economy_migration()
+    run_agent_cli()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

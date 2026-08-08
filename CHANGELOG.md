@@ -8,6 +8,29 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Node economy — crux now enforces economy the way it already enforced falsifiability**
+  (engine **1.3**, spec [`06`](.spec/06-node-economy.md)). Every guardrail used to push toward
+  more rigor and none toward less volume, so nodes grew until the vault stopped being readable
+  by the PI it exists to serve — measured on one real vault, questions ran from 101 to 5,725
+  words with the split falling on *how the node was authored*, not on how hard the question was.
+  - Questions and hypotheses now open with **`## ELI5`** (one sentence) and **`## TL;DR`**
+    (one paragraph: what it asks or claims, and what would settle it).
+  - **A 400-word prose budget per node.** Counts the framing and interpretation sections only —
+    `## Verifiables`, `## Run Links`, `## Artifacts` and the generated ledger are free, because
+    they were never the bloat and capping them would punish thoroughness where crux wants it.
+  - **A fan-out budget of 5 unrun hypotheses per question.** `crux hypothesize` warns on the
+    call that would breach it.
+  - Both are **warnings**: `crux validate` prints them and still exits 0. **`--strict`** makes
+    them fail, and **`--check=tree,wiki,economy,fanout`** runs a subset.
+  - The **cockpit detail pane now opens with ELI5 + TL;DR** and folds the long prose behind a
+    disclosure. Before this, a question's whole `## Question` section was the first thing in the
+    pane — the single line most responsible for the cockpit being unskimmable.
+- **`--json` on every verb an agent loop drives** — `ask`, `hypothesize`, `test`, `close`,
+  `review`, `answer`, `pursue`, `status`, `synthesize`, `approve`, `ingest`, `validate`. On
+  `--json`, stdout is JSON and nothing else; hints and warnings go to stderr. `crux status
+  --json` is the whole snapshot, `crux status q3 --json` one node, `crux validate --json` the
+  `{ok, checks, problems, warnings}` report. In the CLI rather than in agent-private scripts, so
+  `selftest.py` can assert it, the cockpit reuses it, and you can run any of it by hand.
 - **A third example vault, `scaling_vault/`** — *More data, or a better model?* 13 nodes,
   24 wiki pages, 22 arXiv sources (every id checked against the arXiv API before the page
   citing it was written). Deliberately small and jargon-free: the shape of a crux vault

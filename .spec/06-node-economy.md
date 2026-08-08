@@ -1,6 +1,6 @@
 # Spec 06 — Node economy
 
-**Label:** `economy` · **Status:** ☐ todo
+**Label:** `economy` · **Status:** ☑ done
 **Blocks:** [07 RD layer](07-rd-layer.md), [08 taskhub](08-taskhub.md), [09 specialized agents](09-specialized-agents.md)
 
 ## Goal
@@ -160,29 +160,40 @@ can consume the same output, and the PI can run any of it by hand.
   nobody re-runs the investigation.
 - **A hard word cap on verifiables or artifacts.** See above — wrong target.
 
-## Open questions
+## Open questions — both settled 2026-08-08
 
-- **Enforcement level.** Three candidates, undecided:
-  1. warn by default, `validate --strict` exits non-zero *(recommended)*
-  2. hard error immediately
-  3. warn on existing vaults, hard from birth for vaults created at the new `ENGINE_VERSION`
+- **Enforcement level → warn by default, `validate --strict` exits non-zero.** Three
+  candidates were on the table; the other two were a hard error immediately, and warn-on-old /
+  hard-from-birth at the new `ENGINE_VERSION`. Warn won on the stakes: a hard error puts the
+  CANDI vault into permanent red on q19, q21, h48, h59 and h60 until those five are refactored
+  into RDs — and the RD layer ([07](07-rd-layer.md)) does not exist yet, so red would be red
+  with nowhere to go. That bundles a migration project onto a feature. The codebase already
+  distinguishes tiers (`artifact_problems` vs `artifact_warnings`), so a warn tier was not a
+  new concept to introduce.
+- **Fan-out threshold N → 5.** Enough room for a genuine slate of competing hypotheses;
+  past that a question is stockpiling intent rather than testing it. q21 held 10 unrun when the
+  11th was added, so 5 fires six children earlier than the case that motivated the check.
+  `validate` warns above 5; `crux hypothesize` warns *at* 5, because the node being created is
+  the one that breaches.
 
-  The stakes are concrete: a hard error puts the CANDI vault into permanent red on q19, q21,
-  h48, h59 and h60 until those five are refactored into RDs — bundling a migration project
-  onto a feature. The codebase already distinguishes tiers (`artifact_problems` vs
-  `artifact_warnings`), so a warn tier is not a new concept.
-- The exact fan-out threshold N.
+## What this spec did not settle
+
+The cap creates demand for somewhere to put the overflow, and only one of the three channels
+exists today. Decision history moved to git (free, shipped here as a skill rule). Design detail
+still needs [07](07-rd-layer.md) and open work items still need [08](08-taskhub.md); until
+those land, an over-cap node's only remedy is compression. That is the main argument for the
+warn tier, and the main thing to revisit once 07 and 08 ship.
 
 ## Work items
 
-- ☐ Add `## ELI5` / `## TL;DR` to `templates/question.md` and `templates/idea.md`
-- ☐ Prose-word counter + cap check in `validate()`, prose sections only
-- ☐ Fan-out check: unrun `idea` children per question
-- ☐ `eli5` / `tldr` keys in `_node_json`; cockpit leads with them, collapses `detail`
-- ☐ `--json` on existing verbs; `--check=<list>` selector on `validate`
-- ☐ Back-pressure in `cmd_hypothesize`
-- ☐ Skill rule: on a PI ruling, **edit** the node; never append an `AMENDED` block
-- ☐ `ENGINE_VERSION` → 1.3 + proof an old-format vault still loads
+- ☑ Add `## ELI5` / `## TL;DR` to `templates/question.md` and `templates/idea.md`
+- ☑ Prose-word counter + cap check in `validate()`, prose sections only
+- ☑ Fan-out check: unrun `idea` children per question
+- ☑ `eli5` / `tldr` keys in `_node_json`; cockpit leads with them, collapses `detail`
+- ☑ `--json` on existing verbs; `--check=<list>` selector on `validate`
+- ☑ Back-pressure in `cmd_hypothesize`
+- ☑ Skill rule: on a PI ruling, **edit** the node; never append an `AMENDED` block
+- ☑ `ENGINE_VERSION` → 1.3 + proof an old-format vault still loads
 
 ## Acceptance criteria
 

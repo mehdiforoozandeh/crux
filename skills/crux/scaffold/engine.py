@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -49,6 +49,31 @@ IDEA_STATUS      = ["idea", "staged", "running", "done"]
 VERDICTS         = ["supported", "partial", "refuted", "inconclusive"]
 TERMINAL_IDEA    = "done"
 TERMINAL_QUESTION= "resolved"
+
+# node economy (v1.3): the engine has always enforced falsifiability and never economy, so
+# nodes grew without bound until the vault stopped being readable by the PI it exists to
+# serve. Two numbers push back — a prose budget per node, and a fan-out budget per question.
+#
+# Both are WARNINGS, never problems. A hard error would put every already-bloated vault into
+# permanent red on nodes whose only remedy (RD pages, a taskhub) is not built yet; that
+# bundles a migration project onto a feature. `crux validate --strict` is the opt-in.
+PROSE_CAP  = 400        # words of prose per node
+FANOUT_MAX = 5          # unrun hypotheses under one question
+
+# What the cap counts. Deliberately NOT `## Verifiables`, `## Run Links`, `## Artifacts` or
+# the generated ledger: those are structured lists, they are not what made nodes unreadable,
+# and capping them would punish thoroughness in the one place crux wants it. ELI5 and TL;DR
+# count *inside* the budget rather than on top of it — otherwise the schema raises the
+# ceiling instead of capping it.
+PROSE_SECTIONS = {
+    "question": ("ELI5", "TL;DR", "Question", "Answer so far"),
+    "idea":     ("ELI5", "TL;DR", "Problem Statement", "Idea / Hypothesis",
+                 "Planned Intervention", "Findings"),
+}
+
+# `crux validate --check=<list>`. Named so an agent can drive one check deterministically
+# without parsing prose, and so the PI can silence a tier without silencing the whole lint.
+CHECKS = ("tree", "wiki", "economy", "fanout")
 
 class CruxError(Exception):
     """Raised on any rule violation; the CLI turns it into a clean message + exit 1."""
@@ -584,6 +609,69 @@ def refresh(root):
     return changed
 
 # ----------------------------------------------------------------------------- validation
+# ----------------------------------------------------------------------------- node economy (v1.3)
+_PLACEHOLDER = re.compile(r"^\s*_\(.*\)_\s*$")
+
+def _prose_tokens(text):
+    """Whitespace-separated words in a prose section, minus the two things that are guidance
+    rather than content: HTML comments, and a line that is nothing but a `_(placeholder)_`.
+    Dropping placeholders matters — otherwise a node spends part of its budget on the
+    template's own prompts before anyone has written a word."""
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    return " ".join(l for l in text.splitlines() if not _PLACEHOLDER.match(l)).split()
+
+def prose_words(body, node_type):
+    """Words of prose in a node body, counting only PROSE_SECTIONS. Pure — no vault, no
+    filesystem — so it can be called on a string, and a pre-1.3 node with no `## ELI5`
+    simply contributes zero for that section instead of raising.
+
+    The ledger is split off first: it is generated, it can run to hundreds of words on a
+    busy question, and it lives *under* `## Answer so far`, so `_section` would otherwise
+    swallow it and make every question with children look over-cap."""
+    pre = body.split(LEDGER_START)[0]
+    return sum(len(_prose_tokens(_section(pre, h))) for h in PROSE_SECTIONS.get(node_type, ()))
+
+def unrun_children(v, qid):
+    """Hypotheses under `qid` that have never been staged, run or closed — the ones that are
+    pure intent. A question stockpiling these is the fan-out failure mode."""
+    return [c for c in v.children.get(qid, [])
+            if v.nodes[c].type == "idea" and v.nodes[c].status == "idea"]
+
+def economy_warnings(v):
+    """Nodes whose counted prose exceeds PROSE_CAP."""
+    out = []
+    for nid, n in v.nodes.items():
+        if n.type not in PROSE_SECTIONS:
+            continue
+        w = prose_words(n["body"], n.type)
+        if w > PROSE_CAP:
+            out.append((nid, f"{n.type} '{nid}': {w} words of prose, over the {PROSE_CAP}-word cap "
+                             f"(verifiables, artifacts and the ledger are not counted). Compress it, "
+                             f"or move the detail somewhere it belongs."))
+    return out
+
+def fanout_warnings(v):
+    """Questions holding more unrun hypotheses than FANOUT_MAX."""
+    out = []
+    for nid, n in v.nodes.items():
+        if n.type != "question":
+            continue
+        k = len(unrun_children(v, nid))
+        if k > FANOUT_MAX:
+            out.append((nid, f"question '{nid}': {k} hypotheses proposed and none of them run "
+                             f"(cap {FANOUT_MAX}). Run or close some before adding more."))
+    return out
+
+def fanout_pressure(v, qid):
+    """The back-pressure message for the hypothesis about to be created under `qid`, or None
+    when there is room. Fires at exactly FANOUT_MAX because the node being added is the one
+    that breaches — warning after the fact is a warning too late."""
+    k = len(unrun_children(v, qid))
+    if k >= FANOUT_MAX:
+        return (f"question '{qid}' already holds {k} unrun hypotheses (cap {FANOUT_MAX}) — "
+                f"this one puts it over. Run or close some before proposing more.")
+    return None
+
 def validate(v):
     problems = []
     req = {"project": ["id","type","title","status"],
@@ -1017,7 +1105,7 @@ def _materialize(root, project):
     def _add_hypothesis(root, h, qid):
         if h["tested"] and not h["verifiables"]:
             raise CruxError(f"seed: [tested] hypothesis {h['title']!r} needs at least one verifiable")
-        hid, _ = cmd_hypothesize(root, h["title"], parent=qid, problem=h["problem"],
+        hid, _, _ = cmd_hypothesize(root, h["title"], parent=qid, problem=h["problem"],
                                  verifiables=[vf["text"] for vf in h["verifiables"]])
         if not h["tested"]:
             return
@@ -1077,10 +1165,15 @@ def cmd_ask(root, title, parent=None, body_text=""):
     return nid, fn
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
+    """Returns (id, filename, warning). The third element is fan-out back-pressure — None
+    when the parent question has room, a message when this hypothesis puts it over
+    FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
+    number out loud and lets the PI decide."""
     v = Vault(root)
     p = v.get(parent)
     if p.type != "question":
         raise CruxError("a hypothesis must hang under a question (use `ask` first)")
+    warning = fanout_pressure(v, parent)
     nid = _new_id(v, "idea")
     fn = f"{nid}_{slugify(title)}.md"
     text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
@@ -1091,7 +1184,7 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
         text = text.replace(f"- [ ] {verifiables[0]}", f"- [ ] {verifiables[0]}\n{extra}")
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
-    return nid, fn
+    return nid, fn, warning
 
 def _bump(node):
     node["fm"]["updated"] = now()
@@ -1254,8 +1347,34 @@ def cmd_synthesize(root, title, questions):
     refresh(root)
     return nid, fn
 
-def cmd_validate(root):
-    return validate(Vault(root)) + validate_wiki(root)
+def validation_report(root, checks=None):
+    """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
+    economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
+    CHECKS; None runs them all.
+
+    This is the machine-readable form behind `crux validate --json` and the cockpit — one
+    serializer, so the CLI, the GUI and an agent can never drift apart on what 'valid' means."""
+    names = tuple(checks) if checks else CHECKS
+    unknown = [c for c in names if c not in CHECKS]
+    if unknown:
+        raise CruxError(f"unknown check(s): {', '.join(unknown)} — known checks are "
+                        f"{', '.join(CHECKS)}")
+    v = Vault(root)
+    problems, warnings = [], []
+    if "tree"    in names: problems += validate(v)
+    if "wiki"    in names: problems += validate_wiki(root)
+    if "economy" in names: warnings += economy_warnings(v)
+    if "fanout"  in names: warnings += fanout_warnings(v)
+    return {"ok": not problems and not warnings,
+            "checks": list(names),
+            "problems": [{"id": i, "message": m} for i, m in problems],
+            "warnings": [{"id": i, "message": m} for i, m in warnings]}
+
+def cmd_validate(root, checks=None):
+    """The hard problems only, as (id, message) pairs. Kept at this return type on purpose:
+    it is what every caller and every selftest assert already expects. Warnings live in
+    `validation_report`."""
+    return [(p["id"], p["message"]) for p in validation_report(root, checks)["problems"]]
 
 # ----------------------------------------------------------------------------- text status view
 def status_text(root, node=None):
@@ -1296,6 +1415,14 @@ def _section(body, heading):
         if grab:
             out.append(line)
     return "\n".join(out).strip()
+
+def _summary(body, heading):
+    """An `## ELI5` / `## TL;DR` section for the cockpit. Returns '' both when the section is
+    absent (a pre-1.3 node) and when it still holds nothing but the template placeholder — a
+    summary nobody has written should read as empty, not lead the detail pane with
+    `_(one sentence, plain language, no jargon)_`."""
+    text = _section(body, heading)
+    return "" if not _prose_tokens(text) else text
 
 def _verifiables(body):
     """The `## Verifiables` list as read-only tri-state: [{text, state}] with state in met/unmet/na."""
@@ -1353,6 +1480,12 @@ def _node_json(v, n):
         pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent
         d["stale"] = bool(n["fm"].get("stale"))
+        # the summary pair leads the cockpit's detail pane; `detail` is the long form behind
+        # it. Before 1.3 `detail` WAS the lead, which is how a 5,000-word question arrived in
+        # the pane as a wall of text.
+        d["eli5"] = _summary(pre, "ELI5")
+        d["tldr"] = _summary(pre, "TL;DR")
+        d["words"] = prose_words(n["body"], "question")
         d["detail"] = _section(pre, "Question")
         d["answer"] = _section(pre, "Answer so far")
         d["synthesis"] = n["fm"].get("synthesis") or None   # the approved synthesis that closed it
@@ -1363,6 +1496,9 @@ def _node_json(v, n):
         d["parent"] = n.parent
         d["verdict"] = verdict if verdict in VERDICTS else None   # only ever a valid enum or None
         d["metric"] = n["fm"].get("metric") or None
+        d["eli5"] = _summary(n["body"], "ELI5")
+        d["tldr"] = _summary(n["body"], "TL;DR")
+        d["words"] = prose_words(n["body"], "idea")
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
         d["verifiables"] = _verifiables(n["body"])
@@ -1381,6 +1517,12 @@ def _node_json(v, n):
         d["body"] = "\n".join(l for l in n["body"].splitlines()
                               if not l.strip().startswith("Related::")).strip()
     return d
+
+def node_json(vault, nid):
+    """One node's read-only JSON — the same shape `snapshot()` puts under `nodes`. Public so
+    `crux status <id> --json` reuses the serializer instead of growing a second one."""
+    v = vault if isinstance(vault, Vault) else Vault(vault)
+    return _node_json(v, v.get(nid))
 
 def _subtree(v, nid):
     return {"id": nid, "children": [_subtree(v, c) for c in v.children[nid]]}
@@ -1412,6 +1554,9 @@ def snapshot(vault):
         "engine_version": ENGINE_VERSION,
         "crux_version": CRUX_VERSION,
         "update": _update_snapshot(),
+        # the economy budgets, published so the cockpit reads the engine's numbers instead of
+        # keeping its own copy of them
+        "limits": {"prose_cap": PROSE_CAP, "fanout_max": FANOUT_MAX},
         "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
                     "status": root.status, "goal": _section(root["body"], "Goal")},
         "nodes": {nid: _node_json(v, n) for nid, n in v.nodes.items()},
