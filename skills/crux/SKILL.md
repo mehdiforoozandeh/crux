@@ -1,22 +1,11 @@
 ---
 name: crux
-description: >-
-  An agentic research companion — a scientific-method lab notebook for navigating
-  large research programs. Organize work as a tree of Questions (what we don't know)
-  and falsifiable Hypotheses (testable leaves), each with pre-registered verifiables
-  and findings; a deterministic engine rolls results up into per-question answers,
-  trips a human review gate, and regenerates an Obsidian-graphable META + experiments
-  registry. Use when the user wants to run a research program rigorously: open/track
-  research questions, design experiments as problem-statement → hypothesis → verifiables
-  → findings, synthesize results, and update the open questions. Triggers: crux,
-  "open a research question", "lab notebook", "hypothesis/experiment tracking",
-  "design an experiment", "what should we try next", "research notebook", scientific
-  method, meta-questions, Obsidian research vault.
+description: "An agentic research companion — a scientific-method lab notebook for navigating large research programs. Organize work as a tree of Questions (what we don't know) and falsifiable Hypotheses (testable leaves), each with pre-registered verifiables and findings; a deterministic engine rolls results up into per-question answers, trips a human review gate, and regenerates an Obsidian-graphable META + experiments registry. Use when the user wants to run a research program rigorously: open/track research questions, design experiments as problem-statement → hypothesis → verifiables → findings, synthesize results, and update the open questions. Triggers: crux, \"open a research question\", \"lab notebook\", \"hypothesis/experiment tracking\", \"design an experiment\", \"what should we try next\", \"research notebook\", scientific method, meta-questions, research vault."
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
   version: "1.0"
-  notice: "Bundled engine is original MIT work; no third-party code."
+  notice: Bundled engine is original MIT work; no third-party code.
 ---
 
 # crux — an agentic research companion
