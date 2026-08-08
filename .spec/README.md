@@ -13,7 +13,7 @@ rationale rather than just checklists.
 | 03 | [LLM wiki](03-llm-wiki.md) | `wiki` | ◐ |
 | 04 | [ERA: empirical program search](04-era.md) | `era` | ☐ |
 | 05 | [Autoresearch: autonomous experiment loops](05-autoresearch.md) | `autoresearch` | ☐ |
-| 06 | [Node economy](06-node-economy.md) | `economy` | ☐ |
+| 06 | [Node economy](06-node-economy.md) | `economy` | ☑ |
 | 07 | [RD layer](07-rd-layer.md) | `rd` | ☐ |
 | 08 | [Taskhub](08-taskhub.md) | `taskhub` | ☐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☐ |

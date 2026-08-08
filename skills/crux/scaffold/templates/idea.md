@@ -14,6 +14,14 @@ updated: <<now>>
 
 Parent:: [[<<parent_basename>>]]
 
+## ELI5
+
+_(one sentence, plain language, no jargon)_
+
+## TL;DR
+
+_(one paragraph: what this claims, and what would settle it)_
+
 ## Problem Statement
 
 <<problem>>

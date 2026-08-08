@@ -802,6 +802,35 @@ function badge(text, varName, cls) {
 
 function section(title, html) { return `<div class="sec"><h4>${title}</h4>${html}</div>`; }
 
+// Spec 06 (node economy). The pane leads with the node's own one-sentence ELI5 and its
+// one-paragraph TL;DR. Before v1.3 the lead was the entire `## Question` section, which is
+// how a 5,000-word question arrived here as a wall of text and made the cockpit unskimmable.
+// Both are empty until someone writes them — an unwritten summary is simply absent, never a
+// rendered template placeholder.
+function summaryLead(n) {
+  const rows = [];
+  if (n.eli5 && n.eli5.trim()) rows.push(`<div class="sum-row sum-eli5"><span class="sum-k">ELI5</span>${mdRender(n.eli5)}</div>`);
+  if (n.tldr && n.tldr.trim()) rows.push(`<div class="sum-row sum-tldr"><span class="sum-k">TL;DR</span>${mdRender(n.tldr)}</div>`);
+  return rows.length ? `<div class="summary">${rows.join("")}</div>` : "";
+}
+
+// A prose section that might be long. Folded when it is, open when it isn't — so the reader
+// lands on the summary, and the long form is one click away rather than in the way.
+function foldedSection(title, text, empty) {
+  if (!(text && text.trim())) return section(title, bodyOr(text, empty));
+  const words = text.trim().split(/\s+/).length;
+  if (words <= 60) return section(title, bodyOr(text, empty));
+  return `<details class="sec fold"><summary class="fold-h">${title}` +
+         `<span class="fold-n">${words} words</span></summary>` + bodyOr(text, empty) + `</details>`;
+}
+
+// Said out loud only when the node is over the engine's budget, and only using the engine's
+// own number — the cockpit never keeps its own copy of the cap.
+function economyBadge(n) {
+  const cap = (state.snap.limits || {}).prose_cap;
+  return cap && n.words > cap ? badge(`${n.words} words · over cap`, "--q-review") : "";
+}
+
 // Node prose is MARKDOWN, and is rendered as such — headings, lists, tables, code and all.
 // (It used to be printed as escaped source, so a finding written with any structure at all
 // showed up as literal `**bold**` and `- bullets`.) Wiki citations keep working: the
@@ -912,13 +941,15 @@ function questionDetail(n) {
     (l.subq_total ? ` · ${l.subq_resolved}/${l.subq_total} sub-questions resolved` : "") + `<br>` +
     VERDICTS.map((k) => `${l[k]} ${k}`).join(" · ") + `</div>`;
   const kids = n.children.map((cid) => childLink(cid)).join("");
-  // the question's own framing (## Question); shown only when it adds to the title
+  // the question's own framing (## Question); shown only when it adds to the title, and
+  // folded when it runs long — the ELI5/TL;DR pair above is what the pane opens on
   const stmt = n.detail && n.detail.trim() && n.detail.trim() !== n.title.trim()
-    ? section("Detail", bodyOr(n.detail, "")) : "";
+    ? foldedSection("Detail", n.detail, "") : "";
   // a resolved question closed on an APPROVED synthesis — surface it, and make it openable
   const syn = n.synthesis && state.snap.nodes[n.synthesis]
     ? section("Closed on synthesis", childLink(n.synthesis)) : "";
-  return head("question", n.title) + `<div class="badges">${badges}</div>` +
+  return head("question", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` +
+    summaryLead(n) +
     stmt +
     section("Answer so far", bodyOr(n.answer, "not yet interpreted")) +
     syn +
@@ -977,8 +1008,9 @@ function ideaDetail(n) {
       `<span class="ro-ic">▤</span><span class="ro-txt">Open report</span>` +
       `<span class="ro-sub2">${esc(rep.path.split("/").pop())}</span></button>`
     : "";
-  return head("hypothesis", n.title) + `<div class="badges">${badges}</div>` + openReportBtn +
-    section("Problem", bodyOr(n.problem, "—")) +
+  return head("hypothesis", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` + openReportBtn +
+    summaryLead(n) +
+    foldedSection("Problem", n.problem, "—") +
     section("Verifiables", vs) +
     section("Run links", runs) +
     artifactsSection(n) +

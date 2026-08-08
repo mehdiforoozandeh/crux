@@ -362,6 +362,32 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 /* rendered markdown supplies its own block structure — pre-wrap would double every gap */
 .sec .body.md-body { white-space: normal; }
 .sec .muted { color: var(--ink-mute); font-style: italic; }
+
+/* node economy (spec 06): the summary pair the detail pane opens on. Set off from the rest
+   of the pane so the eye lands here first — this is the whole point of the ELI5/TL;DR slot,
+   and the sections below it are the long form you read only if you need it. */
+.summary { margin: 0 0 16px; padding: 11px 13px; border-radius: 9px;
+           border: 1px solid var(--line); background: var(--panel2); }
+.sum-row + .sum-row { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
+.sum-k { display: block; font-size: .74em; font-weight: 700; text-transform: uppercase;
+         letter-spacing: .7px; color: var(--ink-dim); margin-bottom: 3px; }
+.sum-row :where(p):first-of-type { margin-top: 0; }
+.sum-row :where(p):last-of-type { margin-bottom: 0; }
+.sum-eli5 { font-size: 1.02em; }
+.sum-tldr { color: var(--ink); }
+
+/* a long prose section, folded. `.fold` reuses `.sec` spacing; the marker is the only
+   affordance, so it has to stay visible in both themes. */
+.fold > .fold-h { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px;
+                  margin: 0 0 6px; font-size: .86em; font-weight: 600; text-transform: uppercase;
+                  letter-spacing: .6px; color: var(--ink-dim); }
+.fold > .fold-h::-webkit-details-marker { display: none; }
+.fold > .fold-h::before { content: "▸"; display: inline-block; transition: transform .15s ease;
+                          font-size: .9em; color: var(--ink-mute); }
+.fold[open] > .fold-h::before { transform: rotate(90deg); }
+.fold > .fold-h:hover { color: var(--ink); }
+.fold-n { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0;
+          color: var(--ink-mute); }
 .verif { list-style: none; padding: 0; margin: 0; }
 .verif li { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
 .tick { flex: 0 0 auto; width: 1.15em; height: 1.15em; border-radius: 4px; border: 1.5px solid var(--line); font-size: .82em; line-height: 1.05em; text-align: center; }

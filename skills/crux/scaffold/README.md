@@ -35,7 +35,25 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 | `synthesize` | weave, rollup | optional horizontal synthesis across questions |
 | `ingest` | source, add-source | register a PI-curated `raw/` source into the literature wiki |
 | `serve` | gui, ui, cockpit | open the read-only browser cockpit over the vault (localhost, view-only) |
-| `validate` | lint, check | run all integrity checks (tree + wiki structural lint) |
+| `validate` | lint, check | run all integrity checks (tree + wiki lint, plus economy warnings) |
+
+Every verb except `init`, `serve` and `selftest` takes `--json`, so a caller reads a result
+instead of parsing prose. `crux status --json` is the whole snapshot, `crux status q3 --json`
+one node, `crux validate --json` the `{ok, checks, problems, warnings}` report.
+
+## Node economy (v1.3)
+
+Two budgets, both **warnings** — `crux validate` prints them and still exits 0; `--strict`
+makes them fail. `--check=tree,wiki,economy,fanout` runs a subset.
+
+- **400 words of prose per node.** Counted: `ELI5`, `TL;DR`, `Question` / `Problem Statement`
+  + `Idea / Hypothesis` + `Planned Intervention`, and `Answer so far` / `Findings`.
+  **Not** counted: `Verifiables`, `Run Links`, `Artifacts`, and the generated ledger — those
+  are structured, they were never the bloat, and capping them would punish thoroughness.
+- **5 unrun hypotheses per question.** `hypothesize` warns on the call that would breach it.
+
+Advisory on purpose: an over-cap node's real fix is often to move detail elsewhere, and not
+every destination exists yet. `--strict` is how you opt into red.
 
 ## Lifecycles
 

@@ -42,6 +42,11 @@ A hypothesis's `## Findings` can spawn **new** child questions — that's the lo
 The tree is the `Parent:: [[…]]` wikilink in each file; `META.md`/`EXPERIMENTS.md` are
 generated views (never hand-edit).
 
+**Every question and hypothesis opens with `## ELI5` (one sentence, no jargon) and `## TL;DR`
+(one paragraph: what it asks or claims, and what would settle it).** Write both when you
+create the node. They are what the PI reads first in the cockpit, and they are the node's
+job description — if you can't write the TL;DR, the node isn't ready to exist yet.
+
 **Literature wiki (optional).** A crux vault can carry a `raw/` + `wiki/` **literature layer**
 — prior methods, SOTA, baselines, definitions the agent compiles and draws on. It's a separate
 skill (**crux-wiki**) sharing this engine; when proposing questions/hypotheses, consult
@@ -194,7 +199,11 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `approve` | sign-off, signoff | ◆ | **the PI's signature on a synthesis** — never run this on your own judgment |
 | `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
 | `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit (localhost; view-only — tree, review gate, rendered reports + figures; launch playbook: the **crux-cockpit** skill) |
-| `validate` | lint, check | ○ | integrity checks (tree + wiki structural lint) |
+| `validate` | lint, check | ○ | integrity checks (tree + wiki lint, plus the economy warnings). `--strict` fails on warnings; `--check=tree,economy` runs a subset |
+
+Every verb above except `init`/`serve`/`selftest` takes **`--json`** — use it when you need to
+read a result back rather than show it. `crux status --json` is the whole vault; `crux status
+q3 --json` is one node; `crux validate --json` is `{ok, checks, problems, warnings}`.
 
 ## How you run a session
 
@@ -236,6 +245,24 @@ and `crux answer` will refuse until it's signed.
   a headline metric string. This is what keeps crux reusable across projects.
 - **One parent per node** (it's a tree). Use extra `[[links]]` for "see also" — they show in the graph
   but don't affect roll-up.
+- **Keep a node under 400 words of prose.** The budget covers `ELI5` + `TL;DR` + the framing
+  sections + `Answer so far` / `Findings`. It does **not** cover `## Verifiables`,
+  `## Run Links` or `## Artifacts` — be as thorough there as the science needs; the cap is
+  aimed at prose, not at rigor. `crux validate` says which nodes are over.
+
+  A node that wants more room is usually one node doing several jobs. Split the question,
+  or move the design detail into the report you link under `## Artifacts`.
+- **When the PI rules, edit the text — the diff is the history.** Never append an
+  `AMENDED 2026-08-04 (PI ruling)` block to a node. Vault files are git-tracked, so
+  `git log -p <node>.md` already *is* the changelog, and appending rulings is how a
+  600-word node quietly becomes a 5,000-word one. Rewrite the affected sentence in place.
+- **Don't stockpile hypotheses.** Five proposed-but-unrun hypotheses under one question is
+  the cap; past that `crux hypothesize` warns and `validate` flags the question. Run or close
+  some before proposing more — an unrun hypothesis costs nothing to write and buys nothing
+  until it's tested.
+- **Node files are files, not chat.** Your response-formatting habits don't apply here: no
+  `### TL;DR`-style improvised headings beyond the schema above, no restating the section
+  you just wrote. The node's schema is the format.
 
 ## Running the engine
 
