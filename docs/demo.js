@@ -461,15 +461,26 @@ function onScroll() {
 
 layout();   /* place the nodes before anything tries to measure them */
 
-if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+/* Reduced motion gets the *last* frame — the finished tree — because a static
+   reader sees one frame and it should be the one carrying the most. Everything
+   that repaints has to honour that: onScroll() recomputes a beat from scroll
+   position, so calling it here would silently replace the finished tree with
+   beat 1, the emptiest frame on the page. That is exactly what the load handler
+   below used to do, which left these readers with 1 of the 9 beats and no way to
+   reach the other 8. Repaint through paint(), never through onScroll() directly. */
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const paint = () => REDUCED ? render(BEATS.length - 1, 0.999) : onScroll();
+
+if (REDUCED) {
   track.style.height = 'auto';
   document.getElementById('stageWrap').classList.add('static');
-  render(BEATS.length - 1, 0.999);
 } else {
   addEventListener('scroll', onScroll, {passive:true});
-  addEventListener('resize', () => { layout(); onScroll(); });
-  mqNarrow.addEventListener('change', () => { layout(); onScroll(); });
   render(0, 0);
-  onScroll();
 }
-addEventListener('load', () => { layout(); onScroll(); });
+/* registered in both modes: a reduced-motion reader who resizes or crosses the
+   narrow breakpoint still needs the tree re-laid-out under the new geometry */
+addEventListener('resize', () => { layout(); paint(); });
+mqNarrow.addEventListener('change', () => { layout(); paint(); });
+paint();
+addEventListener('load', () => { layout(); paint(); });

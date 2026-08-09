@@ -80,12 +80,29 @@ button.tt svg{width:13px; height:13px; display:block}
 /* ─────────────────────────────────────────────── hero */
 header.hero{min-height:88vh; display:flex; flex-direction:column; justify-content:center;
   padding:120px 0 40px}
-header.hero h1{font-size:clamp(30px,4.6vw,46px); line-height:1.14; margin:0 0 22px; max-width:18ch}
+/* No max-width. The <br> sets the break and .wrap already caps the column at 760px, so a cap
+   here could only ever cause a wrap, never prevent one — and it did: at 18ch it allowed 534px,
+   while "You stay the lead scientist." needs 487px in SF Pro but 556-559px in Helvetica Neue /
+   Helvetica / Arial. Anywhere -apple-system failed to resolve, the second line broke into three.
+   `ch` cannot fix this by being larger: it scales with the same font, and Helvetica's digit is
+   narrow relative to its lowercase, so a wider face inflates the requirement faster than the
+   budget. Below ~430px the line wraps whatever we do — 28 characters will not fit a phone at a
+   readable size, and wrapping there is fine. */
+header.hero h1{font-size:clamp(30px,4.6vw,46px); line-height:1.14; margin:0 0 22px}
 header.hero h1 .g{color:var(--gold)}
 .deck{font-size:17px; line-height:1.5; color:var(--dim); max-width:58ch}
 .deck b{color:var(--ink); font-weight:600}
 .kicker{margin:0 0 18px; font:400 13px/1 var(--mono); color:var(--mute); letter-spacing:.06em}
 .links{display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:28px; font-size:14.5px}
+/* The install line lives up here as well as in §Install: on a 10,935px page the
+   command sat 11.4 viewport-heights down, which is past where any first visit ends. */
+.hero-cta{margin-top:30px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px}
+/* flex:none — as a shrinkable flex item the box narrows below its own text, and
+   `overflow-x:auto; white-space:pre` then slides the command under the copy button */
+.code.mini{margin:0; padding:11px 64px 11px 14px; font-size:12.3px; border-radius:8px;
+  flex:0 0 auto; overflow:visible}
+.code.mini .copy{top:6px; right:6px; padding:5px 7px; font-size:10.5px}
+.hero-cta .alt{margin:0; font-size:14.5px; color:var(--dim)}
 .cue{margin-top:44px; font:400 10.5px/1 var(--mono); letter-spacing:.14em;
   text-transform:uppercase; color:var(--mute); opacity:.6;
   display:flex; align-items:center; gap:8px}
@@ -319,6 +336,11 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
   .code{font-size:11px; line-height:1.8; padding:34px 13px 13px;
     white-space:pre-wrap; overflow-wrap:anywhere}
   .copy{font-size:10px; padding:5px 7px; top:7px; right:8px}
+  /* .code.mini outranks the rule above on specificity, so it needs the same
+     copy-button-on-its-own-strip treatment or the command runs under the button */
+  .code.mini{padding:32px 12px 12px; font-size:11px}
+  .code.mini .copy{top:7px; right:8px; font-size:10px; padding:5px 7px}
+  .hero-cta{gap:8px 14px; margin-top:24px}
   ul.vs button{font-size:14.5px; gap:10px}
   .term{font-size:12px}
 }
@@ -354,8 +376,12 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
 <body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
-  <!-- The Southern Cross. Square box so every use renders identically; the
-       fifth star sits at the computed centre of its own quadrant (96,122). -->
+  <!-- The Southern Cross. Square box so every use renders identically.
+       Epsilon Crucis (the fifth, faintest star) sits at 110,130 r15. It was at
+       96,122 r20, which left 1.4 units between it and the Gacrux–Acrux line —
+       sub-pixel at 21px in the nav and at 12px in the cockpit bar, so the star
+       and the line fused into one blob. 110,130 r15 clears everything by 20.9.
+       Smaller is also truer: Epsilon is much the faintest of the five. -->
   <symbol id="cruxmark" viewBox="-51 -27 229 229">
     <g stroke="currentColor" stroke-width="17" stroke-linecap="round">
       <line x1="75" y1="0" x2="62.5" y2="170"/><line x1="0" y1="90" x2="130" y2="75"/>
@@ -363,7 +389,7 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
     <g fill="currentColor">
       <circle cx="75" cy="0" r="21"/><circle cx="62.5" cy="170" r="25"/>
       <circle cx="0" cy="90" r="21"/><circle cx="130" cy="75" r="20"/>
-      <circle cx="96" cy="122" r="20"/>
+      <circle cx="110" cy="130" r="15"/>
     </g>
   </symbol>
 </defs></svg>
@@ -384,6 +410,9 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
   <p class="kicker">an agentic lab notebook</p>
   <h1>AI does the legwork.<br><span class="g">You stay the lead scientist.</span></h1>
   <p class="deck">A tree of questions and falsifiable hypotheses, and a literature wiki &mdash; all in plain markdown.</p>
+  <div class="hero-cta">
+    <div class="code mini" id="c0"><button class="copy" data-t="c0">copy</button>npx skills add mehdiforoozandeh/crux --all</div>
+  </div>
   <p class="cue"><i></i> scroll</p>
 </header>
 </div>
