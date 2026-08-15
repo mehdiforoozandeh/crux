@@ -1521,6 +1521,35 @@ def run_webui():
     check("webui: the stylesheet header documents the real theme behavior",
           "before first paint" in style and "prefers-color-scheme" in style)
 
+    # -- spec 12 (PRD-D): the type scale. Pane steps 12 / 16 / 21 px (a perfect fourth —
+    #    a step under ~1.2× does not read as a step, which was the complaint), and the
+    #    chrome consolidated to three NAMED sizes carried as variables so drift is
+    #    visible. Exempt by decision D8: SVG canvas text (.node/.wnode — those px sizes
+    #    feed the canvas measureText geometry in app.js), the pane's own em-driven
+    #    content, and the A/A/A size-hint glyphs (iconography that depicts size).
+    steps = {m.group(1): float(m.group(2)) for m in re.finditer(
+        r'#detail-content\[data-font="(\w+)"\]\s*\{\s*font-size:\s*([\d.]+)px', style)}
+    check(f"webui: the pane scale is 12 / 16 / 21 (found {steps})",
+          steps == {"small": 12.0, "medium": 16.0, "large": 21.0})
+    check("webui: the default pane size IS the medium step",
+          bool(re.search(r"#detail-content\s*\{[^}]*font-size:\s*16px", style)))
+    check("webui: every pane step reads as a step (ratio >= 1.2)",
+          len(steps) == 3 and steps["medium"] / steps["small"] >= 1.2
+          and steps["large"] / steps["medium"] >= 1.2)
+    check("webui: the three chrome sizes are named variables (10 / 11.5 / 12.5)",
+          "--fs-ui: 12.5px" in style and "--fs-ui-sm: 11.5px" in style
+          and "--fs-ui-xs: 10px" in style)
+    exempt = re.compile(r"(\.node|\.wnode|#detail-content|#detail-fontctl button\[data-font)")
+    strays = []
+    for m in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
+        sel = m.group(1).strip().splitlines()[-1].strip()
+        if exempt.search(sel):
+            continue
+        for px in re.findall(r"font-size:\s*([\d.]+)px", m.group(2)):
+            strays.append(f"{sel}: {px}px")
+    check(f"webui: chrome carries no stray px font-size — all through the vars (strays: {strays[:4]})",
+          not strays)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never

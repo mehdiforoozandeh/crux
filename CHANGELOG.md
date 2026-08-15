@@ -66,6 +66,13 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: a type scale that reads** (spec [`12`](.spec/12-cockpit-craft.md)). The detail
+  pane's three text steps were 12.5 / 14 / 16.5 px — ratios under 1.2, which does not read
+  as a step. Now 12 / 16 / 21 (a perfect fourth): small is a genuine overview, large a
+  genuine reading mode, and the whole pane scales in `em` off the step as before. The
+  chrome went the opposite way: ~12 distinct sizes between 8.5 and 15.5 px collapsed to
+  three named variables (10 / 11.5 / 12.5), with hierarchy carried by ink tier and weight —
+  SVG canvas labels are exempt because their sizes feed the node-geometry `measureText`.
 - **Cockpit: the theme now actually follows the OS** (spec
   [`12`](.spec/12-cockpit-craft.md)). The stylesheet header promised "saved preference,
   else system"; the code defaulted to dark and never consulted the OS. Now: with no saved

@@ -17,6 +17,11 @@
   --h-idea: #6a7280; --h-staged: #4f74c8; --h-running: #4f9fe0;
   --v-supported: #3fa06a; --v-partial: #8b5cf6; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
   --root: #8a8f98; --synth: #57c8c0;
+  /* chrome type scale (spec 12): every UI-chrome font-size goes through these three
+     steps — hierarchy beyond that is carried by ink tier and weight, not size. Canvas
+     text (SVG node labels) is NOT chrome: its px sizes feed the measureText geometry
+     in app.js, and the pane's content scales in em off the reader control instead. */
+  --fs-ui: 12.5px; --fs-ui-sm: 11.5px; --fs-ui-xs: 10px;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
@@ -62,16 +67,16 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .brand .mark { height: 22px; width: auto; flex: 0 0 auto; }
 .brand .mark .mk-l { stroke: var(--brand); stroke-opacity: .8; stroke-width: 3.6; stroke-linecap: round; }
 .brand .mark .mk-s { fill: var(--brand); }
-.brand .wordmark { color: var(--brand); font-weight: 800; font-size: 15.5px; letter-spacing: .2px; }
+.brand .wordmark { color: var(--brand); font-weight: 800; font-size: var(--fs-ui); letter-spacing: .2px; }
 .brand .divider { width: 1px; height: 16px; background: var(--line); }
-#project-title { font-size: 12.5px; color: var(--ink-dim); font-weight: 500;
+#project-title { font-size: var(--fs-ui); color: var(--ink-dim); font-weight: 500;
   flex: 0 1 auto; min-width: 48px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* read-only reminder: an always-visible "View-only" pill in the header (the cockpit never
    writes — edits go through the agent/CLI). The full explanation lives in its tooltip and in
    the detail-pane footer below. */
 .ro-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; cursor: default;
-  font-size: 10.5px; font-weight: 600; letter-spacing: .2px; color: var(--ink-dim); white-space: nowrap;
+  font-size: var(--fs-ui-xs); font-weight: 600; letter-spacing: .2px; color: var(--ink-dim); white-space: nowrap;
   padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); }
 .ro-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--q-resolved); flex: 0 0 auto; }
 /* .tools must GROW (not just sit at content width) — the search is the only growing child
@@ -84,12 +89,12 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 #search-wrap { position: relative; flex: 0 1 290px; min-width: 190px; max-width: 320px; }
 #search {
   width: 100%; padding: 5px 56px 5px 10px; border-radius: 7px; border: 1px solid var(--line);
-  background: var(--panel2); color: var(--ink); font-size: 12.5px;
+  background: var(--panel2); color: var(--ink); font-size: var(--fs-ui);
   user-select: text; -webkit-user-select: text;
 }
 #search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 #search-count { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
-  font-size: 10px; color: var(--ink-mute); pointer-events: none;
+  font-size: var(--fs-ui-xs); color: var(--ink-mute); pointer-events: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 #search-count[hidden] { display: none; }
 
@@ -97,11 +102,11 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 .viewctl { display: flex; gap: 5px; flex: 0 0 auto; }
 .viewctl button {
   height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line);
-  background: var(--panel2); color: var(--ink); font-size: 12px; line-height: 1; cursor: pointer;
+  background: var(--panel2); color: var(--ink); font-size: var(--fs-ui); line-height: 1; cursor: pointer;
   display: flex; align-items: center; gap: 5px; white-space: nowrap;
   transition: border-color .16s ease, color .16s ease, background-color .16s ease, transform .1s ease;
 }
-.viewctl button .ic { font-size: 13px; }
+.viewctl button .ic { font-size: var(--fs-ui); }
 .viewctl button .tb-label { font-weight: 550; white-space: nowrap; }
 .viewctl button[hidden] { display: none; }
 .viewctl button.na { visibility: hidden; }   /* radial retires left-right but keeps its slot */
@@ -123,20 +128,20 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
 #review-btn {
   flex: 0 0 auto; white-space: nowrap; height: 28px; padding: 0 12px; border-radius: 7px;
   border: 1px solid var(--q-review); background: transparent; color: var(--ink);
-  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  font-size: var(--fs-ui); font-weight: 600; cursor: pointer;
 }
 #review-btn.active { background: var(--q-review); color: #1a1305; }
 #review-btn.has-queue { box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-review) 28%, transparent); }
 #theme-btn {
   flex: 0 0 auto; width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line);
-  background: var(--panel2); color: var(--ink-dim); font-size: 14px; line-height: 1;
+  background: var(--panel2); color: var(--ink-dim); font-size: var(--fs-ui); line-height: 1;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 #theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* release version, and the once-a-day update notice when there is one (the CLI fills that
    cache; the server never fetches) */
-#version-chip { flex: 0 0 auto; font-size: 10.5px; font-weight: 600; color: var(--ink-mute);
+#version-chip { flex: 0 0 auto; font-size: var(--fs-ui-xs); font-weight: 600; color: var(--ink-mute);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: default; white-space: nowrap;
   padding: 2px 7px; border-radius: 999px; border: 1px solid transparent; }
 #version-chip:empty { display: none; }
@@ -181,12 +186,14 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 #tree.morph .lbl, #tree.morph .glyph, #tree.morph .vdot, #tree.morph .code-div { display: none; }
 #detail-pane { position: relative; flex: 1 1 38%; min-width: 280px; max-width: 560px; overflow: hidden;
   background: var(--panel); display: flex; flex-direction: column; }
-/* the scrolling content; its base font-size drives everything inside (children use em) */
-#detail-content { flex: 1 1 auto; overflow-y: auto; padding: 16px 20px 22px; font-size: 14px; }
+/* the scrolling content; its base font-size drives everything inside (children use em).
+   The scale is a perfect fourth (12 / 16 / 21, ×1.33 — spec 12): each step big enough to
+   READ as a step, so small is a genuine overview and large a genuine reading mode. */
+#detail-content { flex: 1 1 auto; overflow-y: auto; padding: 16px 20px 22px; font-size: 16px; }
 #detail-content:focus { outline: none; }   /* programmatic focus (Enter on the tree) — no ring */
-#detail-content[data-font="small"]  { font-size: 12.5px; }
-#detail-content[data-font="medium"] { font-size: 14px; }
-#detail-content[data-font="large"]  { font-size: 16.5px; }
+#detail-content[data-font="small"]  { font-size: 12px; }
+#detail-content[data-font="medium"] { font-size: 16px; }
+#detail-content[data-font="large"]  { font-size: 21px; }
 /* text-size control, floating top-right of the detail pane */
 #detail-fontctl { position: absolute; top: 9px; right: 12px; z-index: 3; display: flex; gap: 1px;
   padding: 2px; border-radius: 8px; border: 1px solid var(--line);
@@ -200,7 +207,7 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 #detail-fontctl button:hover { color: var(--ink); }
 #detail-fontctl button.on { background: var(--panel2); color: var(--accent); }
 /* the detail pane's own full-screen toggle, set off from the three text sizes */
-#detail-fontctl .fc-max { font-size: 11px; margin-left: 3px; padding-left: 4px;
+#detail-fontctl .fc-max { font-size: var(--fs-ui-sm); margin-left: 3px; padding-left: 4px;
   border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; width: 24px; }
 /* detail content eases in whenever it changes (new selection / queue) */
 @media (prefers-reduced-motion: no-preference) {
@@ -212,26 +219,24 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 #help { position: absolute; left: 12px; bottom: 10px; display: flex; align-items: center; gap: 8px; }
 #help-btn {
   flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink-mute); font-size: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink-mute); font-size: var(--fs-ui);
   line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(3px); transition: border-color .16s ease, color .16s ease;
 }
 #help-btn:hover { border-color: var(--accent); color: var(--accent); }
-.hint { color: var(--ink-mute); font-size: 10.5px; pointer-events: none; white-space: nowrap; }
+.hint { color: var(--ink-mute); font-size: var(--fs-ui-xs); pointer-events: none; white-space: nowrap; }
 .hint[hidden] { display: none; }
-/* zoom controls — compact (~30% smaller than the header buttons); fit glyph sized larger
-   relative to its button so it reads clearly at this size */
+/* zoom controls — compact (~30% smaller than the header buttons) */
 #zoom-ctl { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 #zoom-ctl button {
   width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
-  font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-ui); line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(3px); box-shadow: var(--shadow);
   transition: border-color .16s ease, color .16s ease, transform .1s ease;
 }
 #zoom-ctl button:hover { border-color: var(--accent); color: var(--accent); }
 #zoom-ctl button:active { transform: translateY(1px); }
-#zoom-ctl #zoom-fit { font-size: 15px; }
 
 /* movable divider between the tree and the detail pane */
 #splitter { flex: 0 0 6px; cursor: col-resize; position: relative; background: var(--line);
@@ -251,17 +256,17 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 }
 #legend[hidden] { display: none; }
 #legend .lg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 1px; }
-#legend .lg-title { font-size: 8.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); }
+#legend .lg-title { font-size: var(--fs-ui-xs); letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); }
 #legend .lg-hide {
   width: 15px; height: 15px; border: none; background: none; color: var(--ink-mute); cursor: pointer;
-  font-size: 14px; line-height: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-ui); line-height: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;
 }
 #legend .lg-hide:hover { color: var(--ink); background: var(--panel2); }
 #legend .lg-row { display: flex; align-items: center; gap: 3px; }
-#legend .lg-group { color: var(--ink-mute); font-size: 8.5px; text-transform: uppercase;
+#legend .lg-group { color: var(--ink-mute); font-size: var(--fs-ui-xs); text-transform: uppercase;
   letter-spacing: .5px; width: 62px; text-align: right; margin-right: 3px; flex: 0 0 auto; }
 #legend .lg {
-  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--ink-dim);
+  display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-ui-xs); color: var(--ink-dim);
   padding: 1px 5px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer;
   font-family: inherit;
 }
@@ -276,14 +281,14 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
   border: 1px solid var(--accent); background: color-mix(in srgb, var(--panel) 92%, transparent);
   backdrop-filter: blur(3px); box-shadow: var(--shadow); }
 #focus-crumb[hidden] { display: none; }
-.fc-label { font-size: 8.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); margin-right: 4px; }
+.fc-label { font-size: var(--fs-ui-xs); letter-spacing: .8px; text-transform: uppercase; color: var(--ink-mute); margin-right: 4px; }
 .fc-step { border: none; background: none; font-family: inherit; cursor: pointer; color: var(--ink-dim);
-  font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; max-width: 160px;
+  font-size: var(--fs-ui-sm); font-weight: 600; padding: 2px 6px; border-radius: 6px; max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-step:hover { color: var(--ink); background: var(--panel2); }
 .fc-step.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
-.fc-sep { color: var(--ink-mute); font-size: 10px; }
-.fc-clear { border: none; background: none; cursor: pointer; color: var(--ink-mute); font-size: 12px;
+.fc-sep { color: var(--ink-mute); font-size: var(--fs-ui-xs); }
+.fc-clear { border: none; background: none; cursor: pointer; color: var(--ink-mute); font-size: var(--fs-ui);
   line-height: 1; width: 18px; height: 18px; border-radius: 50%; margin-left: 3px;
   display: flex; align-items: center; justify-content: center; }
 .fc-clear:hover { color: var(--ink); background: var(--panel2); }
@@ -292,7 +297,7 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 #legend-btn {
   position: absolute; right: 12px; top: 10px; height: 24px; padding: 0 10px; border-radius: 8px;
   border: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 88%, transparent);
-  color: var(--ink-dim); font-size: 11px; font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  color: var(--ink-dim); font-size: var(--fs-ui-sm); font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
   backdrop-filter: blur(3px); box-shadow: var(--shadow); transition: border-color .16s ease, color .16s ease;
 }
 #legend-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px;
@@ -430,7 +435,7 @@ a.go:hover { text-decoration: underline; }
   border: 1px solid var(--line); background: var(--panel2); flex: 0 0 auto; }
 #tabs[hidden] { display: none; }
 #tabs button { height: 22px; padding: 0 12px; border: none; border-radius: 6px; background: none;
-  color: var(--ink-dim); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+  color: var(--ink-dim); font-size: var(--fs-ui); font-weight: 600; cursor: pointer; font-family: inherit;
   transition: background-color .16s ease, color .16s ease; }
 #tabs button:hover { color: var(--ink); }
 #tabs button.on { background: var(--panel); color: var(--accent);
@@ -450,22 +455,22 @@ body[data-tab="wiki"] .viewctl { display: none; }
 #wiki-rail.hidden #wiki-rail-body, #wiki-rail.hidden .wr-title { display: none; }
 .wr-head { display: flex; align-items: center; justify-content: space-between; gap: 6px;
   padding: 8px 10px 6px; flex: 0 0 auto; }
-.wr-title { font-size: 9.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--ink-mute); }
+.wr-title { font-size: var(--fs-ui-xs); letter-spacing: 1.4px; text-transform: uppercase; color: var(--ink-mute); }
 #wiki-rail-btn { width: 18px; height: 18px; border: none; border-radius: 5px; background: none;
-  color: var(--ink-mute); font-size: 11px; line-height: 1; cursor: pointer;
+  color: var(--ink-mute); font-size: var(--fs-ui-sm); line-height: 1; cursor: pointer;
   display: flex; align-items: center; justify-content: center; }
 #wiki-rail-btn:hover { color: var(--accent); background: var(--panel2); }
 #wiki-rail-body { flex: 1 1 auto; overflow-y: auto; padding: 2px 6px 12px; }
 .wr-folder { margin: 1px 0; }
 .wr-fold { display: flex; align-items: center; gap: 5px; width: 100%; border: none; background: none;
-  color: var(--ink-dim); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+  color: var(--ink-dim); font-size: var(--fs-ui); font-weight: 600; cursor: pointer; font-family: inherit;
   padding: 3px 4px; border-radius: 5px; text-align: left; }
 .wr-fold:hover { color: var(--ink); background: var(--panel2); }
-.wr-arrow { width: 10px; font-size: 9px; color: var(--ink-mute); flex: 0 0 auto; }
-.wr-count { margin-left: auto; color: var(--ink-mute); font-size: 10px; font-weight: 500; }
+.wr-arrow { width: 10px; font-size: var(--fs-ui-xs); color: var(--ink-mute); flex: 0 0 auto; }
+.wr-count { margin-left: auto; color: var(--ink-mute); font-size: var(--fs-ui-xs); font-weight: 500; }
 .wr-items { padding-left: 15px; }
 .wr-item { display: block; width: 100%; border: none; background: none; text-align: left;
-  color: var(--ink-dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink-dim); font-size: var(--fs-ui); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   padding: 2.5px 7px; border-radius: 5px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color .14s ease, color .14s ease; }
@@ -473,10 +478,10 @@ body[data-tab="wiki"] .viewctl { display: none; }
 .wr-item.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .wr-specials { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .wr-special { color: var(--ink-mute); }
-.wr-src { display: flex; align-items: baseline; gap: 6px; color: var(--ink-mute); font-size: 11px;
+.wr-src { display: flex; align-items: baseline; gap: 6px; color: var(--ink-mute); font-size: var(--fs-ui-sm);
   padding: 2px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
-.wr-date { margin-left: auto; font-size: 9.5px; opacity: .75; flex: 0 0 auto; }
-.wr-empty { color: var(--ink-mute); font-size: 11.5px; font-style: italic; padding: 6px 8px; }
+.wr-date { margin-left: auto; font-size: var(--fs-ui-xs); opacity: .75; flex: 0 0 auto; }
+.wr-empty { color: var(--ink-mute); font-size: var(--fs-ui-sm); font-style: italic; padding: 6px 8px; }
 
 /* the rail's own divider — same affordance as the main splitter */
 #wiki-rail.resizing { transition: none; }   /* live drag must not fight the flex ease */
@@ -513,18 +518,18 @@ body[data-tab="wiki"] .viewctl { display: none; }
   gap: 4px 10px; max-width: 70%; padding: 5px 9px; border-radius: 9px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(3px); }
 #wiki-legend:empty, #wiki-legend[hidden] { display: none; }
-.wlg { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--ink-dim); }
+.wlg { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-ui-xs); color: var(--ink-dim); }
 .wlg .sw { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .wlg.dim-note { color: var(--ink-mute); font-style: italic; }
 .wlg-hide { width: 15px; height: 15px; border: none; background: none; color: var(--ink-mute);
-  cursor: pointer; font-size: 13px; line-height: 1; border-radius: 4px;
+  cursor: pointer; font-size: var(--fs-ui); line-height: 1; border-radius: 4px;
   display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
 .wlg-hide:hover { color: var(--ink); background: var(--panel2); }
 /* the small "Key" button shown (bottom-left) when the category key is hidden */
 #wiki-legend-btn { position: absolute; left: 12px; bottom: 12px; height: 24px; padding: 0 10px;
   border-radius: 8px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink-dim);
-  font-size: 11px; font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  font-size: var(--fs-ui-sm); font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px;
   backdrop-filter: blur(3px); box-shadow: var(--shadow); transition: border-color .16s ease, color .16s ease; }
 #wiki-legend-btn::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: linear-gradient(135deg, #3fa06a 50%, #8b5cf6 50%); }
@@ -533,12 +538,11 @@ body[data-tab="wiki"] .viewctl { display: none; }
 #wiki-zoom { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 #wiki-zoom button { width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
-  font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-ui); line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(3px); box-shadow: var(--shadow);
   transition: border-color .16s ease, color .16s ease, transform .1s ease; }
 #wiki-zoom button:hover { border-color: var(--accent); color: var(--accent); }
 #wiki-zoom button:active { transform: translateY(1px); }
-#wiki-zoom #wgraph-fit { font-size: 15px; }
 
 /* rendered markdown in the detail pane — the wiki reader, node prose, and
    artifact reports all share this one typography block */
@@ -606,12 +610,12 @@ a.ext { color: var(--accent); }
 .wl-mark { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 
 #offline { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-  background: var(--v-refuted); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 12px; }
+  background: var(--v-refuted); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: var(--fs-ui); }
 
 /* read-only footer — pinned to the bottom of the detail pane, always visible under any
    selection, reminding that edits happen through the agent (or the crux CLI), not here */
 #ro-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 14px;
   border-top: 1px solid var(--line); background: var(--panel); color: var(--ink-mute);
-  font-size: 11px; line-height: 1.35; cursor: default; }
+  font-size: var(--fs-ui-sm); line-height: 1.35; cursor: default; }
 #ro-footer::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--q-resolved); flex: 0 0 auto; }
 #ro-footer .ro-sub { opacity: .8; }
