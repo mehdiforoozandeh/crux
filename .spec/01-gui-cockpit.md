@@ -1,6 +1,12 @@
 # Spec 01 — Graphical UI for crux
 
-**Label:** `ui` · **Status:** ◐ in progress
+**Label:** `ui` · **Status:** ☑ done
+
+> **Closed 2026-08-15.** The cockpit exists, ships, and is used. The remaining `◐` work items
+> below were either settled as deliberate non-goals (editing stays in the agent/CLI) or moved
+> to [12 cockpit craft](12-cockpit-craft.md), which owns interaction and performance as
+> independently shippable work. Packaging is the one genuinely open item and is recorded as a
+> future spec rather than holding this epic open indefinitely.
 
 ## Goal
 

@@ -2,19 +2,22 @@
 
 **Label:** `taskhub` · **Status:** ☐ todo
 **Depends on:** [06 node economy](06-node-economy.md)
+**Amended 2026-08-14:** experiments merged into this layer — see *Experiments are tasks*.
+**Paired with:** [15 evidence semantics](15-evidence-semantics.md), which owns what an
+experiment's results *mean*; this spec owns where they are stored.
 
 ## Goal
 
-A durable, project-level task layer beside the tree and the wiki: a third cockpit tab holding
-the **implementation legwork** of a research program — data prep, infrastructure, code,
-manuscript figures — maintained automatically by agents across months and many sessions, so
-nothing is forgotten.
+A durable, project-level work layer beside the tree and the wiki: a third cockpit tab holding
+everything a research program has to **do** — data prep, infrastructure, code, manuscript
+figures, and the experiments themselves — maintained automatically by agents across months
+and many sessions, so nothing is forgotten.
 
 The PI should be able to *view* it and never have to *manage* it.
 
 ## The dividing line
 
-**Science goes in the tree. Software and implementation go in the taskhub.**
+**Science goes in the tree. Doing goes in the taskhub.**
 
 A task is an **action**. If it is a claim about the world that could be true or false, it is a
 hypothesis and belongs in the tree. If it is work someone has to do, it is a task.
@@ -23,6 +26,89 @@ Task creation normally follows the tree — we open a question, design an experi
 say *"to answer this we need to do X, Y, Z."* But that is the default path, not the only one.
 Manuscript work, project scaffolding, and software-engineering chores are real work with no
 question attached, and they belong here too.
+
+## Experiments are tasks
+
+*Added 2026-08-14, replacing a proposed separate experiment layer.*
+
+An **experiment is a task whose output is evidence.** That is the entire difference. Strip
+both records down and exactly one row differs:
+
+| | ordinary task | experiment |
+|---|---|---|
+| is an action | ✓ | ✓ |
+| many-to-many with tree nodes | ✓ | ✓ |
+| owns its refs; the node gets a computed backlink | ✓ | ✓ |
+| has dependencies | ✓ | ✓ — a pilot blocks the full run |
+| status, and a required output on `done` | ✓ | ✓ |
+| **what the output is** | a *thing* — a dataset, code, a figure | **evidence about a hypothesis** |
+
+Two layers with one differing field is one layer. A separate experiment store was designed
+and dropped; the rationale is under *Rejected alternatives*.
+
+### The role is computed, never stored
+
+A task **may** declare `hypothesis_refs` — the hypotheses it produces evidence about, and
+what it concluded about each. **A task that declares them is an experiment.** Nothing is
+stored to say so.
+
+This is the same move this spec already makes for `blocked`, for the same reason: *a state
+you can compute is a state that cannot drift.* There is no way to have an experiment that
+forgot to be marked one, or a task mislabelled as an experiment.
+
+### The hard line, restated
+
+The original rule was *"a task may never create direction."* That was doing double duty and
+breaks the first time someone observes that a run **is** a task. Replace it with:
+
+> **Work never creates direction. Work produces outputs — and an output that is evidence
+> about a hypothesis enters the gated tier.**
+
+The line moves from *which layer* to *which output*, and it becomes computable:
+
+| | gating |
+|---|---|
+| task with no `hypothesis_refs` | act-and-report, not PI-gated. Ticking "fetched the antibody lot" sets no direction and records no result. |
+| task **with** `hypothesis_refs` | completing it is a verdict input. The PI accepts what it concluded, exactly as `answer` and `pursue` are accepted today. |
+
+The moment a task would *open a question*, it still converts to a tree node and goes through
+the gate. That part is unchanged.
+
+### `experiment` is a reserved, computed category
+
+Category stays exactly as designed below — a tag from a per-vault declared list, rendered as
+the cockpit's visual language, one colour per kind (`data-acquisition`, `hpc-setup`,
+`implementation`, `visualization`, `manuscript`, …).
+
+**`experiment` is reserved.** It cannot be typed by hand; it is assigned by the engine to any
+task carrying `hypothesis_refs`. Every other category is free-form from the declared list.
+Without this, the one category with gating consequences would be the one category that can
+drift.
+
+### Decomposition, and why the PI is not spammed
+
+An experiment breaks down into sub-tasks — acquire the data, implement the arm, run it, make
+the figures — through the **existing `parent` link**. No new mechanism.
+
+**Sub-tasks do not inherit the role.** Only the parent carries `hypothesis_refs`; the
+children are ordinary tasks. Two consequences, both free:
+
+- `blocked` already sequences the whole thing — the experiment is blocked until its children
+  are `done`.
+- **The gate fires once, when the experiment completes — not once per sub-task.** That is what
+  keeps this layer's founding promise (*view it, never manage it*) intact after the merge.
+
+### What the merge buys
+
+1. **One dependency graph.** *"Dedupe the accessions → blocks the pilot → blocks the full
+   run"* is one chain. Under two layers that chain crosses a store boundary and needs plumbing
+   in both directions.
+2. **One frontier query.** *"What can I do right now"* spans chores and experiments, which is
+   the question a PI actually asks. Two frontiers would need merging by hand every time.
+3. **The experiment timeline is a view, not a tab** — the same records, filtered to those with
+   `hypothesis_refs`, ordered by time. That is the one question the tree structurally cannot
+   answer (*what did we actually run, when, and what did it conclude*), and it costs a filter
+   rather than a fourth tab.
 
 ## Motivation
 
@@ -98,13 +184,17 @@ Four states: `open` · `done` · `dropped` · `blocked`.
   completed almost always produced something — code at a path, a dataset, a figure — and a
   bare ticked box discards exactly the thing that makes the layer traversable.
 
-Task state is **not PI-gated**. Ticking "fetched the antibody lot" sets no direction, spends
-no compute and records no scientific result, so it sits in the act-and-report tier with
-`status` and `validate`. That is what makes "the PI needn't be concerned about it" legal
-rather than a leash violation.
+Task state is **not PI-gated** — *unless the task carries `hypothesis_refs`*. Ticking
+"fetched the antibody lot" sets no direction, spends no compute and records no scientific
+result, so it sits in the act-and-report tier with `status` and `validate`. That is what
+makes "the PI needn't be concerned about it" legal rather than a leash violation.
 
-**The hard line: a task may never create direction.** The moment a task would open a question
-or launch a run, it converts to a tree node and goes through the gate.
+Completing an **experiment** is different: its output is a verdict input, so it is PI-gated.
+See *The hard line, restated* above. Because only the parent of a decomposition carries
+`hypothesis_refs`, this costs one gate per experiment, not one per sub-task.
+
+**The hard line: work never creates direction.** The moment a task would open a question, it
+converts to a tree node and goes through the gate.
 
 ### 6. Navigation
 
@@ -121,17 +211,29 @@ Design the taskhub index for the queries actually made against it.
 
 - `id` — engine-allocated, immutable, never renumbered
 - `title` — imperative, verb + object
-- `category` — from the declared list
+- `category` — from the declared list; `experiment` is reserved and computed
 - `parent` — optional, decomposition only
 - `blocked_by` — **mandatory**, task ids or the literal `None`, so a missing edge is a visible
   omission rather than silence *(from `to-tickets`)*
 - `refs` — tree nodes / wiki pages this serves
+- `hypothesis_refs` — optional. Hypothesis ids **plus what this task concluded about each**
+  (`supports` / `disputes` / `inconclusive`). Present ⇒ this task is an experiment.
 - `status` — `open` / `done` / `dropped` (`blocked` is computed)
 - `output` — required when `done`; must resolve
 
 **No file path is required.** spec-kit *rejects* a task without one; `to-tickets` says paths
 go stale. For research work — cluster jobs, dataset registrations, portal fetches, manuscript
 figures — `to-tickets` is right.
+
+### Why `hypothesis_refs` carries a per-hypothesis conclusion
+
+One experiment can say **different things about different hypotheses** — a pilot may support
+h44 and dispute h45. A bare list of ids cannot record that, so the conclusion rides on the
+ref itself, one line per hypothesis. This is the *only* structured place that fact exists;
+without it the experiment timeline cannot be rendered and no check can be written against it.
+
+A third record type — one file per (hypothesis, experiment) pair, carrying its own direction
+and strength — was considered and deferred. See *Rejected alternatives*.
 
 ## Prior art — spec-kit (`github/spec-kit`)
 
@@ -182,8 +284,26 @@ happens when orchestration logic that should be code is expressed as prompt text
 
 ## Rejected alternatives (ours)
 
+- **A separate experiment layer.** Designed in full, then merged here. Two record types
+  differing in exactly one field are one record type, and keeping them apart cost a split
+  dependency graph, a split frontier query, and a boundary every "the run is also a task"
+  conversation had to cross. The merge also made the gating rule *computable* rather than a
+  judgment about which store something belongs in.
+- **A reified link record — one file per (hypothesis, experiment) pair**, carrying its own
+  direction, strength and provenance. This is the strongest signal in the prior-art survey:
+  SEPIO's *evidence line*, W3C PROV's `prov:Usage` + `hadRole`, RO-Crate's `ControlAction` and
+  the Micropublications SupportGraph all converged on it independently, and GrowthBook ships a
+  commercial version (`supportingExperimentIds[]` / `contradictingExperimentIds[]`). It buys
+  one thing the per-ref conclusion cannot: **re-grading an old run under a new criterion, or
+  versioning a judgment, without editing either file.** Deferred rather than rejected — the
+  benefit is real but so far hypothetical, and a third file type is a large cost to pay for
+  it. Revisit the first time someone genuinely needs to re-grade. Full survey in
+  [`research/research-prior-art-experiment-model.md`](research/research-prior-art-experiment-model.md).
 - **Taskhub as a projection of the tree.** Derived state cannot hold months of history.
 - **Storing `blocked`.** Computable, therefore driftable if stored.
+- **Storing `is_experiment` as a flag, or letting `experiment` be a hand-typed category.**
+  Same objection as storing `blocked`, with higher stakes: it is the one category that changes
+  whether the PI gets asked.
 - **Storing a separate external-blocked state with a reason string.** Considered and dropped
   — externalities become tasks instead, which keeps one rule instead of two.
 - **An `active` / in-progress state.** Durable only when it means "SLURM job 4012 is running,"
@@ -200,19 +320,28 @@ happens when orchestration logic that should be code is expressed as prompt text
 - Whether `dropped` needs a reason field.
 - Storage shape: one file per task (like wiki pages) vs one `TASKS.md` with a stable grammar.
   One-file-per-task fits the "engine owns IDs, never renumbers" rule better and makes git
-  history per-task; a single file is easier to read raw.
+  history per-task; a single file is easier to read raw. **The merge pushes toward one file
+  per task**: an experiment carries a methodology section and sub-tasks, which is more than a
+  line in a shared file wants to hold.
+- Whether an experiment may be `dropped` after producing partial evidence, and what that does
+  to the hypotheses it refs.
+- Whether the reified evidence-line record (see *Rejected alternatives*) ever becomes
+  necessary.
 
 ## Work items
 
-- ☐ Task schema + storage layout + declared category list
+- ☐ Task schema + storage layout + declared category list, `experiment` reserved
+- ☐ `hypothesis_refs` with per-hypothesis conclusion; `is_experiment` computed from it
 - ☐ Engine: ID allocation (immutable, never renumbered), `blocked` computation, dependency
   cycle detection, `done`-requires-resolving-output check
+- ☐ Gating split: completing a task with `hypothesis_refs` is PI-gated; without, it is not
 - ☐ `crux task` verbs — add / link / done / drop, and the frontier query
-- ☐ Backlink computation: node → tasks, wiki → tasks
+- ☐ Backlink computation: node → tasks, wiki → tasks; hypothesis → experiments
 - ☐ `TASKHUB.md` generated index, shaped for the frontier query
 - ☐ Structural lint in `validate`
-- ☐ Snapshot key + cockpit tab with status filters (show/hide per state)
-- ☐ Skill rules: what gets in, when status changes, the "never creates direction" line
+- ☐ Snapshot key + cockpit tab: one list, status filters, **one colour per category** as the
+  visual language, and a chronological experiment view (filter to `hypothesis_refs` present)
+- ☐ Skill rules: what gets in, when status changes, the "work never creates direction" line
 
 ## Acceptance criteria
 
@@ -220,7 +349,14 @@ happens when orchestration logic that should be code is expressed as prompt text
   the task modified no node file.
 - `blocked` is never stored and always agrees with the dependency graph.
 - `done` with an unresolvable output ref fails `validate`.
-- The frontier query returns exactly the open tasks whose blockers are all `done`.
+- The frontier query returns exactly the open tasks whose blockers are all `done`, and spans
+  ordinary tasks and experiments in one result.
 - A dependency cycle is caught deterministically.
 - Task IDs survive add / drop / re-parent without renumbering.
+- `is_experiment` is nowhere stored, and always equals "has `hypothesis_refs`".
+- `--category=experiment` is refused; the category appears only on tasks with
+  `hypothesis_refs`.
+- One experiment with three sub-tasks fires **one** review gate, on the parent.
+- An experiment refs two hypotheses with opposite conclusions, and both are rendered
+  correctly on their nodes and in the timeline view.
 - `selftest.py` passes with a grown assert count.

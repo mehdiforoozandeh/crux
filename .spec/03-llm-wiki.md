@@ -1,6 +1,11 @@
 # Spec 03 — LLM wiki
 
-**Label:** `wiki` · **Status:** ◐ in progress
+**Label:** `wiki` · **Status:** ☑ done
+
+> **Closed 2026-08-15.** The wiki layer ships: `raw/` sources, compiled `wiki/` pages, the
+> generated `WIKI.md` index, structural lint in `validate`, the cockpit wiki tab with its link
+> graph and reader, and the `crux-wiki` skill. Anything still open below is refinement, not
+> the epic.
 
 ## Goal
 
