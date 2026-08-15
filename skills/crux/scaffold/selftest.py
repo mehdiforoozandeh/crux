@@ -1883,6 +1883,178 @@ def run_deck():
     shutil.rmtree(base, ignore_errors=True)
 
 
+# ------------------------------------------- deck verify / refresh / validate --check=decks (PRD 11b)
+def _mini_deck(hid, extra=""):
+    """A minimal synthetic deck exercising every verify bucket: chart src rows, data-src
+    spans (incl. entity minus + thousands separator + string-typed value), a literal
+    escape, a data-derived span, a bare numeral, and geometry numerals in script."""
+    return f"""<!doctype html><html><head><title>mini</title>
+<style>.x{{width:100px;margin:12px}}</style></head><body>
+<div id="deck">
+<section class="slide">
+  <h1>No numbers on this slide</h1>
+</section>
+<section class="slide">
+  <p>delta <span data-src="{hid}#m.delta">+3.3</span>
+  over <span data-src="{hid}#m.share">50,000</span> examples,
+  neg <span data-src="{hid}#m.neg">&minus;4.6</span>,
+  ratio <span data-src="{hid}#d.ratio">1.20M</span>,
+  the <span data-src="literal">95%</span> interval,
+  combo <span data-derived="{hid}#m.delta,{hid}#m.share">165000</span>.{extra}</p>
+</section>
+</div>
+<script>
+const ROWS=[
+  {{lab:'first', src:'{hid}#m.delta', v: 3.3, lo: 1.9, hi: 4.7}},
+];
+const W=1140,H=430,pad=52;   // geometry numerals must never be flagged
+</script>
+</body></html>
+"""
+
+def run_deck_verify():
+    import json
+    print("\n# deck verify / refresh / validate --check=decks")
+    CRUX = os.path.join(HERE, "crux.py")
+    base = tempfile.mkdtemp(prefix="crux_dv_")
+    root = os.path.join(base, "vault")
+    E.cmd_init("Verify Demo", root, goal="g")
+    qv, _ = E.cmd_ask(root, "Check question")
+    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"])
+    write(os.path.join(root, "results", hv, "metrics.json"), json.dumps({
+        "m": {"delta": {"value": 3.3, "ci": [1.9, 4.7]},
+              "share": {"value": 50000},
+              "neg":   {"value": -4.6}},
+        "d": {"ratio": {"value": "1.20M"}}}))
+    write(os.path.join(root, "results", hv, "report.md"), "# r\n\nsynthetic.\n")
+    edit(node_path(root, hv), f"results/{hv}/curve.png -->\n_(none yet)_",
+         f"results/{hv}/curve.png -->\n- [Report](results/{hv}/report.md)")
+    deck = os.path.join(root, "presentations", qv, "index.html")
+    write(deck, _mini_deck(hv, extra=" A bare numeral 42 sits here."))
+
+    # --- verify: buckets on a current deck -----------------------------------------
+    rep = E.deck_verify(root, deck)
+    check("verify: current deck has no mismatches",
+          rep["mismatch"] == [] and rep["unresolvable"] == [])
+    check("verify: derived listed, inputs checked, result not recomputed",
+          len(rep["derived"]) == 1 and not rep["mismatch"])
+    check("verify: bare numeral lands in unsourced with its slide",
+          [ (u["numeral"], u["slide"]) for u in rep["unsourced"] ] == [("42", 2)])
+    check("verify: literal escape is not unsourced and not a failure",
+          len(rep["literal"]) == 1)
+    check("verify: entity minus + comma + string values all match after normalization",
+          all(u["numeral"] == "42" for u in rep["unsourced"]))
+    r0 = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
+                        text=True, cwd=root)
+    check("verify CLI: plain verify passes with the unsourced numeral listed",
+          r0.returncode == 0 and "42" in r0.stdout)
+    rs = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck, "--strict"],
+                        capture_output=True, text=True, cwd=root)
+    check("verify CLI: --strict fails on the unsourced numeral", rs.returncode != 0)
+
+    # --- mismatch: cached value edited to disagree ---------------------------------
+    edit(deck, ">+3.3</span>", ">+9.9</span>")
+    edit(deck, "v: 3.3", "v: 2.0")
+    rep = E.deck_verify(root, deck)
+    m_addrs = {m["addr"] for m in rep["mismatch"]}
+    check("verify: edited cached values fail as mismatch, naming the address",
+          f"{hv}#m.delta" in m_addrs and len(rep["mismatch"]) == 2)
+    rm = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
+                        text=True, cwd=root)
+    check("verify CLI: mismatch exits non-zero and names the address",
+          rm.returncode != 0 and f"{hv}#m.delta" in rm.stdout + rm.stderr)
+
+    # --- refresh: mechanical repair, values only -----------------------------------
+    before = read(deck)
+    res = E.deck_refresh(root, deck)
+    check("refresh: rewrites the corrupted values and names the slides",
+          res["changes"] and set(res["slides"]) == {2} == set(c["slide"] for c in res["changes"]))
+    rep = E.deck_verify(root, deck)
+    check("refresh: deck verifies clean afterwards",
+          rep["mismatch"] == [] and rep["unresolvable"] == [])
+    after = read(deck)
+    check("refresh: non-value bytes untouched",
+          "No numbers on this slide" in after and "W=1140,H=430,pad=52" in after
+          and "&minus;4.6" in after and "1.20M" in after and "50,000" in after
+          and "data-derived" in after and after.count("<section") == before.count("<section"))
+    check("refresh: sign convention preserved on the repaired span", ">+3.3</span>" in after)
+    res2 = E.deck_refresh(root, deck)
+    check("refresh: idempotent — second run changes nothing",
+          res2["changes"] == [] and read(deck) == after)
+
+    # --- refresh after the VAULT moves: formatting conventions survive -------------
+    edit(os.path.join(root, "results", hv, "metrics.json"), '"share": {"value": 50000}',
+         '"share": {"value": 60000}')
+    edit(os.path.join(root, "results", hv, "metrics.json"), '"neg": {"value": -4.6}',
+         '"neg": {"value": -5.0}')
+    check("validate --check=decks: a stale deck is a warning, not a problem",
+          (lambda r: r["problems"] == [] and r["warnings"] != [])(
+              E.validation_report(root, ["decks"])))
+    rv = subprocess.run([sys.executable, CRUX, "validate", "--check=decks"],
+                        capture_output=True, text=True, cwd=root)
+    check("validate CLI: stale deck warns but exits 0", rv.returncode == 0 and "⚠" in rv.stdout)
+    rvs = subprocess.run([sys.executable, CRUX, "validate", "--check=decks", "--strict"],
+                         capture_output=True, text=True, cwd=root)
+    check("validate CLI: --strict + --check=decks fails on the stale deck", rvs.returncode != 0)
+    rp = subprocess.run([sys.executable, CRUX, "validate"], capture_output=True, text=True, cwd=root)
+    check("validate CLI: plain validate ignores presentations/ entirely",
+          rp.returncode == 0 and "deck" not in rp.stdout + rp.stderr)
+    res = E.deck_refresh(root, deck)
+    after2 = read(deck)
+    check("refresh: thousands separator re-applied on the moved value", ">60,000</span>" in after2)
+    check("refresh: entity minus re-applied on the moved value", ">&minus;5.0</span>" in after2)
+    check("refresh: verify green after the vault moved and the deck refreshed",
+          E.deck_verify(root, deck)["mismatch"] == [])
+    rr = subprocess.run([sys.executable, CRUX, "deck", "--refresh", deck], capture_output=True,
+                        text=True, cwd=root)
+    check("refresh CLI: an already-current deck reports nothing to do",
+          rr.returncode == 0 and read(deck) == after2)
+
+    # --- unresolvable: distinct from mismatch, one per failure kind -----------------
+    deck2 = os.path.join(root, "presentations", qv, "broken.html")
+    write(deck2, f"""<section class="slide"><p>
+<span data-src="h99#x.y">1.0</span>
+<span data-src="{hv}#m.nope">2.0</span>
+<span data-src="{hv}#m">3.0</span>
+<span data-derived="h98#a.b">4.0</span>
+</p></section>""")
+    rep = E.deck_verify(root, deck2)
+    kinds = sorted(u["kind"] for u in rep["unresolvable"])
+    check("verify: unresolvable buckets carry distinct kinds, no mismatches",
+          kinds == ["missing-file", "missing-file", "missing-key", "missing-value"]
+          and rep["mismatch"] == [])
+    rb = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck2], capture_output=True,
+                        text=True, cwd=root)
+    check("verify CLI: unresolvable exits non-zero, reported distinctly",
+          rb.returncode != 0 and "unresolvable" in (rb.stdout + rb.stderr))
+    os.remove(deck2)
+
+    # --- strict-clean deck: literal escape suffices ---------------------------------
+    deck3 = os.path.join(root, "presentations", qv, "clean.html")
+    write(deck3, _mini_deck(hv))
+    E.deck_refresh(root, deck3)   # vault moved above; bring the copy current first
+    rc = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck3, "--strict"],
+                        capture_output=True, text=True, cwd=root)
+    check("verify CLI: --strict passes a deck whose only constants are literal-escaped",
+          rc.returncode == 0)
+
+    # --- check registry -------------------------------------------------------------
+    try:
+        E.validation_report(root, ["bogus"])
+        check("validate: unknown check still refused", False)
+    except E.CruxError as e:
+        check("validate: unknown check still refused, message names decks", "decks" in str(e))
+
+    # --- pre-11 vault: --strict clean with no presentations/ ------------------------
+    old = os.path.join(base, "old_vault")
+    E.cmd_init("Old Strict", old, goal="g")
+    E.cmd_ask(old, "Old question")
+    ros = subprocess.run([sys.executable, CRUX, "validate", "--strict"], capture_output=True,
+                         text=True, cwd=old)
+    check("validate: pre-11 vault passes --strict with no migration", ros.returncode == 0)
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -1927,6 +2099,7 @@ def main():
     run_economy_migration()
     run_agent_cli()
     run_deck()
+    run_deck_verify()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

@@ -8,6 +8,19 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux deck --verify` / `--refresh` — the deck traceability contract, enforced**
+  (spec [`11`](.spec/11-prezit.md) §5, PRD 11b). `--verify <deck.html>` walks every
+  `src:` / `data-src` / `data-derived` in the deck **source** (never a rendered DOM) and
+  buckets each: *mismatch* and *unresolvable* fail with distinct reporting; *derived* passes
+  with inputs checked, result not recomputed; *unsourced* passes and is listed —
+  `--strict` fails it, with `data-src="literal"` as the escape for definitional constants.
+  All findings are reported before the exit decision. `--refresh <deck.html>` rewrites the
+  cached values only — sign convention, `&minus;` entities, thousands separators and
+  decimal count preserved; string-typed values verbatim — and warns per slide, loudly:
+  refresh fixes values, only a human can fix the sentence around them. `validate` gains an
+  **opt-in** `--check=decks` (stale decks surface as warnings; plain `validate` ignores
+  `presentations/` entirely; `--strict` fails on them like any warning). No vault-format
+  change — no migration.
 - **`crux deck <anchor> --json` — the deterministic presentation payload** (engine **1.4**,
   spec [`11`](.spec/11-prezit.md), PRD 11a). One anchor's whole story material — lineage,
   siblings, recursive children with verifiables/findings/artifacts, linked wiki pages, the
