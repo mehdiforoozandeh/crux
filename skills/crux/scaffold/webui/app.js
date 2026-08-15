@@ -1322,13 +1322,19 @@ $("help-btn").addEventListener("click", () => {
 });
 document.querySelector("#help .hint").hidden = localStorage.getItem("crux-help-hidden") === "1";
 
-// theme: resolve saved preference (else system) once at boot, then the button toggles
+// theme (spec 12): the blocking <head> stamp already resolved saved-preference-else-OS
+// BEFORE first paint — here we just sync the ☀/☾ button to it, keep following the OS
+// while no preference is saved (a machine that flips at sunset flips the cockpit), and
+// let the first explicit toggle write the preference that sticks from then on.
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   $("theme-btn").textContent = t === "dark" ? "☀" : "☾";
 }
-// dark is the default; only a saved preference (the toggle) can switch to light
-applyTheme(localStorage.getItem("crux-theme") === "light" ? "light" : "dark");
+applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+  if (localStorage.getItem("crux-theme")) return;   // an explicit choice sticks
+  applyTheme(e.matches ? "light" : "dark");
+});
 $("theme-btn").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   localStorage.setItem("crux-theme", next);

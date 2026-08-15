@@ -1,6 +1,8 @@
 /* crux cockpit — no-build static styles. Two explicit themes (Obsidian-like):
-   dark is the default; `:root[data-theme="light"]` overrides. app.js resolves the
-   initial theme (saved preference, else system) and the ☀/☾ button toggles it. */
+   dark is the CSS default; `:root[data-theme="light"]` overrides. A blocking script in
+   index.html's <head> stamps data-theme before first paint (saved preference, else
+   prefers-color-scheme, so neither theme flashes the other); app.js follows the OS live
+   until the ☀/☾ button writes an explicit choice, which sticks from then on. */
 :root {
   /* dark — near-black canvas, dark-gray panels */
   --bg: #161616; --panel: #1f1f1f; --panel2: #262626; --line: #333333;

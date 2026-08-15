@@ -66,6 +66,12 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: the theme now actually follows the OS** (spec
+  [`12`](.spec/12-cockpit-craft.md)). The stylesheet header promised "saved preference,
+  else system"; the code defaulted to dark and never consulted the OS. Now: with no saved
+  preference the cockpit resolves from `prefers-color-scheme` and follows OS flips live;
+  the first ☀/☾ press writes an explicit choice that sticks. A blocking `<head>` stamp sets
+  the theme before first paint, so neither theme ever flashes the other on load.
 - **An artifact bullet may now carry a note after a markdown link.** `parse_artifacts()`
   anchored its link regex to end-of-line, so `- [Report](results/h1/report.md) — a note`
   fell through to the bare-path branch and split into the path `'[Report'` — surfacing as

@@ -1499,6 +1499,28 @@ def run_webui():
     check("webui: a new query restarts the cycle",
           bool(re.search(r'addEventListener\("input"[\s\S]{0,200}matchId = null', app_js)))
 
+    # -- spec 12 (PRD-C): the theme follows the OS until you touch it. A blocking <head>
+    #    stamp (before the stylesheet) kills the wrong-theme first-paint flash; app.js
+    #    follows prefers-color-scheme LIVE until the first explicit ☀/☾ press, which
+    #    writes the preference that sticks. The flash itself and the live OS-flip are the
+    #    PRD's manual checklist (they need a real browser + OS appearance toggle).
+    head_html = index.split("</head>")[0]
+    stamp = re.search(r"<script>([\s\S]*?)</script>", head_html)
+    stamp_src = stamp.group(1) if stamp else ""
+    check("webui: a blocking theme stamp sits in <head> before the stylesheet",
+          bool(stamp) and head_html.index("<script>") < head_html.index('href="style.css"'))
+    check("webui: the stamp resolves saved-preference-else-OS and writes data-theme",
+          "crux-theme" in stamp_src and "prefers-color-scheme" in stamp_src
+          and "dataset.theme" in stamp_src)
+    check("webui: app.js follows the OS theme live",
+          'matchMedia("(prefers-color-scheme: light)").addEventListener("change"' in app_js)
+    check("webui: an explicit choice sticks — the listener defers to the saved preference",
+          'if (localStorage.getItem("crux-theme")) return;' in app_js)
+    check("webui: the unconditional-dark boot is gone (regression)",
+          'applyTheme(localStorage.getItem("crux-theme") === "light" ? "light" : "dark")' not in app_js)
+    check("webui: the stylesheet header documents the real theme behavior",
+          "before first paint" in style and "prefers-color-scheme" in style)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never

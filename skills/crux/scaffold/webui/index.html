@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>crux cockpit</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!-- blocking theme stamp — BEFORE the stylesheet, so the first paint is already in the
+       right theme and neither theme ever flashes the other (spec 12): a saved ☀/☾ choice
+       wins, else the OS decides. app.js keeps following the OS live until that first
+       explicit choice is written. -->
+  <script>
+    document.documentElement.dataset.theme =
+      localStorage.getItem("crux-theme") ||
+      (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
