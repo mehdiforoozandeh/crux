@@ -384,7 +384,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
+    check("wmig: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1534,7 +1534,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
+    check("economy: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1569,7 +1569,7 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.3", E.Vault(root).cfg.get("engine_version") == "1.3")
+    check("emig: drift re-stamps to 1.4", E.Vault(root).cfg.get("engine_version") == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1686,10 +1686,207 @@ def run_agent_cli():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- deck payload (spec 11 / PRD 11a)
+DECK_PROTOCOL_PLACEHOLDER = "_(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_"
+
+def run_deck():
+    import json
+    print("\n# deck payload (crux deck <anchor> --json)")
+    CRUX = os.path.join(HERE, "crux.py")
+    check("deck: ENGINE_VERSION is 1.4", E.ENGINE_VERSION == "1.4")
+
+    base = tempfile.mkdtemp(prefix="crux_deck_")
+    root = os.path.join(base, "vault")
+    E.cmd_init("Deck Demo", root, goal="Prove the deck payload.")
+    qtop, _ = E.cmd_ask(root, "Top question")
+    qmid, _ = E.cmd_ask(root, "Mid question", parent=qtop)
+    qsib, _ = E.cmd_ask(root, "Sibling question", parent=qtop)
+    h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid,
+                                 verifiables=["bar one", "bar two"])
+    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
+    # the optional ## Protocol section (new in 1.4) — fill it on the anchor
+    edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
+    # close h1 with a (found: …) parenthetical on the first bar
+    edit(node_path(root, h1), "- [ ] bar one", "- [x] bar one   (found: +0.02)")
+    edit(node_path(root, h1), "- [ ] bar two", "- [x] bar two")
+    E.cmd_test(root, h1, to="running")
+    E.cmd_close(root, h1, metric="imp +0.02")
+    # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
+    rd = os.path.join(root, "results", h1)
+    write(os.path.join(rd, "metrics.json"), json.dumps({
+        "task_a": {"delta": {"value": 3.3, "ci": [1.9, 4.7], "n": 3, "unit": "points"}},
+        "design": {"train_n": {"value": "1.20M"}}}))
+    write(os.path.join(rd, "report.md"), "# report\n\nsynthetic.\n")
+    write(os.path.join(rd, "curve.png"), "png-bytes")
+    edit(node_path(root, h1), f"results/{h1}/curve.png -->\n_(none yet)_",
+         f"results/{h1}/curve.png -->\n- [Report](results/{h1}/report.md)\n"
+         f"- results/{h1}/curve.png the loss curve")
+    E.refresh(root)
+
+    # determinism — in-process and through the CLI
+    p1 = E.deck_payload(root, qmid)
+    s1 = json.dumps(p1, ensure_ascii=False)
+    s2 = json.dumps(E.deck_payload(root, qmid), ensure_ascii=False)
+    check("deck: byte-identical across runs (in-process)", s1 == s2)
+    argv = [sys.executable, CRUX, "deck", qmid, "--json"]
+    r1 = subprocess.run(argv, capture_output=True, cwd=root)
+    r2 = subprocess.run(argv, capture_output=True, cwd=root)
+    check("deck: byte-identical across runs (CLI)", r1.returncode == 0 and r1.stdout == r2.stdout)
+    check("deck: CLI stdout is exactly the payload", r1.stdout.decode("utf-8").strip() == s1)
+    check("deck: engine_version stamped in the payload", p1["engine_version"] == E.ENGINE_VERSION)
+    check("deck: payload carries no absolute path and no timestamp",
+          root not in s1 and E.now()[:10] not in s1)
+
+    # lineage / siblings / children
+    check("deck: lineage is root -> parent, in order",
+          [x["id"] for x in p1["lineage"]] == ["root", qtop])
+    check("deck: project lineage entry carries the Goal",
+          p1["lineage"][0]["answer_so_far"] == "Prove the deck payload.")
+    check("deck: siblings listed, anchor excluded",
+          [x["id"] for x in p1["siblings"]] == [qsib])
+    kids = p1["children"]
+    check("deck: children are the anchor's subtree in order", [x["id"] for x in kids] == [h1, h2])
+    k1 = kids[0]
+    check("deck: closed child carries verdict + metric",
+          k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
+    check("deck: verifiable `found` parsed from the (found: …) parenthetical",
+          k1["verifiables"][0] == {"text": "bar one", "state": "met", "found": "+0.02"})
+    check("deck: verifiable without a parenthetical has found None",
+          k1["verifiables"][1] == {"text": "bar two", "state": "met", "found": None})
+    check("deck: no failure_scenario field (dropped per PI ruling; spec 15/09)",
+          "failure_scenario" not in k1["verifiables"][0])
+    check("deck: child artifacts parsed with kinds",
+          any(a["path"] == f"results/{h1}/report.md" and a["kind"] == "report"
+              for a in k1["artifacts"]))
+    check("deck: rd present and empty until spec 07", p1["rd"] == [])
+    check("deck: anchor question + protocol surfaced",
+          p1["anchor"]["question"] == "Mid question"
+          and p1["anchor"]["protocol"] == "Rules locked up front.")
+    check("deck: placeholder answer-so-far reads as empty", p1["anchor"]["answer_so_far"] == "")
+    check("deck: scope counts executed vs parked",
+          p1["scope"]["executed"] == 1 and p1["scope"]["parked"] == 1
+          and p1["scope"]["by_state"]["done"] == 1 and p1["scope"]["by_state"]["idea"] == 1)
+
+    # figures + metrics
+    figs = p1["figures"]
+    check("deck: figures list every results file",
+          sorted(f["path"] for f in figs) == sorted([f"results/{h1}/curve.png",
+                f"results/{h1}/metrics.json", f"results/{h1}/report.md"]))
+    caps = {f["path"]: f["caption"] for f in figs}
+    check("deck: figure caption from the matching artifact label",
+          caps[f"results/{h1}/curve.png"] == "the loss curve")
+    check("deck: unlabeled results file gets an empty caption",
+          caps[f"results/{h1}/metrics.json"] == "")
+    check("deck: metrics in defined order (hid, then key path)",
+          [m["addr"] for m in p1["metrics"]] == [f"{h1}#design.train_n", f"{h1}#task_a.delta"])
+    md = p1["metrics"][1]
+    check("deck: metric leaf carried through untouched",
+          md["value"] == 3.3 and md["ci"] == [1.9, 4.7] and md["n"] == 3 and md["unit"] == "points")
+    check("deck: string-typed metric value survives (formatted displays)",
+          p1["metrics"][0]["value"] == "1.20M")
+
+    # the address resolver and its distinct failure kinds
+    check("deck: resolve_address returns the leaf",
+          E.resolve_address(root, f"{h1}#task_a.delta")["value"] == 3.3)
+    def kind_of(addr):
+        try:
+            E.resolve_address(root, addr)
+            return None
+        except E.AddressError as e:
+            return e.kind
+    check("deck: unresolvable — missing metrics file", kind_of("h99#x.y") == "missing-file")
+    check("deck: unresolvable — missing key path", kind_of(f"{h1}#task_a.nope") == "missing-key")
+    check("deck: unresolvable — not a leaf (no value)", kind_of(f"{h1}#task_a") == "missing-value")
+    check("deck: unresolvable — malformed address", kind_of("no-hash-here") == "bad-address")
+
+    # synthesis: only an APPROVED one enters the payload
+    syn, _ = E.cmd_synthesize(root, "what qmid settled", [qmid])
+    check("deck: unapproved synthesis stays out of the payload",
+          E.deck_payload(root, qmid)["synthesis"] is None)
+    E.cmd_approve(root, syn)
+    ps = E.deck_payload(root, qmid)["synthesis"]
+    check("deck: approved synthesis lands with its text",
+          bool(ps) and ps["id"] == syn and bool(ps["approved"]) and "Related::" not in ps["text"])
+
+    # wiki pages linked from the anchor
+    E.ensure_wiki(root)
+    wiki_page(root, "deck-bg", "Deck background", "why decks exist")
+    edit(node_path(root, qmid), "Mid question\n\n## Protocol",
+         "Mid question — see [[deck-bg]].\n\n## Protocol")
+    E.refresh(root)
+    pw = E.deck_payload(root, qmid)["wiki"]
+    check("deck: wiki pages linked from the anchor are indexed",
+          pw == [{"slug": "deck-bg", "title": "Deck background", "path": "wiki/deck-bg.md"}])
+
+    # hypothesis / childless anchors — always emit (PI ruling #1)
+    ph = E.deck_payload(root, h1)
+    check("deck: hypothesis anchor — no children, no synthesis",
+          ph["children"] == [] and ph["synthesis"] is None)
+    check("deck: hypothesis anchor carries its own evidence fields",
+          len(ph["anchor"]["verifiables"]) == 2 and ph["anchor"]["question"] is None)
+    check("deck: hypothesis anchor scopes metrics to itself",
+          {m["addr"].split("#")[0] for m in ph["metrics"]} == {h1})
+    check("deck: no-children question anchor still emits",
+          E.deck_payload(root, qsib)["children"] == [])
+
+    # bad anchor
+    expect_error("deck: unknown anchor refused", lambda: E.deck_payload(root, "zz9"))
+    rb = subprocess.run([sys.executable, CRUX, "deck", "zz9", "--json"],
+                        capture_output=True, cwd=root)
+    check("deck: CLI unknown anchor -> exit 1, silent stdout",
+          rb.returncode == 1 and rb.stdout.strip() == b"")
+    ra = subprocess.run([sys.executable, CRUX, "slides", qmid, "--json"],
+                        capture_output=True, cwd=root)
+    rd2 = subprocess.run([sys.executable, CRUX, "deck", qmid, "--json"],
+                         capture_output=True, cwd=root)
+    check("deck: `slides` alias emits the identical payload", ra.stdout == rd2.stdout)
+    check("deck: vault still validates clean after all of it", E.cmd_validate(root) == [])
+
+    # migration proof (PI ruling #5): a pre-11 (engine 1.3) vault loads with only the
+    # drift warning, and deck runs on it with empty metrics/figures
+    old = os.path.join(base, "old_vault")
+    E.cmd_init("Old Vault", old, goal="g")
+    oq, _ = E.cmd_ask(old, "Old question")
+    cfgp = os.path.join(old, ".crux.yaml")
+    edit(cfgp, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.3")
+    ro = subprocess.run([sys.executable, CRUX, "status"], capture_output=True, text=True, cwd=old)
+    check("deck migration: pre-11 vault loads with only the drift warning",
+          ro.returncode == 0 and "v1.3" in ro.stderr)
+    check("deck migration: drift re-stamps to the current engine",
+          f"engine_version: {E.ENGINE_VERSION}" in read(cfgp))
+    check("deck migration: pre-11 vault validates clean", E.cmd_validate(old) == [])
+    rq = subprocess.run([sys.executable, CRUX, "deck", oq, "--json"],
+                        capture_output=True, text=True, cwd=old)
+    pq = json.loads(rq.stdout) if rq.returncode == 0 and rq.stdout.strip() else {}
+    check("deck migration: deck runs on a metrics-less vault, metrics/figures empty",
+          rq.returncode == 0 and pq.get("metrics") == [] and pq.get("figures") == [])
+
+    # the committed scaling_vault fixture: reference-deck addresses resolve
+    sv = os.path.join(HERE, "..", "examples", "scaling_vault")
+    svc = os.path.join(base, "scaling_copy")
+    shutil.copytree(sv, svc)
+    # tree check only: the wiki tier is legitimately non-clean on a fresh copy (the raw/
+    # PDFs are fetched by fetch_sources.sh, not committed); the new results/ fixtures live
+    # under the tree tier's artifact lint, which must stay clean
+    check("deck fixture: scaling_vault tree+artifacts validate clean",
+          E.cmd_validate(svc, checks=["tree"]) == [])
+    sp = E.deck_payload(svc, "q1")
+    addrs = [m["addr"] for m in sp["metrics"]]
+    check("deck fixture: reference-deck addresses resolve",
+          all(a in addrs for a in ("h1#task_a.delta", "h2#equal_compute.delta",
+                                   "h3#equal_data.delta", "h1#design.seeds")))
+    check("deck fixture: q1 protocol filled", sp["anchor"]["protocol"] != "")
+    check("deck fixture: linked reports appear in figures",
+          any(f["path"] == "results/h1/report.md" for f in sp["figures"]))
+    check("deck fixture: formatted display value stored as a string",
+          E.resolve_address(svc, "h1#design.train_n_baseline")["value"] == "1.20M")
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"]):
+                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True)
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -1729,6 +1926,7 @@ def main():
     run_economy()
     run_economy_migration()
     run_agent_cli()
+    run_deck()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

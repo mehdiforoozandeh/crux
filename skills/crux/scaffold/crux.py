@@ -141,6 +141,11 @@ def main(argv=None):
     s.add_argument("--check", default=None, metavar="LIST",
                    help="comma-separated subset of checks to run: " + ",".join(E.CHECKS) + " (default: all)")
 
+    s = _jsonable(sub.add_parser("deck", aliases=["prezit", "present", "slides"],
+                                 help="assemble the presentation payload for an anchor's subtree (spec 11)"))
+    s.add_argument("anchor", nargs="?", default=None,
+                   help="anchor node id — a question, or a hypothesis for a shorter deck")
+
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
     s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
 
@@ -276,6 +281,20 @@ def dispatch(a):
             return 0
         print("✓ vault is valid")
         return 0
+    elif c in ("deck", "prezit", "present", "slides"):
+        # a read verb: resolve without stamping, like serve — the deck never mutates a vault
+        root = _vault_ro()
+        if not a.anchor:
+            print("crux: deck needs an anchor id (e.g. `crux deck q1 --json`)", file=sys.stderr)
+            return 1
+        payload = E.deck_payload(root, a.anchor)
+        if a.json:
+            return _emit(payload)
+        print(f"deck {a.anchor}: {len(payload['lineage'])} ancestor(s) · "
+              f"{len(payload['children'])} direct child(ren) · "
+              f"{len(payload['figures'])} figure file(s) · "
+              f"{len(payload['metrics'])} addressed metric(s)\n"
+              f"  full payload: crux deck {a.anchor} --json")
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)

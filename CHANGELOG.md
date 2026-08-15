@@ -8,6 +8,18 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux deck <anchor> --json` — the deterministic presentation payload** (engine **1.4**,
+  spec [`11`](.spec/11-prezit.md), PRD 11a). One anchor's whole story material — lineage,
+  siblings, recursive children with verifiables/findings/artifacts, linked wiki pages, the
+  approved synthesis, scope counts, figures and every addressed metric — assembled from vault
+  state only, byte-identical across runs, no prose authored by the engine. Aliases `prezit`,
+  `present`, `slides`. New optional conventions the engine now reads (and never writes):
+  `results/<hid>/metrics.json` (nested leaves carrying `value` (+`ci`/`se`/`n`/`unit`),
+  addressed as `<hid>#<dotted.key.path>`) and a `## Protocol` section on questions (the
+  "rules locked up front" note). Pre-1.4 vaults load unchanged — the bump is additive; the
+  drift warning is the only visible effect. `examples/scaling_vault` gains committed
+  `results/h1..h3/` fixtures (metrics + linked reports) so the reference deck's addresses
+  resolve.
 - **Node economy — crux now enforces economy the way it already enforced falsifiability**
   (engine **1.3**, spec [`06`](.spec/06-node-economy.md)). Every guardrail used to push toward
   more rigor and none toward less volume, so nodes grew until the vault stopped being readable

@@ -11,10 +11,14 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, datetime, tempfile, shutil, hashlib
+import os, re, sys, json, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+                                # 1.4: prezit (spec 11) — the engine now reads two new optional
+                                # vault conventions: results/<hid>/metrics.json (addressable
+                                # numbers) and an optional `## Protocol` section on questions.
+                                # Additive + read-only: a pre-1.4 vault loads unchanged.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -34,6 +38,9 @@ GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX) # root .md views the no
 # The engine only does bookkeeping here too — it classifies by extension and checks the
 # paths resolve; it never opens an artifact, and never judges one.
 RESULTS_DIR      = "results"
+METRICS_FILE     = "metrics.json"   # optional, PI/harness-written: results/<hid>/metrics.json
+                                    # holds the addressable numbers a deck may quote (spec 11 §5a).
+                                    # The engine reads and resolves it; it NEVER writes or computes one.
 ARTIFACT_KINDS   = {"report": (".md",),
                     "image":  (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"),
                     "data":   (".csv", ".tsv", ".json", ".txt")}
@@ -225,6 +232,12 @@ Parent:: [[<<parent_basename>>]]
 ## Question
 
 <<title>>
+
+## Protocol
+
+<!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,
+     thresholds, scope. `crux deck` surfaces this as the "rules locked up front" note. -->
+_(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
 
 ## Answer so far
 
@@ -1564,4 +1577,205 @@ def snapshot(vault):
         "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
         "wiki": _wiki_snapshot(v.root),
+    }
+
+# ----------------------------------------------------------------------------- deck payload (spec 11 / prezit)
+# `crux deck <anchor> --json` assembles the entire story material for one anchor's subtree,
+# deterministically, from vault state only. The engine authors no prose and computes no
+# number — selection and phrasing are the calling agent's whole job. Pure read.
+#
+# The traceability contract rides on `results/<hid>/metrics.json` (optional, written by the
+# PI or the run harness, never by crux): nested JSON whose every leaf is an object carrying
+# a required `value` (number, or a string for formatted displays like "1.20M") and optional
+# `ci`/`se`/`n`/`unit`; unknown leaf keys are carried through untouched. An address is
+# `<hid>#<dotted.key.path>` — vault-relative by construction.
+
+class AddressError(CruxError):
+    """A metrics address that cannot be resolved. `kind` distinguishes the failure so
+    `--verify` can bucket it: bad-address | missing-file | missing-key | missing-value."""
+    def __init__(self, kind, msg):
+        super().__init__(msg)
+        self.kind = kind
+
+def load_metrics(root, hid):
+    """Parsed results/<hid>/metrics.json, or None when the file does not exist."""
+    path = os.path.join(root, RESULTS_DIR, hid, METRICS_FILE)
+    if not os.path.isfile(path):
+        return None
+    try:
+        return json.loads(read(path))
+    except ValueError as e:
+        raise CruxError(f"malformed {RESULTS_DIR}/{hid}/{METRICS_FILE}: {e}")
+
+def resolve_address(root, addr):
+    """Resolve `<hid>#<dotted.key.path>` to its metrics leaf. Raises AddressError with a
+    distinct `kind` for each failure mode; never touches anything outside results/."""
+    hid, sep, keypath = str(addr).partition("#")
+    hid, keypath = hid.strip(), keypath.strip()
+    if not sep or not hid or not keypath or "/" in hid or "\\" in hid or "." in hid:
+        raise AddressError("bad-address",
+                           f"bad metrics address '{addr}' (expected <hid>#<dotted.key.path>)")
+    tree = load_metrics(root, hid)
+    if tree is None:
+        raise AddressError("missing-file", f"{addr}: no {RESULTS_DIR}/{hid}/{METRICS_FILE}")
+    node = tree
+    for part in keypath.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise AddressError("missing-key", f"{addr}: key path '{keypath}' does not resolve")
+        node = node[part]
+    if not isinstance(node, dict) or "value" not in node:
+        raise AddressError("missing-value",
+                           f"{addr}: not a metrics leaf (an object carrying 'value')")
+    return node
+
+def _metric_leaves(tree, prefix=""):
+    """Depth-first [(dotted.path, leaf)] for every leaf (a dict carrying `value`), keys
+    sorted lexicographically at every level — the defined, deterministic order."""
+    out = []
+    if isinstance(tree, dict):
+        if "value" in tree:
+            return [(prefix, tree)]
+        for k in sorted(tree):
+            out += _metric_leaves(tree[k], f"{prefix}.{k}" if prefix else k)
+    return out
+
+_FOUND_RE = re.compile(r"\s*\(found:\s*(.*?)\)\s*$")
+
+def _deck_verifiables(body):
+    """`## Verifiables` for the payload: [{text, state, found}] where `found` is the
+    trailing `(found: …)` evidence parenthetical the seed materializer writes (None when
+    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it."""
+    out = []
+    for item in _verifiables(body):
+        m = _FOUND_RE.search(item["text"])
+        out.append({"text": _FOUND_RE.sub("", item["text"]).strip(), "state": item["state"],
+                    "found": m.group(1).strip() if m else None})
+    return out
+
+def _deck_text(body, heading):
+    """A prose section for the payload: placeholder-empty like `_summary`, with HTML
+    comments stripped — template guidance is not vault-authored content."""
+    return re.sub(r"<!--.*?-->", "", _summary(body, heading), flags=re.S).strip()
+
+def _deck_question_fields(n):
+    pre = n["body"].split(LEDGER_START)[0]
+    return {"question": _deck_text(pre, "Question"),
+            "protocol": _deck_text(pre, "Protocol"),
+            "answer_so_far": _deck_text(pre, "Answer so far")}
+
+def _deck_idea_fields(n):
+    verdict = n["fm"].get("verdict")
+    return {"verdict": verdict if verdict in VERDICTS else None,
+            "metric": n["fm"].get("metric") or None,
+            "verifiables": _deck_verifiables(n["body"]),
+            "findings": _deck_text(n["body"], "Findings"),
+            "artifacts": parse_artifacts(n["body"])}
+
+def _deck_child(v, cid):
+    n = v.nodes[cid]
+    d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
+    if n.type == "question":
+        d.update(_deck_question_fields(n))
+    else:
+        d.update(_deck_idea_fields(n))
+    d["children"] = [_deck_child(v, c) for c in v.children.get(cid, ())]
+    return d
+
+def _subtree_hids(v, nid):
+    """Every idea id at or under `nid`, in tree order (the anchor itself included when it
+    is an idea)."""
+    n = v.nodes[nid]
+    out = [nid] if n.type == "idea" else []
+    for c in v.children.get(nid, ()):
+        out += _subtree_hids(v, c)
+    return out
+
+def deck_payload(root, anchor):
+    """The deterministic story payload behind `crux deck <anchor> --json`. Same vault
+    state -> byte-identical json.dumps output: no timestamps, no absolute paths, every
+    list order defined. Anchors with no children still emit (the proposal-deck case);
+    a hypothesis anchor is legal and yields a shorter payload."""
+    v = Vault(root)
+    n = v.get(anchor)
+    if n.type not in ("question", "idea"):
+        raise CruxError(f"deck anchors on a question or hypothesis (got '{n.type}' for '{anchor}')")
+
+    # lineage: root -> parent, cycle-guarded
+    lineage, cur, seen = [], n, {n.id}
+    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
+        cur = v.nodes[cur.parent]
+        seen.add(cur.id)
+        lineage.append(cur)
+    lineage.reverse()
+
+    def _line(m):
+        pre = m["body"].split(LEDGER_START)[0]
+        txt = _deck_text(pre, "Goal") if m.type == "project" else _deck_text(pre, "Answer so far")
+        return {"id": m.id, "type": m.type, "title": m.title, "status": m.status,
+                "answer_so_far": txt}
+
+    anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
+                "question": None, "protocol": None, "answer_so_far": None,
+                "verdict": None, "metric": None, "verifiables": [], "findings": None,
+                "artifacts": []}
+    anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
+
+    siblings = [v.nodes[c] for c in v.children.get(n.parent, ()) if c != n.id] \
+               if n.parent in v.nodes else []
+
+    hids = _subtree_hids(v, n.id)
+    ideas = [v.nodes[h] for h in hids]
+    by_state = {s: sum(1 for i in ideas if i.status == s) for s in IDEA_STATUS}
+
+    # wiki pages linked from the anchor, then its ancestors (root -> parent), first-mention
+    # order, de-duplicated; entries point at the page, bodies stay in the vault
+    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
+    wiki, seen_slugs = [], set()
+    for body in [n["body"]] + [m["body"] for m in lineage]:
+        for t in link_targets(body):
+            if t in pages and t not in seen_slugs:
+                seen_slugs.add(t)
+                wiki.append({"slug": t, "title": pages[t]["title"],
+                             "path": _rel(root, pages[t]["path"])})
+
+    sid = approved_synthesis(v, n.id) if n.type == "question" else None
+    synthesis = None
+    if sid:
+        s = v.nodes[sid]
+        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
+                     "text": "\n".join(l for l in s["body"].splitlines()
+                                       if not l.strip().startswith("Related::")).strip()}
+
+    figures = []
+    hids = sorted(hids, key=natkey)     # defined order: hid natkey, then file/key order
+    for hid in hids:
+        labels = {a["path"]: a["label"] for a in parse_artifacts(v.nodes[hid]["body"])}
+        for f in results_files(root, hid):
+            rel = _rel(root, f)
+            figures.append({"hid": hid, "path": rel,
+                            "ext": os.path.splitext(f)[1].lower(),
+                            "bytes": os.path.getsize(f), "caption": labels.get(rel, "")})
+
+    metrics = []
+    for hid in hids:
+        tree = load_metrics(root, hid)
+        if tree:
+            for path, leaf in _metric_leaves(tree):
+                metrics.append(dict({"addr": f"{hid}#{path}"}, **leaf))
+
+    return {
+        "engine_version": ENGINE_VERSION,
+        "anchor": anchor_d,
+        "lineage": [_line(m) for m in lineage],
+        "siblings": [{"id": s.id, "type": s.type, "title": s.title, "status": s.status}
+                     for s in siblings],
+        "children": [_deck_child(v, c) for c in v.children.get(n.id, ())],
+        "wiki": wiki,
+        "rd": [],   # empty until spec 07 lands; present so callers need no probe
+        "synthesis": synthesis,
+        "scope": {"executed": by_state["running"] + by_state["done"],
+                  "parked": by_state["idea"] + by_state["staged"],
+                  "by_state": by_state},
+        "figures": figures,
+        "metrics": metrics,
     }
