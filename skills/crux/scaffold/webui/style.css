@@ -154,6 +154,15 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
   overflow: hidden; user-select: none; -webkit-user-select: none; }
 #tree { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; background: var(--bg); }
 #tree.panning { cursor: grabbing; }
+/* keyboard focus (spec 12, D1: two states). The ring appears ONLY for keyboard focus
+   (:focus-visible) — a click focuses the canvas too, but shows nothing, so the mouse pays
+   nothing. outline-offset is negative so the ring is never clipped by the canvas edge.
+   While the canvas has keyboard focus, the SELECTED node gains a focus halo on top of its
+   unchanged selection stroke — that is where the next arrow will move from. */
+#tree:focus { outline: none; }
+#tree:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#tree:focus-visible .box.selected { stroke-width: 3;
+  filter: drop-shadow(0 0 2px var(--focus)) drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent)); }
 /* exact fractional glyph advances at every zoom — by default WebKit pixel-snaps SVG text
    at the RENDERED size, so zoomed-out labels paint wider than their geometry and eat the
    box padding that was measured for them (the root pill's symmetric caps, most visibly) */
@@ -166,6 +175,7 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
   background: var(--panel); display: flex; flex-direction: column; }
 /* the scrolling content; its base font-size drives everything inside (children use em) */
 #detail-content { flex: 1 1 auto; overflow-y: auto; padding: 16px 20px 22px; font-size: 14px; }
+#detail-content:focus { outline: none; }   /* programmatic focus (Enter on the tree) — no ring */
 #detail-content[data-font="small"]  { font-size: 12.5px; }
 #detail-content[data-font="medium"] { font-size: 14px; }
 #detail-content[data-font="large"]  { font-size: 16.5px; }

@@ -8,6 +8,15 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Cockpit: keyboard-first tree canvas** (spec [`12`](.spec/12-cockpit-craft.md)). The tree
+  `<svg>` is a real focusable ARIA tree (`tabindex`, `role="tree"`, per-node `treeitem` +
+  `aria-activedescendant`, a `:focus-visible` ring that isn't clipped). Orientation-relative
+  arrows move the selection (child points where the children visibly are — in radial, ↓ is
+  outward), siblings stop at the ends, `Space` folds, `Enter` hands the detail pane the
+  focus, and the camera follows every move via the existing `tweenView()` (instant under
+  reduced motion). Keyboard costs the mouse nothing: every pointer gesture is unchanged, and
+  a guard keeps keyboard-driven camera glides from lighting the hover spotlight.
+
 - **Node economy — crux now enforces economy the way it already enforced falsifiability**
   (engine **1.3**, spec [`06`](.spec/06-node-economy.md)). Every guardrail used to push toward
   more rigor and none toward less volume, so nodes grew until the vault stopped being readable

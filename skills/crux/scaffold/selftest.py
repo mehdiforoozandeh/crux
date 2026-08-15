@@ -1427,6 +1427,49 @@ def run_webui():
     check("webui: the summary styles ship", ".summary {" in css and ".sum-k {" in css)
     check("webui: the fold marker is styled for both themes", ".fold > .fold-h::before" in css)
 
+    # -- spec 12 (PRD-A): keyboard-first canvas. Source invariants only — stdlib has no JS
+    #    engine, so the behavioral half (reachability in all three layouts, camera-follow,
+    #    the pointer-regression walkthrough) is the PRD's scripted MANUAL checklist. These
+    #    asserts pin the structure that makes that behavior possible, and guard the two
+    #    regressions a source grep CAN see: keyboard code writing spotlight classes, and
+    #    the canvas losing its focusability.
+    m = re.search(r'<svg id="tree"[^>]*>', index)
+    svg_tag = m.group(0) if m else ""
+    check("webui: the tree canvas is focusable (tabindex=\"0\")", 'tabindex="0"' in svg_tag)
+    check("webui: the tree canvas is an ARIA tree with a non-empty label",
+          'role="tree"' in svg_tag and bool(re.search(r'aria-label="[^"]+"', svg_tag)))
+    check("webui: keyboard focus ring under :focus-visible, not clipped (outline-offset -2px)",
+          bool(re.search(r"#tree:focus-visible\s*\{[^}]*outline:", style))
+          and "outline-offset: -2px" in style)
+    check("webui: nodes are ARIA treeitems carrying selection + expansion state",
+          'role="treeitem"' in app_js and "aria-selected=" in app_js and "aria-expanded=" in app_js)
+    check("webui: the canvas tracks the selection via aria-activedescendant (set and cleared)",
+          app_js.count("aria-activedescendant") >= 2)
+    kbm = re.search(r"function onTreeKeydown\(e\)\s*\{([\s\S]*?)\n\}", app_js)
+    kb_src = kbm.group(1) if kbm else ""
+    check("webui: a tree keydown handler exists and is bound to the svg",
+          bool(kbm) and 'svg.addEventListener("keydown", onTreeKeydown)' in app_js)
+    check("webui: the handler covers Space + Enter and preventDefaults (Space must not scroll)",
+          '" "' in kb_src and '"Enter"' in kb_src and "preventDefault" in kb_src)
+    check("webui: arrows are orientation-relative (radial/top-down vs left-right maps)",
+          "function keyNavMap" in app_js
+          and 'state.viewMode === "radial"' in app_js.split("function keyNavMap")[1][:300]
+          and '{ child: "ArrowDown", parent: "ArrowUp"' in app_js
+          and '{ child: "ArrowRight", parent: "ArrowLeft"' in app_js)
+    check("webui: selection is the one keyboard cursor — every move goes through selectNode",
+          "selectNode(" in kb_src)
+    check("webui: the keyboard path never writes the spotlight classes",
+          not any(c in kb_src for c in ('"hov"', '"cold"', '"hot"')))
+    check("webui: sibling endpoints stop — no wrap arithmetic in the keyboard handler",
+          "%" not in kb_src)
+    check("webui: keyboard motion cannot light the hover spotlight (kbNav guard, cleared by a real pointer move)",
+          "_kbNav = true" in kb_src
+          and bool(re.search(r'addEventListener\("pointerover"[\s\S]{0,500}_kbNav\) return', app_js))
+          and bool(re.search(r'pointermove[^\n]*_kbNav = false', app_js)))
+    check("webui: Enter opens the detail pane and hands it focus (D6)",
+          'id="detail-content" tabindex="-1"' in index
+          and '$("detail-content").focus()' in kb_src and 'setPane("split")' in kb_src)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never

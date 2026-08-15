@@ -39,7 +39,11 @@
   </header>
   <main id="cockpit">
     <section id="tree-pane">
-      <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
+      <!-- a real focusable ARIA tree (spec 12): Tab reaches it, arrows move the selection,
+           Space folds, Enter opens the detail pane. app.js keeps aria-activedescendant and
+           the per-node treeitem states current on every render. -->
+      <svg id="tree" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="tree"
+           aria-label="crux tree — arrow keys move the selection"></svg>
       <button id="legend-btn" type="button" title="Show the color key" aria-label="Show the color key" hidden>Key</button>
       <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
       <div id="focus-crumb" hidden></div>
@@ -51,7 +55,7 @@
       </div>
       <div id="help">
         <button id="help-btn" type="button" title="Controls help" aria-label="Toggle controls help">?</button>
-        <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse</span>
+        <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse · arrows = move · space = fold</span>
       </div>
     </section>
     <section id="wiki-pane" hidden>
@@ -84,7 +88,9 @@
         <button data-font="large" type="button" aria-label="Large text">A</button>
         <button data-max="right" type="button" class="fc-max" title="Full-screen this panel ( ] )" aria-label="Full-screen the detail panel">⛶</button>
       </div>
-      <div id="detail-content"></div>
+      <!-- tabindex="-1": Enter on the tree canvas hands this pane the focus (spec 12, D6)
+           so PageUp/Down scroll the detail without a pointer -->
+      <div id="detail-content" tabindex="-1"></div>
       <div id="ro-footer" title="The cockpit never writes to the vault. To change the tree, ask your agent (it drives the crux engine) or run the crux CLI.">
         Read-only view — ask your agent to edit the tree <span class="ro-sub">(or use the crux CLI)</span>
       </div>
