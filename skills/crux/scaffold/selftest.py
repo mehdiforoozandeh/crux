@@ -1372,8 +1372,10 @@ def run_webui():
           index.count("data-max=") >= 3)
 
     # (E) the search box is roomier than the old 230px, but bounded — it must not grow to
-    #     swallow the toolbar, and its placeholder has to fit inside it
-    sm = re.search(r"#search\s*\{[^}]*flex:\s*([\d.]+)\s+[\d.]+\s+(\d+)px", style)
+    #     swallow the toolbar, and its placeholder has to fit inside it. Spec 12 (PRD-B)
+    #     wrapped the input in #search-wrap so the match counter can overlay the field;
+    #     the bounded flex moved to the wrapper (amendment pre-registered in the PRD).
+    sm = re.search(r"#search-wrap\s*\{[^}]*flex:\s*([\d.]+)\s+[\d.]+\s+(\d+)px", style)
     basis = int(sm.group(2)) if sm else 0
     check(f"webui: search basis is 260-320px (found {basis or 'none'})", 260 <= basis <= 320)
     check("webui: the search box does not flex-grow into the toolbar",
@@ -1469,6 +1471,33 @@ def run_webui():
     check("webui: Enter opens the detail pane and hands it focus (D6)",
           'id="detail-content" tabindex="-1"' in index
           and '$("detail-content").focus()' in kb_src and 'setPane("split")' in kb_src)
+
+    # -- spec 12 (PRD-B): search that cycles. Enter advances with wrap, Shift+Enter goes
+    #    back, a counter sits in the field. ONE match-set function feeds the cycle and the
+    #    counter in both tabs, in deterministic order (D2: tree walk / wiki index order),
+    #    over visible nodes only (D3). Behavior (order, wrap feel, counter accuracy) is the
+    #    PRD's manual checklist; these pin the structure and the two regressions.
+    sf = re.search(r"function searchMatches\(\)\s*\{([\s\S]*?)\n\}", app_js)
+    sf_src = sf.group(1) if sf else ""
+    check("webui: one match-set function feeds cycling and the counter in both tabs",
+          bool(sf) and app_js.count("searchMatches()") >= 3)
+    check("webui: tree matches are the deterministic walk over visible nodes",
+          "state.snap.tree" in sf_src and "state.collapsed.has" in sf_src
+          and "matchNode" in sf_src and "matchWiki" in sf_src)
+    check("webui: Enter advances, Shift+Enter goes back",
+          "cycleSearch(e.shiftKey ? -1 : 1)" in app_js)
+    check("webui: the cycle wraps in both directions",
+          bool(re.search(r"\+ dir \+ m\.length\) % m\.length", app_js)))
+    check("webui: the single-shot first-match jump is gone (regression)",
+          "Object.keys(state.positions).find(" not in app_js
+          and "wikiPages().find(matchWiki)" not in app_js)
+    check("webui: a match counter lives in the search field",
+          'id="search-wrap"' in index and 'id="search-count"' in index
+          and '$("search-count")' in app_js and "#search-count" in style)
+    check("webui: the counter reads position / total while cycling",
+          '`${i + 1} / ${m.length}`' in app_js)
+    check("webui: a new query restarts the cycle",
+          bool(re.search(r'addEventListener\("input"[\s\S]{0,200}matchId = null', app_js)))
 
 
 def run_economy():

@@ -32,7 +32,12 @@
         <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
         <button id="focus-btn" type="button" aria-label="Focus open questions"></button>
       </div>
-      <input id="search" type="search" placeholder="Search nodes · ↵ jump" title="Search the tree — Enter jumps to the first match, Esc clears" autocomplete="off" spellcheck="false">
+      <!-- the match counter (spec 12) overlays the field's right edge: "11" before you
+           cycle (the set size), "3 / 11" once Enter / Shift+Enter start walking it -->
+      <div id="search-wrap">
+        <input id="search" type="search" placeholder="Search nodes · ↵ jump" title="Search the tree — Enter / Shift+Enter cycle the matches, Esc clears" autocomplete="off" spellcheck="false">
+        <span id="search-count" hidden></span>
+      </div>
       <button id="review-btn" type="button">Review (0)</button>
       <button id="theme-btn" type="button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
     </div>

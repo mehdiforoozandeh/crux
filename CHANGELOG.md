@@ -17,6 +17,12 @@ verdict/roll-up/view logic changes.
   reduced motion). Keyboard costs the mouse nothing: every pointer gesture is unchanged, and
   a guard keeps keyboard-driven camera glides from lighting the hover spotlight.
 
+- **Cockpit: search that cycles** (spec [`12`](.spec/12-cockpit-craft.md)). `Enter` advances
+  to the next match and wraps; `Shift+Enter` goes back; a counter in the field shows the set
+  size before you cycle ("11") and your position once you do ("3 / 11"). One match set feeds
+  both, in deterministic order — the tree's own walk order, the wiki's index order — over
+  visible nodes only, in both tabs. (Before: Enter re-jumped to the first match forever.)
+
 - **Node economy — crux now enforces economy the way it already enforced falsifiability**
   (engine **1.3**, spec [`06`](.spec/06-node-economy.md)). Every guardrail used to push toward
   more rigor and none toward less volume, so nodes grew until the vault stopped being readable

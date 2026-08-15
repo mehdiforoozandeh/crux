@@ -76,14 +76,20 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
    inside it, so free bar space reaches the search only through this. */
 .tools { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
 /* a bit roomier than the old fixed 230px, but it does NOT grow to fill the bar — a
-   search field spanning half the toolbar reads as a mistake */
+   search field spanning half the toolbar reads as a mistake. The WRAPPER carries the
+   bounded flex so the match counter (spec 12) can overlay the field's right edge; the
+   input reserves that corner with padding, so text never runs under the counter. */
+#search-wrap { position: relative; flex: 0 1 290px; min-width: 190px; max-width: 320px; }
 #search {
-  flex: 0 1 290px; min-width: 190px; max-width: 320px;
-  padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line);
+  width: 100%; padding: 5px 56px 5px 10px; border-radius: 7px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--ink); font-size: 12.5px;
   user-select: text; -webkit-user-select: text;
 }
 #search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#search-count { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: var(--ink-mute); pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#search-count[hidden] { display: none; }
 
 /* tree view controls, in the top bar next to search: orientation · density · focus */
 .viewctl { display: flex; gap: 5px; flex: 0 0 auto; }

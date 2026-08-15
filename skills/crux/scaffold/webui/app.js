@@ -111,6 +111,7 @@ const state = {
   pane: localStorage.getItem("crux-pane") || "split",   // "split" | "left" | "right" (full-screen)
   report: null,             // open artifact report: {path, node, text, error}
   search: "",
+  matchId: null,            // where the Enter/Shift+Enter search cycle is parked (node id / wiki slug)
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
   tab: "tree",              // "tree" | "wiki" — applied from localStorage once wiki.active is known
@@ -183,6 +184,7 @@ function onSnapshot() {
   renderTree();
   renderWiki();
   renderDetail();
+  updateMatchCounter();   // the poll can add/remove matches under a live query
 }
 
 // ------------------------------------------------------------------ deterministic layout
@@ -1559,21 +1561,53 @@ function applySearch() {
   if (!state.snap) return;
   if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
   else renderTree();
+  updateMatchCounter();
+}
+// The match set (spec 12): ONE function feeds the counter and the Enter / Shift+Enter
+// cycle, in both tabs. Order is deterministic (D2) — the tree's own walk order, stable
+// across renders and polls; the wiki cycles in index order (the rail's order). Visible
+// nodes only (D3): a collapsed subtree's matches are not cycled, exactly matching what
+// the dim/hit classes show — a collapsed node itself is drawn (as a leaf), so it counts.
+function searchMatches() {
+  if (!state.search || !state.snap) return [];
+  if (state.tab === "wiki") return wikiPages().filter(matchWiki).map((p) => p.slug);
+  const out = [];
+  (function walk(n) {
+    if (matchNode(state.snap.nodes[n.id])) out.push(n.id);
+    if (state.collapsed.has(n.id)) return;
+    for (const c of n.children || []) walk(c);
+  })(state.snap.tree);
+  return out;
+}
+// the set size before you start cycling ("11"), your position once you do ("3 / 11")
+function updateMatchCounter() {
+  const el = $("search-count");
+  if (!state.search || !state.snap) { el.hidden = true; el.textContent = ""; return; }
+  const m = searchMatches(), i = state.matchId ? m.indexOf(state.matchId) : -1;
+  el.textContent = i >= 0 ? `${i + 1} / ${m.length}` : String(m.length);
+  el.hidden = false;
+}
+function cycleSearch(dir) {
+  const m = searchMatches();
+  if (!m.length) return;
+  const cur = state.matchId ? m.indexOf(state.matchId) : -1;   // -1: not cycling yet, or the match vanished
+  const i = cur >= 0 ? (cur + dir + m.length) % m.length       // wrap in both directions
+                     : dir > 0 ? 0 : m.length - 1;             // first press lands on the first / last
+  state.matchId = m[i];
+  if (state.tab === "wiki") openWikiPage(m[i]);
+  else selectNode(m[i], { center: true });
+  updateMatchCounter();
 }
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
+  state.matchId = null;   // a new query restarts the cycle
   applySearch();
 });
 $("search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { e.target.value = ""; state.search = ""; applySearch(); return; }
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; applySearch(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
-  if (state.tab === "wiki") {
-    const hit = wikiPages().find(matchWiki);
-    if (hit) openWikiPage(hit.slug);
-    return;
-  }
-  const hit = Object.keys(state.positions).find((id) => matchNode(state.snap.nodes[id]));
-  if (hit) selectNode(hit, { center: true });
+  e.preventDefault();
+  cycleSearch(e.shiftKey ? -1 : 1);
 });
 
 // ================================================================== wiki tab
@@ -1629,8 +1663,8 @@ function setTab(tab) {
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
   $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
   $("search").title = tab === "wiki"
-    ? "Search wiki pages — Enter opens the first match, Esc clears"
-    : "Search the tree — Enter jumps to the first match, Esc clears";
+    ? "Search wiki pages — Enter / Shift+Enter cycle the matches, Esc clears"
+    : "Search the tree — Enter / Shift+Enter cycle the matches, Esc clears";
   updateReviewBtn();
   applySearch();
   renderDetail();
