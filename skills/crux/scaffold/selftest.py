@@ -2055,6 +2055,89 @@ def run_deck_verify():
     shutil.rmtree(base, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- prezit skill assets (PRD 11c)
+def run_prezit():
+    print("\n# prezit skill assets (template, example deck, contract lint)")
+    CRUX = os.path.join(HERE, "crux.py")
+    skl = os.path.abspath(os.path.join(HERE, "..", "..", "prezit"))
+    tpl = os.path.join(skl, "assets", "deck.html")
+    exd = os.path.join(skl, "examples", "q1_scaling_deck.html")
+    sk = os.path.join(skl, "SKILL.md")
+    check("prezit: SKILL.md ships", os.path.isfile(sk))
+    check("prezit: template ships (assets/deck.html)", os.path.isfile(tpl))
+    check("prezit: example deck ships", os.path.isfile(exd))
+    if not (os.path.isfile(tpl) and os.path.isfile(exd) and os.path.isfile(sk)):
+        return  # nothing to probe; the three checks above already failed
+    t, x, s = read(tpl), read(exd), read(sk)
+
+    # self-contained: the automatable half of "loads from file:// with no network"
+    ext = re.compile(r'(?:src|href)\s*=\s*["\']https?://|@import|url\(\s*["\']?https?://'
+                     r'|<script\s[^>]*\bsrc\s*=|<link\s[^>]*stylesheet')
+    check("prezit: template is self-contained (no external refs)", not ext.search(t))
+    check("prezit: example deck is self-contained (no external refs)", not ext.search(x))
+    check("prezit: slide counter is DOM-derived (no literal total in markup)",
+          bool(re.search(r'id="tot">\s*<', t)) and bool(re.search(r'id="tot">\s*<', x)))
+
+    # contract lint: headers + 7-content-unit budget (footer overlap stays manual)
+    check("prezit: template passes `deck --lint`", E.deck_lint(tpl) == [])
+    check("prezit: example passes `deck --lint`", E.deck_lint(exd) == [])
+    tmp = tempfile.mkdtemp(prefix="crux_pzl_")
+    bad = os.path.join(tmp, "bad.html")
+    write(bad, '<section class="slide"><ul>' + "<li>x</li>" * 8 + "</ul></section>")
+    probs = E.deck_lint(bad)
+    check("prezit: lint catches a missing contract header",
+          any("contract header" in m for _, m in probs))
+    check("prezit: lint catches a slide over 7 content units",
+          any("content units" in m for _, m in probs))
+
+    # D5, mechanically: motivation slides carry no addressed numbers; result slides >= 2.
+    # Comments are stripped first — the deck's editing notes quote a literal
+    # <section class="slide"> which must not read as a phantom slide.
+    xs = re.sub(r"<!--.*?-->", " ", x, flags=re.S)
+    secs = re.findall(r'<section class="slide[^"]*"[^>]*>(.*?)</section>', xs, flags=re.S)
+    def addressed(seg):
+        return len(re.findall(r'data-src="(?!literal")[^"]+"|data-derived="[^"]+"'
+                              r"|\bsrc\s*:\s*['\"]", seg))
+    check("prezit: 8-slide spine present in the example", len(secs) == 8)
+    check("prezit: motivation slides (title/lineage/question) carry zero addressed numbers",
+          all(addressed(seg) == 0 for seg in secs[:3]))
+    check("prezit: every result slide carries >= 2 addressed numbers",
+          all(addressed(seg) >= 2 for seg in secs[5:7]))
+    check("prezit: chart-B annotations are computed from cached values, not hand-typed",
+          "note:'" not in x and 'note:"' not in x)
+
+    # the example against the shipped scaling_vault: the full contract, verify green
+    base = tempfile.mkdtemp(prefix="crux_pz_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    rep = E.deck_verify(svc, exd)
+    check("prezit: example deck — zero mismatches against scaling_vault",
+          rep["mismatch"] == [])
+    check("prezit: example deck — zero unresolvable addresses", rep["unresolvable"] == [])
+    check("prezit: example deck — zero unsourced numerals (source-scanned, ~40 rendered)",
+          rep["unsourced"] == [])
+    check("prezit: example exercises span, chart, derived and literal addressing",
+          'data-src="h1#task_a.delta"' in x and "src:'h1#task_a.delta'" in x
+          and "data-derived=" in x and 'data-src="literal"' in x)
+    rv = subprocess.run([sys.executable, CRUX, "deck", "--verify", exd, "--strict"],
+                        capture_output=True, text=True, cwd=svc)
+    check("prezit: `crux deck --verify --strict` green on the example", rv.returncode == 0)
+    rl = subprocess.run([sys.executable, CRUX, "deck", "--lint", exd],
+                        capture_output=True, text=True, cwd=svc)
+    check("prezit: `crux deck --lint` green on the example", rl.returncode == 0)
+    rlb = subprocess.run([sys.executable, CRUX, "deck", "--lint", bad],
+                         capture_output=True, text=True, cwd=svc)
+    check("prezit: `crux deck --lint` fails the bad deck", rlb.returncode != 0)
+    shutil.rmtree(base, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # SKILL.md carries the load-bearing rules (crude string pins so they can't be edited
+    # away silently)
+    for needle in ("crux deck", "--verify", "--refresh", "presentations/", "metrics.json",
+                   "contract header", "one claim", "re-run the plotting code"):
+        check(f"prezit: SKILL.md states '{needle}'", needle in s)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2100,6 +2183,7 @@ def main():
     run_agent_cli()
     run_deck()
     run_deck_verify()
+    run_prezit()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

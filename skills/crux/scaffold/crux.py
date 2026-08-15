@@ -151,6 +151,8 @@ def main(argv=None):
                    help="prove every addressed number in DECK still matches the vault")
     g.add_argument("--refresh", metavar="DECK", default=None,
                    help="rewrite DECK's cached values from the vault (values only; prose untouched)")
+    g.add_argument("--lint", metavar="DECK", default=None,
+                   help="check DECK's slide contract: header comments + the 7-content-unit budget")
     s.add_argument("--strict", action="store_true",
                    help="with --verify: also fail on numerals carrying no address")
 
@@ -335,9 +337,20 @@ def dispatch(a):
                       f"re-read the prose around them: a correct refresh can silently "
                       f"falsify the sentence that interprets a number.", file=sys.stderr)
             return 0
+        if a.lint:
+            probs = E.deck_lint(a.lint)
+            if a.json:
+                _emit([{"slide": i, "message": m} for i, m in probs])
+                return 1 if probs else 0
+            for _, m in probs:
+                print(f"✗ {m}")
+            if probs:
+                return 1
+            print("✓ deck lint clean: contract headers present, every slide within the unit budget")
+            return 0
         if not a.anchor:
             print("crux: deck needs an anchor id (e.g. `crux deck q1 --json`), or "
-                  "--verify/--refresh <deck.html>", file=sys.stderr)
+                  "--verify/--refresh/--lint <deck.html>", file=sys.stderr)
             return 1
         payload = E.deck_payload(root, a.anchor)
         if a.json:

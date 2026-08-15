@@ -1804,10 +1804,18 @@ _NUM_KEY_RE  = {k: re.compile(r"\b%s\s*:\s*(-?[0-9][0-9_.eE+-]*)" % k) for k in 
 _DATA_TAG_RE = re.compile(r"<(\w+)([^>]*\bdata-(src|derived)\s*=\s*\"([^\"]*)\"[^>]*)>(.*?)</\1>", re.S)
 _SLIDE_SEC_RE = re.compile(r'<section\s+class="slide[^"]*"[^>]*>(.*?)</section>', re.S)
 
-def _slide_of(text, pos):
-    """1-based ordinal of the slide the position sits in (script blocks after the last
-    section attribute to the last slide their data belongs to)."""
-    return max(1, text.count('<section class="slide', 0, pos))
+def _slide_sections(text):
+    """The real slides: _SLIDE_SEC_RE matches that do not START inside an HTML comment.
+    A literal '<section class="slide">' quoted in a header comment (the reference deck's
+    editing notes do exactly that) must never become a phantom slide."""
+    spans = [(m.start(), m.end()) for m in re.finditer(r"<!--.*?-->", text, flags=re.S)]
+    return [m for m in _SLIDE_SEC_RE.finditer(text)
+            if not any(s <= m.start() < e for s, e in spans)]
+
+def _slide_of(starts, pos):
+    """1-based ordinal of the slide the position sits in, given the real slide start
+    offsets (script blocks after the last section attribute to the last slide)."""
+    return max(1, sum(1 for s in starts if s <= pos))
 
 def _norm_display(s):
     """Normalize a displayed value for comparison (PI ruling #7): entities unescaped,
@@ -1833,10 +1841,11 @@ def _values_match(display, value):
 
 def _numeral_token(tok):
     """The token stripped of edge punctuation if it is an unsourced-numeral CANDIDATE,
-    else None. Excluded by design: node-id-shaped tokens (q1/h12/s3) and letter-hyphen-
-    digit compounds ('top-1'); geometry and chart data never reach here (script/style and
-    addressed spans are removed before tokenizing)."""
+    else None. Excluded by design: node-id-shaped tokens (q1/h12/s3, possessives
+    included) and letter-hyphen-digit compounds ('top-1'); geometry and chart data never
+    reach here (script/style and addressed spans are removed before tokenizing)."""
     t = tok.strip(".,;:!?()[]{}\"'“”‘’—–·")
+    t = re.sub(r"['’]s$", "", t)        # h3's -> h3
     if not t or not any(ch.isdigit() for ch in t):
         return None
     if re.fullmatch(r"[qhs]\d+", t):
@@ -1850,8 +1859,10 @@ def _unsourced_numerals(text):
     after dropping comments, script/style, and every tag carrying data-src/data-derived
     (their content is already covered by the address)."""
     out = []
-    for sm in _SLIDE_SEC_RE.finditer(text):
-        slide = text.count('<section class="slide', 0, sm.start()) + 1
+    secs = _slide_sections(text)
+    starts = [m.start() for m in secs]
+    for sm in secs:
+        slide = _slide_of(starts, sm.start())
         seg = re.sub(r"<!--.*?-->", " ", sm.group(1), flags=re.S)
         seg = re.sub(r"<(script|style)\b.*?</\1>", " ", seg, flags=re.S | re.I)
         seg = _DATA_TAG_RE.sub(" ", seg)
@@ -1889,6 +1900,7 @@ def deck_verify(root, path):
     (mismatch/unresolvable always fail; unsourced fails only under --strict)."""
     text = read(path)
     rep = {"mismatch": [], "unresolvable": [], "derived": [], "literal": [], "unsourced": []}
+    starts = [m.start() for m in _slide_sections(text)]
 
     def _resolve(addr, slide):
         try:
@@ -1899,7 +1911,7 @@ def deck_verify(root, path):
             return None
 
     for d in _deck_addresses(text):
-        slide = _slide_of(text, d["pos"])
+        slide = _slide_of(starts, d["pos"])
         if d["addr"] == "literal":
             rep["literal"].append({"slide": slide})
             continue
@@ -1966,8 +1978,9 @@ def deck_refresh(root, path):
     fix the prose."""
     text = read(path)
     ops, changes, unresolvable = [], [], []
+    starts = [m.start() for m in _slide_sections(text)]
     for d in _deck_addresses(text):
-        slide = _slide_of(text, d["pos"])
+        slide = _slide_of(starts, d["pos"])
         if d["addr"] == "literal" or d["kind"] == "derived":
             continue
         try:
@@ -2001,6 +2014,53 @@ def deck_refresh(root, path):
         write_if_changed(path, text)
     return {"changes": changes, "slides": sorted({c["slide"] for c in changes}),
             "unresolvable": unresolvable}
+
+# --- contract lint (spec 11 work item; PI ruling #8) -------------------------------
+# Every <section class="slide"> must carry a contract-header comment (job / source /
+# numbers / cut — the override surface a user's "make mine different" pushes against),
+# and no slide may exceed DECK_UNITS_MAX content units, counted mechanically over the
+# declared class list below. Countable, therefore lintable — the spec's own D3 rationale.
+# Footer overlap and 16:9 projector fit cannot be checked without rendering: manual.
+DECK_CONTRACT_KEYS = ("job", "source", "numbers", "cut")
+DECK_UNITS_MAX     = 7
+_DECK_UNIT_PATTERNS = (
+    ("chain node", r'class="node\b'),
+    ("bullet",     r"<li\b"),
+    ("table",      r"<table\b"),
+    ("callout",    r'class="target\b'),
+    ("chart",      r'class="chartbox\b'),
+    ("chip list",  r'class="chips\b'),
+    ("legend",     r'class="legend\b'),
+    ("note",       r'class="note\b'),
+    ("prose lead", r'class="lead\b'),
+    ("pipeline",   r'class="pipe\b'),
+)
+
+def deck_lint(path):
+    """[(slide_no, message)] for every contract violation in the deck file. Empty = clean."""
+    text = read(path)
+    problems = []
+    secs = _slide_sections(text)
+    if not secs:
+        return [(0, 'no <section class="slide"> found')]
+    for i, sm in enumerate(secs, 1):
+        # the header is the last comment in the gap between the previous section's end and
+        # this one's start — comments inside a section's own markup never masquerade as one
+        gap = text[(secs[i - 2].end() if i > 1 else 0):sm.start()]
+        cm = re.findall(r"<!--(.*?)-->", gap, flags=re.S)
+        if not cm:
+            problems.append((i, f"slide {i}: no contract header comment before the section"))
+        else:
+            missing = [k for k in DECK_CONTRACT_KEYS
+                       if not re.search(r"\b%s\b" % k, cm[-1].lower())]
+            if missing:
+                problems.append((i, f"slide {i}: contract header missing {', '.join(missing)}"))
+        seg = re.sub(r"<!--.*?-->", " ", sm.group(1), flags=re.S)
+        units = sum(len(re.findall(p, seg)) for _, p in _DECK_UNIT_PATTERNS)
+        if units > DECK_UNITS_MAX:
+            problems.append((i, f"slide {i}: {units} content units, over the "
+                                f"{DECK_UNITS_MAX}-unit cap"))
+    return problems
 
 def deck_warnings(root):
     """`validate --check=decks`: verify every *.html under presentations/ and surface

@@ -1,6 +1,6 @@
 # Spec 11 — prezit: presentations from a subtree
 
-**Label:** `prezit` · **Status:** ☐ todo
+**Label:** `prezit` · **Status:** ☑ done (landed 2026-08-15 — engine 1.4, PRDs 11a/11b/11c)
 **Depends on:** [06 node economy](06-node-economy.md) (the `--json` CLI convention)
 **Enriched by:** [07 RD layer](07-rd-layer.md) (the methods source) · [03 LLM wiki](03-llm-wiki.md) (the intro source)
 
@@ -408,22 +408,25 @@ Trivia (output path, framework) is stated, not asked.
 
 ## Work items
 
-- ☐ `crux deck <anchor> --json` — deterministic payload assembly (aliases: `prezit`, `present`, `slides`)
-- ☐ `results/<hid>/metrics.json` convention — schema, loader, address resolver (`<hid>#<dotted.path>`)
-- ☐ `crux deck --verify <deck>` — buckets, exit codes, `--strict`
-- ☐ `crux deck --refresh <deck>` — value rewrite + per-slide change warning
-- ☐ `validate --check=decks` — verify every deck under `presentations/`
+- ☑ `crux deck <anchor> --json` — deterministic payload assembly (aliases: `prezit`, `present`, `slides`)
+- ☑ `results/<hid>/metrics.json` convention — schema, loader, address resolver (`<hid>#<dotted.path>`)
+- ☑ `crux deck --verify <deck>` — buckets, exit codes, `--strict`
+- ☑ `crux deck --refresh <deck>` — value rewrite + per-slide change warning
+- ☑ `validate --check=decks` — verify every deck under `presentations/` (opt-in check)
 - ☑ `assets/11-prezit-reference.html` — worked example / template (chrome, palette tokens, slide
   stubs with contract headers, both chart-function scaffolds, addressing wired through)
-- ☐ Promote it to `skills/prezit/assets/deck.html` when the skill is written
-- ☐ Contract-header lint: every `<section class="slide">` has job / source / numbers / cut, and
-  no slide exceeds 7 content units
-- ☐ `skills/prezit/SKILL.md` — the mapping, the arc, the content rules, the refinement loop
-- ☐ Reference deck built from `examples/scaling_vault`, shipped in `skills/prezit/examples/`
-- ☐ `metrics.json` fixtures in the demo vault so selftest has something to resolve against
-- ☐ `selftest.py` coverage (below)
-- ☐ `ENGINE_VERSION` bump + migration proof (vaults with no `presentations/` and no
-  `metrics.json` must load unchanged)
+- ☑ Promote it to `skills/prezit/assets/deck.html` when the skill is written (copied + adapted;
+  this reference stays as the spec's frozen worked example)
+- ☑ Contract-header lint: every `<section class="slide">` has job / source / numbers / cut, and
+  no slide exceeds 7 content units (`crux deck --lint`)
+- ☑ `skills/prezit/SKILL.md` — the mapping, the arc, the content rules, the refinement loop
+- ☑ Reference deck built from `examples/scaling_vault`, shipped in `skills/prezit/examples/`
+  (`q1_scaling_deck.html` — verify `--strict` green, lint clean)
+- ☑ `metrics.json` fixtures — committed to `examples/scaling_vault` (`results/h1..h3/`, with
+  linked reports so the artifact lint stays clean); selftest writes its own temp fixtures
+- ☑ `selftest.py` coverage (below)
+- ☑ `ENGINE_VERSION` bump (1.3 → 1.4) + migration proof (vaults with no `presentations/` and no
+  `metrics.json` load unchanged — asserted in selftest)
 
 ## Acceptance criteria
 

@@ -8,6 +8,16 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The `prezit` skill — presentations from a subtree, end to end**
+  (spec [`11`](.spec/11-prezit.md) closed, PRD 11c). `skills/prezit/` ships the workflow
+  (harvest → read the reports → agree the arc with the PI → draft → verify → refine, with
+  `--refresh` + re-read-the-prose for re-presentation), the deck **template**
+  (`assets/deck.html`: chrome, palette tokens, fade-only + reduced-motion, keyboard nav,
+  DOM-derived slide count, print stylesheet, contract-headed stubs, both chart scaffolds)
+  and the worked **example** (`examples/q1_scaling_deck.html`, built on
+  `examples/scaling_vault` q1 — `--verify --strict` green, lint clean, chart annotations
+  computed from cached values rather than hand-typed). New `crux deck --lint` checks every
+  slide's contract header (job/source/numbers/cut) and the 7-content-unit budget.
 - **`crux deck --verify` / `--refresh` — the deck traceability contract, enforced**
   (spec [`11`](.spec/11-prezit.md) §5, PRD 11b). `--verify <deck.html>` walks every
   `src:` / `data-src` / `data-derived` in the deck **source** (never a rendered DOM) and
