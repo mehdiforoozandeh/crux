@@ -24,6 +24,13 @@ _(one sentence, plain language, no jargon)_
 
 _(one paragraph: what this claims, and what would settle it)_
 
+## Null
+
+<!-- spec 09: the BORING explanation — the cheapest way this result could be trivially
+     true. One line, <=25 words, naming a family. Your checks must discriminate against it.
+     The PI approves it before checks are written: `crux approve-null <id>`. -->
+_(one line: the cheapest way this result could be trivially true — name a family from capacity, chance, leakage, selection, normalization, instrumentation)_
+
 ## Problem Statement
 
 <<problem>>

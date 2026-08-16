@@ -109,6 +109,11 @@ def main(argv=None):
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
                         "run, not the claim. At least one is required before `test --to running`.")
+    s.add_argument("--null", default=None,
+                   help="the BORING explanation: the cheapest way this result could be trivially "
+                        "true. One line, <=25 words, naming a confound family (capacity, chance, "
+                        "leakage, selection, normalization, instrumentation). The PI approves it "
+                        "with `crux approve-null` BEFORE checks are written against it.")
     s.add_argument("--rule", default=None, choices=None,
                    help="how the claim-directed verifiables ADD UP, declared before the run: "
                         "all | any | m-of-n. Required once there is more than one of them — "
@@ -210,6 +215,11 @@ def main(argv=None):
 
     s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
     s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
+                                 help="the PI's sign-off on a hypothesis' null — the gate between "
+                                      "naming the boring explanation and writing checks against it"))
+    s.add_argument("id")
 
     s = _jsonable(sub.add_parser("brief", help="the deterministic cold input for an isolated agent: "
                                           "one hypothesis' claim, question, pre-registered checks "
@@ -395,7 +405,7 @@ def dispatch(a):
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
-                                          a.verifiable, a.neutral, a.rule, a.rule_m)
+                                          a.verifiable, a.neutral, a.rule, a.rule_m, a.null)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
@@ -478,6 +488,12 @@ def dispatch(a):
         print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
+    elif c in ("approve-null", "approve_null"):
+        root = _vault()
+        stamp = E.cmd_approve_null(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "null_approved": stamp})
+        print(f"✓ {a.id} null approved at {stamp}\n  checks may now be written against it")
     elif c == "brief":
         b = E.brief(_vault_ro(None), a.id)
         if a.json:

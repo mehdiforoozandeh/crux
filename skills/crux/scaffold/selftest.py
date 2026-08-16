@@ -40,6 +40,16 @@ def node_path(root, nid):
     return E.Vault(root).get(nid)["path"]
 
 
+def declare_null(root, hid, text="capacity — the extra parameters alone explain the gain"):
+    """Give a fixture hypothesis a declared AND approved null, the way `crux-null` proposes
+    and the PI signs off. Idempotent, so it is safe to call before every `--to running`."""
+    n = E.Vault(root).get(hid)
+    if not E._null_text(n):
+        E.write_if_changed(n["path"], E.render_doc(n["fm"], E.set_null(n["body"], text)))
+    E.cmd_approve_null(root, hid)
+
+
+
 def at_least_version(v):
     """True if the engine is at or past version `v`. Historical "this PRD bumped the version"
     asserts use this instead of a literal equality: the statement they were making is *that
@@ -96,6 +106,7 @@ def run_demo(keep_dir=None):
     # 5. test transitions
     E.cmd_test(root, h1, to="staged")
     check("test: h1 staged", E.Vault(root).get(h1).status == "staged")
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running", run="job 40012")
     edit(node_path(root, h1), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
     check("test: h1 running", E.Vault(root).get(h1).status == "running")
@@ -104,12 +115,14 @@ def run_demo(keep_dir=None):
     # whole-body `_(none yet)_` probe, so the moment a second section shipped with a
     # placeholder of its own (## Artifacts), every run link after the first was silently
     # dropped — no error, and the CLI still printed success.
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running", run="job 40013")
     links = E._run_links(read(node_path(root, h1)).split("---", 2)[-1])
     check("test: a second --run appends rather than dropping the link",
           links == ["job 40012", "job 40013"])
     check("test: the Artifacts placeholder is untouched by a run link",
           "## Artifacts" in read(node_path(root, h1)))
+    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
 
@@ -492,6 +505,8 @@ def run_snapshot():
                                  neutral=["control"], rule="all")
     h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"],
                                  neutral=["control"], rule="all")
+    declare_null(root, h2)
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
     E.cmd_close(root, h1, metric="imp +0.012")
@@ -685,6 +700,7 @@ def run_artifacts():
     # -- close still WARNS rather than blocking when the report is missing
     h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"])
     write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
+    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ]", "- [x]")
     verdict = E.cmd_close(root, h2)
@@ -725,6 +741,7 @@ def run_close_gate():
     q1, _ = E.cmd_ask(root, "the question")
     q2, _ = E.cmd_ask(root, "another question")
     h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"], neutral=["control"])
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")
     E.cmd_close(root, h1)
@@ -1507,8 +1524,17 @@ def run_webui():
     check("webui: summaryLead is defined", "function summaryLead(" in app_js)
     check("webui: the question pane leads with the summary",
           app_js.index("summaryLead(n)") < app_js.index('foldedSection("Detail"'))
+    # Scoped to ideaDetail and stated as an ORDER rather than literal adjacency: spec 09
+    # inserts the one-line `## Null` between the summary and the folded Problem, which does
+    # not violate what this guard is for. What it guards — Problem/Detail going back to being
+    # the first thing in the pane — is asserted directly, and the "nothing bulky in between"
+    # half is kept by naming exactly what may sit there.
+    idea_fn = app_js.split("function ideaDetail")[1].split("\nfunction ")[0]
+    between = idea_fn.split("summaryLead(n) +")[1].split('foldedSection("Problem"')[0]
     check("webui: the hypothesis pane leads with the summary too",
-          'summaryLead(n) +\n    foldedSection("Problem"' in app_js)
+          "summaryLead(n) +" in idea_fn
+          and idea_fn.index("summaryLead(n) +") < idea_fn.index('foldedSection("Problem"')
+          and between.strip().startswith('section("Null'))
     check("webui: the long question detail is folded, not dumped",
           'foldedSection("Detail", n.detail' in app_js and 'section("Detail", bodyOr(n.detail' not in app_js)
     check("webui: the cap comes from the engine, never hardcoded in the UI",
@@ -1927,11 +1953,15 @@ def run_agent_cli():
     check("json: ask exits 0", r.returncode == 0)
 
     r = cli("hypothesize", "it is", "-p", q1["id"], "-v", "stdout parses",
-            "-n", "the parser round-trips a known-good payload", "--json")
+            "-n", "the parser round-trips a known-good payload",
+            "--null", "chance — the payload happened to parse", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
     check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
 
+    rn = cli("approve-null", h1["id"], "--json")
+    check("json: approve-null emits parseable JSON",
+          isinstance(as_json(rn), dict) and as_json(rn).get("null_approved"))
     r = cli("test", h1["id"], "--to", "running", "--json")
     t = as_json(r)
     check("json: test emits parseable JSON", isinstance(t, dict) and t.get("status") == "running")
@@ -2035,6 +2065,7 @@ def run_deck():
     edit(node_path(root, h1), "- [ ] bar one", "- [x] bar one   (found: +0.02)")
     edit(node_path(root, h1), "- [ ] bar two", "- [x] bar two")
     edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     E.cmd_close(root, h1, metric="imp +0.02")
     # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
@@ -3284,9 +3315,11 @@ def run_verifiable_kind():
     n2 = E.Vault(root).get(h2)
     n2["fm"]["neutral_optout"] = "the assay IS the claim; a positive control would beg the question"
     E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
+    declare_null(root, h2)
     check("kind: a written opt-out unblocks running",
           E.cmd_test(root, h2, to="running") == "running")
 
+    declare_null(root, "h1")
     check("kind: a hypothesis WITH a control runs with no opt-out",
           E.cmd_test(root, "h1", to="running") == "running")
 
@@ -3472,6 +3505,7 @@ def run_combination_rule():
     E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
     edit(node_path(root, h1), "- [ ] c one", "- [x] c one")
     edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     check("rule: all with one unmet closes refuted (was partial before 1.8)",
           E.cmd_close(root, h1) == "refuted")
@@ -3481,6 +3515,7 @@ def run_combination_rule():
     n = E.Vault(root).get(h2); n["fm"]["rule"] = "all"
     E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
     edit(node_path(root, h2), "- [ ] c one", "- [x] c one")
+    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     check("rule: a failed control closes invalid-run end to end",
           E.cmd_close(root, h2) == "invalid-run")
@@ -3514,6 +3549,7 @@ def run_combination_rule():
                  lambda: E.cmd_test(root, h3, to="running"))
     h4, _, _ = E.cmd_hypothesize(root, "single check", parent=q1,
                                  verifiables=["only one"], neutral=["control"])
+    declare_null(root, h4)
     check("rule: a single claim-directed check needs no declaration",
           E.cmd_test(root, h4, to="running") == "running")
     n = E.Vault(root).get(h3); n["fm"]["rule"] = "ordered"
@@ -3576,11 +3612,13 @@ def run_hash_lock():
     h1 = mk("locked at running")
     check("lock: an unrun hypothesis carries no lock",
           E.Vault(root).get(h1)["fm"].get("lock") is None)
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     first_lock, first_at = n["fm"].get("lock"), n["fm"].get("locked")
     check("lock: running takes the lock",
           bool(first_lock) and bool(first_at) and n["fm"].get("lock_at") == "running")
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     check("lock: re-running never re-locks",
@@ -3631,6 +3669,7 @@ def run_hash_lock():
 
     # -- the hole `running` alone leaves: cmd_close has no status precondition
     h2 = mk("closed straight from idea")
+    declare_null(root, h2)
     edit(node_path(root, h2), "- [ ] alpha check", "- [x] alpha check")
     edit(node_path(root, h2), "- [ ] beta check", "- [x] beta check")
     edit(node_path(root, h2), "- [ ] [outcome-neutral] the control", "- [x] [outcome-neutral] the control")
@@ -3697,6 +3736,7 @@ def run_hash_lock():
 
     # ------------------------------------------------------------------ the boundary holds
     old, oq, oh = pre15_vault("crux_lmig_")
+    declare_null(old, oh)
     E.cmd_test(old, oh, to="running")
     check("evmig: a pre-15 node never locks",
           E.Vault(old).get(oh)["fm"].get("lock") is None)
@@ -4140,6 +4180,8 @@ def run_cockpit_evidence():
                                  verifiables=["alpha", "beta"], neutral=["the control"])
     h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1, rule="all",
                                  verifiables=["alpha"], neutral=["the control"])
+    declare_null(root, h2)
+    declare_null(root, h1)
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
     edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
     edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
@@ -4447,6 +4489,7 @@ def run_experiment_gate():
     #       a SECOND PI touchpoint 15 could not have known about; blocking here would
     #       reintroduce the block D7 declined, going around 15.3's own guard assert. This is
     #       08's copy of that guard.
+    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     hp = node_path(root, h2)
     edit(hp, "- [ ] sep at n=3", "- [ ] a totally different check")
@@ -4463,6 +4506,7 @@ def run_experiment_gate():
 
     # -- 9. tasks are outside the roll-up, so an open experiment does not hold its question
     #       out of review. Pinned because the opposite is a plausible later "fix".
+    declare_null(root, h3)
     E.cmd_test(root, h3, to="running")
     edit(node_path(root, h3), "- [ ]", "- [x]")          # claim + control both met
     E.cmd_close(root, h3)
@@ -4640,6 +4684,7 @@ def run_task_gui():
     bq, _ = E.cmd_ask(both, "does narration coexist with backlinks?")
     bh, _, _ = E.cmd_hypothesize(both, "it does", parent=bq, rule="all",
                                  verifiables=["alpha"], neutral=["the control"])
+    declare_null(both, bh)
     E.cmd_test(both, bh, to="running")
     edit(node_path(both, bh), "- [ ] alpha", "- [x] a check nobody registered")   # -> DRIFT
     be, _ = E.cmd_task_add(both, "The run", category="implementation", blocked_by=None,
@@ -4761,6 +4806,7 @@ def run_brief():
     edit(node_path(root, h2), "- [ ] gamma", "- [x] gamma   (found: 0.71)")
     edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
                               "- [x] [outcome-neutral] the control")
+    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     E.cmd_close(root, h2, findings="the earlier run settled the preprocessing question")
     # the anchor's OWN results: present in the vault, and they must not reach its own brief
@@ -4832,6 +4878,91 @@ def run_brief():
     shutil.rmtree(old, ignore_errors=True)
 
 
+def run_null():
+    """Spec 09 PRD 09.1 — `## Null`, the boring explanation, PI-gated.
+
+    The brief removes the parent's authored prompt, but one leak cannot be engineered away:
+    the hypothesis TITLE is directional. "masked-token beats masked-stem" presumes a winner.
+    The answer is not to neutralise it but to push against it — name the cheapest way this
+    result could be trivially true, then make the checks discriminate against THAT.
+
+    Three goalposts, all in code, because instructions will not hold this: the crux skill
+    already said "keep the science explicit" and produced 5,725-word nodes."""
+    print("\n# specialized agents — the null and its gate (spec 09, PRD 09.1)")
+    root = tempfile.mkdtemp(prefix="crux_null_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Nulls", root)
+    q1, _ = E.cmd_ask(root, "does the null gate hold?")
+
+    def mk(title, **kw):
+        kw.setdefault("verifiables", ["alpha"]); kw.setdefault("neutral", ["ctl"])
+        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
+        return hid
+
+    h1 = mk("with a good null", null="capacity — the extra parameters alone explain it")
+    n1 = E.Vault(root).get(h1)
+    check("null: the template carries a Null section", "## Null" in n1["body"])
+    check("null: --null writes the section",
+          "capacity — the extra parameters alone explain it" in n1["body"])
+    check("null: the null reaches the brief",
+          E.brief(root, h1)["null"] == "capacity — the extra parameters alone explain it")
+    check("null: snapshot exposes the null",
+          E.snapshot(root)["nodes"][h1]["null"].startswith("capacity"))
+
+    check("null: every confound family is accepted",
+          all(E.null_problem(f"{fam} — the instance", 1) is None for fam in E.CONFOUND_FAMILIES))
+    check("null: a null naming no family is refused, and the message lists them",
+          "capacity" in (E.null_problem("the numbers were just nicer", 1) or ""))
+    check("null: a null over 25 words is refused",
+          "25" in (E.null_problem("chance — " + " ".join(["word"] * 30), 1) or ""))
+    check("null: a 25-word null is accepted (the cap is inclusive)",
+          E.null_problem("chance — " + " ".join(["w"] * 23), 1) is None)
+    check("null: a pre-15 node is never asked for one", E.null_problem("", 0) is None)
+
+    expect_error("null: running is refused with no null at all",
+                 lambda: E.cmd_test(root, mk("no null"), to="running"))
+    expect_error("null: running is refused with an unapproved null",
+                 lambda: E.cmd_test(root, h1, to="running"))
+    check("null: the refusal names the approval route",
+          "approve-null" in _err_text(lambda: E.cmd_test(root, h1, to="running")))
+    stamp = E.cmd_approve_null(root, h1)
+    check("null: approval stamps a timestamp", bool(stamp) and "T" in stamp)
+    check("null: approval is idempotent", E.cmd_approve_null(root, h1) == stamp)
+    ran = E.cmd_test(root, h1, to="running")
+    check("null: an approved null unblocks running", ran == "running")
+
+    edit(node_path(root, h1), "capacity — the extra parameters alone explain it",
+                              "leakage — the split let the answer through")
+    check("null: editing an approved null voids the approval",
+          any(i == h1 and "EDITED after approval" in m for i, m in E.cmd_validate(root)))
+    E.cmd_approve_null(root, h1)
+    check("null: re-approving the edited null clears the flag", E.cmd_validate(root) == [])
+
+    h3 = mk("two nulls", null="chance — noise")
+    edit(node_path(root, h3), "chance — noise",
+                              "chance — noise\nselection — the sample was picked")
+    check("null: exactly one null",
+          any(i == h3 and "exactly one" in m for i, m in E.cmd_validate(root)))
+
+    h4 = mk("bad family")
+    n4 = E.Vault(root).get(h4)
+    E.write_if_changed(n4["path"],
+                       E.render_doc(n4["fm"], E.set_null(n4["body"], "the numbers came out nicer")))
+    check("null: a malformed null is a validate problem before any run",
+          any(i == h4 for i, m in E.cmd_validate(root)))
+
+    check("null: ENGINE_VERSION at or past 2.5", at_least_version("2.5"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_nmig_")
+    check("evmig: a pre-15 hypothesis needs no null",
+          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == []
+          and E.validation_report(old)["warnings"] == [])
+    check("evmig: a pre-15 brief carries a null of None", E.brief(old, oh)["null"] is None)
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -4898,6 +5029,7 @@ def main():
     run_taskhub_skill()
     run_cockpit_evidence()
     run_brief()
+    run_null()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

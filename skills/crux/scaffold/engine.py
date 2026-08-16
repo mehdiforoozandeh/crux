@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -178,6 +178,29 @@ TERMINAL_QUESTION= "resolved"
 # deliberately no `crux migrate` for it. Bringing an old hypothesis up to the new schema
 # means re-declaring what would settle a claim, which is a scientific act, PI-gated, one
 # node at a time.
+# The NULL (spec 09). The brief removes the parent's authored prompt, but one leak cannot be
+# engineered away: the hypothesis TITLE is directional — "masked-token beats masked-stem"
+# presumes a winner, and a fresh agent still knows which way the room leans. The answer is
+# not to neutralise the title but to push against it. The null is the BORING EXPLANATION:
+# the cheapest way this result could be trivially true. The checks must then discriminate
+# between the claim and that null.
+#
+# Three goalposts, all in code. Instructions will not hold this and the proof is on the
+# record — the crux skill already said "keep the science explicit" and produced 5,725-word
+# nodes. The vault also invented the null by hand once, at a cost of 5,725 words, because
+# the schema had nowhere to put it.
+#
+#   one null, one line, <= 25 words     — deterministic
+#   it names a family from a CLOSED list — the agent picks a family and names the instance,
+#                                          so nothing exotic is even on the menu
+#   the PI approves it before checks are written — the gate between crux-null and
+#                                          crux-verifiables; the null IS the bar restated,
+#                                          and the leash already makes the bar the PI's call
+CONFOUND_FAMILIES = ("capacity", "chance", "leakage", "selection", "normalization",
+                     "instrumentation")
+NULL_MAX_WORDS    = 25
+NULL_APPROVED     = "null_approved"
+
 SCHEMA_GENERATION = 1
 
 # `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
@@ -470,6 +493,10 @@ updated: <<now>>
 # <<id>> — <<title>>
 
 Parent:: [[<<parent_basename>>]]
+
+## Null
+
+_(one line: the cheapest way this result could be trivially true — name a family from capacity, chance, leakage, selection, normalization, instrumentation)_
 
 ## Problem Statement
 
@@ -1162,6 +1189,52 @@ def fanout_pressure(v, qid):
                 f"this one puts it over. Run or close some before proposing more.")
     return None
 
+def null_problem(text, schema=1):
+    """The message for a null that fails a goalpost, or None. `schema` is the node's
+    generation: a pre-15 node is never asked for one, so 0 always passes.
+
+    Pure — takes a string, so the goalposts are testable without a vault."""
+    if schema < 1:
+        return None
+    lines = [l for l in (text or "").splitlines() if l.strip()]
+    if not lines:
+        return (f"no null declared. Name the BORING explanation — the cheapest way this "
+                f"result could be trivially true — as one line naming a family from: "
+                f"{', '.join(CONFOUND_FAMILIES)}.")
+    if len(lines) > 1:
+        return (f"{len(lines)} nulls declared; there is exactly one. The null is the single "
+                f"cheapest boring explanation, not a list of everything that could go wrong.")
+    one = lines[0].strip()
+    words = len(one.split())
+    if words > NULL_MAX_WORDS:
+        return (f"the null runs to {words} words, over the {NULL_MAX_WORDS}-word cap. It is "
+                f"one line: a family and its instance, not an argument.")
+    fam = one.lower().split()
+    if not any(f in fam or any(w.startswith(f) for w in fam) for f in CONFOUND_FAMILIES):
+        return (f"the null names no confound family. Pick one of "
+                f"{', '.join(CONFOUND_FAMILIES)} and name the instance — the closed list is "
+                f"what stops an exotic null nobody can test against.")
+    return None
+
+def null_gap(n):
+    """The `validate`/gate message for a hypothesis' null, or None. Gated on the stamp, so a
+    pre-15 hypothesis is never asked for one."""
+    if n.type != "idea" or not binds_evidence_semantics(n):
+        return None
+    p = null_problem(_null_text(n) or "", node_schema(n))
+    if p:
+        return f"hypothesis '{n.id}': {p}"
+    if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") != _null_hash(n):
+        return (f"hypothesis '{n.id}': the null was EDITED after approval, so the approval no "
+                f"longer stands. A different null is a different claim about what would be "
+                f"boring, and checks written against the old one discriminate against "
+                f"nothing. Re-approve with `crux approve-null {n.id}`.")
+    if not str(n["fm"].get(NULL_APPROVED) or "").strip():
+        return (f"hypothesis '{n.id}': the null is declared but not approved. The null IS the "
+                f"bar restated, and the bar is the PI's call — `crux approve-null {n.id}` "
+                f"once they have read it. Checks are written against an APPROVED null.")
+    return None
+
 def neutral_gap(n):
     """The message for a stamped hypothesis that has no outcome-neutral verifiable and no
     written opt-out, or None when it is satisfied. Spec 15 §1.
@@ -1222,6 +1295,14 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        # a malformed null is wrong the moment it is written, not when the run starts —
+        # otherwise a draft accumulates nulls nobody can act on
+        if t == "idea" and binds_evidence_semantics(n):
+            written = _null_text(n)
+            if written:
+                p = null_problem(written, node_schema(n))
+                if p:
+                    problems.append((nid, f"hypothesis '{nid}': {p}"))
         # a declared rule crux will not honor is wrong the moment it is written, not the
         # moment the run starts — `ordered` in particular is reserved, and a vault must never
         # be able to carry one
@@ -1243,7 +1324,7 @@ def validate(v):
                                           f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
         # ...and once a run has actually started, the control requirement bites
         if t == "idea" and n.status in ("running", "done"):
-            for gap in (neutral_gap(n), rule_gap(n)):
+            for gap in (neutral_gap(n), rule_gap(n), null_gap(n)):
                 if gap:
                     problems.append((nid, gap))
         if t == "idea" and lock_drift(n):
@@ -2620,7 +2701,7 @@ def cmd_ask(root, title, parent=None, body_text=""):
     return nid, fn
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
-                    rule=None, rule_m=None):
+                    rule=None, rule_m=None, null=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -2642,6 +2723,12 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
     if rest:
         lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
         text = text.replace(f"- [ ] {lead}", f"- [ ] {lead}\n" + "\n".join(rest))
+    if null is not None:
+        p = null_problem(null, SCHEMA_GENERATION)
+        if p:
+            raise CruxError(f"null: {p}")
+        fm_t, body_t = parse_doc(text)
+        text = render_doc(fm_t, set_null(body_t, null))
     if rule is not None:
         if rule in RESERVED_RULES:
             raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see "
@@ -2696,7 +2783,7 @@ def cmd_test(root, nid, to=None, run=None):
     if target == "running" and sum(count_verifiables(n["body"])) == 0:
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
     if target == "running":
-        for gap in (neutral_gap(n), rule_gap(n)):
+        for gap in (neutral_gap(n), rule_gap(n), null_gap(n)):
             if gap:
                 raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
@@ -2770,6 +2857,52 @@ def approved_synthesis(v, qid):
              if n.type == "synthesis" and n["fm"].get("approved")
              and qid in _related_ids(v, n["body"])]
     return min(cands, key=lambda n: natkey(n.id)).id if cands else None
+
+def cmd_approve_null(root, hid):
+    """The PI's sign-off on the null — the gate between `crux-null` and `crux-verifiables`.
+    Idempotent: the first approval's timestamp is the record.
+
+    The approval stores a hash of what was approved, so EDITING the null silently clears it.
+    That is not bookkeeping: a different null is a different claim about what would be boring,
+    and checks written against the old one no longer discriminate against anything."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n.type != "idea":
+        raise CruxError(f"approve-null applies to a hypothesis (got a '{n.type}' for '{hid}')")
+    p = null_problem(_null_text(n) or "", node_schema(n))
+    if p:
+        raise CruxError(f"cannot approve {hid}'s null: {p}")
+    if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") == _null_hash(n):
+        return str(n["fm"][NULL_APPROVED])
+    stamp = now()
+    n["fm"][NULL_APPROVED] = stamp
+    n["fm"]["null_hash"] = _null_hash(n)
+    _bump(n)
+    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
+    refresh(root)
+    return stamp
+
+def set_null(body, text):
+    """Write `text` as the whole content of `## Null`, replacing the template's guidance
+    comment and placeholder. One helper, because two callers were each carrying their own
+    regex and both broke the moment the template gained a comment."""
+    lines, out, in_sec, done = body.splitlines(), [], False, False
+    for line in lines:
+        if line.startswith("## "):
+            if in_sec and not done:
+                out.append(text); out.append(""); done = True
+            in_sec = line[3:].strip().lower() == "null"
+            out.append(line)
+            continue
+        if in_sec and not done:
+            continue                      # drop the comment + placeholder wholesale
+        out.append(line)
+    if in_sec and not done:
+        out.append(""); out.append(text)
+    return "\n".join(out)
+
+def _null_hash(n):
+    return hashlib.sha256(" ".join((_null_text(n) or "").split()).encode("utf-8")).hexdigest()[:16]
 
 def cmd_approve(root, sid):
     """The PI's sign-off on a synthesis — the second human touchpoint of the close
@@ -3055,6 +3188,8 @@ def _node_json(v, n, rd_map=None, task_map=None):
         rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
         d["rule"], d["rule_m"] = rule, m
         d["tally"] = {k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
+        d["null"] = _null_text(n)
+        d["null_approved"] = str(n["fm"].get(NULL_APPROVED)) if n["fm"].get(NULL_APPROVED) else None
         d["locked"] = bool(n["fm"].get(LOCK_FIELD))
         d["lock_at"] = n["fm"].get(LOCK_WHERE_FIELD) or None
         d["drift"] = lock_drift(n)

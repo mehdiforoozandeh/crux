@@ -8,6 +8,28 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`## Null` — the boring explanation, on a closed vocabulary, PI-gated** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.1). The brief removes the parent's authored
+  prompt, but one leak cannot be engineered away: the hypothesis **title** is directional.
+  *"masked-token beats masked-stem"* presumes a winner, and a fresh agent still knows which
+  way the room leans. The answer is not to neutralise the title but to push against it —
+  name the **cheapest way this result could be trivially true**, then make the checks
+  discriminate against *that*.
+
+  Three goalposts, all in code, because instructions will not hold this (the crux skill
+  already said *"keep the science explicit"* and produced 5,725-word nodes): **one null, one
+  line, ≤25 words**; it must **name a family from a closed list** — `capacity` · `chance` ·
+  `leakage` · `selection` · `normalization` · `instrumentation` — so the agent picks a family
+  and names the instance rather than composing something exotic; and **the PI approves it
+  before checks are written against it** (`crux approve-null <id>`), which is the gate
+  between naming the boring explanation and testing against it. The null *is* the bar
+  restated, and the leash already makes the bar the PI's call.
+
+  Editing an approved null **voids the approval** — a different null is a different claim
+  about what would be boring, and checks written against the old one discriminate against
+  nothing. New `crux hypothesize --null`; the null flows into `crux brief`, `snapshot` and
+  the cockpit pane. `ENGINE_VERSION` 2.4 → 2.5. Pre-15 hypotheses are never asked for one.
+
 - **`crux brief <hypothesis> --json`** (spec [`09`](.spec/09-specialized-agents.md), PRD 09.0).
   The deterministic cold input every isolated agent receives: one hypothesis' claim, its
   question, its ancestry, its pre-registered checks with kinds and combination rule, the
