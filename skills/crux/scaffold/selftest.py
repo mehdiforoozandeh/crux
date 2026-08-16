@@ -5721,6 +5721,163 @@ def run_situate_agent():
     check("situate: ENGINE_VERSION at or past 3.0", at_least_version("3.0"))
 
 
+def run_methodology():
+    """Spec 13 PRD 13.2 — the methodology slots, and a visible `## Planned Intervention`.
+
+    Spec 13 splits experiment design into what code can check and what needs judgment, and
+    lists six deterministic slots. Three shipped with spec 15 (a control is declared, >=1
+    outcome-neutral check, a combination rule). Two did not exist in any form: *the
+    measurement is named* and *n / replicates stated*. (The sixth, the separability model, is
+    PARKED — declaring it would settle spec 15's own open question D10 by side effect.)
+
+    The near-miss is `metric:`, and it is a trap: that field is the headline RESULT written at
+    `close`, i.e. the exact opposite of a declaration made before the run.
+
+    Two properties carry this PRD, and both are negative:
+      - the slots are NOT part of the hash-locked commitment, so adding them cannot drift a
+        single locked node (spec 09's D1 measured what happens when you get this wrong);
+      - a missing slot is INFO, never a warning — `ok` is `not problems and not warnings`, so
+        a warning would put every existing vault into red over a field it never had."""
+    print("\n# design — the methodology slots (spec 13, PRD 13.2)")
+    root = tempfile.mkdtemp(prefix="crux_design_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Design", root)
+    q1, _ = E.cmd_ask(root, "does the design hold up?")
+    h1, _, _ = E.cmd_hypothesize(root, "the declared claim", parent=q1, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 measurement="imputation Spearman on held-out chr21",
+                                 replicates="5 seeds x 3 folds; n = 15 per arm")
+    h2, _, _ = E.cmd_hypothesize(root, "the undeclared claim", parent=q1, rule="all",
+                                 verifiables=["beta"], neutral=["the control"])
+    hidea, _, _ = E.cmd_hypothesize(root, "a raw idea nobody has staged", parent=q1,
+                                    rule="all", verifiables=["gamma"], neutral=["the control"])
+    v = E.Vault(root)
+    check("design: the methodology slots parse, and absence is None",
+          E.node_measurement(v.get(h1)) == "imputation Spearman on held-out chr21"
+          and E.node_replicates(v.get(h1)).startswith("5 seeds")
+          and E.node_measurement(v.get(h2)) is None
+          and E.node_replicates(v.get(h2)) is None)
+    check("design: the declaration is frontmatter, beside rule and metric, not prose",
+          "measurement: imputation Spearman" in read(node_path(root, h1)))
+    check("design: the planned measurement is not the recorded metric",
+          E.Vault(root).get(h1)["fm"].get("metric") in (None, ""))
+
+    # ---- the info tier: a nudge in the window where the design is still changeable
+    for h in (h1, h2):
+        declare_null(root, h)
+    E.cmd_test(root, h2, to="staged")
+    rep = E.validation_report(root)
+    ids = {i["id"]: i for i in rep["info"]}
+    check("design: a staged hypothesis with no measurement is reported as info",
+          "design:measurement" in ids and ids["design:measurement"]["count"] == 1
+          and "design:replicates" in ids)
+    check("design: a thin design is never a problem and never a warning",
+          rep["problems"] == [] and rep["warnings"] == [])
+    check("design: info does not affect ok", rep["ok"] is True)
+    check("design: every design info id is namespaced",
+          "design" in E.INFO_NAMESPACES
+          and all(i["id"].split(":")[0] in E.INFO_NAMESPACES for i in rep["info"]))
+    check("design: design info respects the --check filter",
+          any(i["id"].startswith("design:")
+              for i in E.validation_report(root, ["tree"])["info"])
+          and not any(i["id"].startswith("design:")
+                      for i in E.validation_report(root, ["wiki"])["info"]))
+    check("design: a raw idea nobody has staged is not nagged",
+          ids["design:measurement"]["count"] == 1 and hidea not in ids["design:measurement"]["message"])
+    check("design: a fully declared hypothesis contributes nothing to the tier",
+          h1 not in ids["design:measurement"]["message"])
+
+    # ---- THE NEGATIVE PROPERTY: the slots are not part of the commitment
+    E.cmd_test(root, h1, to="running")
+    locked = E.Vault(root).get(h1)
+    lock_before, mat_before = locked["fm"].get(E.LOCK_FIELD), E.lock_material(locked)
+    edit(node_path(root, h1), "measurement: imputation Spearman on held-out chr21",
+         "measurement: a completely different instrument")
+    edit(node_path(root, h1), "replicates: 5 seeds x 3 folds; n = 15 per arm",
+         "replicates: 40 seeds")
+    after = E.Vault(root).get(h1)
+    check("design: the methodology slots are not part of the commitment",
+          E.lock_material(after) == mat_before and E.lock_hash(after) == lock_before
+          and E.lock_drift(after) is False)
+    check("design: and validate still sees no drift on that node",
+          not [m for i, m in E.cmd_validate(root) if "DRIFT" in m])
+
+    # ---- publication: the section that has been written by the template and read by nobody
+    snap = E.snapshot(root)
+    edit(node_path(root, h1), "_(how this hypothesis will be tested)_",
+         "Two arms, randomised by seed, evaluated on the held-out chromosome.")
+    snap = E.snapshot(root)
+    node = snap["nodes"][h1]
+    check("design: snapshot publishes the planned intervention",
+          "randomised by seed" in node["planned"])
+    check("design: snapshot publishes both slots beside it",
+          node["measurement"] == "a completely different instrument"
+          and node["replicates"] == "40 seeds")
+    check("design: a node that declares nothing publishes None, not an empty string",
+          snap["nodes"][h2]["measurement"] is None and snap["nodes"][h2]["replicates"] is None)
+
+    # ---- the slots are free: they are frontmatter, so the prose cap cannot punish declaring
+    words = E.prose_words(E.Vault(root).get(h2)["body"], "idea")
+    edit(node_path(root, h2), "measurement:", "measurement: " + " ".join(["word"] * 60))
+    check("design: declaring a design does not consume the prose budget",
+          E.prose_words(E.Vault(root).get(h2)["body"], "idea") == words)
+
+    # ---- and they never touch the verdict
+    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    E.cmd_close(root, h1)
+    E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h2), "- [ ] beta", "- [x] beta")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    E.cmd_close(root, h2)
+    vv = E.Vault(root)
+    check("design: the slots never touch the verdict",
+          vv.get(h1)["fm"]["verdict"] == vv.get(h2)["fm"]["verdict"] == "supported")
+    check("design: a closed hypothesis is not retro-flagged — its design is history",
+          not [i for i in E.validation_report(root)["info"]
+               if i["id"].startswith("design:") and i["count"] > 1])
+
+    # ---- the CLI
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
+                        "from the CLI", "-p", q1, "-v", "delta", "-n", "the control",
+                        "--rule", "all", "--measurement", "a named instrument",
+                        "--replicates", "3 seeds", "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("design: the CLI writes both slots",
+          r.returncode == 0
+          and E.node_measurement(E.Vault(root).get(json.loads(r.stdout)["id"]))
+              == "a named instrument")
+    check("design: ENGINE_VERSION at or past 3.1", at_least_version("3.1"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_methodology_migration():
+    """The pre-13 boundary. Two optional frontmatter keys, absent everywhere in an existing
+    vault, and their absence must stay legal forever: nothing retro-writes them, nothing
+    re-verdicts, nothing goes red."""
+    print("\n# design — the pre-13 boundary (spec 13, PRD 13.2)")
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_dmig_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+
+    before, vbefore, sbefore = fingerprint(dst)
+    E.check_and_stamp_version(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst)
+    after, vafter, safter = fingerprint(dst)
+    check("dmig: a pre-13 vault is byte-identical after the bump", before == after)
+    check("dmig: no recorded verdict moved", vbefore == vafter and sbefore == safter)
+    rep = E.validation_report(dst)
+    check("dmig: a pre-13 vault reports no new problems and no new warnings",
+          rep["problems"] == [] and rep["warnings"] == [] and rep["ok"] is True)
+    check("dmig: no command retro-writes a methodology slot",
+          all(x["fm"].get("measurement") in (None, "") for x in E.Vault(dst).nodes.values()))
+    check("dmig: drift re-stamps to the current ENGINE_VERSION",
+          E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+    shutil.rmtree(dst, ignore_errors=True)
+
+
 def _probe_vault():
     """A throwaway vault whose hypothesis has a sentinel problem statement, for the
     cross-check that the brief's behaviour matches what the roster declares."""
@@ -6527,6 +6684,8 @@ def main():
     run_agent_roster()
     run_situate()
     run_situate_agent()
+    run_methodology()
+    run_methodology_migration()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

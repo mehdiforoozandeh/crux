@@ -117,6 +117,14 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
     s.add_argument("--problem", default="")
+    # the methodology slots (spec 13): declared BEFORE the run, and deliberately not `--metric`
+    # — that one is the result, written at close
+    s.add_argument("--measurement", default=None,
+                   help="what this hypothesis measures, and with what instrument — declared "
+                        "before the run. Not the result: that is `close -m`.")
+    s.add_argument("--replicates", default=None,
+                   help="the declared n / replication plan (\"5 seeds x 3 folds\", "
+                        "\"n = 12 per arm\")")
     s.add_argument("-n", "--neutral", action="append", default=[],
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
@@ -462,7 +470,8 @@ def dispatch(a):
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
-                                          a.fails_if, _pair_discriminates(sys.argv))
+                                          a.fails_if, _pair_discriminates(sys.argv),
+                                          measurement=a.measurement, replicates=a.replicates)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))

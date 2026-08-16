@@ -8,6 +8,30 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The methodology slots, and a visible `## Planned Intervention`** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.2). Spec 13 lists six design facts the engine
+  should own. Three shipped with spec 15 — a control is declared, at least one check is
+  outcome-neutral, a combination rule is named. Two did not exist in any form and now do:
+  **`measurement:`** (what is measured, and with what instrument) and **`replicates:`** (the
+  declared n). Both are optional frontmatter on a hypothesis, declared *before* the run.
+
+  `metric:` is deliberately not reused: that field is the headline **result** written at
+  `close`, so reusing it would let the result be written into the slot meant to constrain it.
+
+  Two properties carry the change, and both are negative. The slots are **not part of the
+  hash-locked commitment** — they describe how a run is carried out, not what would settle the
+  claim — so declaring or revising one cannot drift a locked node, and there is no
+  `SCHEMA_GENERATION` bump. And a missing slot is reported at the **`info` tier** (`design:`,
+  the fifth claimed namespace), never as a warning: `ok` turns on warnings, so warning here
+  would put every vault written before 3.1 into red over a field it never had. The nudge fires
+  only for `staged` and `running` hypotheses — the window where a design is both decided and
+  still changeable. A raw idea is not nagged; a closed one is not retro-flagged.
+
+  `snapshot` now publishes `planned`, `measurement` and `replicates`, and the cockpit renders
+  them. `## Planned Intervention` had been written by the template since v0.5 and read by
+  **nothing**, so spec 13's instruction to land the design there was putting it somewhere only
+  `cat` could see. `ENGINE_VERSION` 3.0 → 3.1; a pre-13 vault is byte-identical after the bump.
+
 - **The situate output bound, and the `crux-situate` agent** (spec
   [`13`](.spec/13-situate-and-design.md), PRD 13.1). Spec 13 states situate's success
   condition more firmly than anything else in the backlog — *brevity is the acceptance

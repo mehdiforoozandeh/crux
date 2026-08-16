@@ -1095,6 +1095,23 @@ function rdSection(n) {
     `<span class="rsum">the design detail displaced by the ${state.snap.limits.prose_cap}-word cap</span></button>`);
 }
 
+// The plan — how the run will be carried out, and the two facts spec 13 made declarable:
+// what is measured, and with how many replicates. Both are declared BEFORE the run, which is
+// what separates `measurement` from `metric` (the result, written at close) and why they are
+// rendered next to the plan rather than next to the verdict.
+//
+// Absent entirely when a node declares nothing, so a pre-13 node looks exactly as it did.
+function plannedSection(n) {
+  const chips = [
+    n.measurement ? `<div class="prow"><span class="pk">measures</span>${esc(n.measurement)}</div>` : "",
+    n.replicates ? `<div class="prow"><span class="pk">replicates</span>${esc(n.replicates)}</div>` : "",
+  ].join("");
+  const prose = (n.planned || "").trim();
+  if (!chips && !prose) return "";
+  return section("Planned intervention", (chips ? `<div class="plan">${chips}</div>` : "") +
+    (prose ? bodyOr(prose, "") : `<div class="body muted">not written yet</div>`));
+}
+
 // The taskhub's computed backlinks. `tasks` is what is being DONE for this node;
 // `experiments` is what was actually RUN against this hypothesis and what it concluded —
 // the one question the tree structurally cannot answer. Both are derived at snapshot time
@@ -1250,6 +1267,7 @@ function ideaDetail(n) {
     summaryLead(n) +
     section("Null — the boring explanation the checks must rule out", bodyOr(n.null, "none declared")) +
     foldedSection("Problem", n.problem, "—") +
+    plannedSection(n) +
     rdSection(n) +
     section("Verifiables", vs) +
     section("Run links", runs) +

@@ -6,6 +6,8 @@ title: <<title>>
 parent: <<parent_id>>
 status: idea
 rule:
+measurement:
+replicates:
 verdict:
 metric:
 created: <<now>>

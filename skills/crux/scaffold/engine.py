@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -58,6 +58,13 @@ ENGINE_VERSION = "3.0"          # bumped when verdict/roll-up/view logic or vaul
                                 # one-digit one under plain string comparison — the same
                                 # reason 1.x ended at 1.9. It is a counter, not a
                                 # compatibility era: read-only, no vault format change.
+                                # 3.1: the methodology slots (spec 13) — two OPTIONAL
+                                # frontmatter keys on a hypothesis, `measurement:` and
+                                # `replicates:`, declared before the run. Absence is
+                                # permanently legal and is reported at the `info` tier only.
+                                # Deliberately NOT part of the hash-locked commitment: they
+                                # describe how a run is carried out, not what would settle
+                                # the claim, so adding them cannot drift a locked node.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -235,7 +242,7 @@ SCHEMA_GENERATION = 2
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary", "task", "agents", "glossary")  # <namespace>:<slug>
+INFO_NAMESPACES = ("boundary", "task", "agents", "glossary", "design")  # <namespace>:<slug>
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -408,6 +415,33 @@ BRIEF_DEFAULT_MODE = "isolated"
 # same 400 words, counted by the same tokenizer, so the PI carries one number rather than two
 # and no future change can make them drift apart.
 SITUATE_BUDGET = {"eli5_words": 60, "tldr_paragraphs": 3, "total_words": PROSE_CAP}
+
+# The methodology slots (spec 13). Spec 15 made three design facts machine-checkable — a
+# control is declared, at least one check is outcome-neutral, a combination rule is named.
+# Two more were specified and never built: WHAT is measured, and with how many replicates.
+#
+# `metric:` is NOT either of them, and the difference is the whole point: `metric` is the
+# headline RESULT written at `close`, so reusing it would let the result be written into the
+# slot that is supposed to constrain the result.
+#
+# Three properties, each deliberate:
+#   frontmatter, not prose   same shape as `rule` / `metric` / `neutral_optout`, so there is
+#                            no fifth line format to parse, and declaring a design cannot eat
+#                            the 400-word prose budget.
+#   NOT in `lock_material`   they describe how a run is carried out, not what would settle the
+#                            claim. Spec 09's D1 measured the alternative: anything added to
+#                            the commitment re-hashes every locked node and flags a drift
+#                            nobody caused, which is the engine falsifying its own record.
+#   reported as `info`       `ok` is `not problems and not warnings`, so a warning would put
+#                            every existing vault into red over a field it never had. A
+#                            missing declaration means the design was not written down; it
+#                            does not make the record incoherent.
+MEASUREMENT_FIELD = "measurement"
+REPLICATES_FIELD  = "replicates"
+# The window where a design is both decided and still changeable. A raw `idea` has no design
+# yet and nagging it is noise; a `done` hypothesis' design is history, and flagging it would
+# be the retro-checking spec 15 forbids.
+DESIGN_STATUSES   = ("staged", "running")
 
 class CruxError(Exception):
     """Raised on any rule violation; the CLI turns it into a clean message + exit 1."""
@@ -583,6 +617,8 @@ title: <<title>>
 parent: <<parent_id>>
 status: idea
 rule:
+measurement:
+replicates:
 verdict:
 metric:
 created: <<now>>
@@ -1414,6 +1450,21 @@ def null_gap(n):
                 f"bar restated, and the bar is the PI's call — `crux approve-null {n.id}` "
                 f"once they have read it. Checks are written against an APPROVED null.")
     return None
+
+def _fm_text(n, field):
+    txt = str(n["fm"].get(field) or "").strip()
+    return txt or None
+
+def node_measurement(n):
+    """What this hypothesis measures, declared before the run — or None. Never `metric`,
+    which is the result written at close."""
+    return _fm_text(n, MEASUREMENT_FIELD)
+
+def node_replicates(n):
+    """The declared n / replication plan, or None. Free text on purpose: "5 seeds x 3 folds"
+    and "n = 12 per arm" are both honest, and neither parses into a number the engine could
+    use without inventing a statistical model."""
+    return _fm_text(n, REPLICATES_FIELD)
 
 def neutral_gap(n):
     """The message for a stamped hypothesis that has no outcome-neutral verifiable and no
@@ -3288,7 +3339,8 @@ def cmd_ask(root, title, parent=None, body_text=""):
     return nid, fn
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
-                    rule=None, rule_m=None, null=None, fails_if=None, discriminates=None):
+                    rule=None, rule_m=None, null=None, fails_if=None, discriminates=None,
+                    measurement=None, replicates=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -3340,6 +3392,15 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         fm[RULE_FIELD] = rule
         if rule_m is not None:
             fm[RULE_M_FIELD] = int(rule_m)
+        text = render_doc(fm, body)
+    # the methodology slots (spec 13). Declared here or later by hand — either way they are
+    # ordinary frontmatter, never part of the commitment the run locks.
+    if measurement is not None or replicates is not None:
+        fm, body = parse_doc(text)
+        if measurement is not None:
+            fm[MEASUREMENT_FIELD] = measurement
+        if replicates is not None:
+            fm[REPLICATES_FIELD] = replicates
         text = render_doc(fm, body)
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
@@ -3581,6 +3642,31 @@ def cmd_synthesize(root, title, questions):
     refresh(root)
     return nid, fn
 
+def design_info(v):
+    """The methodology slots, reported as INFORMATION — namespace `design:`.
+
+    Never a problem and never a warning. A missing declaration does not make the record
+    incoherent, and `ok` turns on warnings, so warning here would put every vault written
+    before 3.1 into red over a field it never had.
+
+    One line per condition with a count, not one per node, and silence when there is nothing
+    to say — the shape `boundary_info` and `task_info` already use."""
+    out = []
+    for field, label, why in (
+            (MEASUREMENT_FIELD, "name a measurement",
+             "what is measured, and with what instrument"),
+            (REPLICATES_FIELD, "state replicates",
+             "how many runs the claim rests on")):
+        gap = [x for x in v.nodes.values()
+               if x.type == "idea" and x.status in DESIGN_STATUSES
+               and not _fm_text(x, field)]
+        if gap:
+            out.append((f"design:{field}",
+                        f"{len(gap)} hypothes{'is does' if len(gap) == 1 else 'es do'} not "
+                        f"{label} before the run ({', '.join(sorted(x.id for x in gap))}) — "
+                        f"declare {why} in frontmatter, or run `crux-design`.", len(gap)))
+    return out
+
 def boundary_info(v):
     """The evidence-semantics boundary, reported as INFORMATION. Never a problem, never a
     warning: a pre-15 vault is correct, not broken, and spec 15 is explicit that the boundary
@@ -3682,7 +3768,7 @@ def validation_report(root, checks=None, propose=None):
                         f"{', '.join(CHECKS + OPT_CHECKS)} ({', '.join(OPT_CHECKS)} opt-in)")
     v = Vault(root)
     problems, warnings, info = [], [], []
-    if "tree"    in names: problems += validate(v); info += boundary_info(v)
+    if "tree"    in names: problems += validate(v); info += boundary_info(v) + design_info(v)
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
@@ -3853,6 +3939,12 @@ def _node_json(v, n, rd_map=None, task_map=None):
         d["words"] = prose_words(n["body"], "idea")
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
+        # the design, published (spec 13). `## Planned Intervention` has been written by the
+        # template since v0.5 and read by NOTHING — not this serializer, not the cockpit — so
+        # "the design lands in Planned Intervention" put it somewhere only `cat` could see.
+        d["planned"] = _section(n["body"], "Planned Intervention")
+        d["measurement"] = node_measurement(n)
+        d["replicates"] = node_replicates(n)
         vfs = _verifiables(n["body"])
         for item, s in zip(vfs, verifiable_scenarios(n["body"])):
             item.update(s)
