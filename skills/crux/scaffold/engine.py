@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.6"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.7"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -206,6 +206,7 @@ NULL_APPROVED     = "null_approved"
 # the material it was locked with — forever. Without that split, bumping the commitment's
 # shape would re-hash every already-locked node and flag an edit nobody made, which is the
 # engine falsifying its own record.
+
 SCHEMA_GENERATION = 2
 
 # `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
@@ -304,6 +305,28 @@ LOCKED_AT_FIELD   = "locked"      # when — the timestamp crux can prove and a 
 LOCK_WHERE_FIELD  = "lock_at"     # "running" (pre-registered) | "close" (never was)
 RECONSTRUCTED     = "reconstructed"   # seeded [tested]: history, not a pre-registration
 
+# `crux migrate` bridges SCHEMA, never SCIENCE (spec 09 + spec 15's ruling).
+#
+# Spec 09 dissolves version bridging into a mechanical rewrite. Spec 15 ruled the opposite
+# for its own fields: bringing an old hypothesis up to evidence semantics means re-declaring
+# what would settle a claim, which is a scientific act, PI-gated, one node at a time. Both
+# are right about different fields, and the split was measured rather than guessed.
+#
+# `schema` is the sharp one and deserves naming: writing it does not "add a field", it FLIPS
+# A NODE ACROSS THE VERSION BOUNDARY, and every spec-15 rule — control required, rule
+# required, null approved, scenarios, lock, drift — instantly binds work that was settled
+# before those rules existed. One automated write is the whole grandfathering ruling undone.
+#
+# So the verb does not know how to write these. Not a warning, not a --force.
+MIGRATE_FORBIDDEN = frozenset({"schema", RULE_FIELD, RULE_M_FIELD, LOCK_FIELD,
+                               LOCKED_AT_FIELD, LOCK_WHERE_FIELD, NEUTRAL_OPTOUT,
+                               NULL_APPROVED, "null_hash"})
+# Sections it may CREATE (empty) but never FILL. An empty `## Null` is inert — the null gate
+# is stamp-gated, so a pre-15 node is never asked for one — but a *filled* null would be the
+# engine inventing the boring explanation on the PI's behalf.
+MIGRATE_SECTIONS = {"idea":     ("ELI5", "TL;DR", "Null", "Artifacts"),
+                    "question": ("ELI5", "TL;DR", "Protocol")}
+
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
 # serve. Two numbers push back — a prose budget per node, and a fan-out budget per question.
@@ -331,7 +354,7 @@ PROSE_SECTIONS = {
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
 CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks")
-OPT_CHECKS = ("decks",)
+OPT_CHECKS = ("decks", "gate")
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
 
@@ -3113,6 +3136,70 @@ def boundary_info(v):
                     f"existed before the checks were written down.", len(recon)))
     return out
 
+def _section_placeholder(name):
+    return {"ELI5":     "_(one sentence, plain language, no jargon)_",
+            "TL;DR":    "_(one paragraph: what this claims, and what would settle it)_",
+            "Null":     "_(one line: the cheapest way this result could be trivially true — "
+                        "name a family from " + ", ".join(CONFOUND_FAMILIES) + ")_",
+            "Artifacts": "_(none yet)_",
+            "Protocol": "_(optional: the pre-registered rules — endpoints, thresholds, "
+                        "scope — locked before any run)_"}.get(name, "_(not written)_")
+
+def _migrate_plan(v):
+    """[{id, adds}] — which structural sections each node is missing. Read-only."""
+    out = []
+    for nid, n in sorted(v.nodes.items(), key=lambda kv: natkey(kv[0])):
+        want = MIGRATE_SECTIONS.get(n.type)
+        if not want:
+            continue
+        have = {l[3:].strip() for l in n["body"].splitlines() if l.startswith("## ")}
+        adds = [s for s in want if s not in have]
+        if adds:
+            out.append({"id": nid, "adds": adds})
+    return out
+
+def cmd_migrate(root, apply=False):
+    """Bridge a vault's SCHEMA to the current engine: add the structural sections newer
+    versions expect, empty. Dry run by default.
+
+    What it will not do — structurally, rather than by policy: write any field in
+    MIGRATE_FORBIDDEN, fill a `## Null`, touch `## Verifiables`, or move a verdict. A
+    migration able to do those could overturn recorded science, which is the one thing the
+    leash forbids, so this verb has no code path that writes them."""
+    v = Vault(root)
+    plan = _migrate_plan(v)
+    if not apply:
+        return {"applied": False, "changes": plan}
+    for entry in plan:
+        n = v.get(entry["id"])
+        # append before the generated ledger (questions) or at the end, so authored content
+        # is never reflowed — only added to
+        pre, sep, post = n["body"].partition(LEDGER_START)
+        add = "".join(f"\n## {s}\n\n{_section_placeholder(s)}\n" for s in entry["adds"])
+        body = pre.rstrip() + "\n" + add + ("\n" + sep + post if sep else "")
+        fm = dict(n["fm"])
+        for f in MIGRATE_FORBIDDEN:
+            fm.pop(f, None)          # belt and braces: a migration cannot introduce one
+        write_if_changed(n["path"], render_doc(fm, body))
+    refresh(root)
+    return {"applied": True, "changes": plan}
+
+def gate_warnings(v):
+    """The gate backlog: a question parked in `review` with no synthesis drafted for it. The
+    one item on spec 09's audit list that was not already a check — over-cap nodes,
+    unresolvable artifacts and unrun-idea pileup all shipped with specs 06 and v0.5."""
+    out = []
+    for nid, n in v.nodes.items():
+        if n.type != "question" or n.status != "review":
+            continue
+        drafted = any(s.type == "synthesis" and nid in _related_ids(v, s["body"])
+                      for s in v.nodes.values())
+        if not drafted:
+            out.append((nid, f"question '{nid}' has been awaiting a decision with no synthesis "
+                             f"drafted for it. `crux synthesize \"what {nid} settled\" --for "
+                             f"{nid}` is the first step; the PI approves it, then `crux answer`."))
+    return out
+
 def validation_report(root, checks=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
@@ -3137,6 +3224,7 @@ def validation_report(root, checks=None):
         problems += validate_tasks(root)
         info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
+    if "gate"    in names: warnings += gate_warnings(v)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],

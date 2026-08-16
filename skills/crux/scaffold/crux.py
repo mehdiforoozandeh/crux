@@ -244,6 +244,12 @@ def main(argv=None):
                                       "naming the boring explanation and writing checks against it"))
     s.add_argument("id")
 
+    s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
+                                 "expects, empty. Never writes an evidence field, never fills a "
+                                 "null, never moves a verdict — bringing old science up to new "
+                                 "rules is the PI's call, one node at a time"))
+    s.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
+
     s = _jsonable(sub.add_parser("brief", help="the deterministic cold input for an isolated agent: "
                                           "one hypothesis' claim, question, pre-registered checks "
                                           "and the shared factual record — assembled from vault "
@@ -518,6 +524,20 @@ def dispatch(a):
         if a.json:
             return _emit({"id": a.id, "null_approved": stamp})
         print(f"✓ {a.id} null approved at {stamp}\n  checks may now be written against it")
+    elif c == "migrate":
+        res = E.cmd_migrate(_vault(), apply=a.apply)
+        if a.json:
+            return _emit(res)
+        if not res["changes"]:
+            print("✓ nothing to migrate — every node has the sections this engine expects.")
+        else:
+            for ch in res["changes"]:
+                print(f"  {ch['id']}: + " + ", ".join(ch["adds"]))
+            print(("✓ applied to " if res["applied"] else "dry run — would touch ")
+                  + f"{len(res['changes'])} node(s)."
+                  + ("" if res["applied"] else "  Re-run with --apply."))
+            print("  (never written: the schema stamp, the combination rule, the lock, or the "
+                  "content of a null — those are the PI's call, one node at a time.)")
     elif c == "brief":
         b = E.brief(_vault_ro(None), a.id)
         if a.json:

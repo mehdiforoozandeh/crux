@@ -8,6 +8,31 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux migrate` — schema bridging, with evidence fields structurally unmigratable** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.3). Adds the structural sections a newer
+  engine expects (`## ELI5`, `## TL;DR`, `## Null`, `## Artifacts`, `## Protocol`), empty.
+  Dry run by default; idempotent; authored prose is never reflowed, only added to.
+
+  **This resolves the standing collision between specs 09 and 15, and 15 wins.** Spec 09
+  dissolved version bridging into a mechanical rewrite; spec 15 ruled *"no `crux migrate`
+  path for this"*, because bringing an old hypothesis up to evidence semantics means
+  re-declaring what would settle a claim — a scientific act, PI-gated, one node at a time.
+  Both are right about different fields, and the split was **measured**: a node built at 2.6
+  differs from the committed pre-15 fixture by four structural sections plus exactly two
+  frontmatter fields, `schema` and `rule`.
+
+  So `MIGRATE_FORBIDDEN` is enforced structurally, not by policy: the verb has no code path
+  that writes `schema`, `rule`, `rule_m`, the lock triple, `neutral_optout`, or the null
+  approval — and it creates `## Null` **empty**, never filled. `schema` is the sharp one:
+  writing it would not "add a field", it would **flip a node across the version boundary**,
+  binding work settled before those rules existed to every spec-15 rule at once. Scientific
+  staleness is surfaced as `info`, never repaired.
+
+  Also adds `validate --check=gate` (opt-in): a question parked in `review` with no synthesis
+  drafted. That is the one item on spec 09's audit list that was not already a check —
+  over-cap nodes, unresolvable artifacts and unrun-idea pileup all shipped with specs 06 and
+  v0.5. `ENGINE_VERSION` 2.6 → 2.7.
+
 - **A failure scenario on every verifiable, and the two-part discrimination filter** (spec
   [`09`](.spec/09-specialized-agents.md), PRD 09.2). Spec 09 replaces a numeric cap on
   verifiables with a logical one: **two verifiables are redundant if they fail for the same

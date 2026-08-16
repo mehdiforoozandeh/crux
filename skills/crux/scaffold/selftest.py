@@ -5158,6 +5158,109 @@ def run_failure_scenarios():
     shutil.rmtree(old, ignore_errors=True)
 
 
+def run_migrate():
+    """Spec 09 PRD 09.3 — `crux migrate`, with evidence fields structurally unmigratable.
+
+    Spec 09 dissolves version bridging into "a mechanical schema rewrite -> a `crux migrate`
+    verb". Spec 15 then ruled the opposite for its OWN fields: no migrate path, because
+    bringing an old hypothesis up to evidence semantics means re-declaring what would settle
+    a claim — a scientific act, PI-gated, one node at a time.
+
+    Both are right about different fields, and the split is measurable. `schema` is the sharp
+    one: writing it does not add a field, it FLIPS A NODE ACROSS THE VERSION BOUNDARY, and
+    every spec-15 rule instantly binds work settled before those rules existed."""
+    print("\n# specialized agents — crux migrate (spec 09, PRD 09.3)")
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    root = tempfile.mkdtemp(prefix="crux_mig_")
+    shutil.rmtree(root); shutil.copytree(src, root)
+
+    before_files, before_verdicts, before_status = fingerprint(root)
+    before_gen = generated_verdicts(root)
+
+    plan = E.cmd_migrate(root, apply=False)
+    check("migrate: the default is a dry run",
+          plan["applied"] is False and fingerprint(root)[0] == before_files)
+    check("migrate: the plan names the sections it would add",
+          any("Null" in c["adds"] for c in plan["changes"])
+          and any("ELI5" in c["adds"] for c in plan["changes"]))
+
+    res = E.cmd_migrate(root, apply=True)
+    check("migrate: apply adds the placeholder sections", res["applied"] and res["changes"])
+    v = E.Vault(root)
+    check("migrate: a pre-15 idea gains the empty structural sections",
+          all(s in v.get("h1")["body"] for s in ("## ELI5", "## TL;DR", "## Null", "## Artifacts")))
+    check("migrate: a pre-15 question gains its own",
+          all(s in v.get("q1")["body"] for s in ("## ELI5", "## TL;DR", "## Protocol")))
+
+    # ---- THE LINE. These are what spec 15 ruled unmigratable, and the verb cannot write them.
+    check("evmig: migrate never stamps a node across the boundary",
+          all(E.node_schema(n) == 0 for n in v.nodes.values() if n.type in ("question", "idea")))
+    check("evmig: migrate writes no evidence field",
+          all(f not in n["fm"] for n in v.nodes.values() for f in E.MIGRATE_FORBIDDEN))
+    check("evmig: the Null it adds is EMPTY — naming the boring explanation is a scientific act",
+          E._null_text(v.get("h1")) is None)
+    check("evmig: migrate changes no recorded verdict",
+          fingerprint(root)[1] == before_verdicts and fingerprint(root)[2] == before_status)
+    check("evmig: and no verdict is re-labelled in anything generated",
+          generated_verdicts(root) == before_gen)
+    check("migrate: the vault still validates clean, still pre-15",
+          E.cmd_validate(root) == []
+          and any(i["id"] == "boundary:evidence-semantics"
+                  for i in E.validation_report(root)["info"]))
+
+    # ---- authored prose is untouched: only whole new sections appear
+    after_files = fingerprint(root)[0]
+    changed = [k for k in before_files if before_files[k] != after_files.get(k)]
+    check("migrate: only node files changed, and only by gaining sections",
+          all(k.endswith(".md") for k in changed))
+    for nid in ("h1", "q1"):
+        old_body = E.parse_doc(read(os.path.join(src, os.path.basename(v.get(nid)["path"]))))[1]
+        new_body = v.get(nid)["body"]
+        authored = [l for l in old_body.splitlines() if l.strip()]
+        check(f"migrate: every authored line of {nid} survives verbatim",
+              all(l in new_body for l in authored))
+
+    check("migrate: apply is idempotent", E.cmd_migrate(root, apply=True)["changes"] == [])
+
+    # ---- staleness is SURFACED, never repaired
+    info = E.validation_report(root)["info"]
+    check("migrate: staleness is surfaced as info, never repaired",
+          all(i["id"].split(":")[0] in E.INFO_NAMESPACES for i in info))
+    check("migrate: info never affects ok", E.validation_report(root)["ok"] is True)
+
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "migrate", "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("migrate: the CLI dry run emits parseable JSON and exits 0",
+          r.returncode == 0 and json.loads(r.stdout)["applied"] is False)
+    check("migrate: ENGINE_VERSION at or past 2.7", at_least_version("2.7"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the gate backlog, the one audit check spec 09 asked for that did not exist
+    root = tempfile.mkdtemp(prefix="crux_gate_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Gate", root)
+    q1, _ = E.cmd_ask(root, "a question that will sit in review")
+    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, rule="all", null="chance — noise",
+                                 verifiables=["alpha"], neutral=["ctl"],
+                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
+    declare_null(root, h1)
+    E.cmd_test(root, h1, to="running")
+    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] ctl", "- [x] [outcome-neutral] ctl")
+    E.cmd_close(root, h1)
+    # node-scoped checks carry the bare node id, matching `economy`/`fanout`
+    gate = E.validation_report(root, ["gate"])["warnings"]
+    check("migrate: a question parked in review with no synthesis is a gate-backlog warning",
+          any(w["id"] == q1 and "no synthesis drafted" in w["message"] for w in gate))
+    check("migrate: --check=gate is opt-in and does not fire on the default lint",
+          not any("no synthesis drafted" in w["message"]
+                  for w in E.validation_report(root)["warnings"]))
+    E.cmd_synthesize(root, "what q1 settled", [q1])
+    check("migrate: drafting the synthesis clears the backlog warning",
+          not E.validation_report(root, ["gate"])["warnings"])
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -5226,6 +5329,7 @@ def main():
     run_brief()
     run_null()
     run_failure_scenarios()
+    run_migrate()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
