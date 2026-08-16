@@ -8,6 +8,28 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux brief --mode=situate`** — the orientation payload (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.0). *"I have been away. Where are we on
+  q20?"* is five questions, and four of them are computable: what this is, where we are, what
+  is known, and — the one the engine owns outright — **what is yet to be tested**. The fifth,
+  the paths forward, is judgment and stays with the agent.
+
+  So `crux brief` gains a second payload rather than crux gaining a second verb: subtree
+  (summary-shaped, full depth, findings only on closed hypotheses), the ancestry chain with
+  each ancestor's answer-so-far, linked wiki pages, the approved synthesis, unrun ideas and
+  unticked checks, **inbound citations** from outside the subtree as ids and titles, and the
+  taskhub scoped to the subtree — because post-spec-08 a queued run is the difference between
+  a claim nobody has tried and one that is executing right now.
+
+  **The mode is a safety boundary, not a convenience.** Spec 09's payload excludes
+  `## Problem Statement` precisely because that is where the advocacy lives, and situate needs
+  the opposite. So `isolated` stays the default — a forgotten flag degrades to over-isolation
+  rather than to leaked advocacy — and an unrecognised mode is **refused**, because any
+  "unknown means the default" rule is one edit away from "unknown means the wider payload".
+  Omitting the node in situate mode orients over the whole programme. Pure read: the verb
+  writes nothing in either mode, and the payload is byte-identical across runs and a function
+  of vault state alone. `ENGINE_VERSION` 2.8 → 2.9.
+
 - **`crux glossary accept | decline | list`** — the write path, and the skill's vocabulary
   rule (spec [`14`](.spec/14-glossary.md), PRD 14.3). **Spec 14 is done.**
 

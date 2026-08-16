@@ -5414,6 +5414,215 @@ def run_agent_roster():
           not versioned)
 
 
+def _situate_vault():
+    """A vault shaped like a programme someone has been away from: two question levels, a
+    closed hypothesis with findings, an unrun one, one in flight, a linked wiki page, an
+    inbound citation from outside the subtree, and a taskhub."""
+    root = tempfile.mkdtemp(prefix="crux_situate_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Situate", root, goal="Improve the thing.")
+    qtop, _ = E.cmd_ask(root, "the top question")
+    qmid, _ = E.cmd_ask(root, "the mid question", parent=qtop)
+    qout, _ = E.cmd_ask(root, "an unrelated question")
+    SENTINEL = "ADVOCACY-LIVES-HERE-AND-SITUATE-MAY-SEE-IT"
+    hdone, _, _ = E.cmd_hypothesize(root, "the settled claim", parent=qmid, rule="all",
+                                    problem=SENTINEL, verifiables=["alpha check"],
+                                    neutral=["the control"])
+    hidea, _, _ = E.cmd_hypothesize(root, "the untried claim", parent=qmid, rule="all",
+                                    verifiables=["gamma check"], neutral=["the control"])
+    hrun, _, _ = E.cmd_hypothesize(root, "the claim in flight", parent=qmid, rule="all",
+                                   verifiables=["delta check"], neutral=["the control"])
+    for h in (hdone, hrun):
+        declare_null(root, h)
+    edit(node_path(root, hdone), "- [ ] alpha check", "- [x] alpha check")
+    edit(node_path(root, hdone), "- [ ] [outcome-neutral] the control",
+                                 "- [x] [outcome-neutral] the control")
+    E.cmd_test(root, hdone, to="running")
+    E.cmd_close(root, hdone, findings="the settled claim held at the declared threshold")
+    E.cmd_test(root, hrun, to="running")
+    # the parent's answer-so-far: "where we are" usually needs it
+    edit(node_path(root, qtop), "_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_",
+         "So far the direction looks right, on one settled claim.")
+    # a wiki page linked from the ANCHOR'S ANCESTOR, so the ancestor walk is what finds it
+    E.ensure_wiki(root)
+    wiki_page(root, "sit-bg", "Situate background", "why orientation is hard")
+    edit(node_path(root, qtop), "the top question\n\n## Protocol",
+         "the top question — see [[sit-bg]].\n\n## Protocol")
+    # an INBOUND citation: a node outside the subtree that links into it
+    mid_base = E.Vault(root).get(qmid).basename
+    edit(node_path(root, qout), "an unrelated question\n\n## Protocol",
+         f"an unrelated question, which waits on [[{mid_base}]].\n\n## Protocol")
+    E.refresh(root)
+    return root, dict(qtop=qtop, qmid=qmid, qout=qout, hdone=hdone, hidea=hidea, hrun=hrun,
+                      sentinel=SENTINEL)
+
+
+def run_situate():
+    """Spec 13 PRD 13.0 — `crux brief --mode=situate`, the orientation payload.
+
+    Spec 09's brief is built around a DELIBERATE EXCLUSION: no problem statement, no subtree,
+    no findings, because its consumer is an agent that must not be told which way to lean.
+    Situate needs the opposite of every one of those — so the mode is a safety boundary, not
+    a convenience, and the default has to fail toward over-isolation.
+
+    The engine assembles; the agent composes. Everything asserted here is vault state or an
+    engine-computed count: crux authors no sentence of it."""
+    print("\n# situate — the orientation payload (spec 13, PRD 13.0)")
+    root, ids = _situate_vault()
+    qmid, hdone, hidea, hrun = ids["qmid"], ids["hdone"], ids["hidea"], ids["hrun"]
+
+    s = E.brief(root, qmid, mode="situate")
+    blob = json.dumps(s, sort_keys=True)
+
+    # ---- the mode is a boundary, and the default falls the safe way
+    check("situate: every payload names its own mode",
+          s["mode"] == "situate" and E.brief(root, hdone)["mode"] == "isolated")
+    check("situate: the default mode is isolated",
+          json.dumps(E.brief(root, hdone), sort_keys=True)
+          == json.dumps(E.brief(root, hdone, mode="isolated"), sort_keys=True))
+    check("situate: the default mode never carries the advocacy channel",
+          ids["sentinel"] not in json.dumps(E.brief(root, hdone), sort_keys=True)
+          and ids["sentinel"] not in json.dumps(E.brief(root, hdone, mode="isolated"),
+                                                sort_keys=True))
+    check("situate: situate mode does carry it — that is the whole point of the split",
+          ids["sentinel"] in E.brief(root, hdone, mode="situate")["anchor"]["problem"])
+    check("situate: a descendant's problem statement stays out — the payload summarises",
+          ids["sentinel"] not in blob)
+    expect_error("situate: an unknown mode is refused, never silently widened",
+                 lambda: E.brief(root, qmid, mode="situated"))
+    expect_error("situate: mode matching is exact, not case-folded",
+                 lambda: E.brief(root, qmid, mode="Situate"))
+
+    # ---- the four blocks the spec names
+    kids = [c["id"] for c in s["subtree"]]
+    check("situate: the subtree reaches the payload nested, in tree order",
+          kids == [hdone, hidea, hrun]
+          and all("children" in c for c in s["subtree"]))
+    check("situate: the ancestry chain carries each answer-so-far",
+          [a["id"] for a in s["ancestry"]] == ["root", ids["qtop"]]
+          and s["ancestry"][0]["answer_so_far"] == "Improve the thing."
+          and "direction looks right" in s["ancestry"][1]["answer_so_far"])
+    check("situate: linked wiki pages are indexed from the anchor and its ancestors",
+          [w["slug"] for w in s["wiki"]] == ["sit-bg"])
+    # D3, extended to the third caller: situate uses the SAME walks as `brief` and
+    # `deck_payload` rather than a third copy of the cycle guard. Asserted the way spec 09's
+    # audit fix asserts it, so a future edit that re-forks them fails here too.
+    vv = E.Vault(root)
+    check("situate: the ancestry and wiki walks are the shared ones, not a third copy",
+          [a["id"] for a in s["ancestry"]]
+          == [m.id for m in E.ancestor_chain(vv, vv.get(qmid))]
+          and s["wiki"] == E.wiki_refs(root, [vv.get(qmid)["body"]]
+                                       + [m["body"] for m in
+                                          E.ancestor_chain(vv, vv.get(qmid))]))
+    check("situate: findings travel only with a closed hypothesis",
+          s["subtree"][0]["findings"] and s["subtree"][1]["findings"] is None
+          and s["subtree"][2]["findings"] is None)
+
+    # ---- what is yet to be tested is COMPUTED. This is the row the spec marks "engine".
+    ut = s["untested"]
+    check("situate: what is yet to be tested is computed, not narrated",
+          [x["id"] for x in ut["unrun_ideas"]] == [hidea]
+          and {c["hid"] for c in ut["open_checks"]} == {hidea, hrun}
+          and ut["open_questions"] == [qmid])
+    check("situate: an open check carries its kind, so a control is not read as a claim",
+          {c["kind"] for c in ut["open_checks"]} == {"hypothesis", "outcome-neutral"})
+
+    # ---- inbound citations: high value, bounded shape
+    check("situate: inbound citations are ids and titles, never prose",
+          [x["id"] for x in s["inbound"]] == [ids["qout"]]
+          and set(s["inbound"][0]) == {"id", "type", "title"})
+
+    # ---- determinism, which is what keeps the payload assertable at all
+    check("situate: the payload is byte-identical across runs",
+          json.dumps(E.brief(root, qmid, mode="situate"), sort_keys=True) == blob)
+    other = tempfile.mkdtemp(prefix="crux_situate2_")
+    shutil.rmtree(other); shutil.copytree(root, other)
+    check("situate: the payload is a pure function of vault state",
+          json.dumps(E.brief(other, qmid, mode="situate"), sort_keys=True) == blob)
+    shutil.rmtree(other, ignore_errors=True)
+
+    # ---- anchors: a hypothesis is legal, no argument means the whole programme
+    ph = E.brief(root, hdone, mode="situate")
+    check("situate: a hypothesis anchor is legal",
+          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and ph["synthesis"] is None
+          and ph["anchor"]["findings"])
+    whole = E.brief(root, None, mode="situate")
+    check("situate: no argument means the whole programme",
+          whole["anchor"]["id"] == "root"
+          and [c["id"] for c in whole["subtree"]] == [ids["qtop"], ids["qout"]])
+    expect_error("situate: a synthesis anchor is refused",
+                 lambda: E.brief(root, E.cmd_synthesize(root, "x", [qmid])[0], mode="situate"))
+
+    # ---- only an APPROVED synthesis is an answer
+    syn, _ = E.cmd_synthesize(root, "what the mid question settled", [qmid])
+    check("situate: an unapproved synthesis stays out of the payload",
+          E.brief(root, qmid, mode="situate")["synthesis"] is None)
+    E.cmd_approve(root, syn)
+    check("situate: only an approved synthesis reaches the payload",
+          E.brief(root, qmid, mode="situate")["synthesis"]["id"] == syn)
+
+    # ---- the taskhub: post-08, a queued run is the difference between untried and in flight
+    check("situate: the work block is present-and-inert without a taskhub",
+          E.brief(root, qmid, mode="situate")["work"]
+          == {"active": False, "open": [], "experiments": []})
+    E.ensure_tasks(root)
+    t1 = E.cmd_task_add(root, "queue the untried claim", "implementation", refs=[hidea])[0]
+    t2 = E.cmd_task_add(root, "the run against the claim in flight", "implementation",
+                        refs=[hrun], hypothesis_refs=[(hrun, "inconclusive")])[0]
+    E.cmd_task_add(root, "unrelated chore", "admin")
+    w = E.brief(root, qmid, mode="situate")["work"]
+    check("situate: a queued run is reported, so untried is not confused with idle",
+          w["active"] and [x["id"] for x in w["open"]] == [t1, t2])
+    check("situate: an experiment is reported beside the hypothesis it serves",
+          [x["id"] for x in w["experiments"]] == [t2]
+          and w["experiments"][0]["hypothesis_refs"]
+              == [{"id": hrun, "conclusion": "inconclusive"}])
+    check("situate: the work block scopes to the subtree, not the whole vault",
+          all(x["title"] != "unrelated chore" for x in w["open"]))
+
+    # ---- the CLI
+    argv = [sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+            "--mode=situate", "--json"]
+    r1 = subprocess.run(argv, capture_output=True, cwd=root)
+    r2 = subprocess.run(argv, capture_output=True, cwd=root)
+    check("situate: the CLI emits the payload and nothing else, byte-identically",
+          r1.returncode == 0 and r1.stdout == r2.stdout
+          and json.loads(r1.stdout.decode("utf-8"))["mode"] == "situate")
+    rn = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief",
+                         "--mode=situate", "--json"], capture_output=True, cwd=root)
+    check("situate: the CLI takes no node and orients over the whole programme",
+          rn.returncode == 0 and json.loads(rn.stdout.decode("utf-8"))["anchor"]["id"] == "root")
+    rb = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+                         "--mode=nope", "--json"], capture_output=True, cwd=root)
+    check("situate: the CLI refuses an unknown mode — exit 1, silent stdout",
+          rb.returncode == 1 and rb.stdout.strip() == b"")
+    rh = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+                         "--mode=situate"], capture_output=True, cwd=root,
+                        encoding="utf-8", errors="replace")
+    check("situate: a bare situate prints a human summary and never mixes the two",
+          rh.returncode == 0 and "the mid question" in rh.stdout
+          and not rh.stdout.lstrip().startswith("{"))
+
+    check("situate: ENGINE_VERSION at or past 2.9", at_least_version("2.9"))
+
+    # ---- READ-ONLY. The whole verb writes nothing, in either mode.
+    before = _tree_hashes(root)
+    E.brief(root, qmid, mode="situate"); E.brief(root, hdone)
+    check("smig: brief writes nothing, in either mode", _tree_hashes(root) == before)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the boundary, and a vault with none of the side layers
+    old, oq, oh = pre15_vault("crux_smig13_")
+    os_ = E.brief(old, oq, mode="situate")
+    check("smig: situate mode works on a pre-15 node",
+          os_["subtree"][0]["verdict"] is None and os_["subtree"][0]["schema"] == 0
+          and os_["anchor"]["schema"] == 0)
+    check("smig: situate mode works on a vault with no side layers",
+          os_["wiki"] == [] and os_["work"] == {"active": False, "open": [], "experiments": []}
+          and os_["inbound"] == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def _probe_vault():
     """A throwaway vault whose hypothesis has a sentinel problem statement, for the
     cross-check that the brief's behaviour matches what the roster declares."""
@@ -6218,6 +6427,7 @@ def main():
     run_failure_scenarios()
     run_migrate()
     run_agent_roster()
+    run_situate()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

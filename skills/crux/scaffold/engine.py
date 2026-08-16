@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.8"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -44,6 +44,13 @@ ENGINE_VERSION = "2.8"          # bumped when verdict/roll-up/view logic or vaul
                                 # new directory is the largest format change since the wiki
                                 # layer, and a two-digit minor ("1.10") sorts below "1.9"
                                 # under plain string comparison.
+                                # 2.9: `crux brief --mode=situate` (spec 13) — a second,
+                                # WIDER payload on the same verb: subtree, ancestry, linked
+                                # wiki, what is untested, inbound citations and the taskhub.
+                                # Read-only; no vault format change. The mode is a safety
+                                # boundary, not a convenience — `isolated` stays the default
+                                # so a forgotten flag degrades to over-isolation rather than
+                                # to leaked advocacy, and an unknown mode is REFUSED.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -371,6 +378,18 @@ CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary")
 OPT_CHECKS = ("decks", "gate")
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
+
+# `crux brief --mode=…` (spec 13). Two payloads on one verb, and the pair is a SAFETY
+# boundary: `isolated` is spec 09's bias-proof cold input, which excludes the problem
+# statement precisely because that is where the advocacy lives; `situate` is the opposite —
+# subtree, ancestry, findings — for orienting the PI after time away.
+#
+# `isolated` is the default so that a forgotten flag degrades to over-isolation rather than
+# to leaked advocacy, and an unrecognised value is REFUSED rather than coerced. That refusal
+# is the load-bearing part: any "unknown means the default" rule is one edit away from
+# "unknown means the wider payload".
+BRIEF_MODES        = ("isolated", "situate")
+BRIEF_DEFAULT_MODE = "isolated"
 
 class CruxError(Exception):
     """Raised on any rule violation; the CLI turns it into a clean message + exit 1."""
@@ -4183,8 +4202,23 @@ def wiki_refs(root, bodies):
                             "path": _rel(root, pages[tgt]["path"])})
     return out
 
-def brief(root, hid):
-    """The deterministic cold input for an isolated agent. Pure read; byte-stable."""
+def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
+    """The deterministic cold input for an agent. Pure read; byte-stable.
+
+    Two modes, and the split is a SAFETY boundary rather than a convenience. `isolated` is
+    09's bias-proof payload and stays the default, so a forgotten flag degrades to
+    over-isolation rather than to leaked advocacy. `situate` (spec 13) is the opposite
+    payload — subtree, ancestry, findings, the problem statement — for orienting the PI, who
+    wrote the advocacy and cannot be biased by reading it back.
+
+    An unrecognised mode is REFUSED. Any fallback rule ("unknown means the default") is one
+    edit away from "unknown means the wider payload", and this is the flag where that edit
+    would matter."""
+    if mode not in BRIEF_MODES:
+        raise CruxError(f"unknown brief mode '{mode}' — use one of {', '.join(BRIEF_MODES)}. "
+                        f"'{BRIEF_DEFAULT_MODE}' is the default and the bias-proof one.")
+    if mode == "situate":
+        return situate_brief(root, hid)
     v = Vault(root)
     n = v.get(hid)
     if n.type != "idea":
@@ -4219,6 +4253,8 @@ def brief(root, hid):
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
     return {
         "engine_version": ENGINE_VERSION,
+        "mode": mode,           # a payload names its own contract; inferring it from which
+                                # fields are absent is right until someone adds a field
         "id": n.id,
         "claim": _section(n["body"], "Idea / Hypothesis"),
         "question": _section(parent["body"].split(LEDGER_START)[0], "Question") if parent else None,
@@ -4238,6 +4274,186 @@ def _null_text(n):
     section exists (PRD 09.1) without the brief needing a second edit."""
     txt = _summary(n["body"], "Null")
     return re.sub(r"<!--.*?-->", "", txt, flags=re.S).strip() or None
+
+# ----------------------------------------------------------------------------- situate (spec 13)
+# `crux brief <node> --mode=situate --json` is the OTHER payload: what the PI needs after
+# months away, when the tree shows what exists but not where we are.
+#
+# Five questions, and four of them are computable — which is why this is a mode on a verb
+# rather than an agent's reading of the vault:
+#
+#   what q20 is            the node's own ELI5 / TL;DR
+#   where we are           child statuses, the ledger, the ancestors' answers-so-far
+#   what is known          `## Findings` on CLOSED children — never on an open one
+#   what is yet to be tested  unrun ideas + unticked checks + open sub-questions  <- ENGINE
+#   the paths forward      judgment. The agent's, not the engine's. Nothing here computes it.
+#
+# The engine authors no sentence of it: every string is vault text or a count. That is what
+# keeps the payload assertable, and it is the same discipline `deck_payload` already keeps.
+def _situate_child(v, cid):
+    """One descendant, summary-shaped and recursive. Deliberately NOT the whole node: an
+    orientation that inlines 40,000 words of prose has failed at its only job. Findings ride
+    only with a CLOSED hypothesis — an open node's half-written findings are not knowledge."""
+    n = v.nodes[cid]
+    verdict = n["fm"].get("verdict")
+    return {
+        "id": n.id, "type": n.type, "title": n.title, "status": n.status,
+        "schema": node_schema(n),
+        "eli5": _summary(n["body"], "ELI5") or None,
+        "verdict": (verdict if verdict in VERDICTS else None) if n.type == "idea" else None,
+        "tally": ({k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
+                  if n.type == "idea" else None),
+        "findings": (_deck_text(n["body"], "Findings") or None
+                     if n.type == "idea" and n.status == TERMINAL_IDEA else None),
+        "answer_so_far": (_deck_text(n["body"].split(LEDGER_START)[0], "Answer so far") or None
+                          if n.type == "question" else None),
+        "children": [_situate_child(v, c) for c in v.children.get(cid, ())],
+    }
+
+def _situate_untested(v, ids):
+    """The row spec 13 marks *engine*: what is yet to be tested. Three kinds of "not yet",
+    kept apart because they have different remedies — a hypothesis nobody ran, a check nobody
+    ticked, and a question nobody answered."""
+    unrun, checks, openq = [], [], []
+    for nid in ids:
+        n = v.nodes[nid]
+        if n.type == "idea":
+            if n.status in ("idea", "staged"):
+                unrun.append({"id": n.id, "title": n.title, "status": n.status})
+            for item in _verifiables(n["body"]):
+                if item["state"] == "unmet":
+                    checks.append({"hid": n.id, "text": item["text"], "kind": item["kind"]})
+        elif n.type == "question" and n.status != TERMINAL_QUESTION:
+            openq.append(n.id)
+    return {"unrun_ideas": unrun, "open_checks": checks, "open_questions": openq}
+
+def _situate_inbound(v, ids):
+    """Nodes OUTSIDE the subtree whose prose links into it — *"h44 under q13 waits on this
+    answer"*, which is exactly the fact that makes a returning PI stop and re-read.
+
+    Ids and titles only. The size objection to inbound citations is entirely a property of
+    the shape: a snippet is unbounded, `{id, type, title}` is forty bytes.
+
+    The generated ledger is stripped before scanning. Every parent links every child there,
+    so counting it would report a node's own parent as a citation — a true link that says
+    nothing, drowning the ones that do."""
+    inside = set(ids)
+    names = {v.nodes[nid].basename: nid for nid in ids}
+    names.update({nid: nid for nid in ids})
+    out = []
+    for nid in sorted(v.nodes, key=natkey):
+        if nid in inside:
+            continue
+        n = v.nodes[nid]
+        pre = n["body"].split(LEDGER_START)[0]
+        if any(t in names for t in link_targets(pre)):
+            out.append({"id": n.id, "type": n.type, "title": n.title})
+    return out
+
+def _situate_work(root, v, ids):
+    """The taskhub, scoped to the subtree. Spec 13 predates spec 08, and its answer to *what
+    is yet to be tested* — unrun ideas plus unticked checks — now under-reports: post-08 a
+    hypothesis can have a run QUEUED or IN FLIGHT, and telling a PI who has been away that
+    nothing has been tried while three runs are executing is the worst thing this payload
+    could do.
+
+    Present-and-inert without a taskhub, the shape `_wiki_snapshot` already uses, so no
+    consumer has to test for the key."""
+    if not task_active(root):
+        return {"active": False, "open": [], "experiments": []}
+    inside = set(ids)
+    tasks = scan_tasks(root)
+    opens, exps = [], []
+    for t in tasks:
+        hrefs = [h for h, _c in t["hypothesis_refs"]]
+        touches = inside.intersection(set(t["refs"]) | set(hrefs))
+        if not touches:
+            continue
+        if t["status"] == "open":
+            opens.append({"id": t["id"], "title": t["title"], "category": task_category(t),
+                          "state": task_state(t, {x["id"]: x for x in tasks})})
+        if [h for h in hrefs if h in inside]:
+            exps.append({"id": t["id"], "title": t["title"], "status": t["status"],
+                         "hypothesis_refs": [{"id": h, "conclusion": c}
+                                             for h, c in t["hypothesis_refs"] if h in inside]})
+    return {"active": True, "open": opens, "experiments": exps}
+
+def situate_brief(root, anchor=None):
+    """`--mode=situate`: the orientation payload. Pure read; byte-stable.
+
+    No anchor means the project root — the come-back-after-months case *is* the whole-vault
+    case, and the root is an ordinary node, so this is the same walk one level higher rather
+    than a second concept."""
+    v = Vault(root)
+    n = v.get(anchor) if anchor else v.get(v.cfg["root_id"])
+    if n.type not in ("project", "question", "idea"):
+        raise CruxError(f"situate orients over the project, a question or a hypothesis "
+                        f"(got a '{n.type}' for '{n.id}')")
+
+    # the SHARED walk (D3), like `brief` and `deck_payload`: one cycle guard, not three.
+    # What is not shared is the field selection — situate needs each ancestor's answer-so-far,
+    # which is exactly what the isolated brief withholds.
+    chain = ancestor_chain(v, n)
+    lineage = []
+    for cur in chain:
+        pre = cur["body"].split(LEDGER_START)[0]
+        lineage.append({"id": cur.id, "type": cur.type, "title": cur.title,
+                        "status": cur.status,
+                        # a project's answer-so-far IS its goal; the field is one thing —
+                        # "what this level is currently telling us" — not two
+                        "answer_so_far": (_deck_text(pre, "Goal") if cur.type == "project"
+                                          else _deck_text(pre, "Answer so far")) or None})
+
+    pre = n["body"].split(LEDGER_START)[0]
+    anchor_d = {
+        "id": n.id, "type": n.type, "title": n.title, "status": n.status,
+        "schema": node_schema(n),
+        "eli5": _summary(n["body"], "ELI5") or None,
+        "tldr": _summary(n["body"], "TL;DR") or None,
+        # the problem statement IS carried here, and that is the whole point of the mode
+        # split: 09 excludes it from an agent about to write the bar, because that is where
+        # the advocacy lives. The PI wrote the advocacy. Reading it back cannot bias them.
+        "problem": _deck_text(n["body"], "Problem Statement") or None,
+        "question": _deck_text(pre, "Question") or None,
+        "answer_so_far": (_deck_text(pre, "Goal") if n.type == "project"
+                          else _deck_text(pre, "Answer so far")) or None,
+        "verdict": None, "rule": None, "rule_m": None,
+        "verifiables": [], "findings": None,
+    }
+    if n.type == "idea":
+        verdict = n["fm"].get("verdict")
+        rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
+        anchor_d.update({"verdict": verdict if verdict in VERDICTS else None,
+                         "rule": rule, "rule_m": m,
+                         "verifiables": _verifiables(n["body"]),
+                         "findings": _deck_text(n["body"], "Findings") or None})
+
+    ids = _subtree_ids(v, n.id)
+    # the shared wiki walk (D3), over the anchor's body then its ancestors' — the same bodies
+    # the isolated brief scans, because "what has been read about this" does not change with
+    # who is asking
+    wiki = wiki_refs(root, [n["body"]] + [m["body"] for m in chain])
+
+    sid = approved_synthesis(v, n.id) if n.type == "question" else None
+    synthesis = None
+    if sid:
+        s = v.nodes[sid]
+        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
+                     "text": "\n".join(l for l in s["body"].splitlines()
+                                       if not l.strip().startswith("Related::")).strip()}
+
+    return {
+        "engine_version": ENGINE_VERSION,
+        "mode": "situate",
+        "anchor": anchor_d,
+        "ancestry": lineage,
+        "subtree": [_situate_child(v, c) for c in v.children.get(n.id, ())],
+        "wiki": wiki,
+        "synthesis": synthesis,
+        "untested": _situate_untested(v, ids),
+        "inbound": _situate_inbound(v, ids),
+        "work": _situate_work(root, v, ids),
+    }
 
 # ----------------------------------------------------------------------------- deck verify / refresh (spec 11 §5d/5e)
 # `--verify` walks the deck SOURCE (never a rendered DOM): chart tick/value/axis text is

@@ -254,7 +254,13 @@ def main(argv=None):
                                           "one hypothesis' claim, question, pre-registered checks "
                                           "and the shared factual record — assembled from vault "
                                           "state, never authored by a calling agent"))
-    s.add_argument("id")
+    s.add_argument("id", nargs="?", default=None,
+                   help="a hypothesis (isolated) or any node (situate); omitted in situate "
+                        "mode means the whole programme")
+    s.add_argument("--mode", default=E.BRIEF_DEFAULT_MODE, metavar="MODE",
+                   help="isolated (default — the bias-proof cold input for an agent) | "
+                        "situate (subtree + ancestry + wiki + what is untested, for "
+                        "orienting the PI)")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -555,9 +561,24 @@ def dispatch(a):
             print("  (never written: the schema stamp, the combination rule, the lock, or the "
                   "content of a null — those are the PI's call, one node at a time.)")
     elif c == "brief":
-        b = E.brief(_vault_ro(None), a.id)
+        b = E.brief(_vault_ro(None), a.id, mode=a.mode)
         if a.json:
             return _emit(b)
+        if b["mode"] == "situate":
+            an = b["anchor"]
+            print(f"{an['id']}  {an['title']}  —  status: {an['status']}")
+            for m in b["ancestry"]:
+                print(f"  under {m['id']}: {(m['answer_so_far'] or '—')[:70]}")
+            ut = b["untested"]
+            print(f"  subtree:  {len(b['subtree'])} direct child(ren)")
+            print(f"  untested: {len(ut['unrun_ideas'])} unrun · "
+                  f"{len(ut['open_checks'])} open check(s) · "
+                  f"{len(ut['open_questions'])} open question(s)")
+            if b["work"]["active"]:
+                print(f"  work:     {len(b['work']['open'])} open task(s) · "
+                      f"{len(b['work']['experiments'])} experiment(s)")
+            print("  (the paths forward are judgment — this verb never writes a sentence.)")
+            return 0
         print(f"{b['id']}  {b['claim']}")
         if b["question"]:
             print(f"  question: {b['question']}")
