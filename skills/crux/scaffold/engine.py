@@ -11,10 +11,14 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, datetime, tempfile, shutil, hashlib
+import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+                                # 1.4: prezit (spec 11) — the engine now reads two new optional
+                                # vault conventions: results/<hid>/metrics.json (addressable
+                                # numbers) and an optional `## Protocol` section on questions.
+                                # Additive + read-only: a pre-1.4 vault loads unchanged.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -34,6 +38,9 @@ GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX) # root .md views the no
 # The engine only does bookkeeping here too — it classifies by extension and checks the
 # paths resolve; it never opens an artifact, and never judges one.
 RESULTS_DIR      = "results"
+METRICS_FILE     = "metrics.json"   # optional, PI/harness-written: results/<hid>/metrics.json
+                                    # holds the addressable numbers a deck may quote (spec 11 §5a).
+                                    # The engine reads and resolves it; it NEVER writes or computes one.
 ARTIFACT_KINDS   = {"report": (".md",),
                     "image":  (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"),
                     "data":   (".csv", ".tsv", ".json", ".txt")}
@@ -73,7 +80,13 @@ PROSE_SECTIONS = {
 
 # `crux validate --check=<list>`. Named so an agent can drive one check deterministically
 # without parsing prose, and so the PI can silence a tier without silencing the whole lint.
-CHECKS = ("tree", "wiki", "economy", "fanout")
+# OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
+# must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
+# documents nobody asked about.
+CHECKS     = ("tree", "wiki", "economy", "fanout")
+OPT_CHECKS = ("decks",)
+PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
+                                        # linked from `## Artifacts`
 
 class CruxError(Exception):
     """Raised on any rule violation; the CLI turns it into a clean message + exit 1."""
@@ -225,6 +238,12 @@ Parent:: [[<<parent_basename>>]]
 ## Question
 
 <<title>>
+
+## Protocol
+
+<!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,
+     thresholds, scope. `crux deck` surfaces this as the "rules locked up front" note. -->
+_(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
 
 ## Answer so far
 
@@ -1354,17 +1373,18 @@ def validation_report(root, checks=None):
 
     This is the machine-readable form behind `crux validate --json` and the cockpit — one
     serializer, so the CLI, the GUI and an agent can never drift apart on what 'valid' means."""
-    names = tuple(checks) if checks else CHECKS
-    unknown = [c for c in names if c not in CHECKS]
+    names = tuple(checks) if checks else CHECKS   # opt-in checks (decks) run only when named
+    unknown = [c for c in names if c not in CHECKS + OPT_CHECKS]
     if unknown:
         raise CruxError(f"unknown check(s): {', '.join(unknown)} — known checks are "
-                        f"{', '.join(CHECKS)}")
+                        f"{', '.join(CHECKS + OPT_CHECKS)} ({', '.join(OPT_CHECKS)} opt-in)")
     v = Vault(root)
     problems, warnings = [], []
     if "tree"    in names: problems += validate(v)
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
+    if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],
@@ -1565,3 +1585,500 @@ def snapshot(vault):
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
         "wiki": _wiki_snapshot(v.root),
     }
+
+# ----------------------------------------------------------------------------- deck payload (spec 11 / prezit)
+# `crux deck <anchor> --json` assembles the entire story material for one anchor's subtree,
+# deterministically, from vault state only. The engine authors no prose and computes no
+# number — selection and phrasing are the calling agent's whole job. Pure read.
+#
+# The traceability contract rides on `results/<hid>/metrics.json` (optional, written by the
+# PI or the run harness, never by crux): nested JSON whose every leaf is an object carrying
+# a required `value` (number, or a string for formatted displays like "1.20M") and optional
+# `ci`/`se`/`n`/`unit`; unknown leaf keys are carried through untouched. An address is
+# `<hid>#<dotted.key.path>` — vault-relative by construction.
+
+class AddressError(CruxError):
+    """A metrics address that cannot be resolved. `kind` distinguishes the failure so
+    `--verify` can bucket it: bad-address | missing-file | missing-key | missing-value."""
+    def __init__(self, kind, msg):
+        super().__init__(msg)
+        self.kind = kind
+
+def load_metrics(root, hid):
+    """Parsed results/<hid>/metrics.json, or None when the file does not exist."""
+    path = os.path.join(root, RESULTS_DIR, hid, METRICS_FILE)
+    if not os.path.isfile(path):
+        return None
+    try:
+        return json.loads(read(path))
+    except ValueError as e:
+        raise CruxError(f"malformed {RESULTS_DIR}/{hid}/{METRICS_FILE}: {e}")
+
+def resolve_address(root, addr):
+    """Resolve `<hid>#<dotted.key.path>` to its metrics leaf. Raises AddressError with a
+    distinct `kind` for each failure mode; never touches anything outside results/."""
+    hid, sep, keypath = str(addr).partition("#")
+    hid, keypath = hid.strip(), keypath.strip()
+    if not sep or not hid or not keypath or "/" in hid or "\\" in hid or "." in hid:
+        raise AddressError("bad-address",
+                           f"bad metrics address '{addr}' (expected <hid>#<dotted.key.path>)")
+    tree = load_metrics(root, hid)
+    if tree is None:
+        raise AddressError("missing-file", f"{addr}: no {RESULTS_DIR}/{hid}/{METRICS_FILE}")
+    node = tree
+    for part in keypath.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise AddressError("missing-key", f"{addr}: key path '{keypath}' does not resolve")
+        node = node[part]
+    if not isinstance(node, dict) or "value" not in node:
+        raise AddressError("missing-value",
+                           f"{addr}: not a metrics leaf (an object carrying 'value')")
+    return node
+
+def _metric_leaves(tree, prefix=""):
+    """Depth-first [(dotted.path, leaf)] for every leaf (a dict carrying `value`), keys
+    sorted lexicographically at every level — the defined, deterministic order."""
+    out = []
+    if isinstance(tree, dict):
+        if "value" in tree:
+            return [(prefix, tree)]
+        for k in sorted(tree):
+            out += _metric_leaves(tree[k], f"{prefix}.{k}" if prefix else k)
+    return out
+
+_FOUND_RE = re.compile(r"\s*\(found:\s*(.*?)\)\s*$")
+
+def _deck_verifiables(body):
+    """`## Verifiables` for the payload: [{text, state, found}] where `found` is the
+    trailing `(found: …)` evidence parenthetical the seed materializer writes (None when
+    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it."""
+    out = []
+    for item in _verifiables(body):
+        m = _FOUND_RE.search(item["text"])
+        out.append({"text": _FOUND_RE.sub("", item["text"]).strip(), "state": item["state"],
+                    "found": m.group(1).strip() if m else None})
+    return out
+
+def _deck_text(body, heading):
+    """A prose section for the payload: placeholder-empty like `_summary`, with HTML
+    comments stripped — template guidance is not vault-authored content."""
+    return re.sub(r"<!--.*?-->", "", _summary(body, heading), flags=re.S).strip()
+
+def _deck_question_fields(n):
+    pre = n["body"].split(LEDGER_START)[0]
+    return {"question": _deck_text(pre, "Question"),
+            "protocol": _deck_text(pre, "Protocol"),
+            "answer_so_far": _deck_text(pre, "Answer so far")}
+
+def _deck_idea_fields(n):
+    verdict = n["fm"].get("verdict")
+    return {"verdict": verdict if verdict in VERDICTS else None,
+            "metric": n["fm"].get("metric") or None,
+            "verifiables": _deck_verifiables(n["body"]),
+            "findings": _deck_text(n["body"], "Findings"),
+            "artifacts": parse_artifacts(n["body"])}
+
+def _deck_child(v, cid):
+    n = v.nodes[cid]
+    d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
+    if n.type == "question":
+        d.update(_deck_question_fields(n))
+    else:
+        d.update(_deck_idea_fields(n))
+    d["children"] = [_deck_child(v, c) for c in v.children.get(cid, ())]
+    return d
+
+def _subtree_hids(v, nid):
+    """Every idea id at or under `nid`, in tree order (the anchor itself included when it
+    is an idea)."""
+    n = v.nodes[nid]
+    out = [nid] if n.type == "idea" else []
+    for c in v.children.get(nid, ()):
+        out += _subtree_hids(v, c)
+    return out
+
+def deck_payload(root, anchor):
+    """The deterministic story payload behind `crux deck <anchor> --json`. Same vault
+    state -> byte-identical json.dumps output: no timestamps, no absolute paths, every
+    list order defined. Anchors with no children still emit (the proposal-deck case);
+    a hypothesis anchor is legal and yields a shorter payload."""
+    v = Vault(root)
+    n = v.get(anchor)
+    if n.type not in ("question", "idea"):
+        raise CruxError(f"deck anchors on a question or hypothesis (got '{n.type}' for '{anchor}')")
+
+    # lineage: root -> parent, cycle-guarded
+    lineage, cur, seen = [], n, {n.id}
+    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
+        cur = v.nodes[cur.parent]
+        seen.add(cur.id)
+        lineage.append(cur)
+    lineage.reverse()
+
+    def _line(m):
+        pre = m["body"].split(LEDGER_START)[0]
+        txt = _deck_text(pre, "Goal") if m.type == "project" else _deck_text(pre, "Answer so far")
+        return {"id": m.id, "type": m.type, "title": m.title, "status": m.status,
+                "answer_so_far": txt}
+
+    anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
+                "question": None, "protocol": None, "answer_so_far": None,
+                "verdict": None, "metric": None, "verifiables": [], "findings": None,
+                "artifacts": []}
+    anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
+
+    siblings = [v.nodes[c] for c in v.children.get(n.parent, ()) if c != n.id] \
+               if n.parent in v.nodes else []
+
+    hids = _subtree_hids(v, n.id)
+    ideas = [v.nodes[h] for h in hids]
+    by_state = {s: sum(1 for i in ideas if i.status == s) for s in IDEA_STATUS}
+
+    # wiki pages linked from the anchor, then its ancestors (root -> parent), first-mention
+    # order, de-duplicated; entries point at the page, bodies stay in the vault
+    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
+    wiki, seen_slugs = [], set()
+    for body in [n["body"]] + [m["body"] for m in lineage]:
+        for t in link_targets(body):
+            if t in pages and t not in seen_slugs:
+                seen_slugs.add(t)
+                wiki.append({"slug": t, "title": pages[t]["title"],
+                             "path": _rel(root, pages[t]["path"])})
+
+    sid = approved_synthesis(v, n.id) if n.type == "question" else None
+    synthesis = None
+    if sid:
+        s = v.nodes[sid]
+        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
+                     "text": "\n".join(l for l in s["body"].splitlines()
+                                       if not l.strip().startswith("Related::")).strip()}
+
+    figures = []
+    hids = sorted(hids, key=natkey)     # defined order: hid natkey, then file/key order
+    for hid in hids:
+        labels = {a["path"]: a["label"] for a in parse_artifacts(v.nodes[hid]["body"])}
+        for f in results_files(root, hid):
+            rel = _rel(root, f)
+            figures.append({"hid": hid, "path": rel,
+                            "ext": os.path.splitext(f)[1].lower(),
+                            "bytes": os.path.getsize(f), "caption": labels.get(rel, "")})
+
+    metrics = []
+    for hid in hids:
+        tree = load_metrics(root, hid)
+        if tree:
+            for path, leaf in _metric_leaves(tree):
+                metrics.append(dict({"addr": f"{hid}#{path}"}, **leaf))
+
+    return {
+        "engine_version": ENGINE_VERSION,
+        "anchor": anchor_d,
+        "lineage": [_line(m) for m in lineage],
+        "siblings": [{"id": s.id, "type": s.type, "title": s.title, "status": s.status}
+                     for s in siblings],
+        "children": [_deck_child(v, c) for c in v.children.get(n.id, ())],
+        "wiki": wiki,
+        "rd": [],   # empty until spec 07 lands; present so callers need no probe
+        "synthesis": synthesis,
+        "scope": {"executed": by_state["running"] + by_state["done"],
+                  "parked": by_state["idea"] + by_state["staged"],
+                  "by_state": by_state},
+        "figures": figures,
+        "metrics": metrics,
+    }
+
+# ----------------------------------------------------------------------------- deck verify / refresh (spec 11 §5d/5e)
+# `--verify` walks the deck SOURCE (never a rendered DOM): chart tick/value/axis text is
+# generated from data arrays already covered by their `src:` entries, so scanning rendered
+# text would report every chart numeral as unsourced. Four buckets:
+#   mismatch      address resolves, cached value differs            -> fail
+#   unresolvable  no such hypothesis / file / key path / leaf       -> fail
+#   derived       data-derived="a,b": inputs resolved, result NOT recomputed -> pass, listed
+#   unsourced     a slide-prose numeral with no address             -> pass; fails --strict
+# `data-src="literal"` is the strict-mode escape for definitional constants ("the 95%
+# interval"). All findings are reported before any exit decision — a repair session needs
+# the whole list, not the first line of it.
+
+_SRC_OBJ_RE  = re.compile(r"\{[^{}]*?\bsrc\s*:\s*(['\"])([^'\"]+)\1[^{}]*\}")
+_NUM_KEY_RE  = {k: re.compile(r"\b%s\s*:\s*(-?[0-9][0-9_.eE+-]*)" % k) for k in ("v", "lo", "hi")}
+_DATA_TAG_RE = re.compile(r"<(\w+)([^>]*\bdata-(src|derived)\s*=\s*\"([^\"]*)\"[^>]*)>(.*?)</\1>", re.S)
+_SLIDE_SEC_RE = re.compile(r'<section\s+class="slide[^"]*"[^>]*>(.*?)</section>', re.S)
+
+def _slide_sections(text):
+    """The real slides: _SLIDE_SEC_RE matches that do not START inside an HTML comment.
+    A literal '<section class="slide">' quoted in a header comment (the reference deck's
+    editing notes do exactly that) must never become a phantom slide."""
+    spans = [(m.start(), m.end()) for m in re.finditer(r"<!--.*?-->", text, flags=re.S)]
+    return [m for m in _SLIDE_SEC_RE.finditer(text)
+            if not any(s <= m.start() < e for s, e in spans)]
+
+def _slide_of(starts, pos):
+    """1-based ordinal of the slide the position sits in, given the real slide start
+    offsets (script blocks after the last section attribute to the last slide)."""
+    return max(1, sum(1 for s in starts if s <= pos))
+
+def _norm_display(s):
+    """Normalize a displayed value for comparison (PI ruling #7): entities unescaped,
+    unicode minus/en-dash -> '-', thousands separators and an explicit '+' dropped, a
+    trailing '%' dropped."""
+    s = html.unescape(str(s)).strip()
+    s = s.replace("−", "-").replace("–", "-")
+    s = s.replace(",", "")
+    if s.endswith("%"):
+        s = s[:-1].strip()
+    if s.startswith("+"):
+        s = s[1:]
+    return s
+
+def _values_match(display, value):
+    d, w = _norm_display(display), _norm_display(value)
+    if d == w:
+        return True
+    try:
+        return float(d) == float(w)
+    except (TypeError, ValueError):
+        return False
+
+def _numeral_token(tok):
+    """The token stripped of edge punctuation if it is an unsourced-numeral CANDIDATE,
+    else None. Excluded by design: node-id-shaped tokens (q1/h12/s3, possessives
+    included) and letter-hyphen-digit compounds ('top-1'); geometry and chart data never
+    reach here (script/style and addressed spans are removed before tokenizing)."""
+    t = tok.strip(".,;:!?()[]{}\"'“”‘’—–·")
+    t = re.sub(r"['’]s$", "", t)        # h3's -> h3
+    if not t or not any(ch.isdigit() for ch in t):
+        return None
+    if re.fullmatch(r"[qhs]\d+", t):
+        return None
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z0-9]*", t):
+        return None
+    return t
+
+def _unsourced_numerals(text):
+    """Digit-bearing tokens in slide TEXT nodes only — inside <section class="slide">,
+    after dropping comments, script/style, and every tag carrying data-src/data-derived
+    (their content is already covered by the address)."""
+    out = []
+    secs = _slide_sections(text)
+    starts = [m.start() for m in secs]
+    for sm in secs:
+        slide = _slide_of(starts, sm.start())
+        seg = re.sub(r"<!--.*?-->", " ", sm.group(1), flags=re.S)
+        seg = re.sub(r"<(script|style)\b.*?</\1>", " ", seg, flags=re.S | re.I)
+        seg = _DATA_TAG_RE.sub(" ", seg)
+        seg = re.sub(r"<[^>]+>", " ", seg)
+        for tok in html.unescape(seg).split():
+            t = _numeral_token(tok)
+            if t:
+                out.append({"numeral": t, "slide": slide})
+    return out
+
+def _deck_addresses(text):
+    """Every addressed datum in the deck source, in document order:
+    kind 'chart' (a src: object literal with cached v/lo/hi), 'span' (data-src with cached
+    inner text), or 'derived' (data-derived input list). Positions are into `text`."""
+    out = []
+    for m in _SRC_OBJ_RE.finditer(text):
+        nums = {}
+        for k, kre in _NUM_KEY_RE.items():
+            km = kre.search(m.group(0))
+            if km:
+                nums[k] = (m.start() + km.start(1), m.start() + km.end(1), km.group(1))
+        out.append({"kind": "chart", "addr": m.group(2), "pos": m.start(), "nums": nums})
+    for m in _DATA_TAG_RE.finditer(text):
+        inner = m.group(5)
+        entry = {"kind": "span" if m.group(3) == "src" else "derived",
+                 "addr": m.group(4), "pos": m.start(),
+                 "inner": (m.end() - len("</" + m.group(1) + ">") - len(inner),
+                           m.end() - len("</" + m.group(1) + ">"), inner)}
+        out.append(entry)
+    return out
+
+def deck_verify(root, path):
+    """Walk every src / data-src / data-derived in the deck file and compare its cached
+    value against the vault. Returns the full findings dict; the CLI decides exit codes
+    (mismatch/unresolvable always fail; unsourced fails only under --strict)."""
+    text = read(path)
+    rep = {"mismatch": [], "unresolvable": [], "derived": [], "literal": [], "unsourced": []}
+    starts = [m.start() for m in _slide_sections(text)]
+
+    def _resolve(addr, slide):
+        try:
+            return resolve_address(root, addr)
+        except AddressError as e:
+            rep["unresolvable"].append({"addr": addr, "slide": slide, "kind": e.kind,
+                                        "msg": str(e)})
+            return None
+
+    for d in _deck_addresses(text):
+        slide = _slide_of(starts, d["pos"])
+        if d["addr"] == "literal":
+            rep["literal"].append({"slide": slide})
+            continue
+        if d["kind"] == "derived":
+            inputs = [a.strip() for a in d["addr"].split(",") if a.strip()]
+            if all(_resolve(a, slide) is not None for a in inputs):
+                rep["derived"].append({"inputs": inputs, "slide": slide})
+            continue
+        leaf = _resolve(d["addr"], slide)
+        if leaf is None:
+            continue
+        if d["kind"] == "span":
+            shown = re.sub(r"<[^>]+>", "", d["inner"][2]).strip()
+            if not _values_match(shown, leaf.get("value")):
+                rep["mismatch"].append({"addr": d["addr"], "slide": slide, "field": "text",
+                                        "msg": f"{d['addr']} (slide {slide}): deck shows "
+                                               f"'{shown}', vault has {leaf.get('value')!r}"})
+            continue
+        # chart object: v against value, lo/hi against ci
+        ci = leaf.get("ci")
+        wants = {"v": leaf.get("value")}
+        if isinstance(ci, (list, tuple)) and len(ci) == 2:
+            wants["lo"], wants["hi"] = ci[0], ci[1]
+        for k, (s0, s1, got) in d["nums"].items():
+            if k not in wants:
+                rep["mismatch"].append({"addr": d["addr"], "slide": slide, "field": k,
+                                        "msg": f"{d['addr']} (slide {slide}): deck caches "
+                                               f"{k}={got} but the vault records no ci"})
+            elif not _values_match(got, wants[k]):
+                rep["mismatch"].append({"addr": d["addr"], "slide": slide, "field": k,
+                                        "msg": f"{d['addr']} (slide {slide}): deck has "
+                                               f"{k}={got}, vault has {wants[k]!r}"})
+    rep["unsourced"] = _unsourced_numerals(text)
+    return rep
+
+def _format_like(old, val):
+    """Render `val` in the formatting conventions of the display text it replaces:
+    explicit '+', &minus; entity / unicode minus, thousands separators, trailing '%', and
+    the old decimal count when it can carry the new value exactly. String-typed metrics
+    values are written verbatim — their formatting IS the value."""
+    if isinstance(val, str):
+        return val
+    raw = html.unescape(old).strip()
+    neg, mag = val < 0, abs(val)
+    m = re.search(r"\d[\d,]*(?:\.(\d+))?", raw)
+    dec = len(m.group(1)) if m and m.group(1) else 0
+    s = f"{mag:,.{dec}f}" if ("," in raw) else f"{mag:.{dec}f}"
+    if float(s.replace(",", "")) != mag:        # old decimal count can't carry it exactly
+        s = repr(float(mag)) if not float(mag).is_integer() else str(int(mag))
+    if neg:
+        s = ("&minus;" if "&minus;" in old else "−" if "−" in old else "-") + s
+    elif raw.startswith("+"):
+        s = "+" + s
+    if raw.endswith("%"):
+        s += "%"
+    return s
+
+def deck_refresh(root, path):
+    """Rewrite the cached values (chart v/lo/hi numerals and data-src span text) from
+    current vault state. Touches NOTHING else — prose, structure, and data-derived spans
+    (whose results the engine must not compute) are left alone. Returns the change list;
+    the CLI turns it into the loud per-slide warning, because a correct value refresh can
+    silently falsify the sentence around a number — refresh fixes values, only a human can
+    fix the prose."""
+    text = read(path)
+    ops, changes, unresolvable = [], [], []
+    starts = [m.start() for m in _slide_sections(text)]
+    for d in _deck_addresses(text):
+        slide = _slide_of(starts, d["pos"])
+        if d["addr"] == "literal" or d["kind"] == "derived":
+            continue
+        try:
+            leaf = resolve_address(root, d["addr"])
+        except AddressError as e:
+            unresolvable.append({"addr": d["addr"], "slide": slide, "msg": str(e)})
+            continue
+        if d["kind"] == "chart":
+            ci = leaf.get("ci")
+            wants = {"v": leaf.get("value")}
+            if isinstance(ci, (list, tuple)) and len(ci) == 2:
+                wants["lo"], wants["hi"] = ci[0], ci[1]
+            for k, (s0, s1, got) in d["nums"].items():
+                if k in wants and not _values_match(got, wants[k]):
+                    new = json.dumps(wants[k])
+                    ops.append((s0, s1, new))
+                    changes.append({"addr": d["addr"], "slide": slide, "field": k,
+                                    "old": got, "new": new})
+        else:
+            s0, s1, inner = d["inner"]
+            shown = re.sub(r"<[^>]+>", "", inner).strip()
+            if "<" in inner or _values_match(shown, leaf.get("value")):
+                continue        # nested markup is prose territory — verify will say if stale
+            new = _format_like(shown, leaf.get("value"))
+            ops.append((s0, s1, new))
+            changes.append({"addr": d["addr"], "slide": slide, "field": "text",
+                            "old": shown, "new": new})
+    for s0, s1, new in sorted(ops, key=lambda o: -o[0]):
+        text = text[:s0] + new + text[s1:]
+    if changes:
+        write_if_changed(path, text)
+    return {"changes": changes, "slides": sorted({c["slide"] for c in changes}),
+            "unresolvable": unresolvable}
+
+# --- contract lint (spec 11 work item; PI ruling #8) -------------------------------
+# Every <section class="slide"> must carry a contract-header comment (job / source /
+# numbers / cut — the override surface a user's "make mine different" pushes against),
+# and no slide may exceed DECK_UNITS_MAX content units, counted mechanically over the
+# declared class list below. Countable, therefore lintable — the spec's own D3 rationale.
+# Footer overlap and 16:9 projector fit cannot be checked without rendering: manual.
+DECK_CONTRACT_KEYS = ("job", "source", "numbers", "cut")
+DECK_UNITS_MAX     = 7
+_DECK_UNIT_PATTERNS = (
+    ("chain node", r'class="node\b'),
+    ("bullet",     r"<li\b"),
+    ("table",      r"<table\b"),
+    ("callout",    r'class="target\b'),
+    ("chart",      r'class="chartbox\b'),
+    ("chip list",  r'class="chips\b'),
+    ("legend",     r'class="legend\b'),
+    ("note",       r'class="note\b'),
+    ("prose lead", r'class="lead\b'),
+    ("pipeline",   r'class="pipe\b'),
+)
+
+def deck_lint(path):
+    """[(slide_no, message)] for every contract violation in the deck file. Empty = clean."""
+    text = read(path)
+    problems = []
+    secs = _slide_sections(text)
+    if not secs:
+        return [(0, 'no <section class="slide"> found')]
+    for i, sm in enumerate(secs, 1):
+        # the header is the last comment in the gap between the previous section's end and
+        # this one's start — comments inside a section's own markup never masquerade as one
+        gap = text[(secs[i - 2].end() if i > 1 else 0):sm.start()]
+        cm = re.findall(r"<!--(.*?)-->", gap, flags=re.S)
+        if not cm:
+            problems.append((i, f"slide {i}: no contract header comment before the section"))
+        else:
+            missing = [k for k in DECK_CONTRACT_KEYS
+                       if not re.search(r"\b%s\b" % k, cm[-1].lower())]
+            if missing:
+                problems.append((i, f"slide {i}: contract header missing {', '.join(missing)}"))
+        seg = re.sub(r"<!--.*?-->", " ", sm.group(1), flags=re.S)
+        units = sum(len(re.findall(p, seg)) for _, p in _DECK_UNIT_PATTERNS)
+        if units > DECK_UNITS_MAX:
+            problems.append((i, f"slide {i}: {units} content units, over the "
+                                f"{DECK_UNITS_MAX}-unit cap"))
+    return problems
+
+def deck_warnings(root):
+    """`validate --check=decks`: verify every *.html under presentations/ and surface
+    mismatch/unresolvable findings as WARNINGS — a stale derived document must never brick
+    the vault lint (and under --strict, warnings already fail, which is the asked-for
+    behavior)."""
+    out = []
+    pd = os.path.join(root, PRESENTATIONS_DIR)
+    if not os.path.isdir(pd):
+        return out
+    for dirpath, dirnames, filenames in os.walk(pd):
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".html"):
+                continue
+            rel = _rel(root, os.path.join(dirpath, fn))
+            rep = deck_verify(root, os.path.join(dirpath, fn))
+            for bucket in ("mismatch", "unresolvable"):
+                for f in rep[bucket]:
+                    out.append((f"deck:{rel}", f"deck '{rel}': {bucket} — {f['msg']}"))
+    return out

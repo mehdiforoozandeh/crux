@@ -1,0 +1,10 @@
+{
+  "equal_data": {
+    "delta":     { "value": 1.8,  "ci": [0.5, 3.1], "n": 3, "unit": "points" }
+  },
+  "equal_compute": {
+    "delta":     { "value": -4.6, "ci": [-6.0, -3.2], "n": 3, "unit": "points" },
+    "data_arm":  { "value": 43.3, "n": 3, "unit": "accuracy" },
+    "model_arm": { "value": 47.9, "n": 3, "unit": "accuracy" }
+  }
+}

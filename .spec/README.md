@@ -18,7 +18,7 @@ being built — do not implement)
 | 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ☐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☐ |
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
-| 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☐ |
+| 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☑ |
 | 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☐ |
 | 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☐ |
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☐ |
@@ -31,7 +31,8 @@ the same runner, budget cap and autonomy envelope. **Both are deferred** — see
 
 ## What to build, and what not to
 
-**Nine specs are `☐ todo`: 07, 08, 09, 10, 11, 12, 13, 14, 15.** They are the work.
+**Eight specs are `☐ todo`: 07, 08, 09, 10, 12, 13, 14, 15.** They are the work.
+(11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill.)
 
 **Do not implement 05.** ERA and the outer autoresearch loop are `⏸ deferred` — designed, kept,
 deliberately unbuilt. Unattended loops are the riskiest thing crux could add, and they must not

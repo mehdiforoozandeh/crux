@@ -25,6 +25,12 @@ _(one paragraph: what this asks, and what would settle it)_
 
 <<title>>
 
+## Protocol
+
+<!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,
+     thresholds, scope. `crux deck` surfaces this as the "rules locked up front" note. -->
+_(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
+
 ## Answer so far
 
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_

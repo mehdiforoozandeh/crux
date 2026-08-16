@@ -139,7 +139,22 @@ def main(argv=None):
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
     s.add_argument("--check", default=None, metavar="LIST",
-                   help="comma-separated subset of checks to run: " + ",".join(E.CHECKS) + " (default: all)")
+                   help="comma-separated subset of checks to run: " + ",".join(E.CHECKS)
+                        + " (default: all) — plus opt-in: " + ",".join(E.OPT_CHECKS))
+
+    s = _jsonable(sub.add_parser("deck", aliases=["prezit", "present", "slides"],
+                                 help="assemble the presentation payload for an anchor's subtree (spec 11)"))
+    s.add_argument("anchor", nargs="?", default=None,
+                   help="anchor node id — a question, or a hypothesis for a shorter deck")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--verify", metavar="DECK", default=None,
+                   help="prove every addressed number in DECK still matches the vault")
+    g.add_argument("--refresh", metavar="DECK", default=None,
+                   help="rewrite DECK's cached values from the vault (values only; prose untouched)")
+    g.add_argument("--lint", metavar="DECK", default=None,
+                   help="check DECK's slide contract: header comments + the 7-content-unit budget")
+    s.add_argument("--strict", action="store_true",
+                   help="with --verify: also fail on numerals carrying no address")
 
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
     s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
@@ -276,6 +291,75 @@ def dispatch(a):
             return 0
         print("✓ vault is valid")
         return 0
+    elif c in ("deck", "prezit", "present", "slides"):
+        # a read verb: resolve without stamping, like serve — payload assembly and verify
+        # never mutate a vault (refresh rewrites the DECK file, still not the vault)
+        root = _vault_ro()
+        if a.verify:
+            rep = E.deck_verify(root, a.verify)
+            failed = bool(rep["mismatch"] or rep["unresolvable"]
+                          or (a.strict and rep["unsourced"]))
+            if a.json:
+                _emit(rep)
+                return 1 if failed else 0
+            for f in rep["mismatch"]:
+                print(f"✗ mismatch     {f['msg']}")
+            for f in rep["unresolvable"]:
+                print(f"✗ unresolvable {f['msg']}")
+            for d in rep["derived"]:
+                print(f"· derived      slide {d['slide']}: inputs current, result not "
+                      f"recomputed ({', '.join(d['inputs'])})")
+            for u in rep["unsourced"]:
+                mark = "✗" if a.strict else "⚠"
+                print(f"{mark} unsourced    slide {u['slide']}: numeral '{u['numeral']}' "
+                      f"carries no address")
+            if failed:
+                return 1
+            print(f"✓ deck verified: every addressed number matches the vault"
+                  + (f" ({len(rep['unsourced'])} unsourced numeral(s) above — --strict to fail on them)"
+                     if rep["unsourced"] else ""))
+            return 0
+        if a.refresh:
+            res = E.deck_refresh(root, a.refresh)
+            if a.json:
+                return _emit(res)
+            if not res["changes"] and not res["unresolvable"]:
+                print("✓ deck already current — nothing rewritten")
+                return 0
+            for ch in res["changes"]:
+                print(f"  slide {ch['slide']}: {ch['addr']} {ch['field']} "
+                      f"{ch['old']} -> {ch['new']}")
+            for u in res["unresolvable"]:
+                print(f"  ⚠ left alone (unresolvable): {u['msg']}", file=sys.stderr)
+            if res["changes"]:
+                print(f"✓ {len(res['changes'])} value(s) rewritten\n"
+                      f"  ⚠ numbers moved on slide(s) {', '.join(map(str, res['slides']))} — "
+                      f"re-read the prose around them: a correct refresh can silently "
+                      f"falsify the sentence that interprets a number.", file=sys.stderr)
+            return 0
+        if a.lint:
+            probs = E.deck_lint(a.lint)
+            if a.json:
+                _emit([{"slide": i, "message": m} for i, m in probs])
+                return 1 if probs else 0
+            for _, m in probs:
+                print(f"✗ {m}")
+            if probs:
+                return 1
+            print("✓ deck lint clean: contract headers present, every slide within the unit budget")
+            return 0
+        if not a.anchor:
+            print("crux: deck needs an anchor id (e.g. `crux deck q1 --json`), or "
+                  "--verify/--refresh/--lint <deck.html>", file=sys.stderr)
+            return 1
+        payload = E.deck_payload(root, a.anchor)
+        if a.json:
+            return _emit(payload)
+        print(f"deck {a.anchor}: {len(payload['lineage'])} ancestor(s) · "
+              f"{len(payload['children'])} direct child(ren) · "
+              f"{len(payload['figures'])} figure file(s) · "
+              f"{len(payload['metrics'])} addressed metric(s)\n"
+              f"  full payload: crux deck {a.anchor} --json")
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)

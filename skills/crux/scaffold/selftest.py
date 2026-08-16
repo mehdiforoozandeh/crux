@@ -384,7 +384,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
+    check("wmig: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1657,7 +1657,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.3", E.ENGINE_VERSION == "1.3")
+    check("economy: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1692,7 +1692,7 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.3", E.Vault(root).cfg.get("engine_version") == "1.3")
+    check("emig: drift re-stamps to 1.4", E.Vault(root).cfg.get("engine_version") == "1.4")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1809,12 +1809,464 @@ def run_agent_cli():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- deck payload (spec 11 / PRD 11a)
+DECK_PROTOCOL_PLACEHOLDER = "_(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_"
+
+def run_deck():
+    import json
+    print("\n# deck payload (crux deck <anchor> --json)")
+    CRUX = os.path.join(HERE, "crux.py")
+    check("deck: ENGINE_VERSION is 1.4", E.ENGINE_VERSION == "1.4")
+
+    base = tempfile.mkdtemp(prefix="crux_deck_")
+    root = os.path.join(base, "vault")
+    E.cmd_init("Deck Demo", root, goal="Prove the deck payload.")
+    qtop, _ = E.cmd_ask(root, "Top question")
+    qmid, _ = E.cmd_ask(root, "Mid question", parent=qtop)
+    qsib, _ = E.cmd_ask(root, "Sibling question", parent=qtop)
+    h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid,
+                                 verifiables=["bar one", "bar two"])
+    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
+    # the optional ## Protocol section (new in 1.4) — fill it on the anchor
+    edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
+    # close h1 with a (found: …) parenthetical on the first bar
+    edit(node_path(root, h1), "- [ ] bar one", "- [x] bar one   (found: +0.02)")
+    edit(node_path(root, h1), "- [ ] bar two", "- [x] bar two")
+    E.cmd_test(root, h1, to="running")
+    E.cmd_close(root, h1, metric="imp +0.02")
+    # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
+    rd = os.path.join(root, "results", h1)
+    write(os.path.join(rd, "metrics.json"), json.dumps({
+        "task_a": {"delta": {"value": 3.3, "ci": [1.9, 4.7], "n": 3, "unit": "points"}},
+        "design": {"train_n": {"value": "1.20M"}}}))
+    write(os.path.join(rd, "report.md"), "# report\n\nsynthetic.\n")
+    write(os.path.join(rd, "curve.png"), "png-bytes")
+    edit(node_path(root, h1), f"results/{h1}/curve.png -->\n_(none yet)_",
+         f"results/{h1}/curve.png -->\n- [Report](results/{h1}/report.md)\n"
+         f"- results/{h1}/curve.png the loss curve")
+    E.refresh(root)
+
+    # determinism — in-process and through the CLI
+    p1 = E.deck_payload(root, qmid)
+    s1 = json.dumps(p1, ensure_ascii=False)
+    s2 = json.dumps(E.deck_payload(root, qmid), ensure_ascii=False)
+    check("deck: byte-identical across runs (in-process)", s1 == s2)
+    argv = [sys.executable, CRUX, "deck", qmid, "--json"]
+    r1 = subprocess.run(argv, capture_output=True, cwd=root)
+    r2 = subprocess.run(argv, capture_output=True, cwd=root)
+    check("deck: byte-identical across runs (CLI)", r1.returncode == 0 and r1.stdout == r2.stdout)
+    check("deck: CLI stdout is exactly the payload", r1.stdout.decode("utf-8").strip() == s1)
+    check("deck: engine_version stamped in the payload", p1["engine_version"] == E.ENGINE_VERSION)
+    check("deck: payload carries no absolute path and no timestamp",
+          root not in s1 and E.now()[:10] not in s1)
+
+    # lineage / siblings / children
+    check("deck: lineage is root -> parent, in order",
+          [x["id"] for x in p1["lineage"]] == ["root", qtop])
+    check("deck: project lineage entry carries the Goal",
+          p1["lineage"][0]["answer_so_far"] == "Prove the deck payload.")
+    check("deck: siblings listed, anchor excluded",
+          [x["id"] for x in p1["siblings"]] == [qsib])
+    kids = p1["children"]
+    check("deck: children are the anchor's subtree in order", [x["id"] for x in kids] == [h1, h2])
+    k1 = kids[0]
+    check("deck: closed child carries verdict + metric",
+          k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
+    check("deck: verifiable `found` parsed from the (found: …) parenthetical",
+          k1["verifiables"][0] == {"text": "bar one", "state": "met", "found": "+0.02"})
+    check("deck: verifiable without a parenthetical has found None",
+          k1["verifiables"][1] == {"text": "bar two", "state": "met", "found": None})
+    check("deck: no failure_scenario field (dropped per PI ruling; spec 15/09)",
+          "failure_scenario" not in k1["verifiables"][0])
+    check("deck: child artifacts parsed with kinds",
+          any(a["path"] == f"results/{h1}/report.md" and a["kind"] == "report"
+              for a in k1["artifacts"]))
+    check("deck: rd present and empty until spec 07", p1["rd"] == [])
+    check("deck: anchor question + protocol surfaced",
+          p1["anchor"]["question"] == "Mid question"
+          and p1["anchor"]["protocol"] == "Rules locked up front.")
+    check("deck: placeholder answer-so-far reads as empty", p1["anchor"]["answer_so_far"] == "")
+    check("deck: scope counts executed vs parked",
+          p1["scope"]["executed"] == 1 and p1["scope"]["parked"] == 1
+          and p1["scope"]["by_state"]["done"] == 1 and p1["scope"]["by_state"]["idea"] == 1)
+
+    # figures + metrics
+    figs = p1["figures"]
+    check("deck: figures list every results file",
+          sorted(f["path"] for f in figs) == sorted([f"results/{h1}/curve.png",
+                f"results/{h1}/metrics.json", f"results/{h1}/report.md"]))
+    caps = {f["path"]: f["caption"] for f in figs}
+    check("deck: figure caption from the matching artifact label",
+          caps[f"results/{h1}/curve.png"] == "the loss curve")
+    check("deck: unlabeled results file gets an empty caption",
+          caps[f"results/{h1}/metrics.json"] == "")
+    check("deck: metrics in defined order (hid, then key path)",
+          [m["addr"] for m in p1["metrics"]] == [f"{h1}#design.train_n", f"{h1}#task_a.delta"])
+    md = p1["metrics"][1]
+    check("deck: metric leaf carried through untouched",
+          md["value"] == 3.3 and md["ci"] == [1.9, 4.7] and md["n"] == 3 and md["unit"] == "points")
+    check("deck: string-typed metric value survives (formatted displays)",
+          p1["metrics"][0]["value"] == "1.20M")
+
+    # the address resolver and its distinct failure kinds
+    check("deck: resolve_address returns the leaf",
+          E.resolve_address(root, f"{h1}#task_a.delta")["value"] == 3.3)
+    def kind_of(addr):
+        try:
+            E.resolve_address(root, addr)
+            return None
+        except E.AddressError as e:
+            return e.kind
+    check("deck: unresolvable — missing metrics file", kind_of("h99#x.y") == "missing-file")
+    check("deck: unresolvable — missing key path", kind_of(f"{h1}#task_a.nope") == "missing-key")
+    check("deck: unresolvable — not a leaf (no value)", kind_of(f"{h1}#task_a") == "missing-value")
+    check("deck: unresolvable — malformed address", kind_of("no-hash-here") == "bad-address")
+
+    # synthesis: only an APPROVED one enters the payload
+    syn, _ = E.cmd_synthesize(root, "what qmid settled", [qmid])
+    check("deck: unapproved synthesis stays out of the payload",
+          E.deck_payload(root, qmid)["synthesis"] is None)
+    E.cmd_approve(root, syn)
+    ps = E.deck_payload(root, qmid)["synthesis"]
+    check("deck: approved synthesis lands with its text",
+          bool(ps) and ps["id"] == syn and bool(ps["approved"]) and "Related::" not in ps["text"])
+
+    # wiki pages linked from the anchor
+    E.ensure_wiki(root)
+    wiki_page(root, "deck-bg", "Deck background", "why decks exist")
+    edit(node_path(root, qmid), "Mid question\n\n## Protocol",
+         "Mid question — see [[deck-bg]].\n\n## Protocol")
+    E.refresh(root)
+    pw = E.deck_payload(root, qmid)["wiki"]
+    check("deck: wiki pages linked from the anchor are indexed",
+          pw == [{"slug": "deck-bg", "title": "Deck background", "path": "wiki/deck-bg.md"}])
+
+    # hypothesis / childless anchors — always emit (PI ruling #1)
+    ph = E.deck_payload(root, h1)
+    check("deck: hypothesis anchor — no children, no synthesis",
+          ph["children"] == [] and ph["synthesis"] is None)
+    check("deck: hypothesis anchor carries its own evidence fields",
+          len(ph["anchor"]["verifiables"]) == 2 and ph["anchor"]["question"] is None)
+    check("deck: hypothesis anchor scopes metrics to itself",
+          {m["addr"].split("#")[0] for m in ph["metrics"]} == {h1})
+    check("deck: no-children question anchor still emits",
+          E.deck_payload(root, qsib)["children"] == [])
+
+    # bad anchor
+    expect_error("deck: unknown anchor refused", lambda: E.deck_payload(root, "zz9"))
+    rb = subprocess.run([sys.executable, CRUX, "deck", "zz9", "--json"],
+                        capture_output=True, cwd=root)
+    check("deck: CLI unknown anchor -> exit 1, silent stdout",
+          rb.returncode == 1 and rb.stdout.strip() == b"")
+    ra = subprocess.run([sys.executable, CRUX, "slides", qmid, "--json"],
+                        capture_output=True, cwd=root)
+    rd2 = subprocess.run([sys.executable, CRUX, "deck", qmid, "--json"],
+                         capture_output=True, cwd=root)
+    check("deck: `slides` alias emits the identical payload", ra.stdout == rd2.stdout)
+    check("deck: vault still validates clean after all of it", E.cmd_validate(root) == [])
+
+    # migration proof (PI ruling #5): a pre-11 (engine 1.3) vault loads with only the
+    # drift warning, and deck runs on it with empty metrics/figures
+    old = os.path.join(base, "old_vault")
+    E.cmd_init("Old Vault", old, goal="g")
+    oq, _ = E.cmd_ask(old, "Old question")
+    cfgp = os.path.join(old, ".crux.yaml")
+    edit(cfgp, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.3")
+    ro = subprocess.run([sys.executable, CRUX, "status"], capture_output=True, text=True, encoding="utf-8", cwd=old)
+    check("deck migration: pre-11 vault loads with only the drift warning",
+          ro.returncode == 0 and "v1.3" in ro.stderr)
+    check("deck migration: drift re-stamps to the current engine",
+          f"engine_version: {E.ENGINE_VERSION}" in read(cfgp))
+    check("deck migration: pre-11 vault validates clean", E.cmd_validate(old) == [])
+    rq = subprocess.run([sys.executable, CRUX, "deck", oq, "--json"],
+                        capture_output=True, text=True, encoding="utf-8", cwd=old)
+    pq = json.loads(rq.stdout) if rq.returncode == 0 and rq.stdout.strip() else {}
+    check("deck migration: deck runs on a metrics-less vault, metrics/figures empty",
+          rq.returncode == 0 and pq.get("metrics") == [] and pq.get("figures") == [])
+
+    # the committed scaling_vault fixture: reference-deck addresses resolve
+    sv = os.path.join(HERE, "..", "examples", "scaling_vault")
+    svc = os.path.join(base, "scaling_copy")
+    shutil.copytree(sv, svc)
+    # tree check only: the wiki tier is legitimately non-clean on a fresh copy (the raw/
+    # PDFs are fetched by fetch_sources.sh, not committed); the new results/ fixtures live
+    # under the tree tier's artifact lint, which must stay clean
+    check("deck fixture: scaling_vault tree+artifacts validate clean",
+          E.cmd_validate(svc, checks=["tree"]) == [])
+    sp = E.deck_payload(svc, "q1")
+    addrs = [m["addr"] for m in sp["metrics"]]
+    check("deck fixture: reference-deck addresses resolve",
+          all(a in addrs for a in ("h1#task_a.delta", "h2#equal_compute.delta",
+                                   "h3#equal_data.delta", "h1#design.seeds")))
+    check("deck fixture: q1 protocol filled", sp["anchor"]["protocol"] != "")
+    check("deck fixture: linked reports appear in figures",
+          any(f["path"] == "results/h1/report.md" for f in sp["figures"]))
+    check("deck fixture: formatted display value stored as a string",
+          E.resolve_address(svc, "h1#design.train_n_baseline")["value"] == "1.20M")
+    shutil.rmtree(base, ignore_errors=True)
+
+
+# ------------------------------------------- deck verify / refresh / validate --check=decks (PRD 11b)
+def _mini_deck(hid, extra=""):
+    """A minimal synthetic deck exercising every verify bucket: chart src rows, data-src
+    spans (incl. entity minus + thousands separator + string-typed value), a literal
+    escape, a data-derived span, a bare numeral, and geometry numerals in script."""
+    return f"""<!doctype html><html><head><title>mini</title>
+<style>.x{{width:100px;margin:12px}}</style></head><body>
+<div id="deck">
+<section class="slide">
+  <h1>No numbers on this slide</h1>
+</section>
+<section class="slide">
+  <p>delta <span data-src="{hid}#m.delta">+3.3</span>
+  over <span data-src="{hid}#m.share">50,000</span> examples,
+  neg <span data-src="{hid}#m.neg">&minus;4.6</span>,
+  ratio <span data-src="{hid}#d.ratio">1.20M</span>,
+  the <span data-src="literal">95%</span> interval,
+  combo <span data-derived="{hid}#m.delta,{hid}#m.share">165000</span>.{extra}</p>
+</section>
+</div>
+<script>
+const ROWS=[
+  {{lab:'first', src:'{hid}#m.delta', v: 3.3, lo: 1.9, hi: 4.7}},
+];
+const W=1140,H=430,pad=52;   // geometry numerals must never be flagged
+</script>
+</body></html>
+"""
+
+def run_deck_verify():
+    import json
+    print("\n# deck verify / refresh / validate --check=decks")
+    CRUX = os.path.join(HERE, "crux.py")
+    base = tempfile.mkdtemp(prefix="crux_dv_")
+    root = os.path.join(base, "vault")
+    E.cmd_init("Verify Demo", root, goal="g")
+    qv, _ = E.cmd_ask(root, "Check question")
+    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"])
+    write(os.path.join(root, "results", hv, "metrics.json"), json.dumps({
+        "m": {"delta": {"value": 3.3, "ci": [1.9, 4.7]},
+              "share": {"value": 50000},
+              "neg":   {"value": -4.6}},
+        "d": {"ratio": {"value": "1.20M"}}}))
+    write(os.path.join(root, "results", hv, "report.md"), "# r\n\nsynthetic.\n")
+    edit(node_path(root, hv), f"results/{hv}/curve.png -->\n_(none yet)_",
+         f"results/{hv}/curve.png -->\n- [Report](results/{hv}/report.md)")
+    deck = os.path.join(root, "presentations", qv, "index.html")
+    write(deck, _mini_deck(hv, extra=" A bare numeral 42 sits here."))
+
+    # --- verify: buckets on a current deck -----------------------------------------
+    rep = E.deck_verify(root, deck)
+    check("verify: current deck has no mismatches",
+          rep["mismatch"] == [] and rep["unresolvable"] == [])
+    check("verify: derived listed, inputs checked, result not recomputed",
+          len(rep["derived"]) == 1 and not rep["mismatch"])
+    check("verify: bare numeral lands in unsourced with its slide",
+          [ (u["numeral"], u["slide"]) for u in rep["unsourced"] ] == [("42", 2)])
+    check("verify: literal escape is not unsourced and not a failure",
+          len(rep["literal"]) == 1)
+    check("verify: entity minus + comma + string values all match after normalization",
+          all(u["numeral"] == "42" for u in rep["unsourced"]))
+    r0 = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
+                        text=True, encoding="utf-8", cwd=root)
+    check("verify CLI: plain verify passes with the unsourced numeral listed",
+          r0.returncode == 0 and "42" in r0.stdout)
+    rs = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck, "--strict"],
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("verify CLI: --strict fails on the unsourced numeral", rs.returncode != 0)
+
+    # --- mismatch: cached value edited to disagree ---------------------------------
+    edit(deck, ">+3.3</span>", ">+9.9</span>")
+    edit(deck, "v: 3.3", "v: 2.0")
+    rep = E.deck_verify(root, deck)
+    m_addrs = {m["addr"] for m in rep["mismatch"]}
+    check("verify: edited cached values fail as mismatch, naming the address",
+          f"{hv}#m.delta" in m_addrs and len(rep["mismatch"]) == 2)
+    rm = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
+                        text=True, encoding="utf-8", cwd=root)
+    check("verify CLI: mismatch exits non-zero and names the address",
+          rm.returncode != 0 and f"{hv}#m.delta" in rm.stdout + rm.stderr)
+
+    # --- refresh: mechanical repair, values only -----------------------------------
+    before = read(deck)
+    res = E.deck_refresh(root, deck)
+    check("refresh: rewrites the corrupted values and names the slides",
+          res["changes"] and set(res["slides"]) == {2} == set(c["slide"] for c in res["changes"]))
+    rep = E.deck_verify(root, deck)
+    check("refresh: deck verifies clean afterwards",
+          rep["mismatch"] == [] and rep["unresolvable"] == [])
+    after = read(deck)
+    check("refresh: non-value bytes untouched",
+          "No numbers on this slide" in after and "W=1140,H=430,pad=52" in after
+          and "&minus;4.6" in after and "1.20M" in after and "50,000" in after
+          and "data-derived" in after and after.count("<section") == before.count("<section"))
+    check("refresh: sign convention preserved on the repaired span", ">+3.3</span>" in after)
+    res2 = E.deck_refresh(root, deck)
+    check("refresh: idempotent — second run changes nothing",
+          res2["changes"] == [] and read(deck) == after)
+
+    # --- refresh after the VAULT moves: formatting conventions survive -------------
+    edit(os.path.join(root, "results", hv, "metrics.json"), '"share": {"value": 50000}',
+         '"share": {"value": 60000}')
+    edit(os.path.join(root, "results", hv, "metrics.json"), '"neg": {"value": -4.6}',
+         '"neg": {"value": -5.0}')
+    check("validate --check=decks: a stale deck is a warning, not a problem",
+          (lambda r: r["problems"] == [] and r["warnings"] != [])(
+              E.validation_report(root, ["decks"])))
+    rv = subprocess.run([sys.executable, CRUX, "validate", "--check=decks"],
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("validate CLI: stale deck warns but exits 0", rv.returncode == 0 and "⚠" in rv.stdout)
+    rvs = subprocess.run([sys.executable, CRUX, "validate", "--check=decks", "--strict"],
+                         capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("validate CLI: --strict + --check=decks fails on the stale deck", rvs.returncode != 0)
+    rp = subprocess.run([sys.executable, CRUX, "validate"], capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("validate CLI: plain validate ignores presentations/ entirely",
+          rp.returncode == 0 and "deck" not in rp.stdout + rp.stderr)
+    res = E.deck_refresh(root, deck)
+    after2 = read(deck)
+    check("refresh: thousands separator re-applied on the moved value", ">60,000</span>" in after2)
+    check("refresh: entity minus re-applied on the moved value", ">&minus;5.0</span>" in after2)
+    check("refresh: verify green after the vault moved and the deck refreshed",
+          E.deck_verify(root, deck)["mismatch"] == [])
+    rr = subprocess.run([sys.executable, CRUX, "deck", "--refresh", deck], capture_output=True,
+                        text=True, encoding="utf-8", cwd=root)
+    check("refresh CLI: an already-current deck reports nothing to do",
+          rr.returncode == 0 and read(deck) == after2)
+
+    # --- unresolvable: distinct from mismatch, one per failure kind -----------------
+    deck2 = os.path.join(root, "presentations", qv, "broken.html")
+    write(deck2, f"""<section class="slide"><p>
+<span data-src="h99#x.y">1.0</span>
+<span data-src="{hv}#m.nope">2.0</span>
+<span data-src="{hv}#m">3.0</span>
+<span data-derived="h98#a.b">4.0</span>
+</p></section>""")
+    rep = E.deck_verify(root, deck2)
+    kinds = sorted(u["kind"] for u in rep["unresolvable"])
+    check("verify: unresolvable buckets carry distinct kinds, no mismatches",
+          kinds == ["missing-file", "missing-file", "missing-key", "missing-value"]
+          and rep["mismatch"] == [])
+    rb = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck2], capture_output=True,
+                        text=True, encoding="utf-8", cwd=root)
+    check("verify CLI: unresolvable exits non-zero, reported distinctly",
+          rb.returncode != 0 and "unresolvable" in (rb.stdout + rb.stderr))
+    os.remove(deck2)
+
+    # --- strict-clean deck: literal escape suffices ---------------------------------
+    deck3 = os.path.join(root, "presentations", qv, "clean.html")
+    write(deck3, _mini_deck(hv))
+    E.deck_refresh(root, deck3)   # vault moved above; bring the copy current first
+    rc = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck3, "--strict"],
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("verify CLI: --strict passes a deck whose only constants are literal-escaped",
+          rc.returncode == 0)
+
+    # --- check registry -------------------------------------------------------------
+    try:
+        E.validation_report(root, ["bogus"])
+        check("validate: unknown check still refused", False)
+    except E.CruxError as e:
+        check("validate: unknown check still refused, message names decks", "decks" in str(e))
+
+    # --- pre-11 vault: --strict clean with no presentations/ ------------------------
+    old = os.path.join(base, "old_vault")
+    E.cmd_init("Old Strict", old, goal="g")
+    E.cmd_ask(old, "Old question")
+    ros = subprocess.run([sys.executable, CRUX, "validate", "--strict"], capture_output=True,
+                         text=True, encoding="utf-8", cwd=old)
+    check("validate: pre-11 vault passes --strict with no migration", ros.returncode == 0)
+    shutil.rmtree(base, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- prezit skill assets (PRD 11c)
+def run_prezit():
+    print("\n# prezit skill assets (template, example deck, contract lint)")
+    CRUX = os.path.join(HERE, "crux.py")
+    skl = os.path.abspath(os.path.join(HERE, "..", "..", "prezit"))
+    tpl = os.path.join(skl, "assets", "deck.html")
+    exd = os.path.join(skl, "examples", "q1_scaling_deck.html")
+    sk = os.path.join(skl, "SKILL.md")
+    check("prezit: SKILL.md ships", os.path.isfile(sk))
+    check("prezit: template ships (assets/deck.html)", os.path.isfile(tpl))
+    check("prezit: example deck ships", os.path.isfile(exd))
+    if not (os.path.isfile(tpl) and os.path.isfile(exd) and os.path.isfile(sk)):
+        return  # nothing to probe; the three checks above already failed
+    t, x, s = read(tpl), read(exd), read(sk)
+
+    # self-contained: the automatable half of "loads from file:// with no network"
+    ext = re.compile(r'(?:src|href)\s*=\s*["\']https?://|@import|url\(\s*["\']?https?://'
+                     r'|<script\s[^>]*\bsrc\s*=|<link\s[^>]*stylesheet')
+    check("prezit: template is self-contained (no external refs)", not ext.search(t))
+    check("prezit: example deck is self-contained (no external refs)", not ext.search(x))
+    check("prezit: slide counter is DOM-derived (no literal total in markup)",
+          bool(re.search(r'id="tot">\s*<', t)) and bool(re.search(r'id="tot">\s*<', x)))
+
+    # contract lint: headers + 7-content-unit budget (footer overlap stays manual)
+    check("prezit: template passes `deck --lint`", E.deck_lint(tpl) == [])
+    check("prezit: example passes `deck --lint`", E.deck_lint(exd) == [])
+    tmp = tempfile.mkdtemp(prefix="crux_pzl_")
+    bad = os.path.join(tmp, "bad.html")
+    write(bad, '<section class="slide"><ul>' + "<li>x</li>" * 8 + "</ul></section>")
+    probs = E.deck_lint(bad)
+    check("prezit: lint catches a missing contract header",
+          any("contract header" in m for _, m in probs))
+    check("prezit: lint catches a slide over 7 content units",
+          any("content units" in m for _, m in probs))
+
+    # D5, mechanically: motivation slides carry no addressed numbers; result slides >= 2.
+    # Comments are stripped first — the deck's editing notes quote a literal
+    # <section class="slide"> which must not read as a phantom slide.
+    xs = re.sub(r"<!--.*?-->", " ", x, flags=re.S)
+    secs = re.findall(r'<section class="slide[^"]*"[^>]*>(.*?)</section>', xs, flags=re.S)
+    def addressed(seg):
+        return len(re.findall(r'data-src="(?!literal")[^"]+"|data-derived="[^"]+"'
+                              r"|\bsrc\s*:\s*['\"]", seg))
+    check("prezit: 8-slide spine present in the example", len(secs) == 8)
+    check("prezit: motivation slides (title/lineage/question) carry zero addressed numbers",
+          all(addressed(seg) == 0 for seg in secs[:3]))
+    check("prezit: every result slide carries >= 2 addressed numbers",
+          all(addressed(seg) >= 2 for seg in secs[5:7]))
+    check("prezit: chart-B annotations are computed from cached values, not hand-typed",
+          "note:'" not in x and 'note:"' not in x)
+
+    # the example against the shipped scaling_vault: the full contract, verify green
+    base = tempfile.mkdtemp(prefix="crux_pz_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    rep = E.deck_verify(svc, exd)
+    check("prezit: example deck — zero mismatches against scaling_vault",
+          rep["mismatch"] == [])
+    check("prezit: example deck — zero unresolvable addresses", rep["unresolvable"] == [])
+    check("prezit: example deck — zero unsourced numerals (source-scanned, ~40 rendered)",
+          rep["unsourced"] == [])
+    check("prezit: example exercises span, chart, derived and literal addressing",
+          'data-src="h1#task_a.delta"' in x and "src:'h1#task_a.delta'" in x
+          and "data-derived=" in x and 'data-src="literal"' in x)
+    rv = subprocess.run([sys.executable, CRUX, "deck", "--verify", exd, "--strict"],
+                        capture_output=True, text=True, encoding="utf-8", cwd=svc)
+    check("prezit: `crux deck --verify --strict` green on the example", rv.returncode == 0)
+    rl = subprocess.run([sys.executable, CRUX, "deck", "--lint", exd],
+                        capture_output=True, text=True, encoding="utf-8", cwd=svc)
+    check("prezit: `crux deck --lint` green on the example", rl.returncode == 0)
+    rlb = subprocess.run([sys.executable, CRUX, "deck", "--lint", bad],
+                         capture_output=True, text=True, encoding="utf-8", cwd=svc)
+    check("prezit: `crux deck --lint` fails the bad deck", rlb.returncode != 0)
+    shutil.rmtree(base, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # SKILL.md carries the load-bearing rules (crude string pins so they can't be edited
+    # away silently)
+    for needle in ("crux deck", "--verify", "--refresh", "presentations/", "metrics.json",
+                   "contract header", "one claim", "re-run the plotting code"):
+        check(f"prezit: SKILL.md states '{needle}'", needle in s)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"]):
+                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
 
     # -- the post-init hint must work from where the user just ran init: the vault is
@@ -1822,7 +2274,7 @@ def run_cli_help():
     tmp = tempfile.mkdtemp(prefix="crux-hint-")
     try:
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "init", "Hint Project"],
-                           capture_output=True, text=True, cwd=tmp)
+                           capture_output=True, text=True, encoding="utf-8", cwd=tmp)
         check("init hint: includes `cd cruxvault`", r.returncode == 0 and "cd cruxvault" in r.stdout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1852,6 +2304,9 @@ def main():
     run_economy()
     run_economy_migration()
     run_agent_cli()
+    run_deck()
+    run_deck_verify()
+    run_prezit()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

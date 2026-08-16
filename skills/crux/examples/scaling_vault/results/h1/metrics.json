@@ -1,0 +1,16 @@
+{
+  "task_a": {
+    "delta":     { "value": 3.3,  "ci": [1.9, 4.7], "n": 3, "unit": "points" },
+    "data_arm":  { "value": 49.6, "n": 3, "unit": "accuracy" },
+    "model_arm": { "value": 46.3, "n": 3, "unit": "accuracy" }
+  },
+  "task_b": {
+    "delta":     { "value": 1.5,  "ci": [0.3, 2.7], "n": 3, "unit": "points" }
+  },
+  "design": {
+    "seeds":            { "value": 3,       "unit": "seeds" },
+    "heldout_n":        { "value": 50000,   "unit": "examples" },
+    "train_n_baseline": { "value": "1.20M", "unit": "examples" },
+    "train_n_data_arm": { "value": "2.40M", "unit": "examples" }
+  }
+}

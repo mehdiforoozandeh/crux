@@ -41,7 +41,8 @@ _(how this hypothesis will be tested)_
 
 <!-- what the run produced. Keep files under results/h3/ and link at least the report:
      - [Report](results/h3/report.md)   - results/h3/curve.png -->
-_(none yet)_
+- [Report](results/h3/report.md)
+- results/h3/metrics.json addressable numbers (h3#…)
 
 ## Findings
 

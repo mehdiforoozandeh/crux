@@ -8,6 +8,41 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The `prezit` skill — presentations from a subtree, end to end**
+  (spec [`11`](.spec/11-prezit.md) closed, PRD 11c). `skills/prezit/` ships the workflow
+  (harvest → read the reports → agree the arc with the PI → draft → verify → refine, with
+  `--refresh` + re-read-the-prose for re-presentation), the deck **template**
+  (`assets/deck.html`: chrome, palette tokens, fade-only + reduced-motion, keyboard nav,
+  DOM-derived slide count, print stylesheet, contract-headed stubs, both chart scaffolds)
+  and the worked **example** (`examples/q1_scaling_deck.html`, built on
+  `examples/scaling_vault` q1 — `--verify --strict` green, lint clean, chart annotations
+  computed from cached values rather than hand-typed). New `crux deck --lint` checks every
+  slide's contract header (job/source/numbers/cut) and the 7-content-unit budget.
+- **`crux deck --verify` / `--refresh` — the deck traceability contract, enforced**
+  (spec [`11`](.spec/11-prezit.md) §5, PRD 11b). `--verify <deck.html>` walks every
+  `src:` / `data-src` / `data-derived` in the deck **source** (never a rendered DOM) and
+  buckets each: *mismatch* and *unresolvable* fail with distinct reporting; *derived* passes
+  with inputs checked, result not recomputed; *unsourced* passes and is listed —
+  `--strict` fails it, with `data-src="literal"` as the escape for definitional constants.
+  All findings are reported before the exit decision. `--refresh <deck.html>` rewrites the
+  cached values only — sign convention, `&minus;` entities, thousands separators and
+  decimal count preserved; string-typed values verbatim — and warns per slide, loudly:
+  refresh fixes values, only a human can fix the sentence around them. `validate` gains an
+  **opt-in** `--check=decks` (stale decks surface as warnings; plain `validate` ignores
+  `presentations/` entirely; `--strict` fails on them like any warning). No vault-format
+  change — no migration.
+- **`crux deck <anchor> --json` — the deterministic presentation payload** (engine **1.4**,
+  spec [`11`](.spec/11-prezit.md), PRD 11a). One anchor's whole story material — lineage,
+  siblings, recursive children with verifiables/findings/artifacts, linked wiki pages, the
+  approved synthesis, scope counts, figures and every addressed metric — assembled from vault
+  state only, byte-identical across runs, no prose authored by the engine. Aliases `prezit`,
+  `present`, `slides`. New optional conventions the engine now reads (and never writes):
+  `results/<hid>/metrics.json` (nested leaves carrying `value` (+`ci`/`se`/`n`/`unit`),
+  addressed as `<hid>#<dotted.key.path>`) and a `## Protocol` section on questions (the
+  "rules locked up front" note). Pre-1.4 vaults load unchanged — the bump is additive; the
+  drift warning is the only visible effect. `examples/scaling_vault` gains committed
+  `results/h1..h3/` fixtures (metrics + linked reports) so the reference deck's addresses
+  resolve.
 - **Cockpit: keyboard-first tree canvas** (spec [`12`](.spec/12-cockpit-craft.md)). The tree
   `<svg>` is a real focusable ARIA tree (`tabindex`, `role="tree"`, per-node `treeitem` +
   `aria-activedescendant`, a `:focus-visible` ring that isn't clipped). Orientation-relative
