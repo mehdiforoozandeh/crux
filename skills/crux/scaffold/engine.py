@@ -14,11 +14,15 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.6"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
                                 # Additive + read-only: a pre-1.4 vault loads unchanged.
+                                # 1.6: evidence semantics (spec 15) — nodes created from here
+                                # on carry `schema: 1`. The stamp is the version boundary:
+                                # spec-15 rules bind stamped nodes only, and ABSENCE of the
+                                # stamp means the node predates them, permanently.
                                 # 1.5: the RD layer (spec 07) — the engine now scans a new
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
@@ -71,6 +75,30 @@ IDEA_STATUS      = ["idea", "staged", "running", "done"]
 VERDICTS         = ["supported", "partial", "refuted", "inconclusive"]
 TERMINAL_IDEA    = "done"
 TERMINAL_QUESTION= "resolved"
+
+# evidence semantics (v1.6 / spec 15): the version boundary.
+#
+# Spec 15 rewrites what a verifiable is and what a verdict means. Its rules bind hypotheses
+# created at or after this engine version and NEVER anything older — a retroactive rule would
+# re-verdict settled nodes, i.e. the engine overturning recorded science, which is precisely
+# what the leash exists to prevent.
+#
+# The mechanism has to be per-NODE. The vault-level `engine_version` in .crux.yaml cannot
+# carry it: `check_and_stamp_version` overwrites that stamp on drift *before* it returns the
+# warning, so one command after an upgrade erases the evidence that the vault is old.
+#
+# So: every question/idea created from 1.6 on carries `schema: 1`, and absence reads as 0.
+# The boundary is permanent and visible, not a transition to be completed — there is
+# deliberately no `crux migrate` for it. Bringing an old hypothesis up to the new schema
+# means re-declaring what would settle a claim, which is a scientific act, PI-gated, one
+# node at a time.
+SCHEMA_GENERATION = 1
+
+# `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
+# affects `ok`, so a legacy vault is never put into red by a boundary it could not have
+# known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
+# never string-match a message, because messages get reworded and ids do not.
+INFO_NAMESPACES = ("boundary",)
 
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
@@ -238,6 +266,7 @@ See [[META]] for the live question tree and dashboard, and [[EXPERIMENTS]] for t
 "question": """---
 id: <<id>>
 type: question
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: open
@@ -271,6 +300,7 @@ _(no children yet)_
 "idea": """---
 id: <<id>>
 type: idea
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: idea
@@ -435,6 +465,7 @@ def load_template(kind):
 
 def fill(text, **kw):
     kw.setdefault("now", now())
+    kw.setdefault("schema", SCHEMA_GENERATION)   # every node is stamped at creation
     for k, v in kw.items():
         text = text.replace(f"<<{k}>>", str(v))
     return text
@@ -486,6 +517,20 @@ def is_terminal(node):
     if node.type == "idea":     return node.status == TERMINAL_IDEA
     if node.type == "question": return node.status == TERMINAL_QUESTION
     return True
+
+def node_schema(node):
+    """The node's schema generation; 0 means it predates evidence semantics. Total — a
+    missing, empty or malformed value degrades to 0 rather than raising, because this is
+    called on every node of every vault including ones written by hand."""
+    try:
+        return int(node["fm"].get("schema") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+def binds_evidence_semantics(node):
+    """True iff spec 15's rules apply to this node. The ONLY place the boundary is asked
+    about, so there is one answer and no drift between callers."""
+    return node_schema(node) >= 1
 
 # ----------------------------------------------------------------------------- verifiables / verdict
 def count_verifiables(body):
@@ -1659,6 +1704,20 @@ def cmd_synthesize(root, title, questions):
     refresh(root)
     return nid, fn
 
+def boundary_info(v):
+    """The evidence-semantics boundary, reported as INFORMATION. Never a problem, never a
+    warning: a pre-15 vault is correct, not broken, and spec 15 is explicit that the boundary
+    is reported "as information, never as a problem". One line per condition, not one per
+    node, and silence when there is nothing to say."""
+    out = []
+    n = sum(1 for x in v.nodes.values()
+            if x.type == "idea" and not binds_evidence_semantics(x))
+    if n:
+        out.append(("boundary:evidence-semantics",
+                    f"{n} hypothes{'is' if n == 1 else 'es'} predate evidence semantics "
+                    f"(no schema stamp); spec-15 rules do not apply to them.", n))
+    return out
+
 def validation_report(root, checks=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
@@ -1672,17 +1731,19 @@ def validation_report(root, checks=None):
         raise CruxError(f"unknown check(s): {', '.join(unknown)} — known checks are "
                         f"{', '.join(CHECKS + OPT_CHECKS)} ({', '.join(OPT_CHECKS)} opt-in)")
     v = Vault(root)
-    problems, warnings = [], []
-    if "tree"    in names: problems += validate(v)
+    problems, warnings, info = [], [], []
+    if "tree"    in names: problems += validate(v); info += boundary_info(v)
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
     if "decks"   in names: warnings += deck_warnings(root)
-    return {"ok": not problems and not warnings,
+    return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],
-            "warnings": [{"id": i, "message": m} for i, m in warnings]}
+            "warnings": [{"id": i, "message": m} for i, m in warnings],
+            "info": [dict({"id": i, "message": m}, **({"count": c} if c is not None else {}))
+                     for i, m, c in info]}
 
 def cmd_validate(root, checks=None):
     """The hard problems only, as (id, message) pairs. Kept at this return type on purpose:
@@ -1801,6 +1862,9 @@ def _node_json(v, n, rd_map=None):
         # the slug of this node's active RD, or None — so the pane can offer "open the
         # design" without walking the index
         d["rd"] = (_rd_by_node(v.root) if rd_map is None else rd_map).get(n.id)
+        # which side of the evidence-semantics boundary this node sits on (0 = predates it),
+        # published so the cockpit and an agent never re-read frontmatter to find out
+        d["schema"] = node_schema(n)
     if n.type == "question":
         pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent

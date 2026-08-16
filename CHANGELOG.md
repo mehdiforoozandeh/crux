@@ -8,6 +8,30 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The evidence-semantics version boundary** (spec [`15`](.spec/15-evidence-semantics.md),
+  PRD 15.0). Questions and hypotheses created from `ENGINE_VERSION` 1.6 on carry a
+  `schema: 1` frontmatter stamp; **absence of the stamp means the node predates evidence
+  semantics**, permanently. Spec 15's rules — verifiable kinds, the combination rule, the
+  hash-lock — will bind stamped nodes only, so the engine can never re-verdict work that was
+  settled under the old ones. The mechanism has to be per-node: the vault-level
+  `engine_version` cannot carry it, because `check_and_stamp_version` overwrites that stamp
+  on drift *before* returning the warning, so one command after an upgrade erases the
+  evidence that the vault is old. `crux validate` gains a third tier, **`info`** — reported
+  with a neutral glyph, never counted toward the exit code, and never escalated by
+  `--strict`, because a vault that predates a rule is correct rather than broken. This PRD
+  adds **no rule at all**: a stamped and an unstamped node behave identically in every
+  command. `ENGINE_VERSION` 1.5 → 1.6; a pre-1.6 vault loads byte-unchanged, keeps every
+  recorded verdict, and validates clean.
+
+### Changed
+
+- **Version asserts in `selftest.py` no longer pin a literal.** Five checks asserted
+  `E.ENGINE_VERSION == "1.5"`, which made every future engine bump drag earlier specs' tests
+  red. The ones asserting a *historical* bump now use `at_least_version()` ("that bump
+  happened and was never reverted", which stays true), and the ones asserting *current*
+  behaviour compare against `E.ENGINE_VERSION` itself — the idiom `rdmig` was already using
+  one line above one of them.
+
 - **The RD layer: `crux rd <node> "<title>"`** (spec [`07`](.spec/07-rd-layer.md), PRD 07.1).
   Requirements Documents — a home for the design detail the 400-word node cap displaces.
   One active RD per node, living in `rd/<slug>.md` as `type: rd`, linked from the node by an

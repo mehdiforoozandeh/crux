@@ -293,6 +293,11 @@ def dispatch(a):
             print(f"✗ {p['id']}: {p['message']}")
         for w in rep["warnings"]:
             print(f"⚠ {w['id']}: {w['message']}")
+        # information, not a finding: printed with a neutral glyph, never counted toward
+        # the exit code, and never silenced by --strict. A vault that predates a rule is
+        # correct, not broken.
+        for i in rep["info"]:
+            print(f"· {i['message']}")
         if rep["problems"]:
             return 1
         if rep["warnings"]:

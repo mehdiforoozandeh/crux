@@ -40,6 +40,18 @@ def node_path(root, nid):
     return E.Vault(root).get(nid)["path"]
 
 
+def at_least_version(v):
+    """True if the engine is at or past version `v`. Historical "this PRD bumped the version"
+    asserts use this instead of a literal equality: the statement they were making is *that
+    bump happened and has never been reverted*, which stays true forever, whereas `== "1.3"`
+    is a claim that expires on the next PRD and drags every earlier spec's test red with it.
+
+    Parsed here rather than via update.py's `parse_version`, which requires three components
+    (it reads RELEASE tags like `0.5.1`); ENGINE_VERSION is a two-part `major.minor`."""
+    key = lambda s: tuple(int(x) for x in str(s).split("."))
+    return key(E.ENGINE_VERSION) >= key(v)
+
+
 def run_demo(keep_dir=None):
     root = keep_dir or tempfile.mkdtemp(prefix="crux_demo_")
     if os.path.exists(os.path.join(root, ".crux.yaml")):
@@ -384,7 +396,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("wmig: ENGINE_VERSION at or past 1.1", at_least_version("1.1"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1829,7 +1841,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("economy: ENGINE_VERSION at or past 1.3", at_least_version("1.3"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1864,7 +1876,8 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.5", E.Vault(root).cfg.get("engine_version") == "1.5")
+    check("emig: drift re-stamps to the current ENGINE_VERSION",
+          E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1988,7 +2001,7 @@ def run_deck():
     import json
     print("\n# deck payload (crux deck <anchor> --json)")
     CRUX = os.path.join(HERE, "crux.py")
-    check("deck: ENGINE_VERSION is 1.5", E.ENGINE_VERSION == "1.5")
+    check("deck: ENGINE_VERSION at or past 1.4", at_least_version("1.4"))
 
     base = tempfile.mkdtemp(prefix="crux_deck_")
     root = os.path.join(base, "vault")
@@ -2596,7 +2609,7 @@ def run_rd_migration():
     check("rdmig: an old-stamped vault reports drift", warn is not None and "1.4" in warn)
     check("rdmig: drift re-stamps to the new ENGINE_VERSION",
           E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
-    check("rdmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("rdmig: ENGINE_VERSION at or past 1.5", at_least_version("1.5"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -2955,6 +2968,166 @@ def run_rd_gui():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- spec 15 shared helpers
+def _strip_schema(root):
+    """Make every node look pre-15: drop the `schema:` frontmatter line."""
+    for n in E.Vault(root).nodes.values():
+        edit(n["path"], "\nschema: %d\n" % E.SCHEMA_GENERATION, "\n")
+
+
+def pre15_vault(prefix, engine_version="1.5"):
+    """A vault that looks like it was written before evidence semantics: nodes with no
+    `schema` key and an old engine_version stamp. Mirrors run_economy_migration()'s
+    strip-the-schema-back-out idiom, and is shared by every spec-15 migration block."""
+    root = tempfile.mkdtemp(prefix=prefix)
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Legacy Evidence", root)
+    q, _ = E.cmd_ask(root, "a pre-15 question")
+    h, _, _ = E.cmd_hypothesize(root, "a pre-15 hypothesis", parent=q,
+                                verifiables=["first check", "second check"])
+    _strip_schema(root)
+    edit(os.path.join(root, E.VAULT_MARKER),
+         f"engine_version: {E.ENGINE_VERSION}", f"engine_version: {engine_version}")
+    return root, q, h
+
+
+def fingerprint(root):
+    """{relpath: sha256} for every *.md, plus {nid: verdict} and {nid: status}. `.crux.yaml`
+    is deliberately excluded — the version stamp is the one thing an upgrade may rewrite."""
+    files = {}
+    for dp, dn, fn in os.walk(root):
+        dn[:] = sorted(d for d in dn if not d.startswith("."))
+        for f in sorted(fn):
+            if not f.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/")
+            with open(os.path.join(dp, f), "rb") as fh:
+                files[rel] = hashlib.sha256(fh.read()).hexdigest()
+    v = E.Vault(root)
+    return (files,
+            {n.id: n["fm"].get("verdict") for n in v.nodes.values()},
+            {n.id: n.status for n in v.nodes.values()})
+
+
+def run_evidence_boundary():
+    """Spec 15 PRD 15.0 — the version boundary. A per-node `schema` stamp, written at
+    creation, where ABSENCE means the node predates evidence semantics. This PRD adds no
+    rule at all: a stamped and an unstamped node must behave identically in every command.
+    The asserts that look vacuous here are the point — they are regression locks on the
+    guarantee that the engine never overturns recorded science."""
+    print("\n# evidence semantics — the version boundary (spec 15, PRD 15.0)")
+    root = tempfile.mkdtemp(prefix="crux_bound_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Boundary", root)
+    q1, _ = E.cmd_ask(root, "a stamped question")
+    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"])
+
+    v = E.Vault(root)
+    check("boundary: a new hypothesis is stamped schema 1",
+          v.get(h1)["fm"].get("schema") == E.SCHEMA_GENERATION == 1)
+    check("boundary: a new question is stamped schema 1",
+          v.get(q1)["fm"].get("schema") == E.SCHEMA_GENERATION)
+    check("boundary: the project root is not stamped (spec 15 governs q/h only)",
+          "schema" not in v.get("root")["fm"])
+
+    # -- the predicate
+    check("boundary: an unstamped node reads schema 0",
+          E.node_schema(E.Node(fm={})) == 0 and not E.binds_evidence_semantics(E.Node(fm={})))
+    check("boundary: a malformed schema value degrades to 0, never raises",
+          E.node_schema(E.Node(fm={"schema": "banana"})) == 0
+          and E.node_schema(E.Node(fm={"schema": None})) == 0)
+    check("boundary: a stamped node binds evidence semantics",
+          E.binds_evidence_semantics(v.get(h1)))
+
+    # -- seed materialization routes through ask/hypothesize, so it inherits the stamp
+    sd = tempfile.mkdtemp(prefix="crux_bseed_")
+    seed = os.path.join(sd, "seed.md")
+    with open(seed, "w", encoding="utf-8") as f:
+        f.write("- Project: Seeded — a goal\n  - Q: a seeded question\n"
+                "    - H: a seeded hypothesis\n      - v: a check\n")
+    sroot = os.path.join(sd, "vault")
+    E.cmd_init_from(seed, sroot)
+    sv = E.Vault(sroot)
+    check("boundary: seed-materialized nodes are stamped",
+          all(n["fm"].get("schema") == E.SCHEMA_GENERATION
+              for n in sv.nodes.values() if n.type in ("question", "idea")))
+    shutil.rmtree(sd, ignore_errors=True)
+
+    # -- snapshot surface
+    snap = E.snapshot(root)
+    check("boundary: snapshot exposes schema on a node",
+          snap["nodes"][h1]["schema"] == 1 and snap["nodes"][q1]["schema"] == 1)
+
+    # -- the info tier, on a vault with nothing to report
+    rep = E.validation_report(root)
+    check("boundary: a fully-stamped vault reports no boundary info",
+          rep["info"] == [] and rep["ok"] is True)
+
+    check("boundary: ENGINE_VERSION bumped to 1.6", E.ENGINE_VERSION == "1.6")
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary itself
+    old, oq, oh = pre15_vault("crux_bmig_")
+    check("evmig: the fixture really is unstamped",
+          "schema:" not in read(node_path(old, oh)))
+
+    rep = E.validation_report(old)
+    ids = [i["id"] for i in rep["info"]]
+    check("boundary: validate reports the pre-15 count as info",
+          any(i["id"] == "boundary:evidence-semantics" and "1 hypothes" in i["message"]
+              for i in rep["info"]))
+    check("boundary: info does not affect ok",
+          rep["info"] and rep["ok"] is True and rep["problems"] == [] and rep["warnings"] == [])
+    check("boundary: info entries share the problems/warnings shape",
+          all(set(e) == {"id", "message"} | (set(e) & {"count"}) and "id" in e and "message" in e
+              for e in rep["info"]))
+    check("boundary: every info id is namespaced",
+          all(":" in i and i.split(":", 1)[0] in E.INFO_NAMESPACES for i in ids))
+    check("boundary: info respects the --check filter",
+          E.validation_report(old, ["tree"])["info"] != []
+          and E.validation_report(old, ["wiki"])["info"] == [])
+    check("evmig: pre-15 vault validates clean",
+          E.cmd_validate(old) == [] and E.validation_report(old)["warnings"] == [])
+
+    # -- nothing retro-stamps. Run every read/write path there is, then re-check.
+    before = fingerprint(old)
+    E.refresh(old); E.cmd_validate(old); E.validation_report(old)
+    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old); E.cmd_review(old)
+    E.cmd_close(old, oh)
+    after_v = E.Vault(old)
+    check("evmig: no command retro-stamps an existing node",
+          all("schema" not in n["fm"] for n in after_v.nodes.values()))
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- the captured pre-upgrade fixture: byte-identical after the version bump
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_bdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    f0, v0, s0 = fingerprint(dst)
+    warn = E.check_and_stamp_version(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
+    f1, v1, s1 = fingerprint(dst)
+    check("evmig: pre-15 vault — every node file is byte-identical after upgrade", f0 == f1)
+    check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
+          v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
+    check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
+    check("evmig: an older vault reports drift and re-stamps to current",
+          warn is not None and "1.2" in warn
+          and E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("evmig: the demo vault validates clean after upgrade", E.cmd_validate(dst) == [])
+    # the human-readable path shows it too, with a neutral glyph and exit 0 — the boundary
+    # must never look like a finding on the surface the PI actually reads
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "validate"],
+                       capture_output=True, cwd=dst, encoding="utf-8", errors="replace")
+    check("boundary: the CLI prints the boundary as info and still exits 0",
+          r.returncode == 0 and "predate evidence semantics" in r.stdout
+          and "vault is valid" in r.stdout and "\u2717" not in r.stdout)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "validate", "--strict"],
+                       capture_output=True, cwd=dst, encoding="utf-8", errors="replace")
+    check("boundary: --strict does not turn the boundary into a failure", r.returncode == 0)
+    shutil.rmtree(dst, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -3007,6 +3180,7 @@ def main():
     run_deck()
     run_deck_verify()
     run_prezit()
+    run_evidence_boundary()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
