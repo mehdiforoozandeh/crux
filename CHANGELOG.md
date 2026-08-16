@@ -8,6 +8,17 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: cosmetic changes never rebuild the tree** (spec
+  [`12`](.spec/12-cockpit-craft.md)). Selecting a node, showing the review queue, search
+  dimming and the legend filter used to tear down and re-parse the whole SVG
+  (`renderTree()`, 10.9 ms) to move a CSS class (0.19 ms — 55×). They now share one
+  in-place pass (`applyCosmeticState`) that toggles `dim`/`hit`/`.selected` and keeps the
+  ARIA selection (`aria-selected`, `aria-activedescendant`) truthful; `renderTree()` is
+  structural-only and still bakes the same classes, so the paths cannot drift. Search is
+  debounced (~120 ms trailing, Enter/Escape flush): a 10-character query now costs one
+  cosmetic pass, not ten rebuilds. Measured (273 drawn nodes): selection 142.9 → 62.5 ms
+  end-to-end with rebuilds 1 → 0 per click; the tree-side swap itself p50 2.4 ms.
+
 - **Serve: the snapshot is cached on a vault stat key** (spec
   [`12`](.spec/12-cockpit-craft.md)). The server used to regenerate the whole snapshot on
   every 1 Hz poll purely to compute the ETag, then answer 304 — measured 29 ms of Python

@@ -777,12 +777,42 @@ function centerOn(id, animate) {
 }
 
 // ------------------------------------------------------------------ selection / detail
+// The structural-vs-cosmetic split (spec 12, PRD-P1): a change that does not add,
+// remove or move a node never calls renderTree(). Selection, search dim/hit and the
+// legend filter change how EXISTING elements look — measured, the full innerHTML
+// rebuild costs 10.9 ms where the identical class swap costs 0.19 ms (55×), and the
+// rebuild also invalidates the sim's element caches and re-fires pointerover under
+// the cursor. This helper re-derives every cosmetic class in place using the SAME
+// predicates nodeSVG() bakes in at build time, so a structural render and an
+// in-place pass can never disagree. It also keeps the ARIA selection state that the
+// keyboard tree introduced (aria-selected per node, aria-activedescendant on the
+// canvas) truthful between structural renders.
+function applyCosmeticState() {
+  const vp = svg.firstChild;
+  if (!vp || !state.snap) return;
+  vp.querySelectorAll(".node").forEach((el) => {
+    const id = el.getAttribute("data-id"), n = state.snap.nodes[id];
+    if (!n) return;
+    const matches = state.search && matchNode(n);
+    const dimmed = (state.search && !matches) || (state.filter && statusClass(n) !== state.filter);
+    el.classList.toggle("dim", !!dimmed);
+    el.classList.toggle("hit", !!matches);
+    const selected = state.selected === id;
+    el.setAttribute("aria-selected", String(selected));
+    const box = el.querySelector(".box");
+    if (box) box.classList.toggle("selected", selected);
+  });
+  if (state.selected && state.positions[state.selected])
+    svg.setAttribute("aria-activedescendant", "node-" + state.selected);
+  else svg.removeAttribute("aria-activedescendant");
+}
+
 function selectNode(id, opts) {
   state.selected = id;
   state.report = null;      // picking a node leaves any open report
   updateToolbar();
   updateReviewBtn();
-  renderTree();
+  applyCosmeticState();     // selection is cosmetic — never a rebuild (see above)
   renderDetail();
   if (opts && opts.center) centerOn(id);   // used when jumping from the queue / a detail link / search
 }
@@ -793,7 +823,7 @@ function showQueue() {
   state.report = null;   // an open report otherwise wins the render and Review looks dead
   updateToolbar();
   updateReviewBtn();
-  renderTree();
+  applyCosmeticState();  // deselection is a class swap too — no rebuild
   renderDetail();
 }
 
@@ -1309,7 +1339,7 @@ $("legend").addEventListener("click", (e) => {
   const key = chip.getAttribute("data-lg");
   state.filter = state.filter === key ? null : key;
   renderLegend();
-  if (state.snap) renderTree();
+  if (state.snap) applyCosmeticState();   // a filter is cosmetic — dim by class, never rebuild
 });
 $("legend-btn").addEventListener("click", () => setLegendHidden(false));
 setLegendHidden(localStorage.getItem("crux-legend-hidden") === "1");
@@ -1566,7 +1596,7 @@ $("zoom-fit").addEventListener("click", () => { if (state.snap) fitToView(true);
 function applySearch() {
   if (!state.snap) return;
   if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
-  else renderTree();
+  else applyCosmeticState();   // dim/hit by class toggle — a keystroke never rebuilds the SVG
   updateMatchCounter();
 }
 // The match set (spec 12): ONE function feeds the counter and the Enter / Shift+Enter
@@ -1604,15 +1634,25 @@ function cycleSearch(dir) {
   else selectNode(m[i], { center: true });
   updateMatchCounter();
 }
+// Search is debounced (spec 12, ruling P-D6): ONE trailing ~120 ms timer around
+// everything a keystroke drives — the tree dim pass, the wiki rail rebuild, and the
+// match counter — so a 10-character query costs one pass, not ten, and the counter
+// always agrees with the canvas. Two flush points: Enter (cycling must act on the
+// text as typed, not the last debounce tick) and Escape (clearing must feel instant).
+const SEARCH_DEBOUNCE_MS = 120;
+let _searchTimer = 0;
+function flushSearch() { clearTimeout(_searchTimer); _searchTimer = 0; applySearch(); }
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
   state.matchId = null;   // a new query restarts the cycle
-  applySearch();
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(flushSearch, SEARCH_DEBOUNCE_MS);
 });
 $("search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; applySearch(); return; }
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; flushSearch(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
   e.preventDefault();
+  flushSearch();
   cycleSearch(e.shiftKey ? -1 : 1);
 });
 

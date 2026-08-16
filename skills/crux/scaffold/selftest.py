@@ -1610,6 +1610,49 @@ def run_webui():
     check(f"webui: chrome carries no stray px font-size — all through the vars (strays: {strays[:4]})",
           not strays)
 
+    # -- spec 12 perf (PRD-P1): the structural-vs-cosmetic split. A change that does not
+    #    add, remove or move a node never calls renderTree() (measured: the full rebuild
+    #    is 10.9 ms where the identical class swap is 0.19 ms — 55×). Selection, the
+    #    review queue, search dimming and the legend filter all go through ONE in-place
+    #    helper; renderTree() stays structural-only and still bakes the same classes, so
+    #    the two paths cannot disagree. Latency itself (< 2 ms tree-side, ruling P-D7) is
+    #    measured by tools/bench/paint_probe.js, not asserted here — stdlib has no JS.
+    def fn_src(name):
+        m2 = re.search(r"function %s\([^)]*\)\s*\{([\s\S]*?)\n\}" % re.escape(name), app_js)
+        return m2.group(1) if m2 else ""
+    sel_src = fn_src("selectNode")
+    check("webui: selectNode never rebuilds — no renderTree()/layout() in its body",
+          bool(sel_src) and "renderTree(" not in sel_src and "layout(" not in sel_src)
+    check("webui: selectNode swaps cosmetic state in place",
+          "applyCosmeticState(" in sel_src)
+    sq_src = fn_src("showQueue")
+    check("webui: showQueue never rebuilds — no renderTree()/layout() in its body",
+          bool(sq_src) and "renderTree(" not in sq_src and "layout(" not in sq_src
+          and "applyCosmeticState(" in sq_src)
+    cos_src = fn_src("applyCosmeticState")
+    check("webui: the cosmetic helper toggles dim / hit / selected on existing elements",
+          '"dim"' in cos_src and '"hit"' in cos_src and '"selected"' in cos_src
+          and "classList.toggle" in cos_src)
+    check("webui: the in-place swap keeps the ARIA selection truthful (PR #13 contract)",
+          "aria-selected" in cos_src and "aria-activedescendant" in cos_src)
+    check("webui: the helper derives dim/hit from the SAME predicates nodeSVG bakes in",
+          "matchNode(" in cos_src and "statusClass(" in cos_src and "state.filter" in cos_src)
+    as_src = fn_src("applySearch")
+    check("webui: the tree search path dims by class toggle, not by rebuild",
+          "applyCosmeticState(" in as_src and "renderTree(" not in as_src)
+    check("webui: search input is debounced ~120 ms with a single trailing timer (P-D6)",
+          bool(re.search(r"SEARCH_DEBOUNCE_MS = 1[0-9]{2}\b", app_js))
+          and bool(re.search(r'addEventListener\("input"[\s\S]{0,400}setTimeout\(flushSearch, SEARCH_DEBOUNCE_MS\)', app_js)))
+    check("webui: Enter and Escape flush the debounce (cycling acts on the typed text)",
+          bool(re.search(r'"Escape"[^\n]*flushSearch\(\)', app_js))
+          and bool(re.search(r'flushSearch\(\);[\s\S]{0,80}cycleSearch\(', app_js)))
+    lg_src = app_js.split('$("legend").addEventListener')[1].split('$("legend-btn")')[0]
+    check("webui: the legend filter is a class toggle too (P-D10) — chips never rebuild",
+          "applyCosmeticState(" in lg_src and "renderTree(" not in lg_src)
+    check("webui: renderTree still bakes every cosmetic class (the paths cannot drift)",
+          '(dimmed ? " dim" : "")' in app_js and '(matches ? " hit" : "")' in app_js
+          and "${sel}" in app_js)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never
