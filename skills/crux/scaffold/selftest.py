@@ -1840,8 +1840,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the five documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd"))
+    check("economy: the check registry is the six documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -3792,6 +3792,197 @@ def run_rulebook():
           spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
 
 
+def _task_vault(prefix="crux_task_"):
+    """A small vault with one question and one hypothesis — the substrate every taskhub
+    test needs before it can ref anything."""
+    root = tempfile.mkdtemp(prefix=prefix)
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"])
+    return root, q, h
+
+
+def run_taskhub():
+    print("\n# taskhub — the task store (spec 08, PRD 08.0)")
+    root, q, h = _task_vault()
+
+    # -- 1. the record lands under tasks/ with an engine-allocated id
+    t1, fn1 = E.cmd_task_add(root, "Dedupe the reused accessions", category="data-acquisition",
+                             refs=[q, h], blocked_by=None)
+    tp1 = os.path.join(root, E.TASK_DIR, fn1)
+    check("task: add writes a file under tasks/ with an allocated id",
+          t1 == "t1" and os.path.isfile(tp1) and fn1.startswith("t1_"))
+
+    # -- 2. ids are immutable across add / drop / re-parent. spec-kit's append-only
+    #       convergence, minus the part it left to LLM discipline.
+    t2, _ = E.cmd_task_add(root, "Stand up the H100 partition", category="hpc-setup", blocked_by=None)
+    t3, _ = E.cmd_task_add(root, "Implement the arm", category="implementation", blocked_by=[t1])
+    t4, _ = E.cmd_task_add(root, "Draft figure 3", category="manuscript", blocked_by=None)
+    E.cmd_task_drop(root, t2)
+    p4 = E.Vault(root) and [x for x in E.scan_tasks(root) if x["id"] == t4][0]["path"]
+    edit(p4, "parent:", f"parent: {t3}")
+    t5, _ = E.cmd_task_add(root, "Write the caption", category="manuscript", blocked_by=None)
+    ids = [x["id"] for x in E.scan_tasks(root)]
+    check("task: ids survive add, drop and re-parent without renumbering",
+          ids == ["t1", "t2", "t3", "t4", "t5"] and t5 == "t5")
+
+    # -- 4. NOTHING regenerates a task. True on `main` before this PRD (the layer did not
+    #       exist), so this is a REGRESSION LOCK: it fails the day someone adds tasks/ to
+    #       refresh's write set, which is the one thing spec-kit got wrong.
+    before = _dir_bytes(os.path.join(root, E.TASK_DIR))
+    E.refresh(root); E.cmd_validate(root); E.validation_report(root)
+    E.snapshot(root); E.status_text(root); E.cmd_review(root)
+    check("task: a task file is byte-identical after every read path",
+          _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
+
+    # -- 5. adding a task never edits a node. This is what makes many-to-many free, and it
+    #       is the half of the backlink split that stays DERIVED (07's RD:: is written).
+    nodes_before = {n: read(node_path(root, n)) for n in (q, h)}
+    E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                   refs=[q, h], blocked_by=None)
+    check("task: adding a task modifies no node file",
+          all(read(node_path(root, n)) == b for n, b in nodes_before.items()))
+
+    # -- 6. a task is not a node: outside v.nodes, outside the roll-up, outside the gate
+    v = E.Vault(root)
+    ledger_before = E.ledger_counts(v, q)
+    check("task: a task is invisible to the roll-up tree",
+          not any(x.startswith("t") for x in v.nodes)
+          and t1 not in v.nodes and E.ledger_counts(E.Vault(root), q) == ledger_before)
+
+    # -- 7/8. category is a closed, declared list, and `experiment` is RESERVED — refused by
+    #         the ENGINE (not argparse), exactly as 15.2 reserves `ordered`. In this PRD no
+    #         task can legitimately be one, so the refusal is total.
+    expect_error("task: category experiment is reserved and refused",
+                 lambda: E.cmd_task_add(root, "run the pilot", category="experiment",
+                                        blocked_by=None))
+    expect_error("task: an undeclared category is refused",
+                 lambda: E.cmd_task_add(root, "do a thing", category="proteomics",
+                                        blocked_by=None))
+    cats = E.task_categories(root) + (E.TASK_RESERVED_CATEGORY,)
+    check("task: every category token is a valid CSS class suffix",
+          all(c and not re.search(r"\s", c) for c in cats))
+
+    # -- 9. refs must resolve. ISA-Tab's join-by-shared-string is the failure mode to avoid:
+    #       N:M machinery with no referential integrity.
+    edit(tp1, f"refs: {q}, {h}", f"refs: {q}, h99")
+    check("task: an unresolvable ref is a validate problem",
+          any("h99" in m for _, m in E.cmd_validate(root)))
+    edit(tp1, f"refs: {q}, h99", f"refs: {q}, {h}")
+
+    # -- 10. `blocked` is COMPUTED (08.1) and therefore must never be storable
+    edit(tp1, "status: open", "status: blocked")
+    check("task: blocked is never a storable status",
+          any("blocked" in m and t1 in i for i, m in E.cmd_validate(root)))
+    edit(tp1, "status: blocked", "status: open")
+
+    # -- 11/12/13. `done` hard-requires an output that resolves
+    expect_error("task: done without an output is refused",
+                 lambda: E.cmd_task_done(root, t1))
+    E.cmd_task_done(root, t1, outputs=["results/dedupe/table.tsv the deduped accessions"])
+    check("task: done with an unresolvable output fails validate",
+          any("table.tsv" in m for _, m in E.cmd_validate(root)))
+    write(os.path.join(root, "results", "dedupe", "table.tsv"), "a\tb\n")
+    check("task: a resolving path output clears validate",
+          not any("table.tsv" in m for _, m in E.cmd_validate(root)))
+    E.cmd_task_done(root, t3, outputs=[f"[[{h}]]"])
+    check("task: a wikilink output resolves",
+          not any(t3 in i for i, _ in E.cmd_validate(root)))
+    check("task: dropping needs no output",
+          [x for x in E.scan_tasks(root) if x["id"] == t2][0]["status"] == "dropped"
+          and not any(t2 in i for i, _ in E.cmd_validate(root)))
+
+    # -- 14/15. blocked_by is MANDATORY so a missing edge is a visible omission, and a
+    #           dangling edge is a broken one
+    p5 = [x for x in E.scan_tasks(root) if x["id"] == t5][0]["path"]
+    check("task: blocked_by is mandatory and None is the literal for no edge",
+          "blocked_by: None" in read(p5))
+    edit(p5, "blocked_by: None", "blocked_by: t99")
+    check("task: a dangling blocked_by edge is a validate problem",
+          any("t99" in m for _, m in E.cmd_validate(root)))
+    edit(p5, "blocked_by: t99", "")
+    check("task: a missing blocked_by is a validate problem",
+          any("blocked_by" in m and t5 in i for i, m in E.cmd_validate(root)))
+    edit(p5, "refs:", "blocked_by: None\nrefs:")
+
+    # -- 16. a task written to the vault ROOT is caught BY NAME. Vault keys on `id`, not
+    #        `type`, so it would otherwise land in v.nodes and report `unknown type 'task'`
+    #        — a true message pointing at the wrong thing.
+    stray = os.path.join(root, "t99_stray.md")
+    write(stray, "---\nid: t99\ntype: task\ntitle: stray\n---\n\n# t99\n")
+    msgs = [m for i, m in E.cmd_validate(root) if i == "t99"]
+    check("task: a task at the vault root is refused by name",
+          any(E.TASK_DIR in m for m in msgs) and not any("unknown type" in m for m in msgs))
+    os.remove(stray)
+
+    # -- 17. the dropped count is INFORMATION. 15.0 built the tier; 08 claims a namespace
+    #        and consumes it. A dropped task is a decision, not a defect.
+    rep = E.validation_report(root)
+    ti = [x for x in rep["info"] if x["id"].startswith("task:")]
+    check("task: the dropped count is info and does not affect ok",
+          ti and ti[0]["count"] == 1 and rep["ok"] is True and not rep["problems"])
+    check("task: the task info namespace is declared",
+          "task" in E.INFO_NAMESPACES and all(x["id"].split(":")[0] in E.INFO_NAMESPACES
+                                              for x in rep["info"]))
+
+    # -- 18. the lint is independently selectable
+    edit(p5, "blocked_by: None", "blocked_by: t99")
+    check("task: the tasks check is selectable",
+          any("t99" in m for _, m in E.cmd_validate(root, ["tasks"]))
+          and not any("t99" in m for _, m in E.cmd_validate(root, ["tree"])))
+    edit(p5, "blocked_by: t99", "blocked_by: None")
+
+    # -- 3. M3: every vault that exists today has no `counter_t`. The naive
+    #       `v.cfg[key] += 1` raises KeyError on the FIRST task ever added after an upgrade,
+    #       which is the most likely first action a user takes.
+    old, _, _ = _task_vault("crux_task_pre08_")
+    cfg = os.path.join(old, ".crux.yaml")
+    write(cfg, "\n".join(l for l in read(cfg).splitlines()
+                         if not l.startswith(("counter_t", "task_categories"))) + "\n")
+    tid, _ = E.cmd_task_add(old, "first task after the upgrade", category="implementation",
+                            blocked_by=None)
+    check("taskmig: a pre-08 vault allocates t1 without a KeyError", tid == "t1")
+    check("taskmig: a pre-08 vault falls back to the default categories",
+          E.task_categories(old) == E.DEFAULT_TASK_CATEGORIES)
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- 19. the committed pre-08 fixture, upgraded.
+    #
+    #    NOTE ON WHAT THIS ASSERTS, AND WHY IT IS NOT A NAIVE BYTE-COMPARE. The committed
+    #    demo_vault was last regenerated at 1.3, and `refresh` at 1.9 ALREADY rewrites its
+    #    generated views: spec 15 added `invalid-run` to the dashboard and to every ledger
+    #    summary line, and a `rule` column to EXPERIMENTS.md. That drift is spec 15's and it
+    #    is present on this branch's parent — asserting byte-identity of generated views here
+    #    would be asserting someone else's fixture is fresh, not that the taskhub is inert.
+    #
+    #    So the pre-existing drift is SETTLED first (one refresh), and then the property this
+    #    PRD actually owes is proven from there: the taskhub adds nothing to, and takes
+    #    nothing from, a vault that has no tasks.
+    fx = tempfile.mkdtemp(prefix="crux_task_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
+    E.check_and_stamp_version(dst); E.refresh(dst)          # settle spec 15's view drift
+    b0 = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.status_text(dst); E.cmd_review(dst)
+    rep0 = E.validation_report(dst)
+    verdicts1 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
+    b1 = _dir_bytes(dst)
+    check("taskmig: a settled pre-08 vault is byte-identical under every 2.0 read path",
+          b0 == b1 and E.refresh(dst) is False)
+    check("taskmig: a pre-08 vault's recorded verdicts survive the 2.0 upgrade untouched",
+          verdicts1 == verdicts0 and verdicts0["h2"] == "partial")
+    check("taskmig: a pre-08 vault validates clean at 2.0", not rep0["problems"])
+    check("taskmig: a pre-08 vault reports no task problems and no task info",
+          not any(i.startswith("task") for i, _ in E.cmd_validate(dst))
+          and not any(x["id"].startswith("task:") for x in rep0["info"])
+          and not E.task_active(dst))
+    check("taskmig: nothing creates tasks/ on a vault that has none",
+          not os.path.exists(os.path.join(dst, E.TASK_DIR)))
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("task: ENGINE_VERSION bumped to 2.0", at_least_version("2.0"))
 def run_cockpit_evidence():
     """Spec 15 PRD 15.6 — the cockpit narrates evidence semantics.
 
@@ -3891,8 +4082,13 @@ def run_cockpit_evidence():
           idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
           and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
           and snap["nodes"][h2]["verdict"] == "invalid-run")
-    check("webui: no engine change — ENGINE_VERSION is untouched by 15.6",
-          E.ENGINE_VERSION == "1.9")
+    # 15.6 itself bumped nothing: it was webui-only, and at its own tip this read
+    # `== "1.9"`. That is the literal-equality form this file documents as expiring on the
+    # next PRD — spec 08 stacks on top and takes the engine to 2.x, so the claim is kept as
+    # the floor it was always making. What 15.6 guarantees is that the cockpit needs no
+    # engine support beyond 1.9, which the field checks above prove directly.
+    check("webui: the cockpit narration needs no engine support past 1.9",
+          at_least_version("1.9"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -3953,6 +4149,7 @@ def main():
     run_combination_rule()
     run_hash_lock()
     run_rulebook()
+    run_taskhub()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

@@ -154,7 +154,40 @@ def main(argv=None):
     s.add_argument("--supersedes", default=None, metavar="SLUG",
                    help="replace this node's active RD — an active RD is never amended in place")
 
-    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd)"))
+    # `task` carries sub-verbs rather than five top-level ones: the taskhub is queried far
+    # more than it is written, and one namespace keeps the top-level verb list about the
+    # science. Every sub-verb takes --json, per spec 06's rule that the agent toolbelt lives
+    # in the CLI so selftest can assert it and the cockpit can reuse it.
+    tp = sub.add_parser("task", aliases=["todo", "work"], help="the taskhub: the work this project has to do")
+    tsub = tp.add_subparsers(dest="tcmd", metavar="<sub-verb>")
+
+    s = _jsonable(tsub.add_parser("add", help="append a task (never rewrites, never renumbers)"))
+    s.add_argument("title")
+    s.add_argument("-c", "--category", required=True,
+                   help="from this vault's declared list (`crux task categories`)")
+    s.add_argument("--ref", dest="refs", action="append", default=[], metavar="ID",
+                   help="a tree node / wiki/<slug> / rd/<slug> this serves (repeatable)")
+    s.add_argument("--blocked-by", dest="blocked_by", default=None, metavar="IDS",
+                   help="comma-separated task ids, or None — REQUIRED, so a missing edge is "
+                        "a visible omission rather than silence")
+    s.add_argument("--parent", default=None, help="decomposition only: the task this is part of")
+    s.add_argument("--why", default=None, help="one line: what this unblocks")
+
+    s = _jsonable(tsub.add_parser("done", help="close a task — requires an output that resolves"))
+    s.add_argument("id")
+    s.add_argument("-o", "--output", dest="outputs", action="append", default=[], metavar="REF",
+                   help="a vault path or [[wikilink]] this produced (repeatable)")
+
+    s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("show", help="one task's record"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
+    s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
     s.add_argument("--check", default=None, metavar="LIST",
@@ -197,6 +230,59 @@ def main(argv=None):
     except E.CruxError as e:
         print(f"crux: {e}", file=sys.stderr)
         return 1
+
+
+def _csv_arg(val):
+    """`--blocked-by t3,t4` -> ['t3','t4']; `None` (the literal the field requires) -> []."""
+    return [x.strip() for x in (val or "").split(",") if x.strip() and x.strip() != E.NO_BLOCKERS]
+
+
+def _dispatch_task(a):
+    t = getattr(a, "tcmd", None)
+    if not t:
+        print("crux: task needs a sub-verb — add / done / drop / show / categories",
+              file=sys.stderr)
+        return 1
+    if t == "categories":
+        cats = E.cmd_task_categories(_vault(), a.add)
+        if a.json:
+            return _emit({"categories": list(cats), "reserved": E.TASK_RESERVED_CATEGORY})
+        print("declared task categories: " + ", ".join(cats))
+        print(f"  ({E.TASK_RESERVED_CATEGORY} is reserved — it is computed, never typed)")
+        return 0
+    root = _vault()
+    if t == "add":
+        if a.blocked_by is None:
+            print("crux: --blocked-by is required (use `--blocked-by None` when nothing "
+                  "blocks it) — a missing edge must be a visible omission, not silence",
+                  file=sys.stderr)
+            return 1
+        tid, fn = E.cmd_task_add(root, a.title, a.category, refs=a.refs,
+                                 blocked_by=_csv_arg(a.blocked_by), parent=a.parent, why=a.why)
+        if a.json:
+            return _emit({"id": tid, "file": f"{E.TASK_DIR}/{fn}", "category": a.category,
+                          "refs": a.refs, "blocked_by": _csv_arg(a.blocked_by)})
+        print(f"✓ {tid}  ({E.TASK_DIR}/{fn})")
+    elif t == "done":
+        st = E.cmd_task_done(root, a.id, a.outputs)
+        if a.json:
+            return _emit({"id": a.id, "status": st})
+        print(f"✓ {a.id} → {st}")
+    elif t == "drop":
+        st = E.cmd_task_drop(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "status": st})
+        print(f"✓ {a.id} → {st}")
+    elif t == "show":
+        rec = E.task_json(root, a.id)
+        if a.json:
+            return _emit(rec)
+        print(f"{rec['id']} [{rec['category']}] {rec['title']}  —  status: {rec['status']}")
+        print(f"  refs: {', '.join(rec['refs']) or '—'}   "
+              f"blocked_by: {', '.join(rec['blocked_by']) or E.NO_BLOCKERS}")
+        for o in rec["outputs"]:
+            print(f"  output: {o['path']}")
+    return 0
 
 
 def dispatch(a):
@@ -292,6 +378,8 @@ def dispatch(a):
         if a.json:
             return _emit({"state": state, "path": rel})
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
+    elif c in ("task", "todo", "work"):
+        return _dispatch_task(a)
     elif c in ("rd", "design", "requirements"):
         root = _vault()
         slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)

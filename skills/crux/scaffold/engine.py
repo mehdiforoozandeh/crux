@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -36,6 +36,15 @@ ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vaul
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
                                 # rd/ at all and loads byte-unchanged.
+                                # 2.0: the taskhub (spec 08) — a third side-layer, tasks/,
+                                # holding the work a research programme has to DO. A source
+                                # artifact: nothing regenerates it, ever. Additive — a pre-2.0
+                                # vault has no tasks/ and loads byte-unchanged. The major bump
+                                # is deliberate: 1.x ended at 1.9, and the next 1.x would be
+                                # "1.10", which sorts BELOW "1.9" in every naive string
+                                # comparison (update.py already ships a parse_version this
+                                # stamp does not use — the day they are wired together, 1.10
+                                # breaks).
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -58,6 +67,39 @@ RD_DIR       = "rd"             # agent/PI-written design documents, one active 
 RD_INDEX     = "RD.md"          # generated index of RD pages, rendered at the vault root
 RD_STATUS    = ("draft", "active", "superseded")
 RD_LINK      = "RD::"           # the node's backlink, written beside `Parent::`
+
+# taskhub layer (Epic 8): the project's work layer — data prep, infrastructure, code,
+# manuscript figures, and (from 2.2) the experiments themselves. Deliberately the wiki/RD
+# shape again: a parentless side-layer of markdown files, scanned separately, with a
+# generated index and a structural lint.
+#
+# The load-bearing property is NEGATIVE and it is the direct lesson from spec-kit, whose
+# `tasks.md` is generated from the spec and whose documented workflow REGENERATES it,
+# destroying checkbox state. So: the tree can trigger a task; it can never own one. Nothing
+# regenerates the taskhub. `refresh` writes the index and never a task.
+#
+# A task is not a node. `Vault` scans the vault root only, so a file under tasks/ is
+# structurally outside v.nodes — it can never be a child, never enter ledger_counts, never
+# move a verdict and never trip the review gate. That is not incidental; it is the mechanism.
+TASK_DIR     = "tasks"          # one file per task; ids are engine-allocated and never renumbered
+TASK_STATUS  = ("open", "done", "dropped")
+TASK_BLOCKED = "blocked"        # COMPUTED (2.1), never stored — a state you can compute cannot drift
+TASK_LINK    = "Refs::"         # the task's own outbound links, written; node -> task stays DERIVED
+NO_BLOCKERS  = "None"           # the literal, so a missing edge is a visible omission (`to-tickets`)
+
+# Category is a tag from a per-vault declared list, not a parent: categories are not actions,
+# so they are not tasks. The cockpit renders one colour per category as `t-<category>`, which
+# is why a token may not contain whitespace — spec 15 learned that the hard way when
+# `invalid run` produced the broken CSS class `h-invalid run`.
+TASK_CATEGORIES_KEY = "task_categories"
+DEFAULT_TASK_CATEGORIES = ("data-acquisition", "hpc-setup", "implementation",
+                           "visualization", "manuscript", "admin")
+# `experiment` is RESERVED: it cannot be typed by hand, and from 2.2 the engine assigns it to
+# any task carrying `hypothesis_refs`. Reserved from 2.0 rather than introduced later, for
+# exactly the reason spec 15 reserves `ordered`: refusing rather than ignoring is what makes
+# the later addition NOT a format change, because no vault written in between can be
+# ambiguous about what the word meant.
+TASK_RESERVED_CATEGORY = "experiment"
 
 GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX) # root .md views the node scan must never treat as nodes
 
@@ -116,7 +158,7 @@ SCHEMA_GENERATION = 1
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary",)   # <namespace>:<slug>; specs 08 and 14 claim their own
+INFO_NAMESPACES = ("boundary", "task")   # <namespace>:<slug>; spec 14 claims its own next
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -214,7 +256,7 @@ PROSE_SECTIONS = {
 # OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
-CHECKS     = ("tree", "wiki", "economy", "fanout", "rd")
+CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks")
 OPT_CHECKS = ("decks",)
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
@@ -550,7 +592,9 @@ _(list the categories this vault uses, so pages stay consistent)_
 def load_template(kind):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", kind + ".md")
     text = read(path) if os.path.exists(path) else _BUILTIN[kind]
-    return text.replace("<<ledger_start>>", LEDGER_START).replace("<<ledger_end>>", LEDGER_END)
+    return (text.replace("<<ledger_start>>", LEDGER_START)
+                .replace("<<ledger_end>>", LEDGER_END)
+                .replace("<<TASK_LINK>>", TASK_LINK))
 
 def fill(text, **kw):
     kw.setdefault("now", now())
@@ -846,7 +890,7 @@ def artifact_kind(path):
             return kind
     return "other"
 
-def parse_artifacts(body):
+def parse_artifacts(body, heading="artifacts"):
     """Bullets under `## Artifacts` as [{label, path, kind}], in document order. Two forms:
 
         - [Full report](results/h1/report.md)
@@ -857,11 +901,15 @@ def parse_artifacts(body):
 
     The `_(placeholder)_` line and any prose are ignored. Pure — no filesystem access, so
     a node body can be parsed without a vault (and a pre-1.2 node with no such section
-    simply yields [])."""
+    simply yields []).
+
+    `heading` is parameterised so the taskhub's `## Output` reuses this grammar verbatim
+    rather than growing a second, subtly different one. The default keeps every existing
+    caller byte-identical."""
     out, in_sec, in_comment = [], False, False
     for line in body.splitlines():
         if line.startswith("## "):
-            in_sec = line[3:].strip().lower() == "artifacts"
+            in_sec = line[3:].strip().lower() == heading
             continue
         if not in_sec:
             continue
@@ -1110,6 +1158,13 @@ def validate(v):
            "synthesis":["id","type","title"]}
     for nid, n in v.nodes.items():
         t = n.type
+        if t == "task":
+            # `Vault` keys on the presence of `id`, not on `type`, so a task written to the
+            # vault root lands in v.nodes and would otherwise be reported as `unknown type
+            # 'task'` — a true message pointing at entirely the wrong thing.
+            problems.append((nid, f"task '{nid}': a task must live under {TASK_DIR}/ "
+                                  f"(found at the vault root); move the file, or create it "
+                                  f"with `crux task add`")); continue
         if t not in TYPES:
             problems.append((nid, f"unknown type '{t}'")); continue
         for k in req[t]:
@@ -1662,6 +1717,284 @@ def validate_rd(root):
             cur = by_slug[cur]["supersedes"]
     return problems
 
+# ----------------------------------------------------------------------------- taskhub layer (Epic 8)
+# Science goes in the tree. Doing goes in the taskhub. A task is an ACTION: if it is a claim
+# about the world that could be true or false, it is a hypothesis and belongs in the tree.
+#
+# What gets in: "would you be annoyed if this vanished next week?" If yes it belongs here,
+# however small. If no it is session scratch and stays in the agent's own todo list. Tasks
+# can be fine-grained; they cannot be ephemeral.
+def task_dir(root):    return os.path.join(root, TASK_DIR)
+def task_active(root): return os.path.isdir(task_dir(root))
+
+def ensure_tasks(root):
+    """Lazily stand up the taskhub (idempotent, safe on a pre-2.0 vault)."""
+    os.makedirs(task_dir(root), exist_ok=True)
+
+def task_categories(root):
+    """The vault's declared category list. Falls back to the defaults when the key is absent,
+    so a vault created before 2.0 can add its first task without being told to configure
+    something first."""
+    cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
+    raw = [c.strip() for c in str(cfg.get(TASK_CATEGORIES_KEY) or "").split(",") if c.strip()]
+    return tuple(raw) if raw else DEFAULT_TASK_CATEGORIES
+
+def _csv_field(val):
+    """A comma-separated frontmatter scalar -> [str]. The engine's YAML is a flat map of
+    scalars by design (no list type), so every multi-valued field is one string — the wiki
+    layer's `sources:` idiom."""
+    return [x.strip() for x in str(val or "").split(",") if x.strip()]
+
+def task_blockers(t):
+    """The blocker ids on a task. The literal `None` means "no edge, and I said so" — which
+    is the whole point of the field being mandatory (`to-tickets`): a missing edge must be a
+    visible omission rather than silence."""
+    raw = _csv_field(t["fm"].get("blocked_by"))
+    return [x for x in raw if x != NO_BLOCKERS]
+
+def scan_tasks(root):
+    """Every task (a *.md under tasks/ with `type: task`), in id order. Pure read.
+
+    A second scanner rather than widening `Vault`, and that is deliberate: widening `Vault`
+    to walk subdirectories would put tasks into the roll-up in one line."""
+    out, d = [], task_dir(root)
+    if not os.path.isdir(d):
+        return out
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            fm, body = parse_doc(read(os.path.join(dirpath, fn)))
+            if fm.get("type") != "task":
+                continue
+            out.append({"id": fm.get("id"), "fn": fn, "path": os.path.join(dirpath, fn),
+                        "fm": fm, "body": body, "title": fm.get("title") or fn[:-3],
+                        "category": fm.get("category"), "status": fm.get("status") or "open",
+                        "parent": fm.get("parent") or None,
+                        "blocked_by": task_blockers({"fm": fm}),
+                        "refs": _csv_field(fm.get("refs")),
+                        "outputs": parse_artifacts(body, "output")})
+    out.sort(key=lambda t: natkey(str(t["id"] or "")))
+    return out
+
+def _link_universe(root, v=None):
+    """Everything a task's `refs` (or a wikilink output) may legally point at: tree node ids
+    and basenames, plus `wiki/<slug>` and `rd/<slug>`."""
+    v = v or Vault(root)
+    out = set(v.nodes) | {n.basename for n in v.nodes.values()}
+    out |= {f"{WIKI_DIR}/{p['slug']}" for p in scan_wiki_pages(root)}
+    out |= {f"{RD_DIR}/{p['slug']}" for p in scan_rd_pages(root)}
+    return out
+
+def _task_slug(root, title, taken):
+    base = slugify(title)
+    slug, n = base, 1
+    while slug in taken:
+        n += 1
+        slug = f"{base}_{n}"
+    return slug
+
+def _check_category(root, category):
+    """Refuse an undeclared category, and refuse the reserved one BY NAME.
+
+    The refusal lives here rather than in argparse `choices=`: argparse exits 2 instead of 1,
+    prints nothing useful under `--json`, and — decisively — never fires on a hand-edited
+    file, which is where a category actually drifts."""
+    if not category:
+        raise CruxError(f"a task needs a category — one of {', '.join(task_categories(root))}")
+    if category == TASK_RESERVED_CATEGORY:
+        raise CruxError(
+            f"'{TASK_RESERVED_CATEGORY}' is a reserved category and cannot be typed by hand. "
+            f"It is computed: a task is an experiment when it declares what it concluded "
+            f"about a hypothesis (see spec 08). Use one of "
+            f"{', '.join(task_categories(root))}.")
+    if category not in task_categories(root):
+        raise CruxError(f"unknown task category '{category}' — this vault declares "
+                        f"{', '.join(task_categories(root))}. Add one with "
+                        f"`crux task categories --add {category}`.")
+
+def cmd_task_add(root, title, category, refs=None, blocked_by=None, parent=None, why=None):
+    """Append one task. Returns (id, filename).
+
+    Append-only, always: nothing here rewrites, renumbers, reorders or deletes an existing
+    task, and no other command in the engine writes under tasks/ at all."""
+    v = Vault(root)
+    _check_category(root, category)
+    universe = _link_universe(root, v)
+    for r in (refs or []):
+        if r not in universe:
+            raise CruxError(f"task ref '{r}' resolves to nothing — refs point at a tree node, "
+                            f"a `{WIKI_DIR}/<slug>` page or an `{RD_DIR}/<slug>` document")
+    known = {t["id"] for t in scan_tasks(root)}
+    for b in (blocked_by or []):
+        if b not in known:
+            raise CruxError(f"cannot block on '{b}': no such task")
+    if parent is not None and parent not in known:
+        raise CruxError(f"cannot parent under '{parent}': no such task")
+    ensure_tasks(root)
+    tid = _new_id(v, "task")
+    fn = _task_slug(root, f"{tid}_{title}", {t["fn"][:-3] for t in scan_tasks(root)}) + ".md"
+    links = ", ".join(f"[[{r.split('/')[-1]}]]" for r in (refs or [])) or "_(none)_"
+    text = fill(load_template("task"), id=tid, title=title, category=category,
+                parent=parent or "", refs=", ".join(refs or []),
+                blocked_by=", ".join(blocked_by or []) or NO_BLOCKERS,
+                ref_links=links, why=why or "_(what this unblocks)_")
+    write_if_changed(os.path.join(task_dir(root), fn), text)
+    refresh(root)
+    return tid, fn
+
+def _get_task(root, tid):
+    for t in scan_tasks(root):
+        if t["id"] == tid:
+            return t
+    raise CruxError(f"no task with id '{tid}'")
+
+def _write_task(t):
+    t["fm"]["updated"] = now()
+    write_if_changed(t["path"], render_doc(t["fm"], t["body"]))
+
+def cmd_task_done(root, tid, outputs=None):
+    """Close a task. An output ref is HARD-REQUIRED and must resolve.
+
+    An action that completed almost always produced something — code at a path, a dataset, a
+    figure, a registered page — and a bare ticked box discards exactly the thing that makes
+    this layer traversable."""
+    t = _get_task(root, tid)
+    for o in (outputs or []):
+        t["body"] = append_bullet(t["body"], "Output", o)
+    if not parse_artifacts(t["body"], "output"):
+        raise CruxError(f"cannot close {tid}: record what it produced first — "
+                        f"`crux task done {tid} --output <path|[[node]]>`. A task that "
+                        f"genuinely produced nothing was probably `drop`ped, not done.")
+    t["fm"]["status"] = "done"
+    _write_task(t)
+    refresh(root)
+    return "done"
+
+def cmd_task_drop(root, tid):
+    """Drop a task. No output required: a drop is a decision not to do the work, and the
+    reason belongs in the body and in `git log`, not in a field nobody reads (spec 06)."""
+    t = _get_task(root, tid)
+    t["fm"]["status"] = "dropped"
+    _write_task(t)
+    refresh(root)
+    return "dropped"
+
+def cmd_task_categories(root, add=None):
+    """Read, or grow, the declared category list. Growth is an explicit act with a diff —
+    the moment of friction that stops taxonomy drift."""
+    cats = task_categories(root)
+    if add is None:
+        return cats
+    add = add.strip()
+    if not add or re.search(r"\s", add):
+        raise CruxError(f"a category is a single token with no whitespace (got {add!r}) — the "
+                        f"cockpit renders it as the CSS class `t-{add}`")
+    if add == TASK_RESERVED_CATEGORY:
+        raise CruxError(f"'{TASK_RESERVED_CATEGORY}' is reserved and computed; it cannot be declared")
+    if add in cats:
+        return cats
+    v = Vault(root)
+    cats = cats + (add,)
+    v.cfg[TASK_CATEGORIES_KEY] = ", ".join(cats)
+    _save_cfg(v)
+    return cats
+
+def task_json(root, tid):
+    """One task's read-only JSON — the shape `snapshot` will publish under `tasks.items`
+    (2.4). Public so `crux task show --json` reuses the serializer instead of growing a
+    second one that can drift from it."""
+    t = _get_task(root, tid)
+    return {"id": t["id"], "title": t["title"], "category": t["category"],
+            "status": t["status"], "parent": t["parent"], "blocked_by": t["blocked_by"],
+            "refs": t["refs"], "outputs": t["outputs"],
+            "created": t["fm"].get("created"), "updated": t["fm"].get("updated")}
+
+def task_info(root, v=None):
+    """The taskhub's `info` lines — namespace `task:`. Information, never a problem: a
+    dropped task is a decision, not a defect, and `ok` must never turn on one."""
+    out = []
+    if not task_active(root):
+        return out
+    tasks = scan_tasks(root)
+    n = sum(1 for t in tasks if t["status"] == "dropped")
+    if n:
+        out.append(("task:dropped",
+                    f"{n} task{'' if n == 1 else 's'} {'is' if n == 1 else 'are'} dropped — "
+                    f"work deliberately not done. `git log` carries why.", n))
+    return out
+
+def validate_tasks(root):
+    """Structural lint over the taskhub — mechanical checks only. Whether a task is worth
+    recording, and whether `done` is honest, is judgment: that lives in the skill."""
+    problems = []
+    if not task_active(root):
+        return problems
+    v = Vault(root)
+    tasks = scan_tasks(root)
+    ids = {t["id"] for t in tasks}
+    cats = task_categories(root)
+    universe = _link_universe(root, v)
+    for t in tasks:
+        tid = t["id"]
+        if not tid:
+            problems.append((f"task:{t['fn']}", f"task file '{t['fn']}': missing required field 'id'"))
+            continue
+        for k in ("title", "category", "status"):
+            if t["fm"].get(k) in (None, ""):
+                problems.append((tid, f"task '{tid}': missing required field '{k}'"))
+        # `blocked_by` is mandatory so that a missing edge is a visible omission rather than
+        # silence. `None` is the literal for "no edge, deliberately".
+        if t["fm"].get("blocked_by") in (None, ""):
+            problems.append((tid, f"task '{tid}': missing required field 'blocked_by' "
+                                  f"(use `{NO_BLOCKERS}` when nothing blocks it)"))
+        if t["status"] == TASK_BLOCKED:
+            problems.append((tid, f"task '{tid}': '{TASK_BLOCKED}' is computed from the "
+                                  f"dependency graph and is never stored — set "
+                                  f"{'/'.join(TASK_STATUS)} instead"))
+        elif t["status"] not in TASK_STATUS:
+            problems.append((tid, f"task '{tid}': bad status '{t['status']}'"))
+        c = t["category"]
+        if c == TASK_RESERVED_CATEGORY:
+            problems.append((tid, f"task '{tid}': category '{TASK_RESERVED_CATEGORY}' is "
+                                  f"reserved and computed, never written by hand"))
+        elif c and c not in cats:
+            problems.append((tid, f"task '{tid}': undeclared category '{c}' (this vault "
+                                  f"declares {', '.join(cats)})"))
+        for r in t["refs"]:
+            if r not in universe:
+                problems.append((tid, f"task '{tid}': ref '{r}' resolves to nothing"))
+        for b in t["blocked_by"]:
+            if b not in ids:
+                problems.append((tid, f"task '{tid}': blocked_by '{b}' is not a task"))
+        if t["parent"] and t["parent"] not in ids:
+            problems.append((tid, f"task '{tid}': parent '{t['parent']}' is not a task"))
+        if t["status"] == "done":
+            if not t["outputs"]:
+                problems.append((tid, f"task '{tid}': done with no output recorded under "
+                                      f"'## Output'"))
+            for o in t["outputs"]:
+                problems += _task_output_problem(root, tid, o, universe)
+    return problems
+
+def _task_output_problem(root, tid, o, universe):
+    """One output ref, checked. Two forms, both reusing machinery that already exists: a
+    vault-relative path (the `## Artifacts` rules — inside the vault, and it resolves), or a
+    `[[wikilink]]` to a node, a wiki page or an RD, for the many research outputs that are
+    real but are not files."""
+    path = o["path"]
+    link = link_targets(path) or link_targets(o["label"])
+    if link:
+        return [] if any(x in universe or x.split("/")[-1] in
+                         {y.split("/")[-1] for y in universe} for x in link) else \
+               [(tid, f"task '{tid}': output [[{link[0]}]] resolves to nothing")]
+    if artifact_escapes(path):
+        return [(tid, f"task '{tid}': output path must be inside the vault: '{path}'")]
+    if not os.path.isfile(os.path.join(root, path)):
+        return [(tid, f"task '{tid}': output '{path}' does not exist")]
+    return []
+
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
 def _write_obsidian_vault(root):
     """Make the vault a recognized Obsidian vault out of the box: the presence of
@@ -1679,7 +2012,12 @@ def cmd_init(title, dirpath=".", goal=""):
         raise CruxError("a crux vault already exists here")
     slug = slugify(title)
     cfg = {"title": title, "slug": slug, "root_id": "root", "engine_version": ENGINE_VERSION,
-           "counter_q": 0, "counter_h": 0, "counter_s": 0}
+           "counter_q": 0, "counter_h": 0, "counter_s": 0, "counter_t": 0,
+           # the declared task-category list: seeded here so a vault is usable from minute
+           # one, and grown only by `crux task categories --add` — an explicit act with a
+           # diff, which is what makes "declared" mean anything. Without a declared list you
+           # get `data-prep`, `datasets` and `data-related` as siblings after six months.
+           TASK_CATEGORIES_KEY: ", ".join(DEFAULT_TASK_CATEGORIES)}
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
@@ -1860,9 +2198,14 @@ def _save_cfg(v):
     write_if_changed(os.path.join(v.root, VAULT_MARKER), yaml_dump(v.cfg) + "\n")
 
 def _new_id(v, kind):
-    key = {"question": "counter_q", "idea": "counter_h", "synthesis": "counter_s"}[kind]
-    v.cfg[key] += 1
-    prefix = {"question": "q", "idea": "h", "synthesis": "s"}[kind]
+    """Allocate the next id of `kind`. The counter is read with a DEFAULT rather than indexed:
+    every vault written before a counter existed simply lacks the key, and `v.cfg[key] += 1`
+    would raise KeyError on the first allocation after an upgrade — which is the most likely
+    first action a user takes. (`counter_t` on any pre-2.0 vault is exactly this case.)"""
+    key = {"question": "counter_q", "idea": "counter_h", "synthesis": "counter_s",
+           "task": "counter_t"}[kind]
+    v.cfg[key] = int(v.cfg.get(key) or 0) + 1
+    prefix = {"question": "q", "idea": "h", "synthesis": "s", "task": "t"}[kind]
     _save_cfg(v)
     return f"{prefix}{v.cfg[key]}"
 
@@ -2154,6 +2497,7 @@ def validation_report(root, checks=None):
     if "fanout"  in names: warnings += fanout_warnings(v)
     if "tree"    in names: warnings += lock_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
+    if "tasks"   in names: problems += validate_tasks(root); info += task_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),

@@ -8,6 +8,19 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The task store — a record the engine allocates and never rewrites** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.0). A third side-layer beside the tree and the wiki:
+  `tasks/`, holding the work a research programme has to *do*. `crux task add / done / drop /
+  show / categories`, one file per task, engine-allocated ids that are never renumbered, a
+  per-vault declared category list, and a `--check=tasks` structural lint. `done` hard-requires
+  an output that resolves — a vault path or a `[[wikilink]]` — because a bare ticked box
+  discards the thing that makes the layer traversable. The load-bearing property is negative
+  and is the direct lesson from spec-kit, whose `tasks.md` is regenerated from its spec and
+  loses state: **nothing regenerates the taskhub**. `experiment` is a reserved category from
+  day one, refused by the engine, so assigning it later (2.2) is not a format change.
+  `ENGINE_VERSION` 1.9 → 2.0; a pre-2.0 vault has no `tasks/` and loads byte-unchanged.
+
+### Added
 - **The cockpit narrates evidence semantics** (spec
   [`15`](.spec/15-evidence-semantics.md), PRD 15.6). The engine had been publishing `drift`,
   `rule`/`rule_m`, `locked`/`lock_at` and per-verifiable `kind` in `snapshot()` since 1.9, and
