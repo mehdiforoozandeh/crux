@@ -33,6 +33,18 @@ verdict/roll-up/view logic changes.
   edited — `git log -p rd/<slug>.md` is the audit trail, the same call made for a node's
   decision history.
 
+- **The `crux-rd` skill** (spec [`07`](.spec/07-rd-layer.md), PRD 07.4). Carries the two
+  things the engine must not hold: the **write-vs-skip filter** (an RD is warranted when the
+  design would blow the cap on its own, or makes a choice a reader would re-litigate, or
+  carries a distortion that must travel with every result — and is explicitly *not* warranted
+  for a hypothesis whose design is its verifiables), and the **invocation rule** — the PI
+  decides when a design has settled, so the skill ships `disable-model-invocation: true` and
+  never offers unprompted. It also now carries the immutability rule outright: since the
+  engine deliberately does not detect an edited superseded RD, the skill names
+  `git log -p rd/<slug>.md` as the audit trail. Spec 07 is marked done and amended on two
+  points: "one RD per node" is now "one *active* RD per node", and the written-vs-computed
+  backlink split with spec 08 is recorded on both sides.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec

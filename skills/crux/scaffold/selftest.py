@@ -2740,6 +2740,50 @@ def run_rd_lint():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_rd_skill():
+    """Spec 07, PRD 07.4 — the crux-rd skill. Prose is reviewed by reading it; these asserts
+    only stop the documentation from drifting out of sync with the code that ships beside it,
+    which is the specific way skill docs rot."""
+    print("\n# crux-rd skill (write-vs-skip filter · immutability)")
+    sk = os.path.abspath(os.path.join(HERE, "..", "..", "crux-rd", "SKILL.md"))
+    check("rdskill: crux-rd ships with the standard frontmatter", os.path.isfile(sk))
+    if not os.path.isfile(sk):
+        return
+    s = read(sk)
+    fm = s.split("---")[1] if s.startswith("---") else ""
+    check("rdskill: crux-rd frontmatter carries name/description/license/metadata",
+          all(k in fm for k in ("name: crux-rd", "description:", "license:", "metadata:")))
+    # the filter is the reason the skill exists: without it every node grows an RD
+    check("rdskill: the write-vs-skip filter is written down",
+          all(x in s for x in (str(E.PROSE_CAP), "re-litigate", "distortion")))
+    check("rdskill: the filter states its negative case",
+          "verifiables" in s and "not warranted" in s.lower())
+    check("rdskill: the skill documents supersession, not amendment",
+          "--supersedes" in s and "never amended in place" in s)
+    # D7 made this paragraph the ONLY thing holding the invariant, so it must say so
+    check("rdskill: the skill says the engine does not police immutability",
+          "git log -p" in s)
+    check("rdskill: the skill declares disable-model-invocation",
+          "disable-model-invocation: true" in fm)
+    crux_skill = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
+    check("rdskill: the crux verb table lists rd",
+          os.path.isfile(crux_skill) and "| `rd` |" in read(crux_skill))
+    # every invocation the skill shows must be one the CLI actually accepts
+    bad = []
+    for m in re.findall(r"crux rd ([^\n`\"']*)", s):
+        for flag in re.findall(r"--[a-z-]+", m):
+            if flag not in ("--supersedes", "--json"):
+                bad.append(flag)
+    check("rdskill: documented invocations parse", not bad)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "rd", "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    check("rdskill: crux rd --help works", r.returncode == 0 and "--supersedes" in r.stdout)
+    spec = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".spec", "README.md"))
+    if os.path.isfile(spec):
+        row = [l for l in read(spec).splitlines() if "07-rd-layer.md" in l]
+        check("rdskill: spec 07 is marked done in .spec/README.md", bool(row) and "☑" in row[0])
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2786,6 +2830,7 @@ def main():
     run_rd()
     run_rd_migration()
     run_rd_lint()
+    run_rd_skill()
     run_deck()
     run_deck_verify()
     run_prezit()
