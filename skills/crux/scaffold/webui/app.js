@@ -156,6 +156,70 @@ async function poll() {
   setTimeout(poll, 1000);
 }
 
+// The two-tier snapshot diff (spec 12, PRD-P3, ruling P-D5). Any byte change used to
+// run the full pipeline — layout() + renderTree() + renderDetail() — at 21.4 ms, up to
+// 1 Hz while an agent writes files (the normal crux workflow), and the renderDetail
+// rebuild reset the reader's scroll and replayed its entrance animations even when the
+// change was in a node nobody was looking at.
+//
+// treeSignatures() walks the DRAWN tree (collapsed nodes as leaves, exactly layout()'s
+// walk) and splits what the draw path reads into two keys:
+//   geo — anything that can change structure or geometry: the walk order itself, type,
+//         title, verifiable COUNT, child count, the collapsed marker. geo changed →
+//         the old full path (layout + renderTree), unchanged in behavior.
+//   cos — drawn fields that only recolor an existing group: status, verdict,
+//         verifiable STATES. cos-only changes patch just the changed node groups.
+// A selftest ties these field lists to the actual `n.<field>` reads in nodeSVG /
+// computeGeom / statusClass / verifDots — a new drawn field cannot be forgotten
+// silently (the failure mode of every diff is the field it forgot).
+let _treeSig = { geo: "", cosMap: {} };
+function treeSignatures() {
+  const cosMap = {}, geo = [];
+  if (!state.snap) return { geo: "", cosMap };
+  (function walk(node) {
+    const n = state.snap.nodes[node.id];
+    if (!n) return;
+    const vs = n.verifiables || [];
+    geo.push(n.id, n.type, n.title, vs.length, (node.children || []).length,
+             state.collapsed.has(node.id) ? 1 : 0);
+    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + vs.map((v) => v.state).join(",");
+    if (state.collapsed.has(node.id)) return;
+    for (const c of node.children || []) walk(c);
+  })(state.snap.tree);
+  return { geo: JSON.stringify(geo), cosMap };
+}
+
+// Regenerate ONE node's group in place (status/verdict/dot flips — geometry-neutral by
+// construction, the geo key pinned everything else). nodeSVG bakes the current cosmetic
+// classes and ARIA, so the patched group is exactly what a full render would emit; the
+// sim's element cache is re-pointed and the group is put back on its live position.
+function patchNodeEl(id) {
+  const el = svg.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+  const n = state.snap.nodes[id], p = state.positions[id];
+  if (!el || !n || !p) return false;
+  el.outerHTML = nodeSVG(n, p);
+  const el2 = svg.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+  if (el2 && TSIM.els[id]) {
+    TSIM.els[id] = el2;
+    const sp = TSIM.nodes.get(id);
+    if (sp) { el2.setAttribute("transform", `translate(${sp.x},${sp.y})`); sp._wx = sp.x; sp._wy = sp.y; }
+  }
+  return true;
+}
+
+// What the right-hand pane is showing, as a key — the poll re-renders the pane only
+// when THIS changes, so an agent editing some other node can no longer reset the
+// reader's scroll position. The wiki reader keys itself (renderWiki/refreshWikiPage).
+function detailKeyOf() {
+  if (!state.snap) return "";
+  if (state.tab === "wiki") return "wiki";
+  if (state.report) return "report:" + state.report.path;
+  if (state.selected)
+    return "node:" + state.selected + ":" + JSON.stringify(state.snap.nodes[state.selected]);
+  return "queue:" + JSON.stringify(state.snap.queue);
+}
+
+let _legendRendered = false;
 function onSnapshot() {
   const snap = state.snap;
   $("project-title").textContent = snap.project.title || "";
@@ -176,14 +240,27 @@ function onSnapshot() {
   updateTabs();
   updateToolbar();     // the focus button's label is contextual — keep it honest
   updateReviewBtn();
-  layout();
+  // ---- two-tier diff (see treeSignatures above): full path only on structural change
+  const sig = treeSignatures();
+  const structural = sig.geo !== _treeSig.geo;
+  if (structural) layout();
   // One-time fit — but a tab opened in the background has a 0×0 rect until it's shown,
   // so keep retrying on each poll until the pane has real geometry to fit against.
   if (!state.centered && fitToView()) state.centered = true;
-  renderLegend();
-  renderTree();
+  if (structural) {
+    renderTree();
+  } else {
+    let patched = 0;
+    for (const id in sig.cosMap)
+      if (sig.cosMap[id] !== _treeSig.cosMap[id] && patchNodeEl(id)) patched++;
+    if (patched) { clearSpot(); applyCosmeticState(); }   // hover marks died with the old groups
+  }
+  _treeSig = sig;
+  // the legend's content depends only on the engine's constant vocabulary and the
+  // active filter (whose own click handler re-renders it) — once is enough
+  if (!_legendRendered) { renderLegend(); _legendRendered = true; }
   renderWiki();
-  renderDetail();
+  if (detailKeyOf() !== state._detailKey) renderDetail();
   updateMatchCounter();   // the poll can add/remove matches under a live query
 }
 
@@ -462,6 +539,13 @@ function renderTree() {
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
   svg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
+  // the rebuild replaced every .hov/.nbr element — clear the canvas-level spot dim too,
+  // or a rebuild mid-hover would leave the whole tree dimmed with nothing highlighted
+  clearSpot();
+  // a structural render IS the drawn truth — resync the poll diff's signature so a
+  // client-side reshape (fold, density, orientation) never forces a spurious rebuild
+  // on the next poll
+  _treeSig = treeSignatures();
   // keep the ARIA cursor honest: the canvas names its selected treeitem, or nothing
   if (state.selected && pos[state.selected]) svg.setAttribute("aria-activedescendant", "node-" + state.selected);
   else svg.removeAttribute("aria-activedescendant");
@@ -777,12 +861,42 @@ function centerOn(id, animate) {
 }
 
 // ------------------------------------------------------------------ selection / detail
+// The structural-vs-cosmetic split (spec 12, PRD-P1): a change that does not add,
+// remove or move a node never calls renderTree(). Selection, search dim/hit and the
+// legend filter change how EXISTING elements look — measured, the full innerHTML
+// rebuild costs 10.9 ms where the identical class swap costs 0.19 ms (55×), and the
+// rebuild also invalidates the sim's element caches and re-fires pointerover under
+// the cursor. This helper re-derives every cosmetic class in place using the SAME
+// predicates nodeSVG() bakes in at build time, so a structural render and an
+// in-place pass can never disagree. It also keeps the ARIA selection state that the
+// keyboard tree introduced (aria-selected per node, aria-activedescendant on the
+// canvas) truthful between structural renders.
+function applyCosmeticState() {
+  const vp = svg.firstChild;
+  if (!vp || !state.snap) return;
+  vp.querySelectorAll(".node").forEach((el) => {
+    const id = el.getAttribute("data-id"), n = state.snap.nodes[id];
+    if (!n) return;
+    const matches = state.search && matchNode(n);
+    const dimmed = (state.search && !matches) || (state.filter && statusClass(n) !== state.filter);
+    el.classList.toggle("dim", !!dimmed);
+    el.classList.toggle("hit", !!matches);
+    const selected = state.selected === id;
+    el.setAttribute("aria-selected", String(selected));
+    const box = el.querySelector(".box");
+    if (box) box.classList.toggle("selected", selected);
+  });
+  if (state.selected && state.positions[state.selected])
+    svg.setAttribute("aria-activedescendant", "node-" + state.selected);
+  else svg.removeAttribute("aria-activedescendant");
+}
+
 function selectNode(id, opts) {
   state.selected = id;
   state.report = null;      // picking a node leaves any open report
   updateToolbar();
   updateReviewBtn();
-  renderTree();
+  applyCosmeticState();     // selection is cosmetic — never a rebuild (see above)
   renderDetail();
   if (opts && opts.center) centerOn(id);   // used when jumping from the queue / a detail link / search
 }
@@ -793,7 +907,7 @@ function showQueue() {
   state.report = null;   // an open report otherwise wins the render and Review looks dead
   updateToolbar();
   updateReviewBtn();
-  renderTree();
+  applyCosmeticState();  // deselection is a class swap too — no rebuild
   renderDetail();
 }
 
@@ -870,6 +984,7 @@ function resolveRel(p, base) {
 function renderDetail() {
   const pane = $("detail-content");
   if (!state.snap) { pane.innerHTML = ""; return; }
+  state._detailKey = detailKeyOf();   // the snapshot poll re-renders only when this moves
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
   if (state.report) { pane.innerHTML = reportDetail(); return; }
@@ -1161,6 +1276,23 @@ svg.addEventListener("pointerdown", (e) => {
 // Hover spotlight — parity with the wiki graph's responsiveness: the touched node
 // lights up, its edges heat, everything unrelated cools. A CSS-only brightness change
 // was imperceptible at tree zoom levels; the spotlight is what reads as "responsive".
+// Reworked (spec 12, PRD-P2): the old handler wrote 199 classes per pointerover and,
+// with no same-node guard, fired ~12× per node crossed (once per child element),
+// starting a 180 ms opacity animation on ~98 groups — a full-tree repaint held twice
+// per node, re-sampled by every blur overlay. Now: a same-node guard (one firing per
+// crossing), ONE `spot` class on the canvas for the dim, and per-node marks only for
+// the hovered node (.hov) and its direct neighbors (.nbr) found through its own edges
+// — 2 + degree class writes instead of 199. Dim/undim snaps (ruling P-D2): any
+// surviving per-node transition restarts ~N concurrent animations even under a single
+// canvas class, which is exactly the repaint the probe convicted. What lights up is
+// identical to before (ruling P-D3): hovered node + neighbors bright, their edges hot.
+let _hovId = null;
+function clearSpot() {
+  _hovId = null;
+  svg.classList.remove("spot");
+  svg.querySelectorAll(".hov, .nbr, .hot").forEach((el) =>
+    el.classList.remove("hov", "nbr", "hot"));
+}
 svg.addEventListener("pointerover", (e) => {
   const node = e.target.closest(".node");
   // _kbNav: a keyboard move glides the camera, which slides nodes UNDER a parked cursor —
@@ -1168,23 +1300,26 @@ svg.addEventListener("pointerover", (e) => {
   // keyboard costs the mouse nothing, and vice versa). A real pointer move clears the flag.
   if (!node || pan || drag || _kbNav) return;
   const id = node.getAttribute("data-id");
-  const nb = new Set([id]);
-  svg.querySelectorAll(".edge").forEach((el) => {
-    const p = el.getAttribute("data-p"), c = el.getAttribute("data-c");
-    if (p === id) nb.add(c);
-    if (c === id) nb.add(p);
-    el.classList.toggle("hot", p === id || c === id);
-  });
+  if (id === _hovId) return;   // same node, next child element — already lit
+  clearSpot();
+  _hovId = id;
   node.classList.add("hov");
-  svg.querySelectorAll(".node").forEach((el) =>
-    el.classList.toggle("cold", !nb.has(el.getAttribute("data-id"))));
+  svg.querySelectorAll(`.edge[data-p="${CSS.escape(id)}"], .edge[data-c="${CSS.escape(id)}"]`)
+    .forEach((el) => {
+      el.classList.add("hot");
+      const other = el.getAttribute("data-p") === id
+        ? el.getAttribute("data-c") : el.getAttribute("data-p");
+      const nb = TSIM.els[other] ||
+        svg.querySelector(`.node[data-id="${CSS.escape(other)}"]`);
+      if (nb) nb.classList.add("nbr");
+    });
+  svg.classList.add("spot");
 });
 svg.addEventListener("pointerout", (e) => {
   if (!e.target.closest(".node")) return;
   if (e.relatedTarget && e.relatedTarget.closest &&
       e.relatedTarget.closest(".node") === e.target.closest(".node")) return;
-  svg.querySelectorAll(".hot, .cold, .hov").forEach((el) =>
-    el.classList.remove("hot", "cold", "hov"));
+  clearSpot();
 });
 
 svg.addEventListener("click", (e) => {
@@ -1309,7 +1444,7 @@ $("legend").addEventListener("click", (e) => {
   const key = chip.getAttribute("data-lg");
   state.filter = state.filter === key ? null : key;
   renderLegend();
-  if (state.snap) renderTree();
+  if (state.snap) applyCosmeticState();   // a filter is cosmetic — dim by class, never rebuild
 });
 $("legend-btn").addEventListener("click", () => setLegendHidden(false));
 setLegendHidden(localStorage.getItem("crux-legend-hidden") === "1");
@@ -1566,7 +1701,7 @@ $("zoom-fit").addEventListener("click", () => { if (state.snap) fitToView(true);
 function applySearch() {
   if (!state.snap) return;
   if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
-  else renderTree();
+  else applyCosmeticState();   // dim/hit by class toggle — a keystroke never rebuilds the SVG
   updateMatchCounter();
 }
 // The match set (spec 12): ONE function feeds the counter and the Enter / Shift+Enter
@@ -1604,15 +1739,25 @@ function cycleSearch(dir) {
   else selectNode(m[i], { center: true });
   updateMatchCounter();
 }
+// Search is debounced (spec 12, ruling P-D6): ONE trailing ~120 ms timer around
+// everything a keystroke drives — the tree dim pass, the wiki rail rebuild, and the
+// match counter — so a 10-character query costs one pass, not ten, and the counter
+// always agrees with the canvas. Two flush points: Enter (cycling must act on the
+// text as typed, not the last debounce tick) and Escape (clearing must feel instant).
+const SEARCH_DEBOUNCE_MS = 120;
+let _searchTimer = 0;
+function flushSearch() { clearTimeout(_searchTimer); _searchTimer = 0; applySearch(); }
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
   state.matchId = null;   // a new query restarts the cycle
-  applySearch();
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(flushSearch, SEARCH_DEBOUNCE_MS);
 });
 $("search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; applySearch(); return; }
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; flushSearch(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
   e.preventDefault();
+  flushSearch();
   cycleSearch(e.shiftKey ? -1 : 1);
 });
 

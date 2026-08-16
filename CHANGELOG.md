@@ -6,7 +6,57 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec
+  [`12`](.spec/12-cockpit-craft.md)). While an agent writes files — the normal crux
+  workflow — every vault change used to rerun the whole pipeline (21.4 ms up to 1 Hz)
+  and rebuild the detail pane, resetting the reader's scroll and replaying its entrance
+  animations. Now a structural signature (tied by a selftest to the draw path's actual
+  field reads) gates `layout()`/`renderTree()`; status/verdict/verifiable flips patch
+  just the changed node groups in place; and the pane re-renders only when what it shows
+  changed. Verified live: prose-only edits → 0 rebuilds (~2.5 ms per poll); a checkbox
+  flip → one single-node patch; a new node → exactly one full render, as before.
+
+- **Cockpit: the hover spotlight no longer repaints the whole tree, and the blur
+  overlays are gone** (spec [`12`](.spec/12-cockpit-craft.md); paint-gate ruling, final).
+  The spotlight used to write ~199 classes per `pointerover`, fire ~12× per node crossed
+  (no same-node guard), and start a 180 ms opacity animation on every dimmed group under
+  up to nine `backdrop-filter` blurs — measured 54.8 fps with a 216.5 ms worst frame on a
+  hover sweep. Now: a same-node guard, one `spot` class on the canvas, `.hov`/`.nbr`
+  marks found through the node's own edges, no per-node fade (dim snaps), and the
+  overlays carry one shared near-opaque background instead of blur. What lights up is
+  unchanged. Measured (273 drawn nodes): class writes per crossing 284 → 4, redundant
+  refire cost 0.73 → 0.02 ms, live animations after one hover 279 → 8; the gate's
+  ablation showed each half alone restores ~60 fps / ~17 ms worst.
+
+- **Cockpit: cosmetic changes never rebuild the tree** (spec
+  [`12`](.spec/12-cockpit-craft.md)). Selecting a node, showing the review queue, search
+  dimming and the legend filter used to tear down and re-parse the whole SVG
+  (`renderTree()`, 10.9 ms) to move a CSS class (0.19 ms — 55×). They now share one
+  in-place pass (`applyCosmeticState`) that toggles `dim`/`hit`/`.selected` and keeps the
+  ARIA selection (`aria-selected`, `aria-activedescendant`) truthful; `renderTree()` is
+  structural-only and still bakes the same classes, so the paths cannot drift. Search is
+  debounced (~120 ms trailing, Enter/Escape flush): a 10-character query now costs one
+  cosmetic pass, not ten rebuilds. Measured (273 drawn nodes): selection 142.9 → 62.5 ms
+  end-to-end with rebuilds 1 → 0 per click; the tree-side swap itself p50 2.4 ms.
+
+- **Serve: the snapshot is cached on a vault stat key** (spec
+  [`12`](.spec/12-cockpit-craft.md)). The server used to regenerate the whole snapshot on
+  every 1 Hz poll purely to compute the ETag, then answer 304 — measured 29 ms of Python
+  and 181 files re-read per second (~2.4% of a core, forever). Now a stat walk
+  (dir-inclusive max mtime + entry count — dir mtimes catch deletions) keys a cache of
+  the serialized bytes + content-hash ETag; regeneration happens only when the vault
+  actually changed. Measured on a 286-file vault: 37.2 ms → 1.1 ms per poll (33×). The
+  client contract (ETag/304, `poll()`'s text-diff guard) is byte-identical.
+
 ### Added
+
+- **Cockpit benchmark harness** (`tools/bench/`, spec [`12`](.spec/12-cockpit-craft.md)).
+  The console-paste paint/interaction probe, a seeded synthetic-vault grower (drives the
+  real CLI, so every node is format-valid), a 1 Hz agent-writes simulator, and committed
+  baseline JSONs — so every cockpit perf claim is re-measurable, env recorded per run.
+  Dev tooling only: nothing ships in the skill or is served by the cockpit.
 
 - **Cockpit: keyboard-first tree canvas** (spec [`12`](.spec/12-cockpit-craft.md)). The tree
   `<svg>` is a real focusable ARIA tree (`tabindex`, `role="tree"`, per-node `treeitem` +

@@ -1171,6 +1171,66 @@ def run_serve():
         check("serve: stale If-None-Match re-serves 200 with a new ETag",
               r4.status == 200 and bool(fresh) and fresh != etag)
 
+        # -- snapshot cache (spec 12, PRD-P4): the server must not regenerate the whole
+        #    snapshot on every poll just to compute the ETag (measured: 29 ms of Python
+        #    and 181 files re-read per second, ~2.4% of a core, forever). Cache keyed on
+        #    a stat walk (dir-inclusive max mtime + entry count — dir mtimes catch
+        #    deletions); regeneration only when the vault actually changed. Counted by
+        #    wrapping engine.snapshot; the ETag stays a content hash (client contract
+        #    unchanged — poll()'s If-None-Match/text-diff guards still hold).
+        real_snapshot = S.engine.snapshot
+        snap_calls = []
+        def counting_snapshot(*a, **kw):
+            snap_calls.append(1)
+            return real_snapshot(*a, **kw)
+        S.engine.snapshot = counting_snapshot
+        try:
+            import time as _time
+            for _ in range(3):
+                with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                    rc.read()
+            check("serve: 3 polls on an unchanged vault regenerate at most once (cache hit)",
+                  len(snap_calls) <= 1)
+            # invalidation — a new node regenerates exactly once and serves fresh content
+            snap_calls.clear()
+            q3, _ = E.cmd_ask(root, "a third question")
+            t0 = _time.perf_counter()
+            with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                fresh_snap = json.loads(rc.read())
+            uncached_s = _time.perf_counter() - t0   # full wall incl. the regeneration
+            check("serve: a vault change invalidates the cache (regenerates once)",
+                  len(snap_calls) == 1)
+            check("serve: post-change content is fresh through the cache",
+                  any(n.get("id") == q3 for n in fresh_snap.get("nodes", {}).values())
+                  if isinstance(fresh_snap.get("nodes"), dict)
+                  else q3 in json.dumps(fresh_snap))
+            # deletion — max FILE mtime can stay put; the dir-mtime + entry-count half
+            # of the key must catch it
+            snap_calls.clear()
+            q3_file = next(f for f in os.listdir(root)
+                           if f.startswith(q3 + "_") and f.endswith(".md"))
+            os.remove(os.path.join(root, q3_file))
+            with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                after_del = rc.read().decode("utf-8")
+            check("serve: a deletion invalidates the cache", len(snap_calls) == 1)
+            check("serve: the deleted node is gone from the served snapshot",
+                  ('"%s"' % q3) not in after_del or q3_file not in after_del)
+            # timing (soft, generous): mean of 10 cached polls vs the regenerating one
+            # above — the hard numbers live in tools/bench, not in CI
+            t0 = _time.perf_counter()
+            for _ in range(10):
+                with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                    rc.read()
+            cached_mean = (_time.perf_counter() - t0) / 10
+            check("serve: cached poll is not slower than a regenerating one (soft timing)",
+                  cached_mean <= uncached_s * 3 + 0.05)  # generous: green on noisy CI
+        finally:
+            S.engine.snapshot = real_snapshot
+        # source shape: the cache exists, is locked, and the key walks dirs too
+        check("serve: snapshot cache is guarded by a lock", "Lock(" in src)
+        check("serve: cache key is a stat walk incl. directories (vault_stat_key)",
+              "vault_stat_key" in src and "os.walk" in src)
+
         # -- living tree (docs/prd/gui-living-tree.md): the served webui carries the
         #    view-mode toggle, the radial anchor layout, and the anchored physics sim.
         #    These asserts register the wiring; the feel (breathing, drag-settle,
@@ -1549,6 +1609,118 @@ def run_webui():
             strays.append(f"{sel}: {px}px")
     check(f"webui: chrome carries no stray px font-size — all through the vars (strays: {strays[:4]})",
           not strays)
+
+    # -- spec 12 perf (PRD-P1): the structural-vs-cosmetic split. A change that does not
+    #    add, remove or move a node never calls renderTree() (measured: the full rebuild
+    #    is 10.9 ms where the identical class swap is 0.19 ms — 55×). Selection, the
+    #    review queue, search dimming and the legend filter all go through ONE in-place
+    #    helper; renderTree() stays structural-only and still bakes the same classes, so
+    #    the two paths cannot disagree. Latency itself (< 2 ms tree-side, ruling P-D7) is
+    #    measured by tools/bench/paint_probe.js, not asserted here — stdlib has no JS.
+    def fn_src(name):
+        m2 = re.search(r"function %s\([^)]*\)\s*\{([\s\S]*?)\n\}" % re.escape(name), app_js)
+        return m2.group(1) if m2 else ""
+    sel_src = fn_src("selectNode")
+    check("webui: selectNode never rebuilds — no renderTree()/layout() in its body",
+          bool(sel_src) and "renderTree(" not in sel_src and "layout(" not in sel_src)
+    check("webui: selectNode swaps cosmetic state in place",
+          "applyCosmeticState(" in sel_src)
+    sq_src = fn_src("showQueue")
+    check("webui: showQueue never rebuilds — no renderTree()/layout() in its body",
+          bool(sq_src) and "renderTree(" not in sq_src and "layout(" not in sq_src
+          and "applyCosmeticState(" in sq_src)
+    cos_src = fn_src("applyCosmeticState")
+    check("webui: the cosmetic helper toggles dim / hit / selected on existing elements",
+          '"dim"' in cos_src and '"hit"' in cos_src and '"selected"' in cos_src
+          and "classList.toggle" in cos_src)
+    check("webui: the in-place swap keeps the ARIA selection truthful (PR #13 contract)",
+          "aria-selected" in cos_src and "aria-activedescendant" in cos_src)
+    check("webui: the helper derives dim/hit from the SAME predicates nodeSVG bakes in",
+          "matchNode(" in cos_src and "statusClass(" in cos_src and "state.filter" in cos_src)
+    as_src = fn_src("applySearch")
+    check("webui: the tree search path dims by class toggle, not by rebuild",
+          "applyCosmeticState(" in as_src and "renderTree(" not in as_src)
+    check("webui: search input is debounced ~120 ms with a single trailing timer (P-D6)",
+          bool(re.search(r"SEARCH_DEBOUNCE_MS = 1[0-9]{2}\b", app_js))
+          and bool(re.search(r'addEventListener\("input"[\s\S]{0,400}setTimeout\(flushSearch, SEARCH_DEBOUNCE_MS\)', app_js)))
+    check("webui: Enter and Escape flush the debounce (cycling acts on the typed text)",
+          bool(re.search(r'"Escape"[^\n]*flushSearch\(\)', app_js))
+          and bool(re.search(r'flushSearch\(\);[\s\S]{0,80}cycleSearch\(', app_js)))
+    lg_src = app_js.split('$("legend").addEventListener')[1].split('$("legend-btn")')[0]
+    check("webui: the legend filter is a class toggle too (P-D10) — chips never rebuild",
+          "applyCosmeticState(" in lg_src and "renderTree(" not in lg_src)
+    check("webui: renderTree still bakes every cosmetic class (the paths cannot drift)",
+          '(dimmed ? " dim" : "")' in app_js and '(matches ? " hit" : "")' in app_js
+          and "${sel}" in app_js)
+
+    # -- spec 12 perf (PRD-P2): the hover spotlight + the backdrop-filter ruling. The
+    #    old handler wrote 199 classes per pointerover, fired ~12× per node crossed (no
+    #    same-node guard), and started a 180 ms opacity animation on ~98 groups — a
+    #    full-tree repaint held twice per node, re-sampled by up to nine blur overlays.
+    #    PI rulings, final: blur dropped on the overlays (P-D1: one near-opaque token),
+    #    fade dropped (P-D2 — a single spot class still animates every node if the
+    #    per-node transition survives), faithful semantics (P-D3: hovered node AND its
+    #    direct neighbors stay lit, exactly as before). Frame rates are tools/bench
+    #    territory; these pin the structure.
+    check("webui: no backdrop-filter declaration survives anywhere (PI ruling, final)",
+          "backdrop-filter:" not in style)   # the colon: prose may explain the ban, no rule may use it
+    check("webui: overlays share the one near-opaque token (P-D1)",
+          re.search(r"--overlay:\s*color-mix\(in srgb, var\(--panel\) 9[0-9]%", style)
+          and style.count("var(--overlay)") >= 8)
+    hov_src = app_js.split('\nsvg.addEventListener("pointerover"')[1] \
+                    .split('svg.addEventListener("pointerout"')[0]
+    check("webui: same-node guard — the spotlight fires once per node crossing",
+          "_hovId" in hov_src and bool(re.search(r"if \(id === _hovId\) return", hov_src)))
+    check("webui: the 199-write sweep is gone — no full node scan, no cold class",
+          'querySelectorAll(".node")' not in hov_src and '"cold"' not in hov_src
+          and "classList.toggle" not in hov_src)
+    check("webui: edge heat narrows to the hovered node's own edges",
+          'data-p="' in hov_src and 'data-c="' in hov_src)
+    check("webui: one spot class on the canvas + hov/nbr marks (P-D3 faithful)",
+          '"spot"' in hov_src and '"nbr"' in hov_src and '"hov"' in hov_src)
+    check("webui: tree nodes carry no opacity transition (P-D2 — the held repaint)",
+          not re.search(r"\.node\s*\{[^}]*transition:[^}]*opacity", style))
+    check("webui: the spot dim rule keeps the hovered node and its neighbors lit",
+          bool(re.search(r"#tree\.spot \.node:not\(\.hov\):not\(\.nbr\)\s*\{[^}]*opacity", style)))
+    check("webui: a rebuild resets the spotlight (no stale canvas-level dim)",
+          bool(re.search(r"function renderTree\(\)[\s\S]{0,1200}clearSpot\(\)", app_js)))
+
+    # -- spec 12 perf (PRD-P3): onSnapshot diffs and patches instead of rebuilding.
+    #    Any byte change used to run layout() + renderTree() + renderDetail() (21.4 ms,
+    #    up to 1 Hz while an agent writes — and the detail rebuild reset the reader's
+    #    scroll and replayed its entrance animations). Ruling P-D5, two tiers: a
+    #    structural signature gates layout/renderTree entirely; geometry-neutral changes
+    #    (status/verdict/verifiable-state flips) patch just the changed node groups; the
+    #    detail pane re-renders only when what IT shows changed. The signature's honesty
+    #    is asserted below by tying its field list to the draw path's actual reads.
+    sig_src = fn_src("treeSignatures")
+    check("webui: a structural/cosmetic snapshot signature exists", bool(sig_src))
+    draw_src = "".join(fn_src(f) for f in
+                       ("nodeSVG", "computeGeom", "statusClass", "verifDots",
+                        "vBadgeClass", "bodyLabel", "rootLabel"))
+    drawn_fields = sorted(set(re.findall(r"\bn\.([a-z_]+)\b", draw_src)))
+    sig_missing = [f for f in drawn_fields if f not in sig_src]
+    check(f"webui: every field the draw path reads is in the signature (missing: {sig_missing})",
+          bool(drawn_fields) and not sig_missing)
+    os_src = fn_src("onSnapshot")
+    check("webui: onSnapshot gates layout()+renderTree() on the structural signature",
+          "treeSignatures()" in os_src
+          and bool(re.search(r"if \(structural\)[\s\S]{0,200}renderTree\(\)", os_src))
+          and os_src.count("renderTree()") == 1     # the one call sits inside the gate
+          and os_src.count("layout()") == 1)
+    check("webui: geometry-neutral changes patch single node groups in place",
+          "patchNodeEl(" in os_src and "outerHTML" in fn_src("patchNodeEl")
+          and "nodeSVG(" in fn_src("patchNodeEl"))
+    check("webui: a patched node re-enters the sim's element cache",
+          "TSIM.els[" in fn_src("patchNodeEl"))
+    check("webui: the detail pane re-renders only when its own content changed",
+          "function detailKeyOf" in app_js
+          and "detailKeyOf() !== state._detailKey" in os_src
+          and "state._detailKey = detailKeyOf()" in fn_src("renderDetail"))
+    check("webui: the legend is not rebuilt on every poll (content is filter-static)",
+          "renderLegend()" not in os_src or "_legendRendered" in os_src)
+    check("webui: the match counter still rides every accepted snapshot (PR #13 contract)",
+          "updateMatchCounter()" in os_src)
 
 
 def run_economy():
