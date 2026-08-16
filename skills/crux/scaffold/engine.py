@@ -893,6 +893,18 @@ def _wiki_snapshot(root):
                      "schema": os.path.isfile(os.path.join(root, WIKI_SCHEMA))},
     }
 
+def _rd_snapshot(root):
+    """The `rd` block of snapshot(): the index only — public per-page fields plus a content
+    hash for change detection, never a body. The cockpit polls this about once a second, so
+    unbounded design prose must stay behind /rd/<slug>.json."""
+    if not rd_active(root):
+        return {"active": False, "pages": []}
+    return {"active": True,
+            "pages": [{"slug": p["slug"], "title": p["title"], "node": p["node"],
+                       "status": p["status"], "supersedes": p["supersedes"],
+                       "hash": _sha256_file(p["path"])[:16]}
+                      for p in scan_rd_pages(root)]}
+
 def _mention_snippet(body, slug, width=140):
     """The first line of `body` whose wikilinks mention `slug`, trimmed to ~width chars
     around the mention (the canonical link parser decides what counts as a mention)."""
@@ -909,6 +921,38 @@ def _mention_snippet(body, slug, width=140):
         end = min(len(line), start + width)
         return ("…" if start else "") + line[start:end] + ("…" if end < len(line) else "")
     return ""
+
+def _page_payload(root, slug, pages, extra=None):
+    """The shared reader payload for ANY layer of markdown pages with backlinks: body +
+    backlinks, or None for an unknown or traversal-shaped slug. Extracted from the wiki
+    reader so the RD layer reuses it instead of growing a second one — the slug is only ever
+    matched against the scan, never used as a filesystem path, and rejection happens before
+    any file is read. Duplicate slugs resolve deterministically: the first page by sorted path."""
+    if not slug or "/" in slug or "\\" in slug or ".." in slug or slug.startswith("."):
+        return None
+    matches = [p for p in pages if p["slug"] == slug]
+    if not matches:
+        return None
+    page = min(matches, key=lambda p: p["path"])
+    backlinks = [{"slug": q["slug"], "title": q["title"],
+                  "snippet": _mention_snippet(q["body"], slug)}
+                 for q in pages if q["slug"] != slug and slug in q["links"]]
+    d = {"slug": page["slug"], "title": page["title"],
+         "summary": page["fm"].get("summary") or None,
+         "category": page["fm"].get("category") or None,
+         "sources": page.get("sources") or [],
+         "updated": page["fm"].get("updated") or None,
+         "body": page["body"], "backlinks": backlinks}
+    if extra:
+        d.update({k: page.get(k) if k in page else page["fm"].get(k) for k in extra})
+    return d
+
+def rd_page_payload(root, slug):
+    """Payload for /rd/<slug>.json — the same reader the wiki tab uses, pointed at the RD
+    layer. None on a pre-07 vault, so the route 404s rather than 500s."""
+    if not rd_active(root):
+        return None
+    return _page_payload(root, slug, scan_rd_pages(root), extra=("node", "status", "supersedes"))
 
 def wiki_page_payload(root, slug):
     """Payload for /wiki/<slug>.json: a scanned page (with backlinks) or a reserved
@@ -927,20 +971,7 @@ def wiki_page_payload(root, slug):
                 "summary": fm.get("summary") or None, "category": fm.get("category") or None,
                 "sources": [], "updated": fm.get("updated") or None,
                 "body": body, "backlinks": []}
-    if not slug or "/" in slug or "\\" in slug or ".." in slug or slug.startswith("."):
-        return None
-    pages = scan_wiki_pages(root)
-    matches = [p for p in pages if p["slug"] == slug]
-    if not matches:
-        return None
-    page = min(matches, key=lambda p: p["path"])
-    backlinks = [{"slug": q["slug"], "title": q["title"],
-                  "snippet": _mention_snippet(q["body"], slug)}
-                 for q in pages if q["slug"] != slug and slug in q["links"]]
-    return {"slug": page["slug"], "title": page["title"], "summary": page["summary"],
-            "category": page["category"], "sources": page["sources"],
-            "updated": page["fm"].get("updated") or None,
-            "body": page["body"], "backlinks": backlinks}
+    return _page_payload(root, slug, scan_wiki_pages(root))
 
 def ensure_wiki(root):
     """Lazily stand up the wiki subsystem (idempotent, safe on a pre-wiki vault)."""
@@ -1757,8 +1788,19 @@ def _ledger_summary(c):
         parts.append(f"{c['subq_resolved']}/{c['subq_total']} sub-questions resolved")
     return " · ".join(parts)
 
-def _node_json(v, n):
+def _rd_by_node(root):
+    """{node id: active RD slug} in one scan. Passed into `_node_json` rather than looked up
+    per node: the detail pane needs the pointer, and re-scanning rd/ once per node would make
+    the snapshot quadratic in a vault that uses the layer heavily."""
+    return {p["node"]: p["slug"] for p in reversed(scan_rd_pages(root))
+            if p["status"] == "active" and p["node"]}
+
+def _node_json(v, n, rd_map=None):
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
+    if n.type in ("question", "idea"):
+        # the slug of this node's active RD, or None — so the pane can offer "open the
+        # design" without walking the index
+        d["rd"] = (_rd_by_node(v.root) if rd_map is None else rd_map).get(n.id)
     if n.type == "question":
         pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent
@@ -1833,6 +1875,7 @@ def snapshot(vault):
     v = vault if isinstance(vault, Vault) else Vault(vault)
     root_id = v.cfg["root_id"]
     root = v.get(root_id)
+    rd_map = _rd_by_node(v.root)
     return {
         "engine_version": ENGINE_VERSION,
         "crux_version": CRUX_VERSION,
@@ -1842,11 +1885,12 @@ def snapshot(vault):
         "limits": {"prose_cap": PROSE_CAP, "fanout_max": FANOUT_MAX},
         "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
                     "status": root.status, "goal": _section(root["body"], "Goal")},
-        "nodes": {nid: _node_json(v, n) for nid, n in v.nodes.items()},
+        "nodes": {nid: _node_json(v, n, rd_map) for nid, n in v.nodes.items()},
         "tree": _subtree(v, root_id),
         "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
         "wiki": _wiki_snapshot(v.root),
+        "rd": _rd_snapshot(v.root),
     }
 
 # ----------------------------------------------------------------------------- deck payload (spec 11 / prezit)

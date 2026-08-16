@@ -53,6 +53,17 @@ verdict/roll-up/view logic changes.
   methods source for the anchor's own story, so a parent's design must not land on a child's
   method slide. A vault with no `rd/` still gets `[]` and the command still cannot fail.
 
+- **The cockpit reads RDs** (spec [`07`](.spec/07-rd-layer.md), PRD 07.3). A third tab, which
+  appears only when the vault has an `rd/`: a rail grouped by owning node (superseded entries
+  dimmed under their successor) and a reader. The reader is the **wiki tab's, extracted and
+  shared** rather than copied — the pre-registered "app.js is pure-read (three GETs)" assert
+  is what keeps it honest, since a second reader would need a fourth fetch. `snapshot` gains
+  an `rd` index block (slug, title, node, status, supersedes, content hash — never a body,
+  because the cockpit polls it about once a second) and every question and hypothesis gains
+  `rd`: the slug of its active RD, or `null`. Nodes that have one now show a **Design** row
+  that opens it; nodes that do not show nothing. New route `/rd/<slug>.json`, with the wiki
+  route's traversal guard: the slug is matched against the scan and never used as a path.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec

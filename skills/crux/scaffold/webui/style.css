@@ -465,7 +465,7 @@ body[data-tab="wiki"] .viewctl { display: none; }
   color: var(--ink-mute); font-size: var(--fs-ui-sm); line-height: 1; cursor: pointer;
   display: flex; align-items: center; justify-content: center; }
 #wiki-rail-btn:hover { color: var(--accent); background: var(--panel2); }
-#wiki-rail-body { flex: 1 1 auto; overflow-y: auto; padding: 2px 6px 12px; }
+#wiki-rail-body, #rd-rail-body { flex: 1 1 auto; overflow-y: auto; padding: 2px 6px 12px; }
 .wr-folder { margin: 1px 0; }
 .wr-fold { display: flex; align-items: center; gap: 5px; width: 100%; border: none; background: none;
   color: var(--ink-dim); font-size: var(--fs-ui); font-weight: 600; cursor: pointer; font-family: inherit;
@@ -622,3 +622,14 @@ a.ext { color: var(--accent); }
   font-size: var(--fs-ui-sm); line-height: 1.35; cursor: default; }
 #ro-footer::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--q-resolved); flex: 0 0 auto; }
 #ro-footer .ro-sub { opacity: .8; }
+
+/* ---- RD pane (spec 07). Rail only: the reader is the wiki's, shared not copied, and RDs
+   form per-node chains rather than a link web, so there is no graph to lay out. */
+#rd-pane { position: relative; display: flex; flex: 1 1 62%; min-width: 0; overflow: hidden;
+           border-right: 1px solid var(--line); }
+#rd-rail { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+/* an ID selector outranks the UA's `[hidden] { display: none }`, so the pane has to opt back
+   in explicitly — exactly as #wiki-pane already does. Without this the rail renders under
+   the tree. */
+#rd-pane[hidden] { display: none; }
+.wr-item.wr-dim { opacity: .55; }

@@ -481,7 +481,7 @@ def run_snapshot():
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki"})
+                               "project", "nodes", "tree", "queue", "wiki", "rd"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -2837,6 +2837,124 @@ def run_deck_rd():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_rd_gui():
+    """Spec 07, PRD 07.3 — the RD read surfaces: the snapshot `rd` key (index only, never a
+    body), the lazy /rd/<slug>.json route, and each node's pointer at its active RD.
+
+    The reader itself is SHARED with the wiki tab, not copied: the pre-registered
+    `webui: app.js is pure-read (three GETs…)` assert is what proves it — a second reader
+    would need a fourth fetch and would fail that count."""
+    print("\n# RD GUI contract (snapshot rd key + /rd/<slug>.json route)")
+    import json, threading, urllib.request, urllib.error, builtins
+    import serve as S
+    root = tempfile.mkdtemp(prefix="crux_rdgui_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD GUI", root)
+    q1, _ = E.cmd_ask(root, "a question")
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+
+    snap = E.snapshot(root)
+    check("rdgui: snapshot reports an inactive RD layer",
+          snap["rd"] == {"active": False, "pages": []})
+    check("rdgui: a node with no RD reports null", snap["nodes"][h1]["rd"] is None)
+
+    a1, _ = E.cmd_rd(root, h1, "the design")
+    edit(os.path.join(root, "rd", a1 + ".md"), "## Design\n", "## Design\n\nThe substance.\n")
+    a2, _ = E.cmd_rd(root, h1, "the second design", supersedes=a1)
+    snap = E.snapshot(root)
+    pages = {p["slug"]: p for p in snap["rd"]["pages"]}
+    check("rdgui: the RD index carries the public fields",
+          set(pages[a1]) == {"slug", "title", "node", "status", "supersedes", "hash"})
+    check("rdgui: the RD index reports status and chain",
+          pages[a1]["status"] == "superseded" and pages[a2]["supersedes"] == a1)
+    check("rdgui: the RD index carries a content hash",
+          isinstance(pages[a1]["hash"], str) and len(pages[a1]["hash"]) == 16)
+    check("rdgui: snapshot never carries an RD body", "The substance." not in json.dumps(snap))
+    check("rdgui: a node points at its active RD", snap["nodes"][h1]["rd"] == a2)
+    check("rdgui: node_json agrees with snapshot", E.node_json(root, h1)["rd"] == a2)
+
+    httpd = S.make_server(root, port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = "http://127.0.0.1:%d" % httpd.server_address[1]
+
+    def get(path):
+        try:
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    try:
+        st, body = get("/rd/%s.json" % a1)
+        pg = json.loads(body) if st == 200 else {}
+        check("rdgui: the RD route returns a body", st == 200 and "The substance." in pg.get("body", ""))
+        check("rdgui: the RD route returns backlinks", isinstance(pg.get("backlinks"), list))
+        check("rdgui: an unknown RD slug is a 404", get("/rd/nope.json")[0] == 404)
+
+        # the slug is matched against the scan, never used as a path — rejected before disk
+        opened, _open = [], builtins.open
+        def spy(f, *a, **kw):
+            opened.append(str(f)); return _open(f, *a, **kw)
+        builtins.open = spy
+        try:
+            codes = [get("/rd/%s.json" % s)[0] for s in ("..%2f..%2fetc%2fpasswd", ".hidden", "a%2fb")]
+        finally:
+            builtins.open = _open
+        check("rdgui: a traversal slug is rejected without a disk touch",
+              set(codes) == {404} and not any("passwd" in o for o in opened))
+
+        before = _dir_bytes(root)
+        get("/snapshot.json"); get("/rd/%s.json" % a2)
+        check("rdgui: the RD route writes nothing", _dir_bytes(root) == before)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+
+    # the two layers are separate namespaces: the same slug may exist in both and each
+    # route resolves its own (wiki_page_payload rejects a "/" in a slug, so a shared route
+    # could never have carried a prefix)
+    E.ensure_wiki(root)
+    write(os.path.join(root, "raw", "s.txt"), "src\n")
+    E.cmd_ingest(root, "raw/s.txt", title="S")
+    wiki_page(root, a2, "Same Slug, Wiki Side", "the wiki one", sources="raw/s.txt")
+    check("rdgui: RD and wiki slugs are separate namespaces",
+          E.wiki_page_payload(root, a2)["title"] == "Same Slug, Wiki Side"
+          and E.rd_page_payload(root, a2)["title"] == "the second design")
+
+    # the pane must hide by CSS as well as by the hidden attribute: an ID selector outranks
+    # the UA's [hidden] rule, and the first live walk of this tab found the rail rendering
+    # underneath the tree because of it
+    css = read(os.path.join(HERE, "webui", "style.css"))
+    check("rdgui: the RD pane opts back in to [hidden]", "#rd-pane[hidden]" in css)
+    idx = read(os.path.join(HERE, "webui", "index.html"))
+    check("rdgui: the RD pane ships hidden", 'id="rd-pane" hidden' in idx)
+    check("rdgui: the RD tab is registered", 'data-tab="rd"' in idx)
+
+    # the node -> RD pointer has to be reachable from the pane, or it is a snapshot key
+    # nothing uses. Absent on a node with no RD, so it never becomes chrome.
+    check("rdgui: the node pane offers a way into the design",
+          "function rdSection" in read(os.path.join(HERE, "webui", "app.js"))
+          and "if (!n.rd) return \"\";" in read(os.path.join(HERE, "webui", "app.js")))
+
+    # the rail must reuse the wiki rail's DOM contract, or it inherits none of its styling
+    # (the first live walk rendered the rail as a horizontal run of text because of this)
+    app = read(os.path.join(HERE, "webui", "app.js"))
+    check("rdgui: the RD rail reuses the wiki rail's DOM classes",
+          'class="wr-folder"' in app and '"wr-items"' in app)
+    check("rdgui: the rail's scroll rule is shared, not restated",
+          "#wiki-rail-body, #rd-rail-body" in css)
+    # opening a SUPERSEDED design by default is the one thing this lifecycle exists to prevent
+    check("rdgui: the reader defaults to a live design",
+          'p.status === "active"' in app)
+
+    # a pre-07 vault must not 500 the route
+    old = tempfile.mkdtemp(prefix="crux_rdgui0_")
+    shutil.rmtree(old); os.makedirs(old)
+    E.cmd_init("No RDs", old)
+    check("rdgui: the RD route is safe on a pre-07 vault", E.rd_page_payload(old, "anything") is None)
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2885,6 +3003,7 @@ def main():
     run_rd_lint()
     run_rd_skill()
     run_deck_rd()
+    run_rd_gui()
     run_deck()
     run_deck_verify()
     run_prezit()

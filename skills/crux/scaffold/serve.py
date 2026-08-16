@@ -170,6 +170,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._snapshot()
         if path.startswith("/wiki/") and path.endswith(".json"):
             return self._wiki(path[len("/wiki/"):-len(".json")])
+        if path.startswith("/rd/") and path.endswith(".json"):
+            return self._page("rd", path[len("/rd/"):-len(".json")])
         if path.startswith("/file/"):
             return self._file(path[len("/file/"):])
         return super().do_GET()
@@ -206,6 +208,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             return
         self._send_json(data, etag)
+
+    def _page(self, kind, slug):
+        """Lazy page body + backlinks for a non-wiki layer (spec 07: rd). Same contract as
+        `_wiki`: the slug never touches the filesystem — the engine matches it against the
+        layer's scan and rejects a traversal shape before any file is read."""
+        try:
+            payload = engine.rd_page_payload(self.server.root, slug)
+        except Exception as e:
+            self.send_error(500, f"{kind} page failed: {e}")
+            return
+        if payload is None:
+            self.send_error(404, f"no such {kind} page")
+            return
+        self._send_json(json.dumps(payload).encode("utf-8"))
 
     def _wiki(self, slug):
         """Lazy wiki page body + backlinks. The slug never touches the filesystem —
