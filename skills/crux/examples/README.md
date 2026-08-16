@@ -8,6 +8,13 @@ experience: the question/hypothesis **Tree** and, where a wiki exists, the livin
 Start with `scaling_vault/` if you want to see what crux is for; `segssl_vault/` if you
 want to see how large one gets.
 
+> **Not here: the agent-eval fixtures.** Spec 10's planted-defect vaults live under
+> `skills/crux/evals/fixtures/`, deliberately outside this directory. They are
+> `crux validate`-**red by construction** — being wrong in a stated, hand-authored way is
+> their entire purpose. Gate 3 of the `evolve-crux` gate walks *this* directory to ask
+> "did anything break", and a tree of deliberately-broken vaults would make that answer
+> unreadable. These three stay the gate's targets; the fixtures are never one.
+
 ## `demo_vault/` — the minimal fixture
 
 The synthetic vault the docs and the validation gate reference: one small question

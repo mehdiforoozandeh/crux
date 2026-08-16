@@ -8,6 +8,17 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Agent-eval fixtures, and the certifier that keeps them honest** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.0). A fixture is a hand-authored vault with defects
+  planted **one per emitted id**, plus a `PLANTED.md` manifest naming them. `evals.py`
+  (beside `selftest.py`, not a `crux` verb) runs the manifest's own declared checks — `gate`
+  is opt-in, and a certifier using the defaults would score a correct finding as invented —
+  and proves the engine emits exactly the planted set. A fixture that drifts from its manifest
+  goes red immediately, so no eval ever grades against a stale ground truth. First fixture:
+  `audit-01`, seven defects across all five families spec 10 names for `crux-audit`. Fixtures
+  live outside `examples/` on purpose: they are `validate`-red by construction, and gate 3
+  walks `examples/` to ask whether anything broke. **No engine change, no version bump.**
+
 - **`crux-design`, and the three-disease taxonomy in the skill** (spec
   [`13`](.spec/13-situate-and-design.md), PRD 13.3). **Spec 13 is done.**
 

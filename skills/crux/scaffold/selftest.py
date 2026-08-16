@@ -6684,6 +6684,121 @@ def _tree_hashes(root):
     return out
 
 
+def run_agent_evals():
+    """Spec 10 PRD 10.0 — the fixture contract, and the certifier that keeps it honest.
+
+    Ten agent definitions ship. `run_agent_roster` checks they are well-formed and leashed;
+    nothing checked that any of them DOES ITS JOB, which is spec 10's opening line — *"the
+    agent roster is unfalsifiable and drifts silently."*
+
+    Measuring one needs ground truth, and spec 10 is uncompromising about where it may come
+    from: *"the planted defects must be authored independently of the agent that finds them."*
+    Easy to write, easy to break by accident — a hand-authored fixture drifts the moment
+    someone edits the vault and forgets the manifest, and then the eval grades against a
+    ground truth that describes a vault which no longer exists.
+
+    So the ENGINE certifies the fixture: `validation_report` on the fixture vault must emit
+    exactly the planted id set. The manifest is written by a human; a program with no
+    knowledge of any agent says whether it is true.
+
+    No engine change, no version bump — a new sibling module and a tree of fixture data."""
+    print("\n# agent evals — the fixture contract (spec 10, PRD 10.0)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+    names = V.fixture_names()
+    check(f"evals: the audit-01 fixture exists and its vault loads (found: {names})",
+          "audit-01" in names and len(E.Vault(os.path.join(V.FIXTURES, "audit-01", "vault")).nodes) > 3)
+
+    # -- the contract: seven fields, every one of them load-bearing somewhere below
+    bad = []
+    for n in names:
+        try:
+            m = V.load_manifest(n)
+        except E.CruxError as e:
+            bad.append(f"{n}: {e}"); continue
+        if not all(m["fm"].get(k) not in (None, "") for k in V.MANIFEST_FIELDS):
+            bad.append(f"{n}: missing a contract field")
+    check(f"evals: a manifest declares the seven contract fields (bad: {bad[:2]})", not bad)
+
+    adir = os.path.join(repo, "agents")
+    ghosts = [n for n in names
+              if not os.path.isfile(os.path.join(adir, V.load_manifest(n)["agent"], "AGENT.md"))]
+    check(f"evals: every fixture names a real agent (ghosts: {ghosts})", not ghosts)
+
+    # -- the checks list is the MANIFEST's, never a default. `gate` is opt-in: a certifier
+    #    running the defaults decides audit-01 has no gate backlog, and then scores a CORRECT
+    #    finding on q2 as an invention — precision 0.0 for the right answer.
+    m = V.load_manifest("audit-01")
+    check("evals: certification runs the manifest's declared checks, not the defaults",
+          "gate" in m["checks"] and "gate" not in E.CHECKS and "gate" in E.OPT_CHECKS
+          and "q2" in V.emitted_ids(m)
+          and "q2" not in {e["id"] for t in ("problems", "warnings")
+                           for e in E.validation_report(V.vault_of(m))[t]})
+
+    r = V.certify("audit-01")
+    check(f"evals: audit-01 certifies — the engine finds exactly what was planted "
+          f"(missing {r['missing']}, extra {r['extra']})", r["ok"])
+
+    # -- the two ways a fixture rots, each proven on a COPY (the shipped tree is never touched)
+    tmp = tempfile.mkdtemp(prefix="crux_evalfix_")
+    try:
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        vault = os.path.join(tmp, "audit-01", "vault")
+        h2 = [p for p in os.listdir(vault) if p.startswith("h2_")][0]
+        edit(os.path.join(vault, h2), "- [Report](results/h2/report.md)", "")
+        c = V.certify("audit-01", root=tmp)
+        check(f"evals: a fixture that drifts from its manifest fails certification "
+              f"(missing {c['missing']})", not c["ok"] and c["missing"] == ["h2"])
+
+        shutil.rmtree(os.path.join(tmp, "audit-01"))
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        vault = os.path.join(tmp, "audit-01", "vault")
+        h1 = [p for p in os.listdir(vault) if p.startswith("h1_")][0]
+        edit(os.path.join(vault, h1), "## Idea / Hypothesis",
+             "## Idea / Hypothesis\n\n" + ("an unplanted flood of prose. " * 220))
+        c = V.certify("audit-01", root=tmp)
+        check(f"evals: an unplanted defect fails certification as extra (extra {c['extra']})",
+              not c["ok"] and c["extra"] == ["h1"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # -- one defect per id is what buys exact scoring with no engine change; load_manifest
+    #    refuses a duplicate, so this is a property of every fixture that parses at all
+    dupes = []
+    for n in names:
+        ids = [p["id"] for p in V.load_manifest(n)["planted"]]
+        dupes += [f"{n}:{i}" for i in set(ids) if ids.count(i) > 1]
+    check(f"evals: at most one planted defect per emitted id (dupes: {dupes})", not dupes)
+
+    before = _tree_hashes(V.FIXTURES)
+    V.certify_all()
+    check("evals: certification is read-only", _tree_hashes(V.FIXTURES) == before)
+
+    # -- spec 10 names five defect families for crux-audit; all five are here, and the
+    #    ambiguous one is resolved in the fixture rather than in the reader's head (M4)
+    classes = " ".join(p["class"] for p in m["planted"])
+    check(f"evals: audit-01 plants every defect family the spec names ({classes})",
+          all(c in classes for c in ("economy:over-cap", "task:dangling-ref",
+                                     "artifact:missing", "gate:backlog", "tree:parent-cycle"))
+          and "parent cycle" in V.load_manifest("audit-01")["body"].lower())
+
+    # -- THE GATE-4 ARGUMENT, asserted rather than asserted-in-prose. Spec 10 alters no vault
+    #    format, no verdict/roll-up logic and no view, so the stamp does not move. Precedents:
+    #    09.4 and 13.3, both doc-only, both explicitly no-bump.
+    check(f"evals: the fixture contract does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+    # -- gate 3 of the evolve-crux gate walks examples/ and asks "did anything break". These
+    #    vaults are validate-RED BY CONSTRUCTION, so putting them there would make the one
+    #    gate whose job is 'nothing broke' unreadable.
+    ex = os.path.join(HERE, "..", "examples")
+    check("evals: the fixture tree is outside the example-vault gate",
+          not os.path.isdir(os.path.join(ex, "audit-01"))
+          and os.path.abspath(V.FIXTURES) != os.path.abspath(ex)
+          and "evals/fixtures" in read(os.path.join(ex, "README.md")))
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -6765,6 +6880,7 @@ def main():
     run_glossary_oracle()
     run_glossary_filter()
     run_glossary_write()
+    run_agent_evals()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

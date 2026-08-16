@@ -1,0 +1,9 @@
+title: Audit fixture
+slug: audit_fixture
+root_id: root
+engine_version: 3.1
+counter_q: 5
+counter_h: 2
+counter_s: 0
+counter_t: 2
+task_categories: data-acquisition, hpc-setup, implementation, visualization, manuscript, admin
