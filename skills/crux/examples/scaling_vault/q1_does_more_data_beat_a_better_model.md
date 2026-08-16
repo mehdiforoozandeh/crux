@@ -27,7 +27,7 @@ Architecture family, adaptation protocol and seed count fixed before any run. Ev
 Not on a level budget. Doubling the data beats the better model when each arm is run at its own cost, and that is the comparison the literature usually reports. Matched on training compute the advantage reverses, and on a harder task it is gone before matching. The honest reading is that we measured a budget difference and very nearly published it as a data result.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 1, refuted 1, inconclusive 0)
+**3 children** · ideas 3/3 done (supported 1, partial 1, refuted 1, inconclusive 0, invalid-run 0)
 
 - `h1` [[h1_twice_the_data_beats_a_better_model|Twice the data beats a better model]] — *done* — verdict **supported**, metric `+3.3 points`
 - `h2` [[h2_the_advantage_survives_at_equal_compute|The advantage survives at equal compute]] — *done* — verdict **partial**, metric `+1.8 at equal data; -4.6 at equal compute`
