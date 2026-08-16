@@ -6,6 +6,17 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Serve: the snapshot is cached on a vault stat key** (spec
+  [`12`](.spec/12-cockpit-craft.md)). The server used to regenerate the whole snapshot on
+  every 1 Hz poll purely to compute the ETag, then answer 304 — measured 29 ms of Python
+  and 181 files re-read per second (~2.4% of a core, forever). Now a stat walk
+  (dir-inclusive max mtime + entry count — dir mtimes catch deletions) keys a cache of
+  the serialized bytes + content-hash ETag; regeneration happens only when the vault
+  actually changed. Measured on a 286-file vault: 37.2 ms → 1.1 ms per poll (33×). The
+  client contract (ETag/304, `poll()`'s text-diff guard) is byte-identical.
+
 ### Added
 
 - **Cockpit benchmark harness** (`tools/bench/`, spec [`12`](.spec/12-cockpit-craft.md)).

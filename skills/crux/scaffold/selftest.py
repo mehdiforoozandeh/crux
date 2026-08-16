@@ -1171,6 +1171,66 @@ def run_serve():
         check("serve: stale If-None-Match re-serves 200 with a new ETag",
               r4.status == 200 and bool(fresh) and fresh != etag)
 
+        # -- snapshot cache (spec 12, PRD-P4): the server must not regenerate the whole
+        #    snapshot on every poll just to compute the ETag (measured: 29 ms of Python
+        #    and 181 files re-read per second, ~2.4% of a core, forever). Cache keyed on
+        #    a stat walk (dir-inclusive max mtime + entry count — dir mtimes catch
+        #    deletions); regeneration only when the vault actually changed. Counted by
+        #    wrapping engine.snapshot; the ETag stays a content hash (client contract
+        #    unchanged — poll()'s If-None-Match/text-diff guards still hold).
+        real_snapshot = S.engine.snapshot
+        snap_calls = []
+        def counting_snapshot(*a, **kw):
+            snap_calls.append(1)
+            return real_snapshot(*a, **kw)
+        S.engine.snapshot = counting_snapshot
+        try:
+            import time as _time
+            for _ in range(3):
+                with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                    rc.read()
+            check("serve: 3 polls on an unchanged vault regenerate at most once (cache hit)",
+                  len(snap_calls) <= 1)
+            # invalidation — a new node regenerates exactly once and serves fresh content
+            snap_calls.clear()
+            q3, _ = E.cmd_ask(root, "a third question")
+            t0 = _time.perf_counter()
+            with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                fresh_snap = json.loads(rc.read())
+            uncached_s = _time.perf_counter() - t0   # full wall incl. the regeneration
+            check("serve: a vault change invalidates the cache (regenerates once)",
+                  len(snap_calls) == 1)
+            check("serve: post-change content is fresh through the cache",
+                  any(n.get("id") == q3 for n in fresh_snap.get("nodes", {}).values())
+                  if isinstance(fresh_snap.get("nodes"), dict)
+                  else q3 in json.dumps(fresh_snap))
+            # deletion — max FILE mtime can stay put; the dir-mtime + entry-count half
+            # of the key must catch it
+            snap_calls.clear()
+            q3_file = next(f for f in os.listdir(root)
+                           if f.startswith(q3 + "_") and f.endswith(".md"))
+            os.remove(os.path.join(root, q3_file))
+            with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                after_del = rc.read().decode("utf-8")
+            check("serve: a deletion invalidates the cache", len(snap_calls) == 1)
+            check("serve: the deleted node is gone from the served snapshot",
+                  ('"%s"' % q3) not in after_del or q3_file not in after_del)
+            # timing (soft, generous): mean of 10 cached polls vs the regenerating one
+            # above — the hard numbers live in tools/bench, not in CI
+            t0 = _time.perf_counter()
+            for _ in range(10):
+                with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as rc:
+                    rc.read()
+            cached_mean = (_time.perf_counter() - t0) / 10
+            check("serve: cached poll is not slower than a regenerating one (soft timing)",
+                  cached_mean <= uncached_s * 3 + 0.05)  # generous: green on noisy CI
+        finally:
+            S.engine.snapshot = real_snapshot
+        # source shape: the cache exists, is locked, and the key walks dirs too
+        check("serve: snapshot cache is guarded by a lock", "Lock(" in src)
+        check("serve: cache key is a stat walk incl. directories (vault_stat_key)",
+              "vault_stat_key" in src and "os.walk" in src)
+
         # -- living tree (docs/prd/gui-living-tree.md): the served webui carries the
         #    view-mode toggle, the radial anchor layout, and the anchored physics sim.
         #    These asserts register the wiring; the feel (breathing, drag-settle,

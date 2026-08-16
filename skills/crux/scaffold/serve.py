@@ -11,7 +11,7 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, shutil, socketserver, webbrowser, http.server, urllib.parse, hashlib
+import os, sys, json, socket, shutil, socketserver, threading, webbrowser, http.server, urllib.parse, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
@@ -64,6 +64,37 @@ def safe_vault_path(root, rel):
         return None
     path = os.path.join(root, *parts)
     return path if os.path.isfile(path) else None
+
+
+def vault_stat_key(root):
+    """Cheap change detector for the snapshot cache (spec 12, PRD-P4, ruling P-D8):
+    (max mtime over files AND directories, entry count) from one os.walk of stats —
+    no file is opened or parsed. Directory mtimes are the load-bearing half: POSIX
+    bumps a directory's mtime on create/delete/rename inside it, so a deletion that
+    leaves every surviving file's mtime alone still changes the key; the entry count
+    is a belt-and-braces second signal. Hidden DIRECTORIES are skipped (.git,
+    .obsidian — Obsidian rewrites its workspace file constantly, which would
+    spuriously regenerate per poll); hidden files (.crux.yaml) are counted.
+
+    Documented blind spot: an in-place, same-size edit landing within the same
+    mtime tick as the previous scan can serve one stale poll; the next write heals
+    it, and the client's own text-diff guard in poll() means a false cache HIT can
+    never repaint a wrong tree — it only delays a right one by a poll."""
+    latest = 0.0
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        try:
+            latest = max(latest, os.stat(dirpath).st_mtime)
+        except OSError:
+            pass
+        count += len(dirnames) + len(filenames)
+        for fn in filenames:
+            try:
+                latest = max(latest, os.stat(os.path.join(dirpath, fn)).st_mtime)
+            except OSError:
+                pass
+    return (latest, count)
 
 
 # ----------------------------------------------------------------------------- context / opening
@@ -119,8 +150,9 @@ def find_free_port(host, start):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves the static webui, plus a live /snapshot.json regenerated per request
-    (a poll picks up on-disk changes) and /wiki/<slug>.json for lazy wiki page bodies.
+    """Serves the static webui, plus a live /snapshot.json (regenerated only when the
+    vault's stat key changes — see _snapshot; a poll still picks up on-disk changes)
+    and /wiki/<slug>.json for lazy wiki page bodies.
     Read-only: only GET, and no route ever writes."""
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WEBUI, **kw)
@@ -143,15 +175,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def _snapshot(self):
+        # Regenerating the whole snapshot per poll just to compute the ETag measured
+        # 29 ms of Python and 181 file reads per second — 2.4% of a core, forever
+        # (.spec/research/perf-cockpit-candi.md §4). Cache the serialized bytes + ETag
+        # keyed on a stat walk (vault_stat_key above); regenerate only when the vault
+        # actually changed. One lock around check-key → maybe-regenerate → read-cache:
+        # ThreadingHTTPServer serves concurrently and two threads must never rebuild
+        # at once — regeneration is rare, holding the lock through it is fine.
+        srv = self.server
         try:
-            data = json.dumps(engine.snapshot(self.server.root)).encode("utf-8")
+            with srv.snap_lock:
+                key = vault_stat_key(srv.root)
+                if key != srv.snap_key:
+                    data = json.dumps(engine.snapshot(srv.root)).encode("utf-8")
+                    srv.snap_key = key
+                    srv.snap_data = data
+                    # the ETag stays a CONTENT hash — identical across restarts and
+                    # immune to key false-positives; the client contract is unchanged
+                    srv.snap_etag = '"%s"' % hashlib.sha256(data).hexdigest()[:32]
+                data, etag = srv.snap_data, srv.snap_etag
         except Exception as e:
             self.send_error(500, f"snapshot failed: {e}")
             return
         # The UI polls ~1/s; an unchanged vault answers 304 with no body. The validator
         # travels in the ETag header and the client echoes it back itself (If-None-Match),
         # so this works alongside Cache-Control: no-store — no browser cache involved.
-        etag = '"%s"' % hashlib.sha256(data).hexdigest()[:32]
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
@@ -231,6 +279,11 @@ def make_server(root, port=None, host="127.0.0.1"):
     except OSError as e:
         raise engine.CruxError(f"cannot bind {host}:{port} — {e}")
     httpd.root = os.path.abspath(root)
+    # snapshot cache (see Handler._snapshot): key/bytes/etag + the lock guarding them
+    httpd.snap_lock = threading.Lock()
+    httpd.snap_key = None
+    httpd.snap_data = None
+    httpd.snap_etag = None
     return httpd
 
 
