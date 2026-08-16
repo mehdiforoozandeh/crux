@@ -1653,6 +1653,38 @@ def run_webui():
           '(dimmed ? " dim" : "")' in app_js and '(matches ? " hit" : "")' in app_js
           and "${sel}" in app_js)
 
+    # -- spec 12 perf (PRD-P2): the hover spotlight + the backdrop-filter ruling. The
+    #    old handler wrote 199 classes per pointerover, fired ~12× per node crossed (no
+    #    same-node guard), and started a 180 ms opacity animation on ~98 groups — a
+    #    full-tree repaint held twice per node, re-sampled by up to nine blur overlays.
+    #    PI rulings, final: blur dropped on the overlays (P-D1: one near-opaque token),
+    #    fade dropped (P-D2 — a single spot class still animates every node if the
+    #    per-node transition survives), faithful semantics (P-D3: hovered node AND its
+    #    direct neighbors stay lit, exactly as before). Frame rates are tools/bench
+    #    territory; these pin the structure.
+    check("webui: no backdrop-filter declaration survives anywhere (PI ruling, final)",
+          "backdrop-filter:" not in style)   # the colon: prose may explain the ban, no rule may use it
+    check("webui: overlays share the one near-opaque token (P-D1)",
+          re.search(r"--overlay:\s*color-mix\(in srgb, var\(--panel\) 9[0-9]%", style)
+          and style.count("var(--overlay)") >= 8)
+    hov_src = app_js.split('\nsvg.addEventListener("pointerover"')[1] \
+                    .split('svg.addEventListener("pointerout"')[0]
+    check("webui: same-node guard — the spotlight fires once per node crossing",
+          "_hovId" in hov_src and bool(re.search(r"if \(id === _hovId\) return", hov_src)))
+    check("webui: the 199-write sweep is gone — no full node scan, no cold class",
+          'querySelectorAll(".node")' not in hov_src and '"cold"' not in hov_src
+          and "classList.toggle" not in hov_src)
+    check("webui: edge heat narrows to the hovered node's own edges",
+          'data-p="' in hov_src and 'data-c="' in hov_src)
+    check("webui: one spot class on the canvas + hov/nbr marks (P-D3 faithful)",
+          '"spot"' in hov_src and '"nbr"' in hov_src and '"hov"' in hov_src)
+    check("webui: tree nodes carry no opacity transition (P-D2 — the held repaint)",
+          not re.search(r"\.node\s*\{[^}]*transition:[^}]*opacity", style))
+    check("webui: the spot dim rule keeps the hovered node and its neighbors lit",
+          bool(re.search(r"#tree\.spot \.node:not\(\.hov\):not\(\.nbr\)\s*\{[^}]*opacity", style)))
+    check("webui: a rebuild resets the spotlight (no stale canvas-level dim)",
+          bool(re.search(r"function renderTree\(\)[\s\S]{0,1200}clearSpot\(\)", app_js)))
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never

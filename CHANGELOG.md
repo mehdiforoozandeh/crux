@@ -8,6 +8,18 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: the hover spotlight no longer repaints the whole tree, and the blur
+  overlays are gone** (spec [`12`](.spec/12-cockpit-craft.md); paint-gate ruling, final).
+  The spotlight used to write ~199 classes per `pointerover`, fire ~12× per node crossed
+  (no same-node guard), and start a 180 ms opacity animation on every dimmed group under
+  up to nine `backdrop-filter` blurs — measured 54.8 fps with a 216.5 ms worst frame on a
+  hover sweep. Now: a same-node guard, one `spot` class on the canvas, `.hov`/`.nbr`
+  marks found through the node's own edges, no per-node fade (dim snaps), and the
+  overlays carry one shared near-opaque background instead of blur. What lights up is
+  unchanged. Measured (273 drawn nodes): class writes per crossing 284 → 4, redundant
+  refire cost 0.73 → 0.02 ms, live animations after one hover 279 → 8; the gate's
+  ablation showed each half alone restores ~60 fps / ~17 ms worst.
+
 - **Cockpit: cosmetic changes never rebuild the tree** (spec
   [`12`](.spec/12-cockpit-craft.md)). Selecting a node, showing the review queue, search
   dimming and the legend filter used to tear down and re-parse the whole SVG

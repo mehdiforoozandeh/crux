@@ -462,6 +462,9 @@ function renderTree() {
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
   svg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
+  // the rebuild replaced every .hov/.nbr element — clear the canvas-level spot dim too,
+  // or a rebuild mid-hover would leave the whole tree dimmed with nothing highlighted
+  clearSpot();
   // keep the ARIA cursor honest: the canvas names its selected treeitem, or nothing
   if (state.selected && pos[state.selected]) svg.setAttribute("aria-activedescendant", "node-" + state.selected);
   else svg.removeAttribute("aria-activedescendant");
@@ -1191,6 +1194,23 @@ svg.addEventListener("pointerdown", (e) => {
 // Hover spotlight — parity with the wiki graph's responsiveness: the touched node
 // lights up, its edges heat, everything unrelated cools. A CSS-only brightness change
 // was imperceptible at tree zoom levels; the spotlight is what reads as "responsive".
+// Reworked (spec 12, PRD-P2): the old handler wrote 199 classes per pointerover and,
+// with no same-node guard, fired ~12× per node crossed (once per child element),
+// starting a 180 ms opacity animation on ~98 groups — a full-tree repaint held twice
+// per node, re-sampled by every blur overlay. Now: a same-node guard (one firing per
+// crossing), ONE `spot` class on the canvas for the dim, and per-node marks only for
+// the hovered node (.hov) and its direct neighbors (.nbr) found through its own edges
+// — 2 + degree class writes instead of 199. Dim/undim snaps (ruling P-D2): any
+// surviving per-node transition restarts ~N concurrent animations even under a single
+// canvas class, which is exactly the repaint the probe convicted. What lights up is
+// identical to before (ruling P-D3): hovered node + neighbors bright, their edges hot.
+let _hovId = null;
+function clearSpot() {
+  _hovId = null;
+  svg.classList.remove("spot");
+  svg.querySelectorAll(".hov, .nbr, .hot").forEach((el) =>
+    el.classList.remove("hov", "nbr", "hot"));
+}
 svg.addEventListener("pointerover", (e) => {
   const node = e.target.closest(".node");
   // _kbNav: a keyboard move glides the camera, which slides nodes UNDER a parked cursor —
@@ -1198,23 +1218,26 @@ svg.addEventListener("pointerover", (e) => {
   // keyboard costs the mouse nothing, and vice versa). A real pointer move clears the flag.
   if (!node || pan || drag || _kbNav) return;
   const id = node.getAttribute("data-id");
-  const nb = new Set([id]);
-  svg.querySelectorAll(".edge").forEach((el) => {
-    const p = el.getAttribute("data-p"), c = el.getAttribute("data-c");
-    if (p === id) nb.add(c);
-    if (c === id) nb.add(p);
-    el.classList.toggle("hot", p === id || c === id);
-  });
+  if (id === _hovId) return;   // same node, next child element — already lit
+  clearSpot();
+  _hovId = id;
   node.classList.add("hov");
-  svg.querySelectorAll(".node").forEach((el) =>
-    el.classList.toggle("cold", !nb.has(el.getAttribute("data-id"))));
+  svg.querySelectorAll(`.edge[data-p="${CSS.escape(id)}"], .edge[data-c="${CSS.escape(id)}"]`)
+    .forEach((el) => {
+      el.classList.add("hot");
+      const other = el.getAttribute("data-p") === id
+        ? el.getAttribute("data-c") : el.getAttribute("data-p");
+      const nb = TSIM.els[other] ||
+        svg.querySelector(`.node[data-id="${CSS.escape(other)}"]`);
+      if (nb) nb.classList.add("nbr");
+    });
+  svg.classList.add("spot");
 });
 svg.addEventListener("pointerout", (e) => {
   if (!e.target.closest(".node")) return;
   if (e.relatedTarget && e.relatedTarget.closest &&
       e.relatedTarget.closest(".node") === e.target.closest(".node")) return;
-  svg.querySelectorAll(".hot, .cold, .hov").forEach((el) =>
-    el.classList.remove("hot", "cold", "hov"));
+  clearSpot();
 });
 
 svg.addEventListener("click", (e) => {
