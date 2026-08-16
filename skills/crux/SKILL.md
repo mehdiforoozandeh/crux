@@ -333,6 +333,37 @@ and `crux answer` will refuse until it's signed.
   beside the question in `crux review`. It blocks nothing. Say what changed and why in the
   node; `git log -p <node>.md` is the diff.
 
+### A mixed result is a symptom, not an outcome
+
+Some checks passed, some did not — that is not a finding, it is a report that something
+upstream went wrong. Verifiables under one hypothesis are *supposed* to correlate: they are
+consequences of the same claim, so if it is true most pass together. Three diseases produce
+the same symptom, and it never announces which one it has:
+
+| cause | what actually went wrong | who fixes it |
+|---|---|---|
+| **compound claim** | the "hypothesis" was two or three claims; each check answered a different one | `crux-critic` — split the node |
+| **non-entailed check** | the check does not follow from the claim; it tests something adjacent | `crux-verifiables` — rewrite the check |
+| **the run could not discriminate** | underpowered, confounded, wrong instrument, no control | `crux-design` — fix the design |
+
+The question that makes this operational, and it belongs **before** the compute is spent, not
+after:
+
+> **Is there any plausible outcome of this run from which we would conclude nothing?**
+> If yes, the design is wrong — fix it before spending the compute.
+
+Answer it by enumerating the outcomes: take the pass/fail vector under the declared rule, plus
+the case where a control fails, and write the sentence you would be able to say for each. If
+one of those sentences is *"we learned nothing"*, that is the design defect, and it is
+cheapest to fix now.
+
+The engine owns the presence of a declaration, never its quality. Before a run, a hypothesis
+should carry a control, a combination rule, and — in frontmatter, beside `rule:` —
+`measurement:` (what is measured, and with what instrument) and `replicates:` (the n the claim
+will rest on). `crux validate` reports the gaps as information; whether the control is the
+*right* control is judgment. Note that `measurement:` is **not** `metric:` — the second is the
+headline result, written at `close`.
+
 ### One experiment, several hypotheses — when that is allowed
 
 > **One experiment settles several hypotheses separately only when** each hypothesis is

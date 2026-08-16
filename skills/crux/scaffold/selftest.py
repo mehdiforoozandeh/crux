@@ -5333,7 +5333,7 @@ def run_agent_roster():
     # to add to the directory, so the list grows and `.spec/09`'s roster grows with it.
     expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
-                "crux-situate"]
+                "crux-situate", "crux-design"]
 
     defs = {}
     for name in expected:
@@ -5876,6 +5876,78 @@ def run_methodology_migration():
     check("dmig: drift re-stamps to the current ENGINE_VERSION",
           E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
     shutil.rmtree(dst, ignore_errors=True)
+
+
+def run_design_agent():
+    """Spec 13 PRD 13.3 — `crux-design`, and the three-disease taxonomy into the skill.
+
+    Spec 15 supplies the schema that makes a partial answer DETECTABLE after the run. Nothing
+    applied it BEFORE. This agent does, around one question — *is there any plausible outcome
+    of this run from which we would conclude nothing?*
+
+    It checks all three causes, because a partial answer does not announce which one it has,
+    and it FIXES only the third: (a) a compound claim is `crux-critic`'s, (b) a non-entailed
+    check is `crux-verifiables`'. Absorbing either would violate 09's one-job rule and rebuild
+    the bias problem those agents exist to solve.
+
+    Doc-only: no engine change, no version bump."""
+    print("\n# design — the crux-design agent and the taxonomy (spec 13, PRD 13.3)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-design", "AGENT.md")))
+
+    check("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
+          "crux brief" in str(fm.get("cold_input"))
+          and "--mode=situate" not in str(fm.get("cold_input")))
+    check("agents: crux-design's excludes name the advocacy channel",
+          "Problem Statement" in str(fm.get("excludes")))
+    check("agents: crux-design cannot write — it proposes, the PI applies",
+          not any(w in str(fm.get("toolbelt")) for w in
+                  ("crux close", "crux answer", "crux approve", "crux pursue",
+                   "crux task accept", "crux hypothesize")))
+    check("agents: crux-design's belt reaches the taskhub for what was already tried",
+          "crux task list" in str(fm.get("toolbelt")))
+    check("agents: crux-design states the central question verbatim",
+          "Is there any plausible outcome of this run from which we would conclude nothing?"
+          in body)
+    check("agents: crux-design names all three causes and both handoff targets",
+          all(x in body for x in ("compound claim", "crux-critic", "crux-verifiables"))
+          and "does not follow from the claim" in body)
+    check("agents: crux-design hands off by NAMING, never by invoking",
+          "never invoke" in body.lower() or "does not invoke" in body.lower())
+    check("agents: crux-design's output is a proposal, never a vault write",
+          "proposal" in body.lower() and "## Output" in body)
+    check("agents: crux-design fills the slots spec 13 gave the engine",
+          E.MEASUREMENT_FIELD in body and E.REPLICATES_FIELD in body)
+
+    # ---- the taxonomy, into the skill (the rulebook sentence shipped with spec 15's 15.5)
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    check("skill: the three-disease taxonomy is in SKILL.md, with its owners",
+          all(x in skill for x in ("compound claim", "crux-critic", "crux-verifiables",
+                                   "crux-design"))
+          and "could not discriminate" in skill)
+    check("skill: the taxonomy states the question that makes it operational",
+          "conclude nothing" in skill)
+    check("skill: the separability rulebook sentence spec 15 froze is still there",
+          "anything less means you ran one experiment with many labels, not many"
+          in re.sub(r"\s+", " ", skill.replace("**", "")).lower())
+    check("skill: SKILL.md tells the PI where a declared design lives",
+          "measurement:" in skill and "replicates:" in skill)
+
+    # ---- the spec, flipped, with the roster amendment recorded where a reader will find it
+    spec13 = read(os.path.join(repo, ".spec", "13-situate-and-design.md"))
+    check("agents: spec 13 is flipped to done", "**Status:** ☑" in spec13)
+    check("agents: spec 13's work items are ticked", spec13.count("- ☑ ") >= 7)
+    check("agents: spec 13 records the roster amendment it owes spec 09",
+          "09-specialized-agents.md" in spec13 and "roster" in spec13.lower()
+          and "crux-design" in spec13)
+    check("agents: spec 13 records what it PARKED rather than quietly dropping it",
+          "PARKED" in spec13 and "separability" in spec13.lower())
+    spec09 = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
+    check("agents: spec 09's roster carries both of spec 13's agents",
+          "crux-situate" in spec09 and "crux-design" in spec09)
+    readme = read(os.path.join(repo, ".spec", "README.md"))
+    check("agents: the backlog index shows 13 done",
+          re.search(r"\|\s*13\s*\|[^|]*\|[^|]*\|\s*☑\s*\|", readme) is not None)
 
 
 def _probe_vault():
@@ -6686,6 +6758,7 @@ def main():
     run_situate_agent()
     run_methodology()
     run_methodology_migration()
+    run_design_agent()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

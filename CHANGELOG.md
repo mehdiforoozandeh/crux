@@ -8,6 +8,29 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux-design`, and the three-disease taxonomy in the skill** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.3). **Spec 13 is done.**
+
+  Spec 15 supplies the schema that makes a partial answer *detectable* after the run; nothing
+  applied it *before*. `crux-design` does, around one question — **is there any plausible
+  outcome of this run from which we would conclude nothing?** — answered by enumerating the
+  outcomes and writing the sentence each would support.
+
+  It checks all three causes of a partial answer, because a mixed result never announces which
+  one it has, and it **fixes only the third**: a compound claim goes to `crux-critic`, a check
+  that does not follow from the claim goes to `crux-verifiables`, and the run's ability to
+  discriminate is its own. Handoffs are **named, never invoked** — `crux-critic`'s cold input
+  is the drafted node and nothing else, so a caller passing it context would hand it the very
+  thing its isolation excludes. Its cold input is the **isolated** brief, and its belt reaches
+  `crux task list --ref <hid>` for what was already tried. Output is a proposal; there is no
+  write verb in its toolbelt.
+
+  `SKILL.md` gains the taxonomy — the three causes, their owners, and the question that makes
+  it operational — beside the separability rules spec 15 already froze, plus a regression lock
+  keeping that sentence byte-identical to the spec's copy. `.spec/09`'s roster gains the
+  `crux-design` row, so the rosters-agree assert stays green by being **amended, not relaxed**.
+  No engine change, no version bump.
+
 - **The methodology slots, and a visible `## Planned Intervention`** (spec
   [`13`](.spec/13-situate-and-design.md), PRD 13.2). Spec 13 lists six design facts the engine
   should own. Three shipped with spec 15 — a control is declared, at least one check is
