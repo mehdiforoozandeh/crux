@@ -168,8 +168,9 @@ def render_taskhub(v, root):
     bn = E.task_basenames(v)
 
     def row(t, extra=""):
+        cat = E.task_category(t)
         refs = (" — refs " + ", ".join(E.task_ref_link(r, bn) for r in t["refs"])) if t["refs"] else ""
-        return f"- `{t['id']}` [{t['category'] or '—'}] {t['title']}{refs}{extra}"
+        return f"- `{t['id']}` [{cat or '—'}] {t['title']}{refs}{extra}"
 
     front = [t for t in tasks if state[t["id"]] == "open"]
     out += ["## Frontier — ready to work now", ""]
@@ -188,11 +189,31 @@ def render_taskhub(v, root):
         out += ["## By category", ""]
         by_cat = {}
         for t in live:
-            by_cat.setdefault(t["category"] or "—", []).append(t)
+            by_cat.setdefault(E.task_category(t) or "—", []).append(t)
         for cat in sorted(by_cat):
             out += [f"### {cat}", ""]
             out += [row(t, f" — *{state[t['id']]}*") for t in by_cat[cat]]
             out += [""]
+
+    # The experiment timeline is a VIEW, not a tab and not a second store: the same records,
+    # filtered to those that concluded something about a hypothesis, in completion order.
+    # That is the one question the tree structurally cannot answer — what did we actually run,
+    # when, and what did it conclude — and it costs a filter.
+    #
+    # It lives here rather than in EXPERIMENTS.md, which is a per-HYPOTHESIS registry with the
+    # same word in its name and a different meaning. Renaming that would break every
+    # [[EXPERIMENTS]] wikilink in every existing vault for a cosmetic gain.
+    exps = [t for t in tasks if E.task_is_experiment(t)]
+    if exps:
+        out += ["## Experiment timeline", "",
+                "_Tasks whose output is evidence. The conclusion is what the run showed and "
+                "was accepted; a hypothesis's own verdict is derived by the engine from its "
+                "ticks and lives on the node._", ""]
+        for t in sorted(exps, key=lambda x: (x["fm"].get("updated") or "", E.natkey(x["id"]))):
+            concl = ", ".join(f"{E.task_ref_link(hid, bn)} → **{c}**"
+                              for hid, c in t["hypothesis_refs"])
+            out.append(f"- `{t['id']}` {t['title']} — *{state[t['id']]}* — {concl}")
+        out += [""]
 
     closed = [t for t in tasks if state[t["id"]] in ("done", "dropped")]
     if closed:

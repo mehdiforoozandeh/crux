@@ -1091,6 +1091,50 @@ function rdSection(n) {
     `<span class="rsum">the design detail displaced by the ${state.snap.limits.prose_cap}-word cap</span></button>`);
 }
 
+// The taskhub's computed backlinks. `tasks` is what is being DONE for this node;
+// `experiments` is what was actually RUN against this hypothesis and what it concluded —
+// the one question the tree structurally cannot answer. Both are derived at snapshot time
+// and written into no node file, which is why they can only appear here.
+function tasksSection(n) {
+  const ids = n.tasks || [];
+  if (!ids.length) return "";
+  const items = state.snap.tasks && state.snap.tasks.active ? state.snap.tasks.items : [];
+  const byId = {};
+  items.forEach((t) => (byId[t.id] = t));
+  const rows = ids.map((id) => {
+    const t = byId[id];
+    if (!t) return `<li><span class="rid">${esc(id)}</span></li>`;
+    return `<li><span class="rid">${esc(t.id)}</span>` +
+      `<span class="tk-cat" style="--tk: var(--t-${esc(t.category)}, var(--t-default))">` +
+      `${esc(t.category)}</span> ${esc(t.title)} ` +
+      `<span class="tk-state">${esc(t.state)}</span></li>`;
+  }).join("");
+  return section("Work", `<ul class="linklist">${rows}</ul>`);
+}
+
+// A conclusion is WRITTEN about a run and PI-accepted; a verdict is DERIVED by the engine
+// from the ticks. Same four tokens, different mechanisms — so this deliberately reads
+// "concluded", never "verdict", and says when the run was accepted.
+function experimentsSection(n) {
+  const exps = n.experiments || [];
+  if (!exps.length) return "";
+  const items = state.snap.tasks && state.snap.tasks.active ? state.snap.tasks.items : [];
+  const byId = {};
+  items.forEach((t) => (byId[t.id] = t));
+  const rows = exps.map((e) => {
+    const t = byId[e.task] || {};
+    const acc = t.accepted
+      ? `<span class="tk-state">accepted</span>`
+      : `<span class="tk-pending">awaiting the PI</span>`;
+    return `<li><span class="rid">${esc(e.task)}</span>` +
+      `${esc(t.title || "")} — concluded ` +
+      `<span class="tk-concl tk-c-${esc(e.conclusion)}">${esc(e.conclusion)}</span> ${acc}</li>`;
+  }).join("");
+  return section("Experiments", `<ul class="linklist">${rows}</ul>` +
+    `<div class="body muted">What a run concluded, accepted by the PI. The verdict above is ` +
+    `derived by the engine from the ticks — the two are different facts.</div>`);
+}
+
 function projectDetail(n) {
   return head("project", n.title) + section("Goal", bodyOr(state.snap.project.goal, "—"));
 }
@@ -1119,6 +1163,7 @@ function questionDetail(n) {
     rdSection(n) +
     syn +
     section("Evidence ledger", ledger) +
+    tasksSection(n) +
     (kids ? section("Children", `<div>${kids}</div>`) : "");
 }
 
@@ -1194,7 +1239,8 @@ function ideaDetail(n) {
     section("Verifiables", vs) +
     section("Run links", runs) +
     artifactsSection(n) +
-    section("Findings", bodyOr(n.findings, "not closed yet"));
+    section("Findings", bodyOr(n.findings, "not closed yet")) +
+    experimentsSection(n) + tasksSection(n);
 }
 
 function synthesisDetail(n) {

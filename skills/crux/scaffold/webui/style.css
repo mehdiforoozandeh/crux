@@ -19,6 +19,10 @@
   --v-invalid-run: #b8873a;   /* amber: the apparatus, not the claim — deliberately not red */
   --drift: #d98c3f;           /* the commitment was edited after it was locked */
   --root: #8a8f98; --synth: #57c8c0;
+  --t-default: #6a7280;
+  --t-data-acquisition: #4f9fe0; --t-hpc-setup: #57c8c0; --t-implementation: #7b93d6;
+  --t-visualization: #c08ad9;    --t-manuscript: #d9a13b; --t-admin: #8b949e;
+  --t-experiment: #a882ff;
   /* chrome type scale (spec 12): every UI-chrome font-size goes through these three
      steps — hierarchy beyond that is carried by ink tier and weight, not size. Canvas
      text (SVG node labels) is NOT chrome: its px sizes feed the measureText geometry
@@ -44,6 +48,10 @@
   --v-invalid-run: #9a6b1f;
   --drift: #b3641a;
   --root: #9aa0a8; --synth: #2fa39a;
+  --t-default: #7a8290;
+  --t-data-acquisition: #2f87cf; --t-hpc-setup: #1f8f80; --t-implementation: #5570c4;
+  --t-visualization: #9a5fbe;    --t-manuscript: #c08a1e; --t-admin: #6e7a86;
+  --t-experiment: #7b5bd6;
   color-scheme: light;
 }
 
@@ -647,3 +655,16 @@ a.ext { color: var(--accent); }
    the tree. */
 #rd-pane[hidden] { display: none; }
 .wr-item.wr-dim { opacity: .55; }
+
+/* taskhub row chrome (spec 08) — used by the node pane's Work / Experiments sections. The
+   Tasks TAB's own layout ships with the tab. */
+.tk-cat { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: var(--fs-ui-xs);
+          color: var(--ink); background: color-mix(in srgb, var(--tk, var(--t-default)) 26%, var(--panel));
+          border: 1px solid var(--tk, var(--t-default)); }
+.tk-state { color: var(--ink-mute); font-size: var(--fs-ui-sm); }
+.tk-concl { font-size: var(--fs-ui-sm); }
+.tk-c-supported   { color: var(--v-supported); }
+.tk-c-refuted     { color: var(--v-refuted); }
+.tk-c-inconclusive{ color: var(--v-inconclusive); }
+.tk-c-invalid-run { color: var(--v-invalid-run); }
+.tk-pending { color: var(--q-review); font-size: var(--fs-ui-sm); }

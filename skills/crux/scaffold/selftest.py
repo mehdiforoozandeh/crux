@@ -4220,6 +4220,167 @@ def run_cockpit_evidence():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_experiments():
+    print("\n# taskhub — experiments are tasks (spec 08, PRD 08.2)")
+    root, q, h1 = _task_vault("crux_exp_")
+    h2, _, _ = E.cmd_hypothesize(root, "the pilot separates the arms", parent=q,
+                                 verifiables=["separation at n=3"])
+
+    # -- the whole difference between a task and an experiment is ONE field: what the output
+    #    is. A task that says what it concluded about a hypothesis IS an experiment, and
+    #    nothing is stored to say so.
+    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                           blocked_by=None)
+    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported"), (h2, "refuted")])
+    by = E.task_by_id(root)
+    check("exp: hypothesis_refs computes the experiment category",
+          E.task_category(by[e1]) == E.TASK_RESERVED_CATEGORY
+          and E.task_category(by[t1]) == "data-acquisition")
+    check("exp: is_experiment is computed, never stored",
+          E.task_is_experiment(by[e1]) and not E.task_is_experiment(by[t1])
+          and "is_experiment" not in read(by[e1]["path"])
+          and f"category: {E.TASK_RESERVED_CATEGORY}" not in read(by[e1]["path"]))
+    check("exp: category experiment stays hand-refused after the role exists",
+          _refused(lambda: E.cmd_task_add(root, "x", category="experiment", blocked_by=None,
+                                          hypothesis_refs=[(h1, "supported")])))
+
+    # -- the conclusion vocabulary IS spec 15's, minus the retired `partial`. Derived from
+    #    VERDICTS so it can never drift from the engine's own list.
+    check("exp: the conclusion vocabulary is 15's VERDICTS minus partial",
+          tuple(E.CONCLUSIONS) == tuple(x for x in E.VERDICTS if x != "partial")
+          and "invalid-run" in E.CONCLUSIONS and "partial" not in E.CONCLUSIONS)
+    expect_error("exp: partial is refused as a conclusion",
+                 lambda: E.cmd_task_add(root, "y", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(h1, "partial")]))
+    expect_error("exp: an unknown conclusion is refused",
+                 lambda: E.cmd_task_add(root, "y", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(h1, "disputes")]))
+    e2, _ = E.cmd_task_add(root, "Read the control", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "invalid-run")])
+    check("exp: invalid-run is accepted and every token is a valid CSS class suffix",
+          E.task_hypothesis_refs(E.task_by_id(root)[e2]) == [(h1, "invalid-run")]
+          and all(not re.search(r"\s", c) for c in E.CONCLUSIONS))
+
+    # -- one experiment, two hypotheses, OPPOSITE conclusions. This is the fact the tree
+    #    structurally cannot hold, and the only structured place it exists.
+    check("exp: one experiment carries opposite conclusions for two hypotheses",
+          E.task_hypothesis_refs(E.task_by_id(root)[e1]) == [(h1, "supported"), (h2, "refuted")])
+
+    # -- THE LEASH. Work never creates direction. Three negatives, proven not asserted-to.
+    v0 = E.Vault(root)
+    ledger0 = E.ledger_counts(v0, q)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
+    nodes0 = {n: read(node_path(root, n)) for n in (q, h1, h2)}
+    E.cmd_task_add(root, "Run the full sweep", category="implementation", blocked_by=None,
+                   hypothesis_refs=[(h1, "refuted")])
+    E.refresh(root)
+    v1 = E.Vault(root)
+    check("exp: adding an experiment modifies no node file",
+          all(read(node_path(root, n)) == b for n, b in nodes0.items()))
+    check("exp: a conclusion never enters the ledger roll-up",
+          E.ledger_counts(v1, q) == ledger0)
+    check("exp: a conclusion never writes a node verdict",
+          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
+
+    # -- refs must resolve to an IDEA. A task bearing on a question is refing the wrong thing;
+    #    that is what plain `refs` is for.
+    expect_error("exp: hypothesis_refs must resolve to an idea node",
+                 lambda: E.cmd_task_add(root, "z", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(q, "supported")]))
+    # (the value is edited rather than the whole line: `fill()` writes it bare and
+    #  `yaml_dump` would quote it, so both spellings are legal on disk)
+    ep = E.task_by_id(root)[e2]["path"]
+    edit(ep, f"{h1}:invalid-run", "h99:invalid-run")
+    check("exp: a dangling hypothesis ref is a validate problem",
+          any("h99" in m for _, m in E.cmd_validate(root)))
+    edit(ep, "h99:invalid-run", f"{h1}:invalid-run")
+
+    # -- the computed backlink: node -> experiments, never written into the node
+    rec = E.node_json(root, h1)
+    expected = [t["id"] for t in E.scan_tasks(root)
+                if h1 in [x for x, _ in t["hypothesis_refs"]]]
+    check("exp: a hypothesis lists its experiments as a computed backlink",
+          [x["task"] for x in rec["experiments"]] == expected and len(expected) >= 3
+          and rec["experiments"][0]["conclusion"] == "supported"
+          and "experiments" not in read(node_path(root, h1)))
+    check("exp: a node lists the ordinary tasks that serve it",
+          E.node_json(root, q)["tasks"] == [t["id"] for t in E.cmd_task_list(root, ref=q)])
+
+    # -- X3 as ruled: an experiment may bear on a PRE-15 hypothesis, and the schema each
+    #    refed node carries is recorded in every view. Nothing is retro-stamped: the record
+    #    lives on the task's side, and 15.0's guarantee is untouched.
+    hp = node_path(root, h2)
+    write(hp, read(hp).replace(f"schema: {E.SCHEMA_GENERATION}\n", ""))
+    check("exp: the refed hypothesis is pre-15 for this check",
+          E.node_schema(E.Vault(root).get(h2)) == 0)
+    e3, _ = E.cmd_task_add(root, "Re-run the old arm", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "invalid-run")])
+    check("exp: a pre-15 hypothesis is refable with the full vocabulary",
+          not any(e3 in i for i, _ in E.cmd_validate(root)))
+    check("exp: every view records which schema a refed hypothesis carries",
+          E.task_json(root, e3)["hypothesis_refs"][0]["schema"] == 0
+          and E.task_json(root, e1)["hypothesis_refs"][0]["schema"] == E.SCHEMA_GENERATION)
+    check("exp: refing a pre-15 hypothesis does not stamp it",
+          E.node_schema(E.Vault(root).get(h2)) == 0 and "schema:" not in read(hp))
+
+    # -- one dependency graph, one frontier: the two reasons the layers were merged
+    check("exp: the frontier spans chores and experiments in one query",
+          {t1, e1} <= {t["id"] for t in E.task_frontier(root)})
+    p1, _ = E.cmd_task_add(root, "Pilot first", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "inconclusive")])
+    f1, _ = E.cmd_task_add(root, "Full run second", category="implementation",
+                           blocked_by=[p1], hypothesis_refs=[(h1, "supported")])
+    check("exp: a pilot blocks a full run in the one dependency graph",
+          E.task_state(E.task_by_id(root)[f1], E.task_by_id(root)) == "blocked")
+
+    # -- the timeline is a VIEW: the same records, filtered, in TASKHUB.md. `EXPERIMENTS.md`
+    #    is a per-HYPOTHESIS registry and is a different artifact — it must not move.
+    exp_before = read(os.path.join(root, "EXPERIMENTS.md"))
+    E.refresh(root)
+    hub = read(os.path.join(root, E.TASK_INDEX))
+    tl = hub.find("## Experiment timeline")
+    check("hub: the timeline filters to hypothesis_refs and is byte-stable",
+          tl > 0 and all(x in hub[tl:] for x in (e1, e2, e3))
+          and t1 not in hub[tl:] and E.refresh(root) is False)
+    check("exp: EXPERIMENTS.md is untouched by the taskhub",
+          read(os.path.join(root, "EXPERIMENTS.md")) == exp_before
+          and "One row per hypothesis" in exp_before)
+    check("exp: a task carries no schema stamp",
+          not any("schema" in read(t["path"]) for t in E.scan_tasks(root)))
+
+    # -- the CLI surface, following 15's `--rule` idiom: one repeatable flag, engine-validated
+    import json as _json
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "add",
+                        "Run the replicate", "-c", "implementation", "--blocked-by", "None",
+                        "--concluded", f"{h1}:supported", "--json"],
+                       capture_output=True, text=True, encoding="utf-8", cwd=root)
+    out = _json.loads(r.stdout)
+    check("exp: the CLI --concluded flag makes a task an experiment",
+          r.returncode == 0 and out["is_experiment"]
+          and out["category"] == E.TASK_RESERVED_CATEGORY
+          and out["hypothesis_refs"][0] == {"id": h1, "conclusion": "supported",
+                                            "schema": E.SCHEMA_GENERATION})
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "add",
+                        "bad", "-c", "implementation", "--blocked-by", "None",
+                        "--concluded", f"{h1}:partial"],
+                       capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("exp: the CLI refuses a retired conclusion with a message naming spec 15",
+          r.returncode == 1 and "retired" in r.stderr and "spec 15" in r.stderr)
+
+    fx = tempfile.mkdtemp(prefix="crux_exp_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: a pre-08 vault is unchanged at 2.2", _dir_bytes(dst) == b)
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -4279,6 +4440,7 @@ def main():
     run_rulebook()
     run_taskhub()
     run_task_graph()
+    run_experiments()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

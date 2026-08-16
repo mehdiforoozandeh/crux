@@ -8,6 +8,22 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Experiments are tasks** (spec [`08`](.spec/08-taskhub.md), PRD 08.2). A task that declares
+  what it concluded about a hypothesis (`hypothesis_refs: "h44:supported, h45:refuted"`) **is**
+  an experiment; the `experiment` category is computed from that and never stored, so there is
+  no way to have an experiment that forgot to be marked one. The conclusion vocabulary is spec
+  15's, derived from `VERDICTS` so the two cannot be edited apart: `supported` / `refuted` /
+  `inconclusive` / `invalid-run`, with the retired `partial` refused by name. One experiment
+  can conclude opposite things about two hypotheses — the fact the tree structurally cannot
+  hold. Node → tasks and hypothesis → experiments are **computed** backlinks, so adding an
+  experiment still edits no node file; the experiment timeline is a filtered section of
+  `TASKHUB.md`, leaving the per-hypothesis `EXPERIMENTS.md` registry untouched. An experiment
+  may bear on a **pre-15** hypothesis, and every view records which schema each refed
+  hypothesis carries — the record sits on the task's side, so nothing is retro-stamped.
+  `crux task add --concluded h44:supported`. `ENGINE_VERSION` 2.1 → 2.2.
+
+### Added
+
 - **The dependency graph, the frontier query, and `TASKHUB.md`** (spec
   [`08`](.spec/08-taskhub.md), PRD 08.1). `blocked` is computed from the graph and never
   stored — a state you can compute cannot drift — and external blockers become tasks rather

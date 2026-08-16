@@ -172,6 +172,13 @@ def main(argv=None):
                         "a visible omission rather than silence")
     s.add_argument("--parent", default=None, help="decomposition only: the task this is part of")
     s.add_argument("--why", default=None, help="one line: what this unblocks")
+    # An experiment is a task whose output is evidence. Declaring what it concluded is what
+    # MAKES it one — the category is computed from this, never typed.
+    s.add_argument("--concluded", dest="concluded", action="append", default=[],
+                   metavar="HID:CONCLUSION",
+                   help="what this run concluded about a hypothesis, e.g. h44:supported "
+                        "(repeatable; one of " + ", ".join(E.CONCLUSIONS) + "). "
+                        "Declaring any makes this task an experiment.")
 
     s = _jsonable(tsub.add_parser("done", help="close a task — requires an output that resolves"))
     s.add_argument("id")
@@ -266,12 +273,27 @@ def _dispatch_task(a):
                   "blocks it) — a missing edge must be a visible omission, not silence",
                   file=sys.stderr)
             return 1
+        hyp = []
+        for spec in a.concluded:
+            hid, sep, concl = spec.partition(":")
+            if not sep:
+                print(f"crux: --concluded takes <hypothesis>:<conclusion> (got {spec!r}) — "
+                      f"one of {', '.join(E.CONCLUSIONS)}", file=sys.stderr)
+                return 1
+            hyp.append((hid.strip(), concl.strip()))
         tid, fn = E.cmd_task_add(root, a.title, a.category, refs=a.refs,
-                                 blocked_by=_csv_arg(a.blocked_by), parent=a.parent, why=a.why)
+                                 blocked_by=_csv_arg(a.blocked_by), parent=a.parent, why=a.why,
+                                 hypothesis_refs=hyp)
+        rec = E.task_json(root, tid)
         if a.json:
-            return _emit({"id": tid, "file": f"{E.TASK_DIR}/{fn}", "category": a.category,
-                          "refs": a.refs, "blocked_by": _csv_arg(a.blocked_by)})
+            return _emit({"id": tid, "file": f"{E.TASK_DIR}/{fn}", "category": rec["category"],
+                          "is_experiment": rec["is_experiment"], "refs": a.refs,
+                          "hypothesis_refs": rec["hypothesis_refs"],
+                          "blocked_by": _csv_arg(a.blocked_by)})
         print(f"✓ {tid}  ({E.TASK_DIR}/{fn})")
+        if rec["is_experiment"]:
+            print(f"  this task is an experiment (category `{E.TASK_RESERVED_CATEGORY}`, "
+                  f"computed from --concluded)")
     elif t == "done":
         st = E.cmd_task_done(root, a.id, a.outputs)
         if a.json:
