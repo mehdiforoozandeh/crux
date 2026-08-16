@@ -245,13 +245,18 @@ def dispatch(a):
     elif c in ("review", "gate", "decide"):
         pend = E.cmd_review(_vault())
         if a.json:
-            return _emit([{"id": nid, "title": title} for nid, title in pend])
+            return _emit([{"id": nid, "title": title, "drift": drift}
+                          for nid, title, drift in pend])
         if not pend:
             print("no questions awaiting a decision.")
         else:
             print("Awaiting your decision (close with `answer`, or `pursue` to keep digging):")
-            for nid, title in pend:
-                print(f"  ◐ {nid}  {title}")
+            for nid, title, drift in pend:
+                # the drift flag belongs HERE, at the moment the PI is deciding. It never
+                # blocks: the engine flags, the PI decides.
+                print(f"  ◐ {nid}  {title}" + ("   ⚠ a child hypothesis has DRIFT — its "
+                                               "verifiables changed after the run started"
+                                               if drift else ""))
     elif c in ("answer", "resolve", "settle"):
         root = _vault()
         E.cmd_answer(root, a.id, a.text)

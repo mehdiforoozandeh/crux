@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.8"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -29,6 +29,9 @@ ENGINE_VERSION = "1.8"          # bumped when verdict/roll-up/view logic or vaul
                                 # 1.8: a hypothesis declares a combination RULE before the
                                 # run, the verdict becomes a function of (kinds, rule,
                                 # vector), and `invalid-run` joins the vocabulary.
+                                # 1.9: the commitment (checks + kinds + rule) is content-
+                                # hashed when the run starts; any later edit is flagged as
+                                # drift, loudly and permanently — never refused.
                                 # 1.5: the RD layer (spec 07) — the engine now scans a new
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
@@ -113,7 +116,7 @@ SCHEMA_GENERATION = 1
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary",)
+INFO_NAMESPACES = ("boundary",)   # <namespace>:<slug>; specs 08 and 14 claim their own
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -168,6 +171,22 @@ COMBINATION_RULES = ("all", "any", "m-of-n")
 RESERVED_RULES    = ("ordered",)
 RULE_FIELD        = "rule"
 RULE_M_FIELD      = "rule_m"
+
+# The lock. Bare pre-registration largely does not work — preregistered studies show no drop
+# in positive results, and 46% of preregistered hypotheses are simply missing from the paper.
+# Registered Reports DO work (44% positive results against 96%), and the active ingredient is
+# ENFORCED COMMITMENT, not the document. crux can enforce what a journal cannot, because a
+# verifiable is content-addressable and a vault is a git repo.
+#
+# Edits are FLAGGED, not refused. Research legitimately discovers that a check was wrong, and
+# refusing the edit only produces a laundered duplicate hypothesis. A loud, permanent flag is
+# both more honest and harder to ignore. Nothing in the engine consults the flag to change a
+# verdict, a status or a roll-up: it warns at `review` and at `answer` and blocks neither —
+# the engine flags, the PI decides.
+LOCK_FIELD        = "lock"        # sha256[:16] of the canonical commitment
+LOCKED_AT_FIELD   = "locked"      # when — the timestamp crux can prove and a journal cannot
+LOCK_WHERE_FIELD  = "lock_at"     # "running" (pre-registered) | "close" (never was)
+RECONSTRUCTED     = "reconstructed"   # seeded [tested]: history, not a pre-registration
 
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
@@ -675,6 +694,47 @@ def count_verifiables(body):
         else:          unmet += 1
     return met, unmet, na
 
+def lock_material(n):
+    """The canonical string a hypothesis commits to: its combination rule, then every
+    verifiable in DOCUMENT ORDER as (kind, normalized text).
+
+    Two exclusions are load-bearing, and both are the difference between a useful flag and
+    one that fires on every hypothesis:
+
+    - the TICK is not part of the commitment. Ticking a box is exactly what closing does.
+    - the `(found: …)` note is not part of it either. That is the evidence, recorded after
+      the run, and spec 11 already treats it as separable from the check text.
+
+    Whitespace is collapsed, so reflowing a long check is not drift. ORDER is part of the
+    commitment: reordering is a real change, and under a future `ordered` rule it would be
+    the entire content of one."""
+    rule, m = node_rule(n)
+    parts = [f"rule={rule or ''}", f"m={'' if m is None else m}"]
+    for _tick, text in _verifiable_lines(n["body"]):
+        kind, text = verifiable_kind(text)
+        text = " ".join(_FOUND_RE.sub("", text).split())
+        parts.append(f"{kind}\x1f{text}")
+    return "\x1e".join(parts)
+
+def lock_hash(n):
+    return hashlib.sha256(lock_material(n).encode("utf-8")).hexdigest()[:16]
+
+def lock_drift(n):
+    """True iff the commitment changed after it was locked. A node with no lock — every
+    pre-15 node, and every reconstructed one — can never drift."""
+    stored = n["fm"].get(LOCK_FIELD)
+    return bool(stored) and str(stored) != lock_hash(n)
+
+def take_lock(n, where):
+    """Stamp the commitment, once. Idempotent: the first lock is the record, so a second
+    `--to running` never rewrites it."""
+    if n["fm"].get(LOCK_FIELD) or not binds_evidence_semantics(n):
+        return False
+    n["fm"][LOCK_FIELD] = lock_hash(n)
+    n["fm"][LOCKED_AT_FIELD] = now()
+    n["fm"][LOCK_WHERE_FIELD] = where
+    return True
+
 def derive_verdict_15(hyp, neutral, rule, m=None):
     """The verdict for a node that binds evidence semantics: a total function of
     (kinds, rule, pass/fail vector). `hyp` and `neutral` are (met, unmet, na) triples from
@@ -989,6 +1049,18 @@ def economy_warnings(v):
                              f"or move the detail somewhere it belongs."))
     return out
 
+def lock_warnings(v):
+    """A hypothesis whose commitment was only hashed at `close` was never pre-registered —
+    the checks and the results were visible at the same moment. A warning, not a problem:
+    the work is recorded honestly, it just carries no commitment."""
+    out = []
+    for nid, n in v.nodes.items():
+        if n.type == "idea" and n["fm"].get(LOCK_WHERE_FIELD) == "close":
+            out.append((nid, f"hypothesis '{nid}': closed without ever going `running`, so its "
+                             f"verifiables were never pre-registered — they were locked at "
+                             f"close, with the results already visible."))
+    return out
+
 def fanout_warnings(v):
     """Questions holding more unrun hypotheses than FANOUT_MAX."""
     out = []
@@ -1088,6 +1160,12 @@ def validate(v):
             for gap in (neutral_gap(n), rule_gap(n)):
                 if gap:
                     problems.append((nid, gap))
+        if t == "idea" and lock_drift(n):
+            problems.append((nid, f"hypothesis '{nid}': DRIFT — the verifiables, their kinds "
+                                  f"or the combination rule changed after the commitment was "
+                                  f"locked at {n['fm'].get(LOCKED_AT_FIELD)}. The edit stands "
+                                  f"(research does discover a check was wrong); the flag is "
+                                  f"permanent. `git log -p {n['fn']}` is the diff."))
         # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
         # produced files links a report among them
         if t == "idea":
@@ -1749,6 +1827,7 @@ def _materialize(root, project):
         # what would have settled an already-settled claim. Untested seeded hypotheses are
         # genuinely new work and keep their stamp.
         n["fm"].pop("schema", None)
+        n["fm"][RECONSTRUCTED] = True
         n["body"] = _render_verifiables(n["body"], h["verifiables"])
         write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
         cmd_close(root, hid, findings=h["finding"] or None)
@@ -1884,6 +1963,8 @@ def cmd_test(root, nid, to=None, run=None):
             if gap:
                 raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
+    if target == "running":
+        take_lock(n, "running")
     if run:
         n["body"] = append_bullet(n["body"], "Run Links", run)
     _bump(n)
@@ -1912,6 +1993,11 @@ def cmd_close(root, nid, metric=None, findings=None):
         verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
     else:
         verdict = derive_verdict(met, unmet, na)
+    # `cmd_close` has no status precondition and is reachable straight from `idea`, so a
+    # lock taken only at `running` is bypassable by the shortest path the CLI offers. Lock
+    # here too, and record that it was never a pre-registration — refusing the close instead
+    # would just push the user through `test --to running` first, laundering the same thing.
+    take_lock(n, "close")
     n["fm"]["status"] = "done"
     n["fm"]["verdict"] = verdict
     if metric is not None:
@@ -1930,8 +2016,14 @@ def cmd_close(root, nid, metric=None, findings=None):
     return verdict
 
 def cmd_review(root):
+    """(id, title, drift) for every question awaiting a decision. `drift` is True when any
+    hypothesis under it has an edited commitment — surfaced HERE because this is the exact
+    moment the PI is deciding, and a flag they never see is a flag that did nothing."""
     v = Vault(root)
-    return [(n.id, n.title) for n in v.nodes.values()
+    def drifted(qid):
+        return any(lock_drift(v.nodes[c]) for c in v.children.get(qid, ())
+                   if v.nodes[c].type == "idea")
+    return [(n.id, n.title, drifted(n.id)) for n in v.nodes.values()
             if n.type == "question" and n.status == "review"]
 
 def approved_synthesis(v, qid):
@@ -2025,12 +2117,21 @@ def boundary_info(v):
     is reported "as information, never as a problem". One line per condition, not one per
     node, and silence when there is nothing to say."""
     out = []
-    n = sum(1 for x in v.nodes.values()
-            if x.type == "idea" and not binds_evidence_semantics(x))
+    olds = [x for x in v.nodes.values()
+            if x.type == "idea" and not binds_evidence_semantics(x)]
+    recon = [x for x in olds if x["fm"].get(RECONSTRUCTED)]
+    n = len(olds) - len(recon)
     if n:
         out.append(("boundary:evidence-semantics",
                     f"{n} hypothes{'is' if n == 1 else 'es'} predate evidence semantics "
                     f"(no schema stamp); spec-15 rules do not apply to them.", n))
+    if recon:
+        # A vault created today can hold these, so calling them "old" would be baffling.
+        # They are reconstructed history: the science happened before crux was watching.
+        out.append(("boundary:reconstructed",
+                    f"{len(recon)} hypothes{'is was' if len(recon) == 1 else 'es were'} "
+                    f"reconstructed from a seed and never pre-registered — the results "
+                    f"existed before the checks were written down.", len(recon)))
     return out
 
 def validation_report(root, checks=None):
@@ -2051,6 +2152,7 @@ def validation_report(root, checks=None):
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
+    if "tree"    in names: warnings += lock_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
     if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
@@ -2206,6 +2308,9 @@ def _node_json(v, n, rd_map=None):
         rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
         d["rule"], d["rule_m"] = rule, m
         d["tally"] = {k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
+        d["locked"] = bool(n["fm"].get(LOCK_FIELD))
+        d["lock_at"] = n["fm"].get(LOCK_WHERE_FIELD) or None
+        d["drift"] = lock_drift(n)
         d["run_links"] = _run_links(n["body"])
         d["artifacts"] = [dict(a,
                                exists=(not artifact_escapes(a["path"])
@@ -2364,7 +2469,7 @@ def _deck_idea_fields(n):
     verdict = n["fm"].get("verdict")
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
     return {"verdict": verdict if verdict in VERDICTS else None,
-            "rule": rule, "rule_m": m,
+            "rule": rule, "rule_m": m, "drift": lock_drift(n),
             "metric": n["fm"].get("metric") or None,
             "verifiables": _deck_verifiables(n["body"]),
             "findings": _deck_text(n["body"], "Findings"),
@@ -2424,7 +2529,7 @@ def deck_payload(root, anchor):
 
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
-                "verdict": None, "rule": None, "rule_m": None,
+                "verdict": None, "rule": None, "rule_m": None, "drift": False,
                 "metric": None, "verifiables": [], "findings": None,
                 "artifacts": []}
     anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))

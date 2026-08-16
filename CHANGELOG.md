@@ -8,6 +8,41 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The hash-lock: enforced pre-registration, and a permanent drift flag** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.3). When a hypothesis goes `running`, the
+  engine content-hashes its **commitment** — the combination rule plus every verifiable, in
+  document order, as (kind, text) — into `lock:` with a `locked:` timestamp. Any later edit
+  to a check, a kind, the rule, or the *order* is detected and raised as a `validate`
+  problem. Two things deliberately do **not** count: ticking a box (that is what closing
+  *is*) and appending a `(found: …)` note (that is the evidence, recorded after). Whitespace
+  is collapsed, so reflowing a long check is not drift.
+
+  The negative result this answers is blunt: bare preregistration shows no measurable drop in
+  positive results and 46% of preregistered hypotheses simply vanish from the paper, while
+  Registered Reports run 44% positive against 96%. The active ingredient is *enforced
+  commitment*, not the document — and a vault is a git repo, so crux can enforce what a
+  journal cannot.
+
+  **Edits are flagged, never refused.** Research legitimately discovers a check was wrong,
+  and refusing the edit only launders it into a duplicate hypothesis. The flag is permanent
+  and no verb clears it. It **blocks nothing**: `crux review` shows it beside the question at
+  the moment the PI is deciding, `crux answer` prints it and proceeds. The engine flags; the
+  PI decides. `ENGINE_VERSION` 1.8 → 1.9.
+
+  `close` also locks, marking `lock_at: close` and raising a *warning* — `cmd_close` has no
+  status precondition and is reachable straight from `idea`, so a lock taken only at
+  `running` is bypassable by the shortest path the CLI offers. The warning says what is true:
+  the checks and the results became visible at the same moment.
+
+### Changed
+
+- **`crux review` reports drift, and its return shape grew a third field**
+  `(id, title, drift)`; `--json` gains `"drift"`.
+- **A seed-reconstructed hypothesis is marked `reconstructed: true`** and reported in its own
+  words — *"reconstructed from a seed and never pre-registered"* — instead of being counted
+  as predating evidence semantics. A vault created today can hold these, so calling them old
+  would be baffling.
+
 - **The combination rule, and a verdict with no `partial` in it** (spec
   [`15`](.spec/15-evidence-semantics.md), PRD 15.2). A hypothesis now declares **how its
   claim-directed checks add up**, before the run: `rule: all | any | m-of-n` (with

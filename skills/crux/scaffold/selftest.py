@@ -542,7 +542,7 @@ def run_snapshot():
 
     # -- queue == cmd_review
     check("snapshot: queue ids == cmd_review output",
-          [r["id"] for r in snap["queue"]] == [nid for nid, _ in E.cmd_review(root)])
+          [r["id"] for r in snap["queue"]] == [x[0] for x in E.cmd_review(root)])
     check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
     check("snapshot: queue rows carry title + summary",
           bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
@@ -3551,6 +3551,164 @@ def run_combination_rule():
     shutil.rmtree(dst, ignore_errors=True)
 
 
+def run_hash_lock():
+    """Spec 15 PRD 15.3 — the hash-lock. Bare pre-registration largely does not work
+    (van den Akker 2023: no drop in positive results, 46% of pre-registered hypotheses simply
+    missing from the paper). Registered Reports DO work — 44% positive vs 96% — and the
+    active ingredient is enforced commitment, not the document. crux can enforce what a
+    journal cannot, because verifiables are content-addressable.
+
+    Edits are FLAGGED, never refused: research legitimately discovers a check was wrong, and
+    refusing only launders the edit into a duplicate hypothesis."""
+    print("\n# evidence semantics — the hash-lock and drift (spec 15, PRD 15.3)")
+    root = tempfile.mkdtemp(prefix="crux_lock_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Locks", root)
+    q1, _ = E.cmd_ask(root, "does the lock hold?")
+
+    def mk(title, **kw):
+        kw.setdefault("verifiables", ["alpha check", "beta check"])
+        kw.setdefault("neutral", ["the control"])
+        kw.setdefault("rule", "all")
+        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
+        return hid
+
+    h1 = mk("locked at running")
+    check("lock: an unrun hypothesis carries no lock",
+          E.Vault(root).get(h1)["fm"].get("lock") is None)
+    E.cmd_test(root, h1, to="running")
+    n = E.Vault(root).get(h1)
+    first_lock, first_at = n["fm"].get("lock"), n["fm"].get("locked")
+    check("lock: running takes the lock",
+          bool(first_lock) and bool(first_at) and n["fm"].get("lock_at") == "running")
+    E.cmd_test(root, h1, to="running")
+    n = E.Vault(root).get(h1)
+    check("lock: re-running never re-locks",
+          n["fm"].get("lock") == first_lock and n["fm"].get("locked") == first_at)
+    check("lock: a fresh lock does not drift", not E.lock_drift(n) and E.cmd_validate(root) == [])
+
+    # -- what must NOT trip it: the things a normal close does
+    edit(node_path(root, h1), "- [ ] alpha check", "- [x] alpha check")
+    check("lock: ticking a box is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    edit(node_path(root, h1), "- [x] alpha check", "- [x] alpha check   (found: +0.02)")
+    check("lock: a (found:) note is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    edit(node_path(root, h1), "- [ ] beta check", "- [ ]  beta   check ")
+    check("lock: whitespace reflow is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    check("lock: a clean close leaves the vault valid", E.cmd_validate(root) == [])
+
+    # -- what MUST trip it
+    def drifts(hid, mutate, name):
+        n = E.Vault(root).get(hid)
+        before = read(n["path"])
+        mutate(n["path"])
+        d = E.lock_drift(E.Vault(root).get(hid))
+        flagged = any(i == hid and "DRIFT" in m for i, m in E.cmd_validate(root))
+        with open(n["path"], "w", encoding="utf-8") as f:
+            f.write(before)
+        check(name, d and flagged)
+
+    drifts(h1, lambda p: edit(p, "beta   check", "an entirely different check"),
+           "lock: editing a verifiable after running is drift")
+    drifts(h1, lambda p: edit(p, "- [ ]  beta", "- [ ] [outcome-neutral] beta"),
+           "lock: editing a kind after running is drift")
+    drifts(h1, lambda p: edit(p, "rule: all", "rule: any"),
+           "lock: editing the rule after running is drift")
+    drifts(h1, lambda p: edit(p, "- [ ] [outcome-neutral] the control", "- [ ] [outcome-neutral] the control\n- [ ] a fourth check"),
+           "lock: adding a verifiable is drift")
+    drifts(h1, lambda p: edit(p, "- [ ] [outcome-neutral] the control\n", ""),
+           "lock: removing a verifiable is drift")
+
+    def _reorder(p):
+        t = read(p)
+        t = t.replace("- [x] alpha check   (found: +0.02)\n- [ ]  beta   check ",
+                      "- [ ]  beta   check \n- [x] alpha check   (found: +0.02)")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(t)
+    drifts(h1, _reorder, "lock: reordering the verifiables is drift")
+
+    check("lock: reverting the edit clears drift",
+          not E.lock_drift(E.Vault(root).get(h1)) and E.cmd_validate(root) == [])
+
+    # -- the hole `running` alone leaves: cmd_close has no status precondition
+    h2 = mk("closed straight from idea")
+    edit(node_path(root, h2), "- [ ] alpha check", "- [x] alpha check")
+    edit(node_path(root, h2), "- [ ] beta check", "- [x] beta check")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control", "- [x] [outcome-neutral] the control")
+    check("lock: closing straight from idea still yields a verdict",
+          E.cmd_close(root, h2) == "supported")
+    n2 = E.Vault(root).get(h2)
+    check("lock: closing without running locks and marks lock_at",
+          bool(n2["fm"].get("lock")) and n2["fm"].get("lock_at") == "close")
+    check("lock: a close-time lock is a warning, not a problem",
+          any("never pre-registered" in w["message"]
+              for w in E.validation_report(root)["warnings"])
+          and E.cmd_validate(root) == [])
+
+    # -- surfaces
+    snap = E.snapshot(root)
+    check("lock: snapshot exposes lock state and drift",
+          snap["nodes"][h1]["locked"] is True and snap["nodes"][h1]["drift"] is False)
+    edit(node_path(root, h1), "an entirely", "an entirely")  # no-op, keep the file settled
+    dp = E.deck_payload(root, q1)
+    check("lock: the deck payload exposes drift on every child",
+          all("drift" in c for c in dp["children"]))
+
+    # -- D7: drift warns loudly and blocks NOTHING
+    edit(node_path(root, h1), "beta   check", "a rewritten check")
+    check("lock: drift is a validate problem",
+          any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
+    E.cmd_close(root, h1)
+    check("lock: drift does not block close", E.Vault(root).get(h1).status == "done")
+    check("lock: review flags the question holding a drifted child",
+          any(qid == q1 and drift for qid, _, drift in E.cmd_review(root)))
+    s, _ = E.cmd_synthesize(root, "what q1 settled", [q1])
+    E.cmd_approve(root, s)
+    check("lock: drift does not block answer (the engine flags; the PI decides)",
+          E.cmd_answer(root, q1) == q1
+          and E.Vault(root).get(q1).status == "resolved")
+    check("lock: and the flag survives the answer — it is permanent",
+          any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
+    check("lock: no verb clears a drift flag",
+          not any(hasattr(E, x) for x in ("cmd_unflag", "cmd_relock", "cmd_acknowledge")))
+
+    check("lock: ENGINE_VERSION at or past 1.9", at_least_version("1.9"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_lmig_")
+    E.cmd_test(old, oh, to="running")
+    check("evmig: a pre-15 node never locks",
+          E.Vault(old).get(oh)["fm"].get("lock") is None)
+    edit(node_path(old, oh), "- [ ] first check", "- [x] a completely rewritten check")
+    check("evmig: a pre-15 node never drifts, however its checks are rewritten",
+          not E.lock_drift(E.Vault(old).get(oh)) and E.cmd_validate(old) == []
+          and E.validation_report(old)["warnings"] == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- D9: a seeded [tested] hypothesis is reconstructed history. No lock, and the boundary
+    #    notice says so in its own words rather than calling a vault made today "old".
+    sd = tempfile.mkdtemp(prefix="crux_lseed_")
+    seed = os.path.join(sd, "seed.md")
+    with open(seed, "w", encoding="utf-8") as f:
+        f.write("- Project: Recon — a goal\n  - Q: a question\n"
+                "    - H: [tested] work done before crux was watching\n"
+                "      - v: [x] the check that was met\n      - finding: it held\n")
+    sroot = os.path.join(sd, "vault")
+    E.cmd_init_from(seed, sroot)
+    sn = E.Vault(sroot).get("h1")
+    check("lock: a seeded tested hypothesis has no lock and no drift",
+          sn["fm"].get("lock") is None and not E.lock_drift(sn))
+    check("lock: a reconstructed hypothesis is marked as such",
+          sn["fm"].get("reconstructed") is True)
+    info = E.validation_report(sroot)["info"]
+    check("lock: validate says reconstructed, not merely 'predates'",
+          any(i["id"] == "boundary:reconstructed" and "never pre-registered" in i["message"]
+              for i in info))
+    check("lock: a reconstructed hypothesis is still not a problem or a warning",
+          E.cmd_validate(sroot) == [] and E.validation_report(sroot)["warnings"] == [])
+    shutil.rmtree(sd, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -3606,6 +3764,7 @@ def main():
     run_evidence_boundary()
     run_verifiable_kind()
     run_combination_rule()
+    run_hash_lock()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
