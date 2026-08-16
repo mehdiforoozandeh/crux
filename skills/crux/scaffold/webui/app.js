@@ -204,7 +204,8 @@ function treeSignatures() {
     const vs = n.verifiables || [];
     geo.push(n.id, n.type, n.title, vs.length, (node.children || []).length,
              state.collapsed.has(node.id) ? 1 : 0);
-    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + vs.map((v) => v.state).join(",");
+    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + (n.drift ? "D" : "") + "|"
+                 + vs.map((v) => v.state).join(",");
     if (state.collapsed.has(node.id)) return;
     for (const c of node.children || []) walk(c);
   })(state.snap.tree);
@@ -462,7 +463,11 @@ function nodeSVG(n, p) {
   const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
   const wrap = "node" + (n.status === "running" ? " running" : "") +
     (dimmed ? " dim" : "") + (matches ? " hit" : "");
-  const shape = `<rect class="box k-${n.type} ${esc(cls)}${sel}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`;
+  const shape = `<rect class="box k-${n.type} ${esc(cls)}${sel}${n.drift ? " drifted" : ""}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`
+    // DRIFT: the verifiables, their kinds or the rule were edited after the commitment was
+    // locked. Drawn on the node itself — a flag only visible once you open the pane is a flag
+    // that does nothing for the reader skimming the tree.
+    + (n.drift ? `<text class="drift-mark" x="${g.w - 7}" y="${-g.h / 2 + 12}">\u26A0</text>` : "");
   // questions get a bold left accent stripe (in their status colour) so they read as containers
   const qbar = n.type === "question"
     ? `<rect class="qbar ${esc(cls)}" x="0" y="${-g.h / 2 + 3}" width="4" height="${g.h - 6}" rx="2"/>` : "";
@@ -1150,11 +1155,25 @@ function artifactsSection(n) {
 function ideaDetail(n) {
   let badges = badge(n.status, { idea: "--h-idea", staged: "--h-staged", running: "--h-running", done: null }[n.status] || null);
   if (n.verdict) badges += badge(n.verdict, "--v-" + n.verdict);
+  // The rule travels WITH the verdict, everywhere the hypothesis is read (spec 15 §5). A
+  // verdict without the rule that produced it is exactly the reading PLATO's authors gave
+  // themselves: "supported" with no account of what would have made it not.
+  if (n.rule) badges += `<span class="badge" title="how the claim-directed checks add up, declared before the run">rule <span class="inline">${esc(n.rule + (n.rule_m ? " (m=" + n.rule_m + ")" : ""))}</span></span>`;
+  if (n.drift) badges += `<span class="badge drift" title="The verifiables, their kinds or the combination rule changed after the commitment was locked. The edit stands — research does discover a check was wrong — but the flag is permanent. git log -p the node for the diff.">\u26A0 drift</span>`;
+  // A commitment hashed only at close was never a pre-registration: the checks and the
+  // results became visible at the same moment. Say so rather than implying otherwise.
+  if (n.locked && n.lock_at === "close") badges += `<span class="badge warn" title="Locked at close, not at run: these checks were never pre-registered.">not pre-registered</span>`;
   if (n.metric) badges += `<span class="badge">metric <span class="inline">${esc(n.metric)}</span></span>`;
   const vs = n.verifiables.length
     ? `<ul class="verif">` + n.verifiables.map((v) => {
         const m = { met: ["met", "✓"], unmet: ["unmet", ""], na: ["na", "–"] }[v.state];
-        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}</span></li>`;
+        // `outcome-neutral` is a control: it must pass whatever the claim turns out to be,
+        // and its failure invalidates the RUN rather than refuting the claim. Unmarked, a
+        // reader of an `invalid-run` node sees "2 met, 1 unmet" and no reason for the verdict.
+        const kn = v.kind === "outcome-neutral"
+          ? `<span class="vkind" title="outcome-neutral: a control that must pass whatever the claim turns out to be. Its failure invalidates the run, not the claim.">control</span>`
+          : "";
+        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}${kn}</span></li>`;
       }).join("") + `</ul>`
     : `<div class="body muted">none registered</div>`;
   const runs = n.run_links.length

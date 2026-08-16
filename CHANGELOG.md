@@ -8,6 +8,40 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The cockpit narrates evidence semantics** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.6). The engine had been publishing `drift`,
+  `rule`/`rule_m`, `locked`/`lock_at` and per-verifiable `kind` in `snapshot()` since 1.9, and
+  the cockpit rendered **none** of them — found by walking the manual check, and measured
+  rather than eyeballed (the string "drift" appeared nowhere in the DOM, in either theme).
+
+  That is spec 15 §5's own failure reproduced: PLATO's rule *"failed at narration time, not
+  computation time"*. A drifted hypothesis read as a clean `supported` over three green
+  ticks, one of them literally titled *"a completely different check nobody registered"*; and
+  on an `invalid-run` node, the control whose failure **caused** the verdict was
+  indistinguishable from the claim checks.
+
+  Now: a drifted node carries a dashed amber edge and a ⚠ in the **tree** (a flag only
+  visible after opening the node is a flag that does nothing for a reader skimming), and the
+  detail pane carries `rule`, a `⚠ drift` badge, a `not pre-registered` badge when the
+  commitment was hashed only at close, and a `CONTROL` chip on outcome-neutral rows. Drift
+  takes the **stroke**, never the fill, so "what was concluded" and "was the commitment
+  edited" stay separately readable. Webui only — no engine change, no `ENGINE_VERSION` bump.
+
+### Changed
+
+- **Guard parity for the cockpit.** The legend guard derived from `E.VERDICTS` is what forced
+  `invalid-run` into the UI during the 15 build; there was no equivalent for per-node fields,
+  which is exactly why three shipped unrendered. A new guard derives the expectation from
+  `snapshot()`'s **actual** published surface — every idea and verifiable field must be
+  consumed by `app.js`, minus a deliberately small, justified allowlist — so a field added to
+  the engine tomorrow joins the expectation without anyone remembering to update a list.
+- **The hash-lock is pinned newline-invariant.** The wiki source registry hashes raw bytes
+  (`_sha256_file`), which is what broke `demo_vault` on Windows CI under an autocrlf
+  checkout. The lock never inherited that: it hashes `lock_material()`, a string built from a
+  body `read()` already normalized in text mode. Three asserts pin it — including a real CRLF
+  file round-tripped from disk — so a future move to byte-hashing fails here rather than on
+  someone else's runner.
+
 - **The separability rulebook, and the skill's account of a verdict** (spec
   [`15`](.spec/15-evidence-semantics.md), PRD 15.5). The `crux` skill gains the PI's rule for
   when one experiment may settle several hypotheses, verbatim — *"each hypothesis turned by

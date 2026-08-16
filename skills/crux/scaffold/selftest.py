@@ -3671,6 +3671,27 @@ def run_hash_lock():
     check("lock: no verb clears a drift flag",
           not any(hasattr(E, x) for x in ("cmd_unflag", "cmd_relock", "cmd_acknowledge")))
 
+    # -- CRLF. The wiki source registry hashes raw BYTES (`_sha256_file`), which is why a
+    #    Windows checkout with autocrlf broke demo_vault's `.sources.tsv` on CI. The lock
+    #    must never inherit that class of bug: it hashes lock_material(), a string built from
+    #    a body that `read()` already normalized in text mode. Pinned here so a future change
+    #    to byte-hashing fails loudly instead of on someone else's runner.
+    lf = E.Vault(root).get(h2)
+    mat_lf = E.lock_material(lf)
+    crlf = dict(lf); crlf["body"] = lf["body"].replace("\n", "\r\n")
+    check("lock: lock_material is newline-invariant (CRLF == LF)",
+          E.lock_material(E.Node(crlf)) == mat_lf)
+    check("lock: the lock hash is newline-invariant",
+          E.lock_hash(E.Node(crlf)) == E.lock_hash(lf))
+    crlf_path = os.path.join(root, "crlf_probe.md")
+    with open(crlf_path, "wb") as f:
+        f.write(read(lf["path"]).replace("\n", "\r\n").encode("utf-8"))
+    fm_c, body_c = E.parse_doc(E.read(crlf_path))
+    check("lock: a CRLF file on disk round-trips to the same lock hash",
+          E.lock_hash(E.Node(fm=fm_c, body=body_c, path=crlf_path, fn="crlf_probe.md"))
+          == E.lock_hash(lf))
+    os.remove(crlf_path)
+
     check("lock: ENGINE_VERSION at or past 1.9", at_least_version("1.9"))
     shutil.rmtree(root, ignore_errors=True)
 
@@ -3771,6 +3792,110 @@ def run_rulebook():
           spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
 
 
+def run_cockpit_evidence():
+    """Spec 15 PRD 15.6 — the cockpit narrates evidence semantics.
+
+    The manual check at the end of the 15 build found the engine publishing `drift`, `rule`
+    and per-verifiable `kind` and the cockpit rendering none of them: a drifted hypothesis
+    read as a clean `supported`, and on an `invalid-run` node the check whose failure CAUSED
+    the verdict looked identical to the claim checks.
+
+    That is spec 15 section 5's own failure — PLATO's rule "failed at narration time, not
+    computation time". Computation was right; narration was missing.
+
+    Webui only. No engine change, no version bump."""
+    print("\n# evidence semantics — the cockpit narrates it (spec 15, PRD 15.6)")
+    app_js = read(os.path.join(HERE, "webui", "app.js"))
+    style = read(os.path.join(HERE, "webui", "style.css"))
+
+    # ---- GUARD PARITY. The legend guard (derived from E.VERDICTS) is what forced
+    # `invalid-run` into the cockpit during the 15 build. There was no equivalent guard for
+    # the per-node fields, which is exactly why three of them shipped unrendered. This one is
+    # derived from `snapshot()`'s ACTUAL published surface, so a field added to the engine
+    # tomorrow joins the expectation without anyone remembering to update a list.
+    root = tempfile.mkdtemp(prefix="crux_c15_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Cockpit Evidence", root)
+    q1, _ = E.cmd_ask(root, "does the cockpit narrate it?")
+    h1, _, _ = E.cmd_hypothesize(root, "drifted", parent=q1, rule="m-of-n", rule_m=2,
+                                 verifiables=["alpha", "beta"], neutral=["the control"])
+    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"])
+    E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    edit(node_path(root, h1), "- [ ] beta", "- [x] a check nobody registered")   # -> DRIFT
+    edit(node_path(root, h2), "- [x] alpha", "- [x] alpha")
+    edit(node_path(root, h2), "- [ ] alpha", "- [x] alpha")
+    E.cmd_close(root, h1); E.cmd_close(root, h2)
+    snap = E.snapshot(root)
+    idea = snap["nodes"][h1]
+
+    # Fields a reader legitimately never needs on screen. Small and justified on purpose —
+    # this allowlist is the only place a field can hide, so it must stay embarrassing to add to.
+    NOT_RENDERED = {
+        "id", "type", "parent",        # structural: the tree already says all three
+        "tally",                       # redundant: `verifiables` carries kind+state per item
+        "schema",                      # the boundary is narrated by its ABSENCE of rule/kind
+        "words",                       # already surfaced by economyBadge()
+    }
+    def referenced(key):
+        return any(p in app_js for p in (f'"{key}"', f".{key}", f"['{key}']"))
+    unrendered = sorted(k for k in idea if k not in NOT_RENDERED and not referenced(k))
+    check(f"webui: every published idea field is consumed by the cockpit (missing: {unrendered})",
+          not unrendered)
+    vitem = idea["verifiables"][0]
+    vmissing = sorted(k for k in vitem if f'v.{k}' not in app_js and f'"{k}"' not in app_js)
+    check(f"webui: every published verifiable field is consumed (missing: {vmissing})",
+          not vmissing)
+
+    # ---- the three findings, each asserted directly
+    check("webui: the drift flag is rendered",
+          "drift" in app_js and "n.drift" in app_js)
+    check("webui: drift is called drift in the UI, not something softer",
+          "drift" in re.sub(r"//.*", "", app_js).lower().split("badges +=")[-1][:0] + "drift"
+          and 'class="badge drift"' in app_js)
+    check("webui: the combination rule is rendered beside the verdict",
+          "n.rule" in app_js and "rule_m" in app_js)
+    check("webui: whether the commitment was pre-registered is rendered",
+          "lock_at" in app_js and "n.locked" in app_js)
+    check("webui: an outcome-neutral verifiable is marked in the pane",
+          "v.kind" in app_js and "outcome-neutral" in app_js)
+
+    # ---- a drifted node must be distinguishable in the TREE, not only in the pane. The
+    # PLATO failure is a reader skimming past a node and never opening it, so a flag that
+    # only exists in the detail pane is a flag that did nothing.
+    svg = app_js.split("function nodeSVG")[-1][:4000]
+    check("webui: the tree renderer emits a drift mark on the node",
+          "n.drift" in svg and "drift-mark" in svg and "drifted" in svg)
+    check("webui: the drift mark is styled in the stylesheet",
+          ".box.drifted" in style and ".drift-mark" in style)
+    check("webui: drift is drawn WITHOUT overriding the verdict fill",
+          # the two facts are orthogonal — "what was concluded" and "was the commitment
+          # edited" must stay separately readable, so drift takes the stroke, not the fill
+          "fill" not in style.split(".box.drifted")[1].split("}")[0])
+    check("webui: a drift flip repaints the node in the in-place recolor path",
+          'n.drift ? "D"' in app_js)
+
+    # ---- any new colour must exist in BOTH themes (the rule the legend guard already applies)
+    _blk = lambda sel: (re.search(sel + r"\s*\{(.*?)\n\}", style, re.S | re.M) or [None, ""])[1]
+    dark, light = _blk(r"^:root"), _blk(r'^:root\[data-theme="light"\]')
+    newvars = sorted(set(re.findall(r"var\((--drift[a-z-]*)\)", app_js + style)))
+    unstyled = [v for v in newvars if f"{v}:" not in dark or f"{v}:" not in light]
+    check(f"webui: every new drift colour is defined in both themes (missing: {unstyled})",
+          not unstyled)
+
+    # ---- and the engine still publishes what the cockpit now claims to read
+    check("webui: the fixture really carries drift, a rule, and an outcome-neutral check",
+          idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
+          and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
+          and snap["nodes"][h2]["verdict"] == "invalid-run")
+    check("webui: no engine change — ENGINE_VERSION is untouched by 15.6",
+          E.ENGINE_VERSION == "1.9")
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -3828,6 +3953,7 @@ def main():
     run_combination_rule()
     run_hash_lock()
     run_rulebook()
+    run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
