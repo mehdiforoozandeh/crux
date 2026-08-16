@@ -111,6 +111,7 @@ const state = {
   pane: localStorage.getItem("crux-pane") || "split",   // "split" | "left" | "right" (full-screen)
   report: null,             // open artifact report: {path, node, text, error}
   search: "",
+  matchId: null,            // where the Enter/Shift+Enter search cycle is parked (node id / wiki slug)
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
   tab: "tree",              // "tree" | "wiki" — applied from localStorage once wiki.active is known
@@ -183,6 +184,7 @@ function onSnapshot() {
   renderTree();
   renderWiki();
   renderDetail();
+  updateMatchCounter();   // the poll can add/remove matches under a live query
 }
 
 // ------------------------------------------------------------------ deterministic layout
@@ -385,7 +387,12 @@ function nodeSVG(n, p) {
     : "";
   const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
   const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
-  return `<g class="${wrap}" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">` +
+  // ARIA (spec 12, D7): every drawn node is a treeitem; the svg's aria-activedescendant
+  // (set in renderTree) points at the selected one via this element id. Attributes only —
+  // the group's structure is untouched.
+  const aria = `id="node-${esc(n.id)}" role="treeitem" aria-selected="${state.selected === n.id}"` +
+    (hasKids ? ` aria-expanded="${!state.collapsed.has(n.id)}"` : "");
+  return `<g class="${wrap}" data-id="${esc(n.id)}" ${aria} transform="translate(${p.x},${p.y})">` +
     `${tip}${shape}${qbar}${inner}${dots}${toggle}</g>`;
 }
 
@@ -455,6 +462,9 @@ function renderTree() {
   for (const id in pos) nodes += nodeSVG(snap.nodes[id], pos[id]);
   const v = state.view;
   svg.innerHTML = `<g class="viewport" transform="translate(${v.tx},${v.ty}) scale(${v.k})">${edges}${nodes}</g>`;
+  // keep the ARIA cursor honest: the canvas names its selected treeitem, or nothing
+  if (state.selected && pos[state.selected]) svg.setAttribute("aria-activedescendant", "node-" + state.selected);
+  else svg.removeAttribute("aria-activedescendant");
   // The DOM above is drawn at the deterministic anchors; the living-tree sim then takes
   // over the transforms (docs/prd/gui-living-tree.md). Surviving nodes keep their live
   // positions and glide to any fresh anchors via their springs — the sim replaced the old
@@ -1153,7 +1163,10 @@ svg.addEventListener("pointerdown", (e) => {
 // was imperceptible at tree zoom levels; the spotlight is what reads as "responsive".
 svg.addEventListener("pointerover", (e) => {
   const node = e.target.closest(".node");
-  if (!node || pan || drag) return;
+  // _kbNav: a keyboard move glides the camera, which slides nodes UNDER a parked cursor —
+  // the browser fires pointerover for that, and it must not light the spotlight (spec 12:
+  // keyboard costs the mouse nothing, and vice versa). A real pointer move clears the flag.
+  if (!node || pan || drag || _kbNav) return;
   const id = node.getAttribute("data-id");
   const nb = new Set([id]);
   svg.querySelectorAll(".edge").forEach((el) => {
@@ -1196,6 +1209,68 @@ svg.addEventListener("dblclick", (e) => {
   const id = node.getAttribute("data-id");
   if (state.focus === id) clearFocus(); else setFocus(id);
 });
+
+// ---------------------------------------------------------------- keyboard traversal (spec 12)
+// The canvas is a focusable ARIA tree (index.html); arrows move the SELECTION — the one
+// keyboard cursor (D1) — and the camera follows through the same selectNode → centerOn →
+// tweenView path every programmatic jump already uses (instant under prefers-reduced-motion,
+// current zoom kept — D9). Arrows are ORIENTATION-RELATIVE: "child" points where the
+// children visibly are. Radial reads like top-down (D4): ↓ = outward/deeper, ↑ = inward,
+// ←/→ = around the ring. Siblings STOP at the ends (D5, the accessible-treeview
+// convention) — branch moves go through the parent, which the camera-follow makes cheap.
+// Space folds/unfolds via the ± toggle's own code path; Enter hands the detail pane the
+// focus (D6). The document-level bindings ([ ] f Esc) and every pointer gesture are untouched.
+let _kbNav = false;   // set by a keyboard move, cleared by a real pointer move (see pointerover)
+svg.addEventListener("pointermove", () => { _kbNav = false; });
+function keyNavMap() {
+  return (state.viewMode === "radial" || state.orient === "td")
+    ? { child: "ArrowDown", parent: "ArrowUp", prev: "ArrowLeft", next: "ArrowRight" }
+    : { child: "ArrowRight", parent: "ArrowLeft", prev: "ArrowUp", next: "ArrowDown" };
+}
+// parent / visible-children index over the current snapshot: keyboard reach = what is drawn,
+// exactly the mouse's reach (collapsed subtrees are skipped, their roots still land as leaves)
+function keyNavIndex() {
+  const parentOf = {}, shownKids = {};
+  (function walk(n) {
+    const shown = state.collapsed.has(n.id) ? [] : (n.children || []);
+    shownKids[n.id] = shown.map((c) => c.id);
+    for (const c of shown) { parentOf[c.id] = n.id; walk(c); }
+  })(state.snap.tree);
+  return { parentOf, shownKids };
+}
+function onTreeKeydown(e) {
+  if (!state.snap || e.metaKey || e.ctrlKey || e.altKey) return;
+  const keys = keyNavMap();
+  const arrow = e.key === keys.child || e.key === keys.parent || e.key === keys.prev || e.key === keys.next;
+  if (!arrow && e.key !== " " && e.key !== "Enter") return;   // anything else keeps its meaning
+  e.preventDefault();                                         // Space must never scroll the page
+  _kbNav = true;    // whatever moves next (camera glide, fold relayout) is keyboard-driven
+  const sel = state.selected && state.positions[state.selected] ? state.selected : null;
+  if (e.key === " ") {                       // fold/unfold — the ± toggle's exact code path
+    if (!sel || !state.childCount[sel]) return;
+    state.collapsed.has(sel) ? state.collapsed.delete(sel) : state.collapsed.add(sel);
+    if (state.focused) { state.focused = false; updateToolbar(); }
+    layout(); renderTree();
+    return;
+  }
+  if (e.key === "Enter") {                   // open the detail pane and hand it the focus (D6)
+    if (state.pane === "left") setPane("split");
+    $("detail-content").focus();
+    return;
+  }
+  if (!sel) { selectNode(state.snap.tree.id, { center: true }); return; }   // first arrow lands on the root
+  const { parentOf, shownKids } = keyNavIndex();
+  let to = null;
+  if (e.key === keys.child) to = (shownKids[sel] || [])[0];
+  else if (e.key === keys.parent) to = parentOf[sel];
+  else {
+    const sib = parentOf[sel] ? shownKids[parentOf[sel]] : [sel];
+    const i = sib.indexOf(sel) + (e.key === keys.next ? 1 : -1);
+    if (i >= 0 && i < sib.length) to = sib[i];                // endpoints stop — no wrap
+  }
+  if (to) selectNode(to, { center: true });
+}
+svg.addEventListener("keydown", onTreeKeydown);
 
 $("detail-pane").addEventListener("click", (e) => {
   // Scope to the font BUTTONS: #detail-content also carries a data-font attribute (it drives the
@@ -1247,13 +1322,19 @@ $("help-btn").addEventListener("click", () => {
 });
 document.querySelector("#help .hint").hidden = localStorage.getItem("crux-help-hidden") === "1";
 
-// theme: resolve saved preference (else system) once at boot, then the button toggles
+// theme (spec 12): the blocking <head> stamp already resolved saved-preference-else-OS
+// BEFORE first paint — here we just sync the ☀/☾ button to it, keep following the OS
+// while no preference is saved (a machine that flips at sunset flips the cockpit), and
+// let the first explicit toggle write the preference that sticks from then on.
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   $("theme-btn").textContent = t === "dark" ? "☀" : "☾";
 }
-// dark is the default; only a saved preference (the toggle) can switch to light
-applyTheme(localStorage.getItem("crux-theme") === "light" ? "light" : "dark");
+applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+  if (localStorage.getItem("crux-theme")) return;   // an explicit choice sticks
+  applyTheme(e.matches ? "light" : "dark");
+});
 $("theme-btn").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   localStorage.setItem("crux-theme", next);
@@ -1486,21 +1567,53 @@ function applySearch() {
   if (!state.snap) return;
   if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
   else renderTree();
+  updateMatchCounter();
+}
+// The match set (spec 12): ONE function feeds the counter and the Enter / Shift+Enter
+// cycle, in both tabs. Order is deterministic (D2) — the tree's own walk order, stable
+// across renders and polls; the wiki cycles in index order (the rail's order). Visible
+// nodes only (D3): a collapsed subtree's matches are not cycled, exactly matching what
+// the dim/hit classes show — a collapsed node itself is drawn (as a leaf), so it counts.
+function searchMatches() {
+  if (!state.search || !state.snap) return [];
+  if (state.tab === "wiki") return wikiPages().filter(matchWiki).map((p) => p.slug);
+  const out = [];
+  (function walk(n) {
+    if (matchNode(state.snap.nodes[n.id])) out.push(n.id);
+    if (state.collapsed.has(n.id)) return;
+    for (const c of n.children || []) walk(c);
+  })(state.snap.tree);
+  return out;
+}
+// the set size before you start cycling ("11"), your position once you do ("3 / 11")
+function updateMatchCounter() {
+  const el = $("search-count");
+  if (!state.search || !state.snap) { el.hidden = true; el.textContent = ""; return; }
+  const m = searchMatches(), i = state.matchId ? m.indexOf(state.matchId) : -1;
+  el.textContent = i >= 0 ? `${i + 1} / ${m.length}` : String(m.length);
+  el.hidden = false;
+}
+function cycleSearch(dir) {
+  const m = searchMatches();
+  if (!m.length) return;
+  const cur = state.matchId ? m.indexOf(state.matchId) : -1;   // -1: not cycling yet, or the match vanished
+  const i = cur >= 0 ? (cur + dir + m.length) % m.length       // wrap in both directions
+                     : dir > 0 ? 0 : m.length - 1;             // first press lands on the first / last
+  state.matchId = m[i];
+  if (state.tab === "wiki") openWikiPage(m[i]);
+  else selectNode(m[i], { center: true });
+  updateMatchCounter();
 }
 $("search").addEventListener("input", (e) => {
   state.search = e.target.value.trim();
+  state.matchId = null;   // a new query restarts the cycle
   applySearch();
 });
 $("search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { e.target.value = ""; state.search = ""; applySearch(); return; }
+  if (e.key === "Escape") { e.target.value = ""; state.search = ""; state.matchId = null; applySearch(); return; }
   if (e.key !== "Enter" || !state.search || !state.snap) return;
-  if (state.tab === "wiki") {
-    const hit = wikiPages().find(matchWiki);
-    if (hit) openWikiPage(hit.slug);
-    return;
-  }
-  const hit = Object.keys(state.positions).find((id) => matchNode(state.snap.nodes[id]));
-  if (hit) selectNode(hit, { center: true });
+  e.preventDefault();
+  cycleSearch(e.shiftKey ? -1 : 1);
 });
 
 // ================================================================== wiki tab
@@ -1556,8 +1669,8 @@ function setTab(tab) {
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
   $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
   $("search").title = tab === "wiki"
-    ? "Search wiki pages — Enter opens the first match, Esc clears"
-    : "Search the tree — Enter jumps to the first match, Esc clears";
+    ? "Search wiki pages — Enter / Shift+Enter cycle the matches, Esc clears"
+    : "Search the tree — Enter / Shift+Enter cycle the matches, Esc clears";
   updateReviewBtn();
   applySearch();
   renderDetail();

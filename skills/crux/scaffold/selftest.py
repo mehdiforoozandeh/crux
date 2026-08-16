@@ -1372,8 +1372,10 @@ def run_webui():
           index.count("data-max=") >= 3)
 
     # (E) the search box is roomier than the old 230px, but bounded — it must not grow to
-    #     swallow the toolbar, and its placeholder has to fit inside it
-    sm = re.search(r"#search\s*\{[^}]*flex:\s*([\d.]+)\s+[\d.]+\s+(\d+)px", style)
+    #     swallow the toolbar, and its placeholder has to fit inside it. Spec 12 (PRD-B)
+    #     wrapped the input in #search-wrap so the match counter can overlay the field;
+    #     the bounded flex moved to the wrapper (amendment pre-registered in the PRD).
+    sm = re.search(r"#search-wrap\s*\{[^}]*flex:\s*([\d.]+)\s+[\d.]+\s+(\d+)px", style)
     basis = int(sm.group(2)) if sm else 0
     check(f"webui: search basis is 260-320px (found {basis or 'none'})", 260 <= basis <= 320)
     check("webui: the search box does not flex-grow into the toolbar",
@@ -1426,6 +1428,127 @@ def run_webui():
           "limits || {}).prose_cap" in app_js and "400" not in app_js.split("function economyBadge")[1][:400])
     check("webui: the summary styles ship", ".summary {" in css and ".sum-k {" in css)
     check("webui: the fold marker is styled for both themes", ".fold > .fold-h::before" in css)
+
+    # -- spec 12 (PRD-A): keyboard-first canvas. Source invariants only — stdlib has no JS
+    #    engine, so the behavioral half (reachability in all three layouts, camera-follow,
+    #    the pointer-regression walkthrough) is the PRD's scripted MANUAL checklist. These
+    #    asserts pin the structure that makes that behavior possible, and guard the two
+    #    regressions a source grep CAN see: keyboard code writing spotlight classes, and
+    #    the canvas losing its focusability.
+    m = re.search(r'<svg id="tree"[^>]*>', index)
+    svg_tag = m.group(0) if m else ""
+    check("webui: the tree canvas is focusable (tabindex=\"0\")", 'tabindex="0"' in svg_tag)
+    check("webui: the tree canvas is an ARIA tree with a non-empty label",
+          'role="tree"' in svg_tag and bool(re.search(r'aria-label="[^"]+"', svg_tag)))
+    check("webui: keyboard focus ring under :focus-visible, not clipped (outline-offset -2px)",
+          bool(re.search(r"#tree:focus-visible\s*\{[^}]*outline:", style))
+          and "outline-offset: -2px" in style)
+    check("webui: nodes are ARIA treeitems carrying selection + expansion state",
+          'role="treeitem"' in app_js and "aria-selected=" in app_js and "aria-expanded=" in app_js)
+    check("webui: the canvas tracks the selection via aria-activedescendant (set and cleared)",
+          app_js.count("aria-activedescendant") >= 2)
+    kbm = re.search(r"function onTreeKeydown\(e\)\s*\{([\s\S]*?)\n\}", app_js)
+    kb_src = kbm.group(1) if kbm else ""
+    check("webui: a tree keydown handler exists and is bound to the svg",
+          bool(kbm) and 'svg.addEventListener("keydown", onTreeKeydown)' in app_js)
+    check("webui: the handler covers Space + Enter and preventDefaults (Space must not scroll)",
+          '" "' in kb_src and '"Enter"' in kb_src and "preventDefault" in kb_src)
+    check("webui: arrows are orientation-relative (radial/top-down vs left-right maps)",
+          "function keyNavMap" in app_js
+          and 'state.viewMode === "radial"' in app_js.split("function keyNavMap")[1][:300]
+          and '{ child: "ArrowDown", parent: "ArrowUp"' in app_js
+          and '{ child: "ArrowRight", parent: "ArrowLeft"' in app_js)
+    check("webui: selection is the one keyboard cursor — every move goes through selectNode",
+          "selectNode(" in kb_src)
+    check("webui: the keyboard path never writes the spotlight classes",
+          not any(c in kb_src for c in ('"hov"', '"cold"', '"hot"')))
+    check("webui: sibling endpoints stop — no wrap arithmetic in the keyboard handler",
+          "%" not in kb_src)
+    check("webui: keyboard motion cannot light the hover spotlight (kbNav guard, cleared by a real pointer move)",
+          "_kbNav = true" in kb_src
+          and bool(re.search(r'addEventListener\("pointerover"[\s\S]{0,500}_kbNav\) return', app_js))
+          and bool(re.search(r'pointermove[^\n]*_kbNav = false', app_js)))
+    check("webui: Enter opens the detail pane and hands it focus (D6)",
+          'id="detail-content" tabindex="-1"' in index
+          and '$("detail-content").focus()' in kb_src and 'setPane("split")' in kb_src)
+
+    # -- spec 12 (PRD-B): search that cycles. Enter advances with wrap, Shift+Enter goes
+    #    back, a counter sits in the field. ONE match-set function feeds the cycle and the
+    #    counter in both tabs, in deterministic order (D2: tree walk / wiki index order),
+    #    over visible nodes only (D3). Behavior (order, wrap feel, counter accuracy) is the
+    #    PRD's manual checklist; these pin the structure and the two regressions.
+    sf = re.search(r"function searchMatches\(\)\s*\{([\s\S]*?)\n\}", app_js)
+    sf_src = sf.group(1) if sf else ""
+    check("webui: one match-set function feeds cycling and the counter in both tabs",
+          bool(sf) and app_js.count("searchMatches()") >= 3)
+    check("webui: tree matches are the deterministic walk over visible nodes",
+          "state.snap.tree" in sf_src and "state.collapsed.has" in sf_src
+          and "matchNode" in sf_src and "matchWiki" in sf_src)
+    check("webui: Enter advances, Shift+Enter goes back",
+          "cycleSearch(e.shiftKey ? -1 : 1)" in app_js)
+    check("webui: the cycle wraps in both directions",
+          bool(re.search(r"\+ dir \+ m\.length\) % m\.length", app_js)))
+    check("webui: the single-shot first-match jump is gone (regression)",
+          "Object.keys(state.positions).find(" not in app_js
+          and "wikiPages().find(matchWiki)" not in app_js)
+    check("webui: a match counter lives in the search field",
+          'id="search-wrap"' in index and 'id="search-count"' in index
+          and '$("search-count")' in app_js and "#search-count" in style)
+    check("webui: the counter reads position / total while cycling",
+          '`${i + 1} / ${m.length}`' in app_js)
+    check("webui: a new query restarts the cycle",
+          bool(re.search(r'addEventListener\("input"[\s\S]{0,200}matchId = null', app_js)))
+
+    # -- spec 12 (PRD-C): the theme follows the OS until you touch it. A blocking <head>
+    #    stamp (before the stylesheet) kills the wrong-theme first-paint flash; app.js
+    #    follows prefers-color-scheme LIVE until the first explicit ☀/☾ press, which
+    #    writes the preference that sticks. The flash itself and the live OS-flip are the
+    #    PRD's manual checklist (they need a real browser + OS appearance toggle).
+    head_html = index.split("</head>")[0]
+    stamp = re.search(r"<script>([\s\S]*?)</script>", head_html)
+    stamp_src = stamp.group(1) if stamp else ""
+    check("webui: a blocking theme stamp sits in <head> before the stylesheet",
+          bool(stamp) and head_html.index("<script>") < head_html.index('href="style.css"'))
+    check("webui: the stamp resolves saved-preference-else-OS and writes data-theme",
+          "crux-theme" in stamp_src and "prefers-color-scheme" in stamp_src
+          and "dataset.theme" in stamp_src)
+    check("webui: app.js follows the OS theme live",
+          'matchMedia("(prefers-color-scheme: light)").addEventListener("change"' in app_js)
+    check("webui: an explicit choice sticks — the listener defers to the saved preference",
+          'if (localStorage.getItem("crux-theme")) return;' in app_js)
+    check("webui: the unconditional-dark boot is gone (regression)",
+          'applyTheme(localStorage.getItem("crux-theme") === "light" ? "light" : "dark")' not in app_js)
+    check("webui: the stylesheet header documents the real theme behavior",
+          "before first paint" in style and "prefers-color-scheme" in style)
+
+    # -- spec 12 (PRD-D): the type scale. Pane steps 12 / 16 / 21 px (a perfect fourth —
+    #    a step under ~1.2× does not read as a step, which was the complaint), and the
+    #    chrome consolidated to three NAMED sizes carried as variables so drift is
+    #    visible. Exempt by decision D8: SVG canvas text (.node/.wnode — those px sizes
+    #    feed the canvas measureText geometry in app.js), the pane's own em-driven
+    #    content, and the A/A/A size-hint glyphs (iconography that depicts size).
+    steps = {m.group(1): float(m.group(2)) for m in re.finditer(
+        r'#detail-content\[data-font="(\w+)"\]\s*\{\s*font-size:\s*([\d.]+)px', style)}
+    check(f"webui: the pane scale is 12 / 16 / 21 (found {steps})",
+          steps == {"small": 12.0, "medium": 16.0, "large": 21.0})
+    check("webui: the default pane size IS the medium step",
+          bool(re.search(r"#detail-content\s*\{[^}]*font-size:\s*16px", style)))
+    check("webui: every pane step reads as a step (ratio >= 1.2)",
+          len(steps) == 3 and steps["medium"] / steps["small"] >= 1.2
+          and steps["large"] / steps["medium"] >= 1.2)
+    check("webui: the three chrome sizes are named variables (10 / 11.5 / 12.5)",
+          "--fs-ui: 12.5px" in style and "--fs-ui-sm: 11.5px" in style
+          and "--fs-ui-xs: 10px" in style)
+    exempt = re.compile(r"(\.node|\.wnode|#detail-content|#detail-fontctl button\[data-font)")
+    strays = []
+    for m in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
+        sel = m.group(1).strip().splitlines()[-1].strip()
+        if exempt.search(sel):
+            continue
+        for px in re.findall(r"font-size:\s*([\d.]+)px", m.group(2)):
+            strays.append(f"{sel}: {px}px")
+    check(f"webui: chrome carries no stray px font-size — all through the vars (strays: {strays[:4]})",
+          not strays)
 
 
 def run_economy():
