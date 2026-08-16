@@ -8,6 +8,43 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **A failure scenario on every verifiable, and the two-part discrimination filter** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.2). Spec 09 replaces a numeric cap on
+  verifiables with a logical one: **two verifiables are redundant if they fail for the same
+  reason.** Applied greedily, the agent stops when it runs out of worlds. The engine cannot
+  judge that — what it *can* do is force the residue to be written down, so redundancy is
+  visible at a glance to the PI and to `crux-critic`.
+
+  Each check now carries the world in which it fails, on an **indented continuation line**:
+
+  ```
+  - [ ] imp-Spearman ≥ +0.01
+        fails-if!:: the gain is capacity alone — the width-matched arm also clears it
+  ```
+
+  The `!` marks the check that **discriminates against the declared null**. `validate` and
+  the `running` gate enforce both halves: every check has a non-empty scenario, no two are
+  byte-identical, and at least one claim-directed check discriminates. Byte-identity is all
+  the engine can honestly check — it catches copy-paste, and the rest is why the scenarios
+  are written down at all.
+
+  The continuation line was chosen because it is the only syntax that leaves **every** spec-15
+  reader byte-clean: tick, kind, text, `(found: …)` and both tallies are unchanged, asserted
+  against values captured before the change. New `--fails-if` / `--discriminates`, which
+  attach to the preceding `-v`/`-n` — **additive, never a second argument to `-v`**, which was
+  measured to break every existing caller. `ENGINE_VERSION` 2.5 → 2.6.
+
+### Changed
+
+- **`SCHEMA_GENERATION` → 2**, and `lock_material` is now **generation-keyed**. From
+  generation 2 the failure scenario is part of the pre-registered commitment — it is what
+  would have falsified the check, and writing it after results are visible is exactly the
+  move the lock exists to detect. A node stamped **generation 1 keeps the material it was
+  locked with, forever**: without that split, changing the commitment's shape would re-hash
+  every already-locked node and flag an edit nobody made, which is the engine falsifying its
+  own record. Proven on a fixture locked under generation 1 — it does not drift, and its
+  vault validates clean.
+
 - **`## Null` — the boring explanation, on a closed vocabulary, PI-gated** (spec
   [`09`](.spec/09-specialized-agents.md), PRD 09.1). The brief removes the parent's authored
   prompt, but one leak cannot be engineered away: the hypothesis **title** is directional.

@@ -41,11 +41,28 @@ def node_path(root, nid):
 
 
 def declare_null(root, hid, text="capacity — the extra parameters alone explain the gain"):
-    """Give a fixture hypothesis a declared AND approved null, the way `crux-null` proposes
-    and the PI signs off. Idempotent, so it is safe to call before every `--to running`."""
+    """Bring a fixture hypothesis up to everything the pre-run gates require, the way the
+    real flow does: a declared and PI-approved null (`crux-null` + `crux approve-null`), and
+    a distinct failure scenario on every check with one marked as discriminating
+    (`crux-verifiables`). Idempotent, so it is safe before every `--to running`.
+
+    One helper rather than three, because a fixture that satisfies one gate and not the
+    others is not a fixture of anything real."""
     n = E.Vault(root).get(hid)
     if not E._null_text(n):
         E.write_if_changed(n["path"], E.render_doc(n["fm"], E.set_null(n["body"], text)))
+    n = E.Vault(root).get(hid)
+    if E.node_schema(n) >= 2 and any(not s["fails_if"] for s in E.verifiable_scenarios(n["body"])):
+        out, i, first = [], 0, True
+        for line in n["body"].splitlines():
+            out.append(line)
+            if re.match(r"\s*- \[(.)\]", line):
+                i += 1
+                kind = E.verifiable_kind(re.match(r"\s*- \[(.)\]\s*(.*)$", line).group(2))[0]
+                bang = "!" if (first and kind == E.DEFAULT_KIND) else ""
+                if bang: first = False
+                out.append(f"      fails-if{bang}:: world {i} where check {i} alone fails")
+        E.write_if_changed(n["path"], E.render_doc(n["fm"], "\n".join(out)))
     E.cmd_approve_null(root, hid)
 
 
@@ -1954,6 +1971,8 @@ def run_agent_cli():
 
     r = cli("hypothesize", "it is", "-p", q1["id"], "-v", "stdout parses",
             "-n", "the parser round-trips a known-good payload",
+            "--fails-if", "the parser accepts anything", "--discriminates",
+            "--fails-if", "the known-good payload was itself broken",
             "--null", "chance — the payload happened to parse", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
@@ -3108,8 +3127,8 @@ def run_evidence_boundary():
     h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"])
 
     v = E.Vault(root)
-    check("boundary: a new hypothesis is stamped schema 1",
-          v.get(h1)["fm"].get("schema") == E.SCHEMA_GENERATION == 1)
+    check("boundary: a new hypothesis is stamped with the current schema generation",
+          v.get(h1)["fm"].get("schema") == E.SCHEMA_GENERATION)
     check("boundary: a new question is stamped schema 1",
           v.get(q1)["fm"].get("schema") == E.SCHEMA_GENERATION)
     check("boundary: the project root is not stamped (spec 15 governs q/h only)",
@@ -3141,7 +3160,8 @@ def run_evidence_boundary():
     # -- snapshot surface
     snap = E.snapshot(root)
     check("boundary: snapshot exposes schema on a node",
-          snap["nodes"][h1]["schema"] == 1 and snap["nodes"][q1]["schema"] == 1)
+          snap["nodes"][h1]["schema"] == E.SCHEMA_GENERATION
+          and snap["nodes"][q1]["schema"] == E.SCHEMA_GENERATION)
 
     # -- the info tier, on a vault with nothing to report
     rep = E.validation_report(root)
@@ -3657,11 +3677,18 @@ def run_hash_lock():
            "lock: removing a verifiable is drift")
 
     def _reorder(p):
-        t = read(p)
-        t = t.replace("- [x] alpha check   (found: +0.02)\n- [ ]  beta   check ",
-                      "- [ ]  beta   check \n- [x] alpha check   (found: +0.02)")
+        # swap the first two checks WITH their continuation lines — a real reorder moves the
+        # whole block, and doing it that way keeps the test honest now that a check carries
+        # its failure scenario on the line below it
+        src = read(p).splitlines()
+        head = next(i for i, l in enumerate(src) if l.startswith("## Verifiables"))
+        idx = [i for i in range(head, len(src)) if re.match(r"- \[(.)\]", src[i])]
+        a0, b0 = idx[0], idx[1]
+        end = idx[2] if len(idx) > 2 else next(
+            (i for i in range(b0 + 1, len(src)) if src[i].startswith("## ")), len(src))
+        blk_a, blk_b = src[a0:b0], src[b0:end]
         with open(p, "w", encoding="utf-8") as f:
-            f.write(t)
+            f.write("\n".join(src[:a0] + blk_b + blk_a + src[end:]) + "\n")
     drifts(h1, _reorder, "lock: reordering the verifiables is drift")
 
     check("lock: reverting the edit clears drift",
@@ -4840,7 +4867,8 @@ def run_brief():
           [x["kind"] for x in b["verifiables"]] == ["hypothesis", "hypothesis", "outcome-neutral"])
     check("brief: the combination rule travels with the checks",
           b["rule"] == "all" and b["rule_m"] is None)
-    check("brief: the payload names the evidence-semantics boundary", b["schema"] == 1)
+    check("brief: the payload names the evidence-semantics boundary",
+          b["schema"] == E.SCHEMA_GENERATION)
 
     # ---- determinism, which is what makes isolation testable at all
     check("brief: the payload is byte-identical across runs",
@@ -4896,6 +4924,9 @@ def run_null():
 
     def mk(title, **kw):
         kw.setdefault("verifiables", ["alpha"]); kw.setdefault("neutral", ["ctl"])
+        # this block is about the NULL, so the other gates are satisfied up front
+        kw.setdefault("fails_if", ["the width-matched arm also clears it", "the control broke"])
+        kw.setdefault("discriminates", [True, False])
         hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
         return hid
 
@@ -4960,6 +4991,170 @@ def run_null():
           E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == []
           and E.validation_report(old)["warnings"] == [])
     check("evmig: a pre-15 brief carries a null of None", E.brief(old, oh)["null"] is None)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def run_failure_scenarios():
+    """Spec 09 PRD 09.2 — a failure scenario per verifiable, and the two-part filter.
+
+    Spec 09 replaces a numeric cap on verifiables with a logical one: two verifiables are
+    redundant if they FAIL FOR THE SAME REASON. Applied greedily, the agent stops when it
+    runs out of worlds. The engine cannot judge that — what it can do is force the residue
+    to be written down, so redundancy is visible to the PI and to crux-critic.
+
+    D1 (ruled): the scenario is part of the pre-registered commitment, and
+    SCHEMA_GENERATION goes to 2 so nodes already stamped generation 1 keep the material they
+    were locked with, forever."""
+    print("\n# specialized agents — failure scenarios (spec 09, PRD 09.2)")
+
+    # ---- the syntax leaves every spec-15 reader byte-clean. Captured BEFORE, compared AFTER.
+    plain = ("## Verifiables\n\n"
+             "- [x] [outcome-neutral] the control reproduces 0.46 (found: 0.461)\n"
+             "- [ ] imp-Spearman >= +0.01\n")
+    withfs = ("## Verifiables\n\n"
+              "- [x] [outcome-neutral] the control reproduces 0.46 (found: 0.461)\n"
+              "      fails-if:: the shared preprocessing path changed under us\n"
+              "- [ ] imp-Spearman >= +0.01\n"
+              "      fails-if!:: the gain is capacity alone — the width-matched arm also clears it\n")
+    check("fails: the continuation line is invisible to the flat tally",
+          E.count_verifiables(withfs) == E.count_verifiables(plain))
+    check("fails: the continuation line is invisible to the kind split",
+          E.count_verifiables_by_kind(withfs) == E.count_verifiables_by_kind(plain))
+    check("fails: the continuation line does not disturb text/state/kind",
+          E._verifiables(withfs) == E._verifiables(plain))
+    check("fails: the continuation line does not disturb the deck payload",
+          E._deck_verifiables(withfs) == E._deck_verifiables(plain))
+    fs = E.verifiable_scenarios(withfs)
+    check("fails: scenarios parse in document order",
+          [x["fails_if"] for x in fs] ==
+          ["the shared preprocessing path changed under us",
+           "the gain is capacity alone — the width-matched arm also clears it"])
+    check("fails: the discriminates marker is read off the same line",
+          [x["discriminates"] for x in fs] == [False, True])
+
+    # ---- the gate
+    root = tempfile.mkdtemp(prefix="crux_fs_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Scenarios", root)
+    q1, _ = E.cmd_ask(root, "do scenarios gate?")
+    h1, _, _ = E.cmd_hypothesize(root, "with scenarios", parent=q1, rule="all",
+                                 null="capacity — width alone explains the gain",
+                                 verifiables=["alpha", "beta"], neutral=["the control"],
+                                 fails_if=["the width-matched arm also clears it",
+                                           "beta moves for an unrelated reason",
+                                           "the preprocessing path changed"],
+                                 discriminates=[True, False, False])
+    n1 = E.Vault(root).get(h1)
+    check("fails: --fails-if writes continuation lines under each check",
+          n1["body"].count("fails-if") == 3 and "fails-if!::" in n1["body"])
+    check("fails: scenarios reach the snapshot",
+          [x["fails_if"] for x in E.snapshot(root)["nodes"][h1]["verifiables"]][0]
+          == "the width-matched arm also clears it")
+    check("fails: scenarios reach the brief",
+          E.brief(root, h1)["verifiables"][0]["fails_if"]
+          == "the width-matched arm also clears it")
+    E.cmd_approve_null(root, h1)
+    check("fails: a complete hypothesis runs", E.cmd_test(root, h1, to="running") == "running")
+
+    def mk(title, **kw):
+        kw.setdefault("verifiables", ["alpha", "beta"]); kw.setdefault("neutral", ["ctl"])
+        kw.setdefault("rule", "all"); kw.setdefault("null", "chance — noise explains it")
+        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
+        E.cmd_approve_null(root, hid)
+        return hid
+
+    h2 = mk("no scenarios")
+    expect_error("fails: running is refused with a missing scenario",
+                 lambda: E.cmd_test(root, h2, to="running"))
+    check("fails: every verifiable needs a failure scenario",
+          "failure scenario" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
+    check("fails: a DRAFT is not nagged for scenarios it has not written yet",
+          not any(i == h2 and "failure scenario" in m for i, m in E.cmd_validate(root)))
+
+    h3 = mk("identical scenarios", fails_if=["the same world", "the same world", "ctl broke"],
+            discriminates=[True, False, False])
+    check("fails: two identical failure scenarios are flagged",
+          any(i == h3 and "same" in m.lower() for i, m in E.cmd_validate(root)))
+
+    h4 = mk("nothing discriminates", fails_if=["world a", "world b", "ctl broke"])
+    check("fails: at least one verifiable must discriminate against the null",
+          "discriminat" in _err_text(lambda: E.cmd_test(root, h4, to="running")))
+    expect_error("fails: running is refused when nothing discriminates",
+                 lambda: E.cmd_test(root, h4, to="running"))
+
+    # ---- the CLI is additive: a bare -v still works (never a second -v argument)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "cli built",
+                        "-p", q1, "-v", "alpha", "--fails-if", "world a", "--discriminates",
+                        "-n", "ctl", "--fails-if", "ctl broke",
+                        "--null", "chance — noise", "--rule", "all"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    hc = [x for x in E.Vault(root).nodes if x.startswith("h")][-1]
+    body = E.Vault(root).get(hc)["body"]
+    check("fails: --fails-if pairs with the preceding verifiable",
+          r.returncode == 0 and "fails-if!:: world a" in body and "fails-if:: ctl broke" in body)
+    r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "bare v",
+                         "-p", q1, "-v", "alpha", "-n", "ctl"],
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("fails: a bare -v is still accepted (no second positional argument)",
+          r2.returncode == 0)
+
+    check("fails: ENGINE_VERSION at or past 2.6", at_least_version("2.6"))
+    check("fails: SCHEMA_GENERATION is 2", E.SCHEMA_GENERATION == 2)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- D1: the scenario IS the commitment, and generation 1 keeps its old material
+    root = tempfile.mkdtemp(prefix="crux_fsl_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Locks2", root)
+    q1, _ = E.cmd_ask(root, "q")
+    hg2, _, _ = E.cmd_hypothesize(root, "gen two", parent=q1, rule="all",
+                                  null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
+    E.cmd_approve_null(root, hg2); E.cmd_test(root, hg2, to="running")
+    n = E.Vault(root).get(hg2)
+    check("fails: a generation-2 node locks generation-2 material",
+          E.node_schema(n) == 2 and "world a" in E.lock_material(n))
+    edit(node_path(root, hg2), "fails-if!:: world a", "fails-if!:: a completely different world")
+    check("fails: a failure scenario added or changed after running is drift",
+          E.lock_drift(E.Vault(root).get(hg2)))
+
+    # a node stamped generation 1 keeps the material it was locked with — the whole of D1
+    hg1, _, _ = E.cmd_hypothesize(root, "gen one", parent=q1, rule="all",
+                                  null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
+    g1 = E.Vault(root).get(hg1)
+    g1["fm"]["schema"] = 1
+    E.write_if_changed(g1["path"], E.render_doc(g1["fm"], g1["body"]))
+    g1 = E.Vault(root).get(hg1)
+    check("fails: a generation-1 node's material EXCLUDES scenarios",
+          "world a" not in E.lock_material(g1))
+    check("fails: generation 1 and generation 2 hash differently on the same body",
+          E.lock_hash(g1) != E.lock_hash(E.Vault(root).get(hg2)))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- THE MIGRATION PROOF: a node locked under generation 1 must not drift now
+    old = tempfile.mkdtemp(prefix="crux_fsmig_")
+    shutil.rmtree(old); os.makedirs(old)
+    E.cmd_init("Gen1", old)
+    oq, _ = E.cmd_ask(old, "q")
+    oh, _, _ = E.cmd_hypothesize(old, "locked under gen 1", parent=oq, rule="all",
+                                 null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
+                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
+    # rewind it to generation 1 and lock it with generation-1 material, as 2.5 would have
+    E.cmd_approve_null(old, oh)
+    g = E.Vault(old).get(oh)
+    g["fm"]["schema"] = 1
+    g["fm"]["lock"] = E.lock_hash(E.Node(dict(g, fm=dict(g["fm"], schema=1))))
+    g["fm"]["locked"] = E.now(); g["fm"]["lock_at"] = "running"; g["fm"]["status"] = "running"
+    E.write_if_changed(g["path"], E.render_doc(g["fm"], g["body"]))
+    check("evmig: a node locked under generation 1 does NOT drift after the bump",
+          not E.lock_drift(E.Vault(old).get(oh)))
+    check("evmig: and its vault validates clean", E.cmd_validate(old) == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    old, oq, oh = pre15_vault("crux_fsp15_")
+    check("evmig: a pre-15 hypothesis needs no failure scenarios",
+          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == [])
     shutil.rmtree(old, ignore_errors=True)
 
 
@@ -5030,6 +5225,7 @@ def main():
     run_cockpit_evidence()
     run_brief()
     run_null()
+    run_failure_scenarios()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

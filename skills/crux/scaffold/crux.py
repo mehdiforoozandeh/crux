@@ -70,6 +70,18 @@ def _jsonable(s):
     return s
 
 
+def _pair_discriminates(argv):
+    """Which `--fails-if` values carried a `--discriminates` after them. argparse's append
+    actions record the two flags in separate lists and lose the interleaving, so the pairing
+    is recovered from argv — the one place the order survives."""
+    out, idx = [], -1
+    for tok in argv:
+        if tok == "--fails-if":
+            idx += 1; out.append(False)
+        elif tok == "--discriminates" and idx >= 0:
+            out[idx] = True
+    return out
+
 def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
     return 0
@@ -109,6 +121,17 @@ def main(argv=None):
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
                         "run, not the claim. At least one is required before `test --to running`.")
+    # Additive, NOT a second argument to -v: `nargs=2` was measured to make `-v "a check"`
+    # exit with "expected 2 arguments", breaking the skill's documented usage, the agent CLI
+    # surface and every existing fixture. These attach to the most recent -v/-n instead, so a
+    # bare -v keeps working and a missing scenario is caught by `validate` before the run.
+    s.add_argument("--fails-if", dest="fails_if", action="append", default=[],
+                   help="the world in which the PRECEDING -v/-n check fails. Two checks are "
+                        "redundant if they fail for the same reason; this is what makes that "
+                        "visible. Required on every check before `test --to running`.")
+    s.add_argument("--discriminates", dest="discriminates", action="append_const", const=True,
+                   default=[], help="mark the preceding --fails-if as the one that "
+                                    "discriminates against the declared null (at least one must)")
     s.add_argument("--null", default=None,
                    help="the BORING explanation: the cheapest way this result could be trivially "
                         "true. One line, <=25 words, naming a confound family (capacity, chance, "
@@ -405,7 +428,8 @@ def dispatch(a):
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
-                                          a.verifiable, a.neutral, a.rule, a.rule_m, a.null)
+                                          a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
+                                          a.fails_if, _pair_discriminates(sys.argv))
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))

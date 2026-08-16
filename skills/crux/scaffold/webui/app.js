@@ -1225,7 +1225,14 @@ function ideaDetail(n) {
         const kn = v.kind === "outcome-neutral"
           ? `<span class="vkind" title="outcome-neutral: a control that must pass whatever the claim turns out to be. Its failure invalidates the run, not the claim.">control</span>`
           : "";
-        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}${kn}</span></li>`;
+        // the failure scenario is what earned this check its place: the world where IT
+        // fails and the others pass. `discriminates` marks the one aimed at the null.
+        const fi = v.fails_if
+          ? `<div class="vfails${v.discriminates ? " disc" : ""}" title="${v.discriminates
+              ? "This is the check that discriminates against the declared null."
+              : "The world in which this check fails."}">fails if: ${esc(v.fails_if)}</div>`
+          : "";
+        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}${kn}${fi}</span></li>`;
       }).join("") + `</ul>`
     : `<div class="body muted">none registered</div>`;
   const runs = n.run_links.length

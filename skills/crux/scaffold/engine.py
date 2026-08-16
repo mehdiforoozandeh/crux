@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.6"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -201,7 +201,12 @@ CONFOUND_FAMILIES = ("capacity", "chance", "leakage", "selection", "normalizatio
 NULL_MAX_WORDS    = 25
 NULL_APPROVED     = "null_approved"
 
-SCHEMA_GENERATION = 1
+# Generation 2 (spec 09): a verifiable's FAILURE SCENARIO joins the pre-registered
+# commitment. The generation is what `lock_material` keys off, so a node stamped 1 keeps
+# the material it was locked with — forever. Without that split, bumping the commitment's
+# shape would re-hash every already-locked node and flag an edit nobody made, which is the
+# engine falsifying its own record.
+SCHEMA_GENERATION = 2
 
 # `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
@@ -233,6 +238,26 @@ INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 
 # Leading, not trailing, and that is forced rather than chosen: the seed parser strips a
 # trailing `(...)` as the evidence note, so `(outcome-neutral)` would be silently recorded as
 # a finding. Anchoring the kind to the FRONT means it can never compete for that slot.
+# A verifiable's FAILURE SCENARIO — the world in which this check fails (spec 09). It rides
+# on an INDENTED CONTINUATION LINE under the checkbox, not as a suffix on it:
+#
+#   - [ ] imp-Spearman >= +0.01
+#         fails-if!:: the gain is capacity alone — the width-matched arm also clears it
+#         ^^^^^^^^^^  the `!` marks the one that DISCRIMINATES against the declared null
+#
+# The continuation line was measured against every reader spec 15 shipped and is invisible to
+# all of them: tick, kind, text, `(found: …)` and both tallies are byte-unchanged. The three
+# alternatives were not — a trailing `(fails-if: …)` is swallowed by the seed parser's
+# evidence regex (the same failure that ruled out `(outcome-neutral)`), and a suffix or an
+# inline field pollutes the check's own sentence in the cockpit and on every deck slide.
+#
+# Why it exists: spec 09 replaces a numeric cap on verifiables with a logical one — two
+# verifiables are redundant if they fail for the SAME REASON. The engine cannot judge that.
+# What it can do is force the residue to be written down, so redundancy is visible at a
+# glance to the PI and to `crux-critic`. Every verifiable had to pass the admission test to
+# exist, so every one has a scenario.
+FAILS_IF_RE      = re.compile(r"^\s+fails-if(!?)::\s*(.+?)\s*$")
+
 DEFAULT_KIND     = "hypothesis"
 NEUTRAL_KIND     = "outcome-neutral"
 VERIFIABLE_KINDS = (DEFAULT_KIND, NEUTRAL_KIND)
@@ -757,6 +782,25 @@ def _verifiable_lines(body):
             out.append((m.group(1).lower(), m.group(2).strip()))
     return out
 
+def verifiable_scenarios(body):
+    """[{fails_if, discriminates}] per verifiable, in document order — the continuation lines
+    attached to each checkbox. Positionally aligned with `_verifiable_lines`, so index i is
+    always check i, with `fails_if=None` where none was written."""
+    out, in_sec = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "verifiables"
+            continue
+        if not in_sec:
+            continue
+        if re.match(r"\s*- \[(.)\]", line):
+            out.append({"fails_if": None, "discriminates": False})
+            continue
+        m = FAILS_IF_RE.match(line)
+        if m and out:
+            out[-1] = {"fails_if": m.group(2).strip(), "discriminates": m.group(1) == "!"}
+    return out
+
 def _tally(states):
     met = sum(1 for c in states if c == "x")
     na  = sum(1 for c in states if c == "-")
@@ -807,10 +851,21 @@ def lock_material(n):
     the entire content of one."""
     rule, m = node_rule(n)
     parts = [f"rule={rule or ''}", f"m={'' if m is None else m}"]
-    for _tick, text in _verifiable_lines(n["body"]):
+    # GENERATION-KEYED. From generation 2 the failure scenario is part of the commitment —
+    # it is what would have falsified the check, and writing it after results are visible is
+    # the move the lock exists to detect. A node stamped generation 1 keeps the material it
+    # was locked with, because re-hashing it would flag an edit that never happened.
+    gen = node_schema(n)
+    scen = verifiable_scenarios(n["body"]) if gen >= 2 else []
+    for i, (_tick, text) in enumerate(_verifiable_lines(n["body"])):
         kind, text = verifiable_kind(text)
         text = " ".join(_FOUND_RE.sub("", text).split())
-        parts.append(f"{kind}\x1f{text}")
+        piece = f"{kind}\x1f{text}"
+        if gen >= 2:
+            s = scen[i] if i < len(scen) else {"fails_if": None, "discriminates": False}
+            piece += "\x1f" + " ".join((s["fails_if"] or "").split())
+            piece += "\x1f" + ("!" if s["discriminates"] else "")
+        parts.append(piece)
     return "\x1e".join(parts)
 
 def lock_hash(n):
@@ -1216,6 +1271,45 @@ def null_problem(text, schema=1):
                 f"what stops an exotic null nobody can test against.")
     return None
 
+def scenario_gap(n):
+    """The `validate`/gate message for a hypothesis' failure scenarios, or None.
+
+    Two checks, and they are total per spec 09:
+      1. at least one verifiable discriminates against the declared null, and
+      2. every verifiable has a non-empty failure scenario, no two byte-identical.
+
+    Byte-identity is all the engine can honestly check — it cannot tell whether two
+    differently-worded scenarios describe the same world. It catches copy-paste; the rest is
+    `crux-critic`'s job, which is precisely why the scenarios are written down at all."""
+    if n.type != "idea" or node_schema(n) < 2:
+        return None
+    lines = _verifiable_lines(n["body"])
+    scen = verifiable_scenarios(n["body"])
+    if not lines:
+        return None
+    missing = [i + 1 for i, s in enumerate(scen) if not (s["fails_if"] or "").strip()]
+    if missing:
+        return (f"hypothesis '{n.id}': verifiable(s) {', '.join(map(str, missing))} have no "
+                f"failure scenario. Every check had to name a world where IT fails and the "
+                f"others pass to earn its place — write that world on an indented "
+                f"`fails-if:: …` line under the check (`--fails-if` at creation).")
+    seen = {}
+    for i, s in enumerate(scen):
+        key = " ".join(s["fails_if"].lower().split())
+        if key in seen:
+            return (f"hypothesis '{n.id}': verifiables {seen[key] + 1} and {i + 1} declare the "
+                    f"SAME failure scenario, so they fail for the same reason and one of them "
+                    f"is redundant. Two checks are distinct only if you can name a world where "
+                    f"one fails and the other passes.")
+        seen[key] = i
+    hyp_idx = [i for i, (_t, txt) in enumerate(lines) if verifiable_kind(txt)[0] == DEFAULT_KIND]
+    if hyp_idx and not any(scen[i]["discriminates"] for i in hyp_idx):
+        return (f"hypothesis '{n.id}': no verifiable discriminates against the declared null. "
+                f"Mark the one that does with `fails-if!::` (`--discriminates` at creation) — "
+                f"without it the checks can all pass while the boring explanation is the true "
+                f"one, which is the whole failure the null exists to catch.")
+    return None
+
 def null_gap(n):
     """The `validate`/gate message for a hypothesis' null, or None. Gated on the stamp, so a
     pre-15 hypothesis is never asked for one."""
@@ -1295,6 +1389,10 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        if t == "idea" and node_schema(n) >= 2 and n.status not in ("running", "done"):
+            g = scenario_gap(n)
+            if g and "SAME failure scenario" in g:
+                problems.append((nid, g))     # redundancy is wrong on sight, not at run time
         # a malformed null is wrong the moment it is written, not when the run starts —
         # otherwise a draft accumulates nulls nobody can act on
         if t == "idea" and binds_evidence_semantics(n):
@@ -1324,7 +1422,7 @@ def validate(v):
                                           f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
         # ...and once a run has actually started, the control requirement bites
         if t == "idea" and n.status in ("running", "done"):
-            for gap in (neutral_gap(n), rule_gap(n), null_gap(n)):
+            for gap in (neutral_gap(n), rule_gap(n), null_gap(n), scenario_gap(n)):
                 if gap:
                     problems.append((nid, gap))
         if t == "idea" and lock_drift(n):
@@ -2701,7 +2799,7 @@ def cmd_ask(root, title, parent=None, body_text=""):
     return nid, fn
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
-                    rule=None, rule_m=None, null=None):
+                    rule=None, rule_m=None, null=None, fails_if=None, discriminates=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -2718,11 +2816,22 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
                 verifiable=(verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"))
     # claim-directed checks first, then the outcome-neutral controls — the controls gate the
     # run, and a reader should meet the claim before the apparatus check for it
-    rest = [f"- [ ] {x}" for x in (verifiables or [])[1:]]
-    rest += [f"- [ ] [{NEUTRAL_KIND}] {x}" for x in (neutral or [])]
-    if rest:
+    # scenarios are positional over (claim checks..., controls...) — the same order the
+    # lines are written in, which is the order the lock hashes them in
+    fi = list(fails_if or []); dz = list(discriminates or [])
+    def _scen(i):
+        s = fi[i] if i < len(fi) else None
+        if not s:
+            return ""
+        bang = "!" if (i < len(dz) and dz[i]) else ""
+        return f"\n      fails-if{bang}:: {s}"
+    rest = [f"- [ ] {x}{_scen(i + 1)}" for i, x in enumerate((verifiables or [])[1:])]
+    noff = len(verifiables or [])
+    rest += [f"- [ ] [{NEUTRAL_KIND}] {x}{_scen(noff + i)}" for i, x in enumerate(neutral or [])]
+    if rest or fi:
         lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
-        text = text.replace(f"- [ ] {lead}", f"- [ ] {lead}\n" + "\n".join(rest))
+        text = text.replace(f"- [ ] {lead}",
+                            f"- [ ] {lead}{_scen(0)}" + ("\n" + "\n".join(rest) if rest else ""))
     if null is not None:
         p = null_problem(null, SCHEMA_GENERATION)
         if p:
@@ -2783,7 +2892,7 @@ def cmd_test(root, nid, to=None, run=None):
     if target == "running" and sum(count_verifiables(n["body"])) == 0:
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
     if target == "running":
-        for gap in (neutral_gap(n), rule_gap(n), null_gap(n)):
+        for gap in (neutral_gap(n), rule_gap(n), null_gap(n), scenario_gap(n)):
             if gap:
                 raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
@@ -3182,7 +3291,10 @@ def _node_json(v, n, rd_map=None, task_map=None):
         d["words"] = prose_words(n["body"], "idea")
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
-        d["verifiables"] = _verifiables(n["body"])
+        vfs = _verifiables(n["body"])
+        for item, s in zip(vfs, verifiable_scenarios(n["body"])):
+            item.update(s)
+        d["verifiables"] = vfs
         # how the checks add up, published beside them — spec 15's render-time rule: the
         # verdict and the rule that produced it travel together wherever the node is read
         rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
@@ -3544,9 +3656,10 @@ def brief(root, hid):
 
     # the pre-registered checks, stripped of their results
     vfs = []
-    for item in _verifiables(n["body"]):
+    for item, s in zip(_verifiables(n["body"]), verifiable_scenarios(n["body"])):
         vfs.append({"text": _FOUND_RE.sub("", item["text"]).strip(),
-                    "kind": item["kind"], "state": item["state"]})
+                    "kind": item["kind"], "state": item["state"],
+                    "fails_if": s["fails_if"], "discriminates": s["discriminates"]})
 
     pages = {p["slug"]: p for p in scan_wiki_pages(root)}
     wiki, seen_slugs = [], set()
