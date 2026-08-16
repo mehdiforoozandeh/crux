@@ -59,9 +59,10 @@ def declare_null(root, hid, text="capacity — the extra parameters alone explai
             if re.match(r"\s*- \[(.)\]", line):
                 i += 1
                 kind = E.verifiable_kind(re.match(r"\s*- \[(.)\]\s*(.*)$", line).group(2))[0]
-                bang = "!" if (first and kind == E.DEFAULT_KIND) else ""
-                if bang: first = False
-                out.append(f"      fails-if{bang}:: world {i} where check {i} alone fails")
+                out.append(f"      fails-if:: world {i} where check {i} alone fails")
+                if first and kind == E.DEFAULT_KIND:
+                    out.append("      discriminates:: true")
+                    first = False
         E.write_if_changed(n["path"], E.render_doc(n["fm"], "\n".join(out)))
     E.cmd_approve_null(root, hid)
 
@@ -2076,7 +2077,12 @@ def run_deck():
     qmid, _ = E.cmd_ask(root, "Mid question", parent=qtop)
     qsib, _ = E.cmd_ask(root, "Sibling question", parent=qtop)
     h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid, neutral=["control"],
-                                 verifiables=["bar one", "bar two"], rule="all")
+                                 verifiables=["bar one", "bar two"], rule="all",
+                                 null="capacity — width alone explains the gain",
+                                 fails_if=["the width-matched arm also clears it",
+                                           "bar two moves on its own",
+                                           "the shared preprocessing path changed"],
+                                 discriminates=[True, False, False])
     h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
     # the optional ## Protocol section (new in 1.4) — fill it on the anchor
     edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
@@ -2126,16 +2132,26 @@ def run_deck():
     check("deck: closed child carries verdict + metric",
           k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
     check("deck: verifiable `found` parsed from the (found: …) parenthetical",
-          k1["verifiables"][0] == {"text": "bar one", "state": "met",
-                                   "kind": "hypothesis", "found": "+0.02"})
+          k1["verifiables"][0] == {"text": "bar one", "state": "met", "kind": "hypothesis",
+                                   "found": "+0.02",
+                                   "fails_if": "the width-matched arm also clears it",
+                                   "discriminates": True})
     check("deck: verifiable without a parenthetical has found None",
-          k1["verifiables"][1] == {"text": "bar two", "state": "met",
-                                   "kind": "hypothesis", "found": None})
+          k1["verifiables"][1] == {"text": "bar two", "state": "met", "kind": "hypothesis",
+                                   "found": None, "fails_if": "bar two moves on its own",
+                                   "discriminates": False})
     check("deck: the outcome-neutral control reaches the payload as its own kind",
           k1["verifiables"][2] == {"text": "control", "state": "met",
-                                   "kind": "outcome-neutral", "found": None})
-    check("deck: no failure_scenario field (dropped per PI ruling; spec 15/09)",
-          "failure_scenario" not in k1["verifiables"][0])
+                                   "kind": "outcome-neutral", "found": None,
+                                   "fails_if": "the shared preprocessing path changed",
+                                   "discriminates": False})
+    # This assert used to say the opposite. It was the tripwire spec 15 left pointing at 09
+    # ("dropped by PI ruling; spec 15/09 owns it"), and 09.2 owns it now — so it is REWRITTEN
+    # to assert the field is present and named, never deleted. Deleting it would erase the
+    # only record of why the field was once refused.
+    check("deck: the verifiable carries its failure scenario (spec 09)",
+          k1["verifiables"][0]["fails_if"] and k1["verifiables"][0]["discriminates"] is True
+          and all("fails_if" in x and "discriminates" in x for x in k1["verifiables"]))
     check("deck: child artifacts parsed with kinds",
           any(a["path"] == f"results/{h1}/report.md" and a["kind"] == "report"
               for a in k1["artifacts"]))
@@ -4871,6 +4887,18 @@ def run_brief():
           b["schema"] == E.SCHEMA_GENERATION)
 
     # ---- determinism, which is what makes isolation testable at all
+    # D3: the brief and the deck share their ancestry/wiki walks. Assert the SHARING, so a
+    # future edit that re-forks them fails here rather than drifting silently apart.
+    check("brief: the ancestry walk is the shared one, not a second copy",
+          [a["id"] for a in b["ancestry"]]
+          == [m.id for m in E.ancestor_chain(E.Vault(root), E.Vault(root).get(h1))])
+    check("brief: the wiki walk is the shared one",
+          b["wiki"] == E.wiki_refs(root, [E.Vault(root).get(h1)["body"]]
+                                   + [m["body"] for m in
+                                      E.ancestor_chain(E.Vault(root), E.Vault(root).get(h1))]))
+    check("brief: sharing the walks did not widen the exclusions",
+          SENTINEL not in json.dumps(b) and "ANCHORS-OWN" not in json.dumps(b))
+
     check("brief: the payload is byte-identical across runs",
           json.dumps(E.brief(root, h1), sort_keys=True) == blob)
     other = tempfile.mkdtemp(prefix="crux_brief2_")
@@ -4939,6 +4967,15 @@ def run_null():
           E.brief(root, h1)["null"] == "capacity — the extra parameters alone explain it")
     check("null: snapshot exposes the null",
           E.snapshot(root)["nodes"][h1]["null"].startswith("capacity"))
+    # 09.1 criterion 9's third surface: the deck. A slide reporting a verdict without the
+    # bar it was measured against is a number with no scale.
+    dp = E.deck_payload(root, h1)
+    check("null: the null reaches the deck payload",
+          dp["anchor"]["null"].startswith("capacity")
+          and dp["anchor"]["null_approved"] is False)
+    check("null: the deck reports approval as a boolean, never a timestamp",
+          isinstance(dp["anchor"]["null_approved"], bool)
+          and not re.search(r"\d{4}-\d\d-\d\dT", json.dumps(dp)))
 
     check("null: every confound family is accepted",
           all(E.null_problem(f"{fam} — the instance", 1) is None for fam in E.CONFOUND_FAMILIES))
@@ -5015,22 +5052,37 @@ def run_failure_scenarios():
               "- [x] [outcome-neutral] the control reproduces 0.46 (found: 0.461)\n"
               "      fails-if:: the shared preprocessing path changed under us\n"
               "- [ ] imp-Spearman >= +0.01\n"
-              "      fails-if!:: the gain is capacity alone — the width-matched arm also clears it\n")
+              "      fails-if:: the gain is capacity alone — the width-matched arm also clears it\n"
+              "      discriminates:: true\n")
     check("fails: the continuation line is invisible to the flat tally",
           E.count_verifiables(withfs) == E.count_verifiables(plain))
     check("fails: the continuation line is invisible to the kind split",
           E.count_verifiables_by_kind(withfs) == E.count_verifiables_by_kind(plain))
     check("fails: the continuation line does not disturb text/state/kind",
           E._verifiables(withfs) == E._verifiables(plain))
-    check("fails: the continuation line does not disturb the deck payload",
-          E._deck_verifiables(withfs) == E._deck_verifiables(plain))
+    # the deck now CARRIES the scenarios (09.2 criterion 7), so the invariance claim is
+    # about the spec-15 fields it must not disturb — text, state, kind, found
+    _s15 = lambda vs: [{k: x[k] for k in ("text", "state", "kind", "found")} for x in vs]
+    check("fails: the continuation line does not disturb the deck payload's spec-15 fields",
+          _s15(E._deck_verifiables(withfs)) == _s15(E._deck_verifiables(plain)))
+    check("fails: and the deck payload does carry the scenarios themselves",
+          [x["fails_if"] for x in E._deck_verifiables(withfs)][1]
+          == "the gain is capacity alone — the width-matched arm also clears it"
+          and [x["discriminates"] for x in E._deck_verifiables(withfs)] == [False, True])
     fs = E.verifiable_scenarios(withfs)
     check("fails: scenarios parse in document order",
           [x["fails_if"] for x in fs] ==
           ["the shared preprocessing path changed under us",
            "the gain is capacity alone — the width-matched arm also clears it"])
-    check("fails: the discriminates marker is read off the same line",
-          [x["discriminates"] for x in fs] == [False, True])
+    check("fails: discriminates is its own field, not a marker on the scenario (D8)",
+          [x["discriminates"] for x in fs] == [False, True]
+          and "fails-if!::" not in withfs and "discriminates::" in withfs)
+    check("fails: a bare `discriminates::` reads as yes",
+          E.verifiable_scenarios("## Verifiables\n\n- [ ] a\n      fails-if:: w\n"
+                                 "      discriminates::\n")[0]["discriminates"] is True)
+    check("fails: `discriminates:: false` reads as no",
+          E.verifiable_scenarios("## Verifiables\n\n- [ ] a\n      fails-if:: w\n"
+                                 "      discriminates:: false\n")[0]["discriminates"] is False)
 
     # ---- the gate
     root = tempfile.mkdtemp(prefix="crux_fs_")
@@ -5046,7 +5098,8 @@ def run_failure_scenarios():
                                  discriminates=[True, False, False])
     n1 = E.Vault(root).get(h1)
     check("fails: --fails-if writes continuation lines under each check",
-          n1["body"].count("fails-if") == 3 and "fails-if!::" in n1["body"])
+          n1["body"].count("fails-if::") == 3 and n1["body"].count("discriminates:: true") == 1
+          and "fails-if!::" not in n1["body"])
     check("fails: scenarios reach the snapshot",
           [x["fails_if"] for x in E.snapshot(root)["nodes"][h1]["verifiables"]][0]
           == "the width-matched arm also clears it")
@@ -5091,7 +5144,8 @@ def run_failure_scenarios():
     hc = [x for x in E.Vault(root).nodes if x.startswith("h")][-1]
     body = E.Vault(root).get(hc)["body"]
     check("fails: --fails-if pairs with the preceding verifiable",
-          r.returncode == 0 and "fails-if!:: world a" in body and "fails-if:: ctl broke" in body)
+          r.returncode == 0 and "fails-if:: world a" in body
+          and "discriminates:: true" in body and "fails-if:: ctl broke" in body)
     r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "bare v",
                          "-p", q1, "-v", "alpha", "-n", "ctl"],
                         capture_output=True, cwd=root, encoding="utf-8", errors="replace")
@@ -5114,7 +5168,7 @@ def run_failure_scenarios():
     n = E.Vault(root).get(hg2)
     check("fails: a generation-2 node locks generation-2 material",
           E.node_schema(n) == 2 and "world a" in E.lock_material(n))
-    edit(node_path(root, hg2), "fails-if!:: world a", "fails-if!:: a completely different world")
+    edit(node_path(root, hg2), "fails-if:: world a", "fails-if:: a completely different world")
     check("fails: a failure scenario added or changed after running is drift",
           E.lock_drift(E.Vault(root).get(hg2)))
 

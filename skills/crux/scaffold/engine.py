@@ -243,8 +243,11 @@ INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 
 # on an INDENTED CONTINUATION LINE under the checkbox, not as a suffix on it:
 #
 #   - [ ] imp-Spearman >= +0.01
-#         fails-if!:: the gain is capacity alone — the width-matched arm also clears it
-#         ^^^^^^^^^^  the `!` marks the one that DISCRIMINATES against the declared null
+#         fails-if:: the gain is capacity alone — the width-matched arm also clears it
+#         discriminates:: true
+#         ^^^^^^^^^^^^^^^ its OWN field (D8), not a marker packed onto the line above. A `!`
+#                         suffix was considered and declined: terser, but easy to miss in
+#                         review, and review is the entire point of writing these down.
 #
 # The continuation line was measured against every reader spec 15 shipped and is invisible to
 # all of them: tick, kind, text, `(found: …)` and both tallies are byte-unchanged. The three
@@ -257,7 +260,10 @@ INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 
 # What it can do is force the residue to be written down, so redundancy is visible at a
 # glance to the PI and to `crux-critic`. Every verifiable had to pass the admission test to
 # exist, so every one has a scenario.
-FAILS_IF_RE      = re.compile(r"^\s+fails-if(!?)::\s*(.+?)\s*$")
+FAILS_IF_RE      = re.compile(r"^\s+fails-if::\s*(.+?)\s*$")
+DISCRIMINATES_RE = re.compile(r"^\s+discriminates::\s*(.*?)\s*$")
+# what counts as "yes" on a `discriminates::` line; a bare marker means yes
+_TRUEISH         = ("", "true", "yes", "y", "1")
 
 DEFAULT_KIND     = "hypothesis"
 NEUTRAL_KIND     = "outcome-neutral"
@@ -808,7 +814,12 @@ def _verifiable_lines(body):
 def verifiable_scenarios(body):
     """[{fails_if, discriminates}] per verifiable, in document order — the continuation lines
     attached to each checkbox. Positionally aligned with `_verifiable_lines`, so index i is
-    always check i, with `fails_if=None` where none was written."""
+    always check i, with `fails_if=None` where none was written.
+
+    Two independent fields, per D8: `fails-if::` names the world where this check fails, and
+    `discriminates::` marks the one aimed at the declared null. Separate lines rather than a
+    `!` packed onto the first, because the whole reason these are written down is that a
+    human reads them — and a one-character marker is exactly what a reader skims past."""
     out, in_sec = [], False
     for line in body.splitlines():
         if line.startswith("## "):
@@ -819,9 +830,15 @@ def verifiable_scenarios(body):
         if re.match(r"\s*- \[(.)\]", line):
             out.append({"fails_if": None, "discriminates": False})
             continue
+        if not out:
+            continue
         m = FAILS_IF_RE.match(line)
-        if m and out:
-            out[-1] = {"fails_if": m.group(2).strip(), "discriminates": m.group(1) == "!"}
+        if m:
+            out[-1]["fails_if"] = m.group(1).strip()
+            continue
+        d = DISCRIMINATES_RE.match(line)
+        if d:
+            out[-1]["discriminates"] = d.group(1).strip().lower() in _TRUEISH
     return out
 
 def _tally(states):
@@ -1328,7 +1345,8 @@ def scenario_gap(n):
     hyp_idx = [i for i, (_t, txt) in enumerate(lines) if verifiable_kind(txt)[0] == DEFAULT_KIND]
     if hyp_idx and not any(scen[i]["discriminates"] for i in hyp_idx):
         return (f"hypothesis '{n.id}': no verifiable discriminates against the declared null. "
-                f"Mark the one that does with `fails-if!::` (`--discriminates` at creation) — "
+                f"Mark the one that does with a `discriminates:: true` line under it "
+                f"(`--discriminates` at creation) — "
                 f"without it the checks can all pass while the boring explanation is the true "
                 f"one, which is the whole failure the null exists to catch.")
     return None
@@ -2846,8 +2864,10 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         s = fi[i] if i < len(fi) else None
         if not s:
             return ""
-        bang = "!" if (i < len(dz) and dz[i]) else ""
-        return f"\n      fails-if{bang}:: {s}"
+        line = f"\n      fails-if:: {s}"
+        if i < len(dz) and dz[i]:
+            line += "\n      discriminates:: true"
+        return line
     rest = [f"- [ ] {x}{_scen(i + 1)}" for i, x in enumerate((verifiables or [])[1:])]
     noff = len(verifiables or [])
     rest += [f"- [ ] [{NEUTRAL_KIND}] {x}{_scen(noff + i)}" for i, x in enumerate(neutral or [])]
@@ -3526,18 +3546,25 @@ def _metric_leaves(tree, prefix=""):
 _FOUND_RE = re.compile(r"\s*\(found:\s*(.*?)\)\s*$")
 
 def _deck_verifiables(body):
-    """`## Verifiables` for the payload: [{text, state, kind, found}] where `found` is the
-    trailing `(found: …)` evidence parenthetical the seed materializer writes (None when
-    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it.
+    """`## Verifiables` for the payload:
+    [{text, state, kind, found, fails_if, discriminates}].
+
+    `found` is the trailing `(found: …)` evidence parenthetical the seed materializer writes.
 
     `kind` (spec 15) matters to a deck: a failed OUTCOME-NEUTRAL check means the run was
     invalid, not that the claim was refuted, and a slide must not narrate the second when
-    the vault recorded the first."""
+    the vault recorded the first.
+
+    `fails_if` / `discriminates` (spec 09) matter for the same reason one rung up. A slide
+    saying "the check passed" is worth what the check was aimed at — and the check aimed at
+    the declared null is the one that carries the claim. Without these the deck can present
+    four decorative checks and the discriminating one identically."""
     out = []
-    for item in _verifiables(body):
+    for item, s in zip(_verifiables(body), verifiable_scenarios(body)):
         m = _FOUND_RE.search(item["text"])
         out.append({"text": _FOUND_RE.sub("", item["text"]).strip(), "state": item["state"],
-                    "kind": item["kind"], "found": m.group(1).strip() if m else None})
+                    "kind": item["kind"], "found": m.group(1).strip() if m else None,
+                    "fails_if": s["fails_if"], "discriminates": s["discriminates"]})
     return out
 
 def _deck_text(body, heading):
@@ -3556,6 +3583,12 @@ def _deck_idea_fields(n):
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
     return {"verdict": verdict if verdict in VERDICTS else None,
             "rule": rule, "rule_m": m, "drift": lock_drift(n),
+            # the null is the bar restated: what the checks had to rule out. A deck that
+            # reports a verdict without it is reporting a number with no scale.
+            "null": _null_text(n),
+            # a BOOLEAN, not the timestamp. The deck payload is byte-stable by contract and
+            # carries no dates; what a slide needs is "was this bar signed off", not when.
+            "null_approved": bool(n["fm"].get(NULL_APPROVED)),
             "metric": n["fm"].get("metric") or None,
             "verifiables": _deck_verifiables(n["body"]),
             "findings": _deck_text(n["body"], "Findings"),
@@ -3599,13 +3632,7 @@ def deck_payload(root, anchor):
     if n.type not in ("question", "idea"):
         raise CruxError(f"deck anchors on a question or hypothesis (got '{n.type}' for '{anchor}')")
 
-    # lineage: root -> parent, cycle-guarded
-    lineage, cur, seen = [], n, {n.id}
-    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
-        cur = v.nodes[cur.parent]
-        seen.add(cur.id)
-        lineage.append(cur)
-    lineage.reverse()
+    lineage = ancestor_chain(v, n)          # root -> parent, cycle-guarded (shared, D3)
 
     def _line(m):
         pre = m["body"].split(LEDGER_START)[0]
@@ -3616,6 +3643,7 @@ def deck_payload(root, anchor):
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
                 "verdict": None, "rule": None, "rule_m": None, "drift": False,
+                "null": None, "null_approved": False,
                 "metric": None, "verifiables": [], "findings": None,
                 "artifacts": []}
     anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
@@ -3629,14 +3657,7 @@ def deck_payload(root, anchor):
 
     # wiki pages linked from the anchor, then its ancestors (root -> parent), first-mention
     # order, de-duplicated; entries point at the page, bodies stay in the vault
-    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
-    wiki, seen_slugs = [], set()
-    for body in [n["body"]] + [m["body"] for m in lineage]:
-        for t in link_targets(body):
-            if t in pages and t not in seen_slugs:
-                seen_slugs.add(t)
-                wiki.append({"slug": t, "title": pages[t]["title"],
-                             "path": _rel(root, pages[t]["path"])})
+    wiki = wiki_refs(root, [n["body"]] + [m["body"] for m in lineage])
 
     # RD pages owned by the anchor or anything under it (spec 07). Active only: a superseded
     # design is history, and putting it on a methods slide is exactly what the supersession
@@ -3716,6 +3737,35 @@ def deck_payload(root, anchor):
 #                             colleague would read.
 #   metric VALUES             — the brief advertises what can be measured (key paths), never
 #                             what was measured.
+def ancestor_chain(v, n):
+    """[Node] from the root down to `n`'s parent, cycle-guarded. Shared by `deck_payload`
+    and `brief` (D3): both need the same walk, and two copies of a cycle guard is two places
+    for it to be wrong."""
+    out, cur, seen = [], n, {n.id}
+    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
+        cur = v.nodes[cur.parent]
+        seen.add(cur.id)
+        out.append(cur)
+    out.reverse()
+    return out
+
+def wiki_refs(root, bodies):
+    """[{slug, title, path}] for every wiki page linked from `bodies`, first-mention order,
+    de-duplicated. Shared by `deck_payload` and `brief` (D3).
+
+    Note what is NOT shared: the two payloads pick DIFFERENT bodies to scan and shape their
+    own fields. The exclusions that make the brief safe live in `brief` itself, where they
+    are sentinel-tested — sharing the walks must not quietly widen them."""
+    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
+    out, seen = [], set()
+    for body in bodies:
+        for tgt in link_targets(body):
+            if tgt in pages and tgt not in seen:
+                seen.add(tgt)
+                out.append({"slug": tgt, "title": pages[tgt]["title"],
+                            "path": _rel(root, pages[tgt]["path"])})
+    return out
+
 def brief(root, hid):
     """The deterministic cold input for an isolated agent. Pure read; byte-stable."""
     v = Vault(root)
@@ -3725,13 +3775,10 @@ def brief(root, hid):
                         f"cold input is one claim, not a subtree")
     parent = v.nodes.get(n.parent)
 
-    # ancestry: ids and titles only, root -> parent. Enough to orient, too little to argue.
-    anc, cur, seen = [], n, {n.id}
-    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
-        cur = v.nodes[cur.parent]
-        seen.add(cur.id)
-        anc.append({"id": cur.id, "type": cur.type, "title": cur.title})
-    anc.reverse()
+    # ancestry: ids and titles ONLY, root -> parent. Enough to orient, too little to argue —
+    # the shared walk hands back nodes; the narrowing to three fields is the brief's own.
+    chain = ancestor_chain(v, n)
+    anc = [{"id": m.id, "type": m.type, "title": m.title} for m in chain]
 
     # the shared factual record: what CLOSED siblings under the same question found.
     prior = []
@@ -3749,14 +3796,7 @@ def brief(root, hid):
                     "kind": item["kind"], "state": item["state"],
                     "fails_if": s["fails_if"], "discriminates": s["discriminates"]})
 
-    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
-    wiki, seen_slugs = [], set()
-    for body in [n["body"]] + [v.nodes[a["id"]]["body"] for a in anc]:
-        for tgt in link_targets(body):
-            if tgt in pages and tgt not in seen_slugs:
-                seen_slugs.add(tgt)
-                wiki.append({"slug": tgt, "title": pages[tgt]["title"],
-                             "path": _rel(root, pages[tgt]["path"])})
+    wiki = wiki_refs(root, [n["body"]] + [m["body"] for m in chain])
 
     tree = load_metrics(root, hid)
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)

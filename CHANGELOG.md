@@ -68,10 +68,11 @@ verdict/roll-up/view logic changes.
 
   ```
   - [ ] imp-Spearman ≥ +0.01
-        fails-if!:: the gain is capacity alone — the width-matched arm also clears it
+        fails-if:: the gain is capacity alone — the width-matched arm also clears it
+        discriminates:: true
   ```
 
-  The `!` marks the check that **discriminates against the declared null**. `validate` and
+  `discriminates::` is **its own field**, marking the check aimed at the declared null. `validate` and
   the `running` gate enforce both halves: every check has a non-empty scenario, no two are
   byte-identical, and at least one claim-directed check discriminates. Byte-identity is all
   the engine can honestly check — it catches copy-paste, and the rest is why the scenarios
