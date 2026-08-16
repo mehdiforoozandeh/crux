@@ -384,7 +384,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
+    check("wmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1829,7 +1829,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
+    check("economy: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1864,7 +1864,7 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.4", E.Vault(root).cfg.get("engine_version") == "1.4")
+    check("emig: drift re-stamps to 1.5", E.Vault(root).cfg.get("engine_version") == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1988,7 +1988,7 @@ def run_deck():
     import json
     print("\n# deck payload (crux deck <anchor> --json)")
     CRUX = os.path.join(HERE, "crux.py")
-    check("deck: ENGINE_VERSION is 1.4", E.ENGINE_VERSION == "1.4")
+    check("deck: ENGINE_VERSION is 1.5", E.ENGINE_VERSION == "1.5")
 
     base = tempfile.mkdtemp(prefix="crux_deck_")
     root = os.path.join(base, "vault")
@@ -2433,6 +2433,173 @@ def run_prezit():
         check(f"prezit: SKILL.md states '{needle}'", needle in s)
 
 
+def run_rd():
+    """Spec 07 — the RD layer. Requirements Documents: one active RD per node, living in
+    rd/, linked from the node, OUTSIDE the roll-up tree. This is the overflow channel spec 06
+    deliberately warned-rather-than-errored without: the 400-word cap had nowhere to send the
+    design detail it displaced. Shape copied from the wiki layer on purpose — a parentless
+    side-layer of markdown pages with a generated index."""
+    print("\n# RD layer (rd/ · crux rd · generated RD.md)")
+    root = tempfile.mkdtemp(prefix="crux_rd_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD Demo", root, goal="Exercise the RD layer.")
+    q1, _ = E.cmd_ask(root, "Does the RD layer hold?")
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+
+    # -- 1. creation + the backlink
+    slug, fn = E.cmd_rd(root, h1, "Probe ladder and estimand")
+    page = os.path.join(root, "rd", slug + ".md")
+    check("rd: crux rd creates the page", os.path.isfile(page))
+    fm, body = E.parse_doc(read(page))
+    check("rd: the created page carries type: rd", fm.get("type") == "rd")
+    check("rd: the page records its owning node", fm.get("node") == h1)
+    ntext = read(node_path(root, h1))
+    check("rd: the node gains an RD:: backlink", "RD:: [[rd/%s]]" % slug in ntext)
+    check("rd: the backlink resolves to the created file",
+          E.link_targets(ntext)[-1] == slug or slug in E.link_targets(ntext))
+    lines = [l for l in ntext.splitlines() if l.startswith(("Parent::", "RD::"))]
+    check("rd: the backlink sits beside Parent::",
+          len(lines) == 2 and lines[0].startswith("Parent::") and lines[1].startswith("RD::"))
+    # the whole point of the preamble placement: text before the first `## ` is invisible to
+    # _section, so linking a design document costs nothing from the budget it exists to free
+    bare = read(node_path(root, h1)).replace("RD:: [[rd/%s]]" % slug, "")
+    check("rd: the backlink does not consume the 400-word budget",
+          E.prose_words(ntext, "idea") == E.prose_words(bare, "idea"))
+
+    # -- 2. which nodes may own one (D2: both; q21 — the motivating case — is a question)
+    qslug, _ = E.cmd_rd(root, q1, "Why this question needs a design")
+    check("rd: an RD may attach to a question", os.path.isfile(os.path.join(root, "rd", qslug + ".md")))
+    check("rd: an RD may attach to a hypothesis", E.scan_rd_pages(root)[0]["node"] in (q1, h1))
+    expect_error("rd: an RD may not attach to the project root",
+                 lambda: E.cmd_rd(root, "root", "nope"))
+    s1, _ = E.cmd_synthesize(root, "a synthesis", [q1])
+    expect_error("rd: an RD may not attach to a synthesis", lambda: E.cmd_rd(root, s1, "nope"))
+
+    # -- 3. one ACTIVE RD per node (D11), and the refusal names the remedy (D12)
+    try:
+        E.cmd_rd(root, h1, "a second design")
+        check("rd: a second active RD is refused with the remedy", False)
+        check("rd: the refusal names --supersedes", False)
+    except E.CruxError as e:
+        check("rd: a second active RD is refused with the remedy", True)
+        check("rd: the refusal names --supersedes", "--supersedes" in str(e))
+
+    # -- 4. supersession is the ONLY way a design changes (never an in-place amendment)
+    before = read(page)
+    slug2, _ = E.cmd_rd(root, h1, "Probe ladder, second cut", supersedes=slug)
+    pages = {p["slug"]: p for p in E.scan_rd_pages(root)}
+    check("rd: --supersedes creates the new RD active", pages[slug2]["status"] == "active")
+    check("rd: --supersedes flips the old RD to superseded", pages[slug]["status"] == "superseded")
+    check("rd: --supersedes records supersedes: on the new RD", pages[slug2]["supersedes"] == slug)
+    check("rd: --supersedes rewrites the node's RD:: line",
+          "RD:: [[rd/%s]]" % slug2 in read(node_path(root, h1))
+          and "RD:: [[rd/%s]]" % slug not in read(node_path(root, h1)))
+    # D7 ruled git is the audit trail, so nothing hashes the old file — but the engine itself
+    # must still never touch its BODY, or the chain stops being a record of what was thought
+    check("rd: superseding never edits the superseded body",
+          E.parse_doc(read(page))[1] == E.parse_doc(before)[1])
+
+    # -- 5. an RD is a document, not evidence: outside the tree, the roll-up and the gate
+    v = E.Vault(root)
+    check("rd: an RD page never becomes a node", set(v.nodes) == {"root", q1, h1, s1})
+    check("rd: no node has type rd", not any(n.type == "rd" for n in v.nodes.values()))
+    led_before = E.ledger_counts(E.Vault(root), q1)
+    st_before = E.Vault(root).get(q1).status
+    E.cmd_rd(root, h1, "third cut", supersedes=slug2)
+    E.refresh(root)
+    check("rd: an RD does not move ledger_counts", E.ledger_counts(E.Vault(root), q1) == led_before)
+    check("rd: an RD does not trip the review gate", E.Vault(root).get(q1).status == st_before)
+
+    # -- 6. the generated index
+    idx = os.path.join(root, "RD.md")
+    check("rd: RD.md is generated when rd/ is active", os.path.isfile(idx))
+    itext = read(idx)
+    check("rd: RD.md lists the page with its title", "Probe ladder, second cut" in itext)
+    check("rd: RD.md shows the page status", "superseded" in itext)
+    check("rd: RD.md derives the reverse chain", "superseded by" in itext.lower())
+    check("rd: refresh #1 no-op after an RD", E.refresh(root) is False)
+    check("rd: refresh #2 no-op after an RD", E.refresh(root) is False)
+    first = read(idx); E.refresh(root)
+    check("rd: RD.md is byte-stable across renders", read(idx) == first)
+    check("rd: RD.md is in GENERATED", "RD.md" in E.GENERATED)
+    check("rd: RD.md is not a node", "RD.md" not in [n["fn"] for n in E.Vault(root).nodes.values()])
+    E.ensure_rd(root)
+    check("rd: ensure_rd is idempotent", E.refresh(root) is False)
+
+    # -- 7. the agent surface (spec 06's convention: --json on every verb an agent drives)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "rd", q1,
+                        "another design", "--supersedes", qslug, "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    try:
+        j = __import__("json").loads(r.stdout)
+    except Exception:
+        j = None
+    check("rd: crux rd emits parseable JSON",
+          isinstance(j, dict) and {"slug", "file", "node", "status"} <= set(j))
+    check("rd: crux rd --json exits 0", r.returncode == 0)
+
+    # -- 8. the criterion the whole epic exists for (D19: on a fixture, not on the real q21).
+    #       The engine never moves text — the PI does. What is asserted is that the move WORKS:
+    #       an over-cap node comes back under the cap and the words survive in the RD.
+    q2, _ = E.cmd_ask(root, "Is this node over the cap?")
+    design = " ".join(["estimand"] * 500)
+    edit(node_path(root, q2), "## Question\n\nIs this node over the cap?",
+         "## Question\n\nIs this node over the cap? " + design)
+    check("rd: the fixture question really is over the cap",
+          any(w["id"] == q2 for w in E.validation_report(root)["warnings"]))
+    dslug, _ = E.cmd_rd(root, q2, "The displaced design")
+    dpath = os.path.join(root, "rd", dslug + ".md")
+    edit(node_path(root, q2), " " + design, "")                       # PI moves it out
+    edit(dpath, "## Design\n", "## Design\n\n" + design + "\n")        # ...and into the RD
+    check("rd: moving design into an RD brings a node back under the cap",
+          not any(w["id"] == q2 for w in E.validation_report(root)["warnings"]))
+    check("rd: the moved words survive in the RD file", design in read(dpath))
+    check("rd: an RD body is not capped",
+          "rd" not in E.PROSE_SECTIONS and
+          not any(dslug in w["message"] for w in E.validation_report(root)["warnings"]))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_rd_migration():
+    """A pre-07 vault has no rd/ directory at all. It must load, validate, refresh and render
+    exactly as before — byte for byte (evolve-crux gate 4). These asserts are deliberate
+    regression locks: they assert an ABSENCE, which is the easiest thing to break silently
+    later by scanning one directory too many."""
+    print("\n# RD layer — a pre-07 vault still reads")
+    root = tempfile.mkdtemp(prefix="crux_rdmig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Vault", root)
+    q1, _ = E.cmd_ask(root, "an old question")
+    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    check("rdmig: a pre-07 vault has no rd/", not os.path.isdir(os.path.join(root, "rd")))
+    check("rdmig: a pre-07 vault grows no RD.md", not os.path.exists(os.path.join(root, "RD.md")))
+    check("rdmig: status still renders on a pre-07 vault", "an old question" in E.status_text(root))
+    check("rdmig: review still runs on a pre-07 vault", isinstance(E.cmd_review(root), list))
+
+    # an rd/ directory full of pages changes nothing until something looks at it
+    before = _dir_bytes(root)
+    os.makedirs(os.path.join(root, "rd"))
+    write(os.path.join(root, "rd", "stray.md"),
+          "---\ntype: rd\nnode: %s\ntitle: Stray\nstatus: active\n---\n\n# Stray\n" % q1)
+    check("rdmig: an rd/ directory adds no nodes", set(E.Vault(root).nodes) == set(E.Vault(root).nodes) and
+          not any(n.type == "rd" for n in E.Vault(root).nodes.values()))
+    check("rdmig: a pre-07 vault validates clean", E.cmd_validate(root) == [])
+    after = {k: v for k, v in _dir_bytes(root).items() if "/rd/" not in k.replace(os.sep, "/")
+             and not k.endswith("RD.md")}
+    check("rdmig: the vault is byte-identical across the upgrade", after == before)
+    shutil.rmtree(os.path.join(root, "rd"))
+    check("rdmig: a pre-07 vault refresh is a no-op", E.refresh(root) is False)
+
+    # the drift path, exactly as the wiki and economy migrations prove it
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.4")
+    warn = E.check_and_stamp_version(root)
+    check("rdmig: an old-stamped vault reports drift", warn is not None and "1.4" in warn)
+    check("rdmig: drift re-stamps to the new ENGINE_VERSION",
+          E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("rdmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2476,6 +2643,8 @@ def main():
     run_economy()
     run_economy_migration()
     run_agent_cli()
+    run_rd()
+    run_rd_migration()
     run_deck()
     run_deck_verify()
     run_prezit()

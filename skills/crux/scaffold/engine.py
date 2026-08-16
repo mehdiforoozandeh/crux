@@ -14,11 +14,15 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
                                 # Additive + read-only: a pre-1.4 vault loads unchanged.
+                                # 1.5: the RD layer (spec 07) — the engine now scans a new
+                                # directory (rd/), interprets a new `type: rd`, and writes a
+                                # new generated view (RD.md). Additive: a pre-1.5 vault has no
+                                # rd/ at all and loads byte-unchanged.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -31,7 +35,18 @@ WIKI_INDEX   = "WIKI.md"        # generated index of wiki pages (Karpathy's inde
 SOURCES_FILE = os.path.join(WIKI_DIR, ".sources.tsv")   # engine-owned source registry: sha256<TAB>date<TAB>path<TAB>title
 WIKI_LOG     = os.path.join(WIKI_DIR, "log.md")          # append-only chronological log (Karpathy's log.md)
 WIKI_SCHEMA  = os.path.join(WIKI_DIR, "SCHEMA.md")       # per-vault conventions the agent + PI co-evolve
-GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX) # root .md views the node scan must never treat as nodes
+
+# RD layer (Epic 7): Requirements Documents — where the design detail displaced by the
+# 400-word prose cap goes. Deliberately the wiki layer's shape, not a second pattern: a
+# parentless side-layer of markdown pages, linked from the node, with a generated index and
+# a structural lint. An RD is a DOCUMENT, not evidence — it never enters the roll-up, never
+# moves a verdict and never trips the review gate.
+RD_DIR       = "rd"             # agent/PI-written design documents, one active per node
+RD_INDEX     = "RD.md"          # generated index of RD pages, rendered at the vault root
+RD_STATUS    = ("draft", "active", "superseded")
+RD_LINK      = "RD::"           # the node's backlink, written beside `Parent::`
+
+GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX) # root .md views the node scan must never treat as nodes
 
 # evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
 # Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
@@ -341,6 +356,46 @@ _(synthesize across the cited sources — every claim traces to a file under `ra
 
 Related:: <<related>>
 """,
+"rd": """---
+type: rd
+node: <<node>>
+title: <<title>>
+status: draft
+supersedes: <<supersedes>>
+created: <<now>>
+updated: <<now>>
+---
+
+# <<title>>
+
+RD for [[<<node_basename>>]] — `<<node>>`
+
+## Context
+
+_(what forced this design — the constraint, the finding, or the question that made it necessary)_
+
+## Out of scope
+
+_(an explicit fence: what this design deliberately does NOT cover, binding on the node and its children)_
+
+## Design
+
+_(the substance)_
+
+## Considered options
+
+_(the alternatives, and why each lost — research reasoning lives in the rejected branch)_
+
+## Consequences and known distortions
+
+_(what this design gets wrong on purpose, and what must travel with every result because of it)_
+
+## Supersedes
+
+_(forward-only. An active RD is never amended in place: a design change writes a NEW RD with
+  `crux rd <node> "<title>" --supersedes <slug>`, and the chain is the reasoning history.
+  The reverse link is generated into RD.md — never write `superseded by` into an old RD.)_
+""",
 "wiki_schema": """---
 type: wiki_schema
 title: Wiki schema
@@ -625,6 +680,8 @@ def refresh(root):
     if write_if_changed(os.path.join(root, "EXPERIMENTS.md"), render.render_experiments(v)): changed = True
     if wiki_active(root):
         if write_if_changed(os.path.join(root, WIKI_INDEX), render.render_wiki(v, root)): changed = True
+    if rd_active(root):
+        if write_if_changed(os.path.join(root, RD_INDEX), render.render_rd(v, root)):     changed = True
     return changed
 
 # ----------------------------------------------------------------------------- validation
@@ -984,6 +1041,126 @@ def validate_wiki(root):
         if rel not in compiled:
             problems.append((f"src:{rel}", f"uncompiled source '{rel}': registered but no wiki page cites it"))
     return problems
+
+# ----------------------------------------------------------------------------- RD layer (Epic 7)
+# Requirements Documents. The engine owns only the bookkeeping — the page, the backlink, the
+# generated index and (in 07.2) the structural lint. What belongs in an RD, and whether a node
+# earns one at all, is judgment and lives in the `crux-rd` skill.
+#
+# Two records, cross-checked: the RD declares `node:`, the node carries an `RD::` wikilink.
+# The backlink sits in the body PREAMBLE beside `Parent::` — text before the first `## `
+# heading is invisible to `_section`, so linking a design document costs nothing from the
+# 400-word budget the RD exists to free.
+
+def rd_dir(root):    return os.path.join(root, RD_DIR)
+def rd_active(root): return os.path.isdir(rd_dir(root))
+
+def ensure_rd(root):
+    """Lazily stand up the RD layer (idempotent, safe on a pre-07 vault)."""
+    os.makedirs(rd_dir(root), exist_ok=True)
+
+def scan_rd_pages(root):
+    """Every RD page (a *.md under rd/ with `type: rd`), sorted by slug. Pure read."""
+    pages, d = [], rd_dir(root)
+    if not os.path.isdir(d):
+        return pages
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            fm, body = parse_doc(read(os.path.join(dirpath, fn)))
+            if fm.get("type") != "rd":
+                continue
+            pages.append({"slug": fn[:-3], "fn": fn, "path": os.path.join(dirpath, fn),
+                          "fm": fm, "body": body, "title": fm.get("title") or fn[:-3],
+                          "node": fm.get("node"), "status": fm.get("status") or "draft",
+                          "supersedes": fm.get("supersedes") or None,
+                          "links": link_targets(body)})
+    pages.sort(key=lambda p: p["slug"])
+    return pages
+
+def active_rd(root, nid):
+    """The one active RD owned by `nid`, or None. Deterministic on the (lint-caught) case of
+    two: the first by slug."""
+    for p in scan_rd_pages(root):
+        if p["node"] == nid and p["status"] == "active":
+            return p
+    return None
+
+def _rd_link_line(slug, title):
+    return f"{RD_LINK} [[{RD_DIR}/{slug}]] — {title}"
+
+def set_rd_link(body, slug, title):
+    """Put the `RD::` backlink in the body preamble, directly under `Parent::` — replacing an
+    existing one rather than accumulating. Returns the new body."""
+    line = _rd_link_line(slug, title)
+    lines = body.splitlines()
+    for i, l in enumerate(lines):
+        if l.strip().startswith(RD_LINK):
+            lines[i] = line
+            return "\n".join(lines)
+    for i, l in enumerate(lines):
+        if l.strip().startswith("Parent::"):
+            lines.insert(i + 1, line)
+            return "\n".join(lines)
+    return line + "\n\n" + body
+
+def _rd_slug(root, title, taken):
+    base = slugify(title)
+    slug, n = base, 1
+    while slug in taken or os.path.exists(os.path.join(rd_dir(root), slug + ".md")):
+        n += 1
+        slug = f"{base}_{n}"
+    return slug
+
+def cmd_rd(root, nid, title, supersedes=None):
+    """Write the Requirements Document for one node: create `rd/<slug>.md` and the node's
+    `RD::` backlink. Returns (slug, filename).
+
+    One ACTIVE RD per node. A design change never edits the active RD in place — it writes a
+    new one with `--supersedes`, and the chain is the reasoning history. That is the direct
+    fix for a node body treated as the only durable record.
+
+    The engine does not detect an edit to a superseded RD (PI ruling, spec 07 D7): `git log -p
+    rd/<slug>.md` is the audit trail, exactly as it is for a node's decision history."""
+    v = Vault(root)
+    n = v.get(nid)
+    if n.type not in ("question", "idea"):
+        raise CruxError(f"an RD belongs to a question or a hypothesis (got a '{n.type}' for "
+                        f"'{nid}'); the project root and syntheses do not carry one")
+    ensure_rd(root)
+    pages = {p["slug"]: p for p in scan_rd_pages(root)}
+    old = None
+    if supersedes:
+        old = pages.get(supersedes)
+        if old is None:
+            raise CruxError(f"cannot supersede '{supersedes}': no such RD under {RD_DIR}/")
+        if old["node"] != nid:
+            raise CruxError(f"cannot supersede '{supersedes}': it belongs to '{old['node']}', "
+                            f"not '{nid}' — an RD belongs to exactly one node")
+    live = active_rd(root, nid)
+    if live and (old is None or live["slug"] != old["slug"]):
+        raise CruxError(f"'{nid}' already has an active RD ('{live['slug']}'). An active RD is "
+                        f"never amended in place — to replace it:\n"
+                        f"    crux rd {nid} \"{title}\" --supersedes {live['slug']}")
+    slug = _rd_slug(root, title, set(pages))
+    fn = slug + ".md"
+    text = fill(load_template("rd"), node=nid, title=title, node_basename=n.basename,
+                supersedes=supersedes or "")
+    text = text.replace("status: draft", "status: active")
+    write_if_changed(os.path.join(rd_dir(root), fn), text)
+    if old is not None:
+        # frontmatter only — the superseded document's BODY is what the chain records, and the
+        # engine must never be the thing that changes it
+        old["fm"]["status"] = "superseded"
+        old["fm"]["updated"] = now()
+        write_if_changed(old["path"], render_doc(old["fm"], old["body"]))
+    n["body"] = set_rd_link(n["body"], slug, title)
+    _bump(n)
+    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
+    refresh(root)
+    return slug, fn
 
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
 def _write_obsidian_vault(root):

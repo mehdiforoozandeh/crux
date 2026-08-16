@@ -6,6 +6,20 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **The RD layer: `crux rd <node> "<title>"`** (spec [`07`](.spec/07-rd-layer.md), PRD 07.1).
+  Requirements Documents — a home for the design detail the 400-word node cap displaces.
+  One active RD per node, living in `rd/<slug>.md` as `type: rd`, linked from the node by an
+  `RD::` line beside `Parent::`, indexed by a generated `RD.md`. An RD is a **document, not
+  evidence**: it is outside the roll-up, never moves `ledger_counts`, and never trips the
+  review gate. An active RD is never amended in place — `--supersedes` writes a new one and
+  flips the old, and the chain is the reasoning history (the direct fix for a node body
+  treated as the only durable record). The backlink sits in the body preamble on purpose:
+  text before the first heading is invisible to the prose counter, so linking a design
+  document costs nothing from the budget it exists to free. `ENGINE_VERSION` 1.4 → 1.5;
+  a pre-1.5 vault has no `rd/` and loads byte-unchanged.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec
