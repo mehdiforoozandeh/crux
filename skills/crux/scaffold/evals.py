@@ -75,8 +75,9 @@ def _table(body, heading):
     The header row and the `|---|` rule are dropped. Pure — no filesystem access."""
     rows, in_sec = [], False
     for line in body.splitlines():
-        if line.startswith("## "):
-            in_sec = line[3:].strip().lower() == heading.lower()
+        if line.startswith("#"):
+            # any heading level: a register may legitimately sit under a `###`
+            in_sec = line.lstrip("#").strip().lower() == heading.lower()
             continue
         if not in_sec:
             continue
@@ -248,10 +249,112 @@ def _oracle_situate(m):
     return avail, cross
 
 
+def _v_prose_cap(m):
+    """Every id classed `over-cap` really is over the cap, per the engine's own counter."""
+    v = E.Vault(vault_of(m))
+    bad = [p["id"] for p in m["planted"] if "over-cap" in p["class"]
+           and E.prose_words(v.get(p["id"].split(":")[-1])["body"],
+                             v.get(p["id"].split(":")[-1]).type) <= E.PROSE_CAP]
+    return f"every over-cap id is genuinely over the cap ({bad})", not bad
+
+
+def _v_scenario_gap(m):
+    """Every id classed `redundant` really is one the engine flags for a shared scenario."""
+    v = E.Vault(vault_of(m))
+    bad = [p["id"] for p in m["planted"] if "redundant" in p["class"]
+           and "SAME failure scenario" not in (E.scenario_gap(v.get(p["id"].split(":")[-1])) or "")]
+    return f"every redundant id is one the engine flags ({bad})", not bad
+
+
+def _v_no_verifiables(m):
+    """The fixture must not contain the answer: the agent writes the checks."""
+    n = E.Vault(vault_of(m)).get(str(m["fm"]["node"]))
+    return ("the target node carries no verifiables — the agent writes them",
+            sum(E.count_verifiables(n["body"])) == 0)
+
+
+def _v_null_approved(m):
+    """`crux-verifiables` writes against an APPROVED null; the PI gate sits before it."""
+    n = E.Vault(vault_of(m)).get(str(m["fm"]["node"]))
+    return ("the null is approved, as the agent's cold input requires",
+            bool(str(n["fm"].get(E.NULL_APPROVED) or "").strip()))
+
+
+def _v_evidence_resolves(m):
+    """Every path named in the key exists under the fixture. A tick nobody can point at is a
+    guess, and a key pointing at a file that is not there cannot catch one."""
+    bad = [t for p in m["planted"] for t in re.findall(r"`([\w./-]+\.(?:md|csv|py|txt))`", p["note"])
+           if not os.path.isfile(os.path.join(m["dir"], "vault", t))]
+    return f"every evidence pointer in the key resolves ({bad})", not bad
+
+
+def _v_term_counts(m):
+    """Each planted term survives the deterministic filter it is graded beside — a term
+    appearing once is dropped before the agent ever sees it."""
+    v = E.Vault(vault_of(m))
+    bad = [p["id"] for p in m["planted"]
+           if len(E.count_term(v, p["id"].split(":", 1)[-1])["documents"]) < 2]
+    return f"every planted term clears the occurrence floor ({bad})", not bad
+
+
+def _v_distinct_expected(m):
+    """THE anti-tautology check at the value level, and the reason tests-01 is worth having at
+    all without executing anything: no expected value in the key may equal what the
+    deliberately-broken implementation actually returns. A key that could be satisfied by
+    describing the code is a description of the code."""
+    wrong = set(_csv(m["fm"].get("wrong_values")))
+    clash = sorted(w for p in m["planted"] for w in wrong if w and w in p["note"])
+    return f"no key row expects what the broken implementation returns ({clash})", not clash
+
+
+def _v_one_disease_per_node(m):
+    """A fixture with two diseases on one node cannot tell a correct diagnosis from a lucky
+    one — and the whole taxonomy exists because a mixed result never announces which it has."""
+    pairs = [p["id"].split(":") for p in m["planted"]]
+    ok = (all(len(x) == 2 for x in pairs)
+          and len({d for d, _n in pairs}) == len(pairs) == len({n for _d, n in pairs}))
+    return f"one disease per node, each disease once ({[':'.join(x) for x in pairs]})", ok
+
+
+VERIFICATIONS = {"prose_cap": _v_prose_cap, "scenario_gap": _v_scenario_gap,
+                 "no_verifiables": _v_no_verifiables, "null_approved": _v_null_approved,
+                 "evidence_resolves": _v_evidence_resolves, "term_counts": _v_term_counts,
+                 "distinct_expected": _v_distinct_expected,
+                 "one_disease_per_node": _v_one_disease_per_node}
+
+
+def _oracle_stated_key(m):
+    """The PROXY oracle, and its proxy-ness is the whole point.
+
+    Here the engine holds no answer, so the key is **stated** by a human rather than derived:
+    available == planted, which means certification cannot catch a wrong key. Spec 10 asks for
+    exactly this to be admitted rather than dressed up — *"an eval that overstates its own
+    rigour is the same failure mode this whole backlog exists to fix"* — so every fixture using
+    this oracle must declare `ground_truth: proxy` and say in its manifest what it fails to
+    measure.
+
+    What certification CAN still do is check the fixture's own construction, via the
+    `verify:` list. Those are real engine calls: the node the key calls over-cap really is
+    over-cap, the term really clears the occurrence floor, no expected value matches the broken
+    implementation. They keep the fixture honest without pretending the key is derived."""
+    cross = []
+    for name in _csv(m["fm"].get("verify")):
+        if name not in VERIFICATIONS:
+            raise E.CruxError(f"fixture '{m['name']}': unknown verification '{name}' — known "
+                              f"are {', '.join(sorted(VERIFICATIONS))}")
+        cross.append(VERIFICATIONS[name](m))
+    cross.append(("a stated key must be declared a proxy — the engine does not derive it",
+                  m["ground_truth"] == "proxy"))
+    cross.append(("every planted row says what it is, in the note column",
+                  all(p["note"].strip() for p in m["planted"])))
+    return set(m["planted_ids"]), cross
+
+
 ORACLES = {"validation_report": _oracle_validation_report,
            "verifiable_ticks": _oracle_ticks,
            "null_vocabulary": _oracle_null,
-           "situate_payload": _oracle_situate}
+           "situate_payload": _oracle_situate,
+           "stated_key": _oracle_stated_key}
 
 
 def _section(body, heading):

@@ -7039,6 +7039,105 @@ def run_ground_truth_fixtures():
           E.ENGINE_VERSION == "3.1")
 
 
+def run_proxy_register():
+    """Spec 10 PRD 10.4 — the six proxies, the register, and the gate ruling.
+
+    Spec 10 is firm about what a proxy obliges: *"Label the proxies as proxies… an eval that
+    overstates its own rigour is the same failure mode this whole backlog exists to fix."* A
+    label in prose decays, so here it is a field, a register, and an assert.
+
+    The register's last column is the one that earns its place. `[proxy]` alone tells a reader
+    the eval is weaker; it does not tell them IN WHICH DIRECTION, which is what they need in
+    order to distrust the right number."""
+    print("\n# agent evals — the proxies, the register, and the gate (spec 10, PRD 10.4)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    spec = read(os.path.join(repo, ".spec", "10-agent-evals.md"))
+
+    proxies = ("verifiables-01", "critic-01", "migrate-01", "tests-01", "glossary-01", "design-01")
+    certs = {c["fixture"]: c for c in V.certify_all()}
+    bad = [n for n in proxies if not certs.get(n, {}).get("ok")]
+    check(f"evals: the six proxy fixtures certify (failed: {bad})", not bad)
+
+    roster = sorted(os.listdir(os.path.join(repo, "agents")))
+    covered = {V.load_manifest(n)["agent"] for n in V.fixture_names()}
+    check(f"evals: every agent in the roster has a fixture "
+          f"(uncovered: {sorted(set(roster) - covered)})",
+          covered == set(roster) and len(roster) == 10)
+
+    # -- the register, parsed out of the spec and diffed against the manifests both ways
+    rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")}
+    check(f"evals: the proxy register and the fixture tree agree "
+          f"({sorted(set(rows) ^ set(V.fixture_names()))})",
+          set(rows) == set(V.fixture_names()))
+
+    REG_TRUTH = {"**yes**": "yes", "proxy": "proxy"}
+    mismatch = [n for n, r in rows.items()
+                if REG_TRUTH.get(r[2]) != V.load_manifest(n)["ground_truth"]]
+    check(f"evals: no fixture can be promoted by editing one side ({mismatch})", not mismatch)
+
+    check("evals: crux-tests is a proxy until code execution is unparked",
+          V.load_manifest("tests-01")["ground_truth"] == "proxy"
+          and "P2" in spec and "demoted" in spec.lower())
+
+    silent = [n for n, r in rows.items()
+              if V.load_manifest(n)["ground_truth"] == "proxy" and not r[4].strip(" —")]
+    check(f"evals: every proxy says what it fails to measure ({silent})", not silent)
+
+    # -- M3: the h59 this spec named lives in the PI's own vault. No real research data enters
+    #    this repo, so the fixture is WRITTEN and bands against its own declared N.
+    m = V.load_manifest("verifiables-01")
+    leaked = sorted(f"{n}:{p['id']}" for n in V.fixture_names()
+                    for p in V.load_manifest(n)["planted"]
+                    if "h59" in p["id"] or "h59" in p["note"])
+    leaked += sorted(os.path.join(dp, f) for n in V.fixture_names()
+                     for dp, _d, fs in os.walk(os.path.join(V.FIXTURES, n, "vault"))
+                     for f in fs if "h59" in read(os.path.join(dp, f)))
+    check(f"evals: verifiables-01 is self-contained, not lifted from an absent vault "
+          f"(leaked: {leaked})",
+          str(m["fm"].get("reference_n") or "").strip() != "" and not leaked)
+
+    m = V.load_manifest("design-01")
+    pairs = [p["id"].split(":") for p in m["planted"]]
+    check(f"evals: design-01 plants one disease per node ({[':'.join(x) for x in pairs]})",
+          len({d for d, _n in pairs}) == len(pairs) == len({n for _d, n in pairs}) == 3)
+
+    m = V.load_manifest("tests-01")
+    wrong = [w for w in V._csv(m["fm"]["wrong_values"]) if w]
+    clash = sorted(w for p in m["planted"] for w in wrong if w in p["note"])
+    check(f"evals: tests-01's key cannot be satisfied by describing the broken code ({clash})",
+          wrong and not clash)
+
+    # -- the gate ruling (D6), where it binds and where it is written down
+    src = read(os.path.join(HERE, "selftest.py"))
+    check("evals: the deterministic eval suite runs in the gate",
+          all(f"    {fn}()" in src for fn in ("run_agent_evals", "run_eval_scorer",
+                                              "run_mutation_harness",
+                                              "run_ground_truth_fixtures", "run_proxy_register")))
+    skill = read(os.path.join(repo, "skills", "evolve-crux", "SKILL.md"))
+    check("evals: the gate contract is written down where contributors read it",
+          "agent evals" in skill and "never gates" in skill and "no API key" in skill)
+
+    # -- D7. The mechanism ships; the numbers are the PI's, and the gap is on the record.
+    unset = all(V.load_manifest(n)["band"] == V.BAND_UNSET for n in V.fixture_names())
+    check("evals: no band was invented, and the gap is recorded",
+          unset and "Pass bands" in spec and "still open" in spec
+          and "☐ **a stated pass band**" in spec)
+
+    check("evals: spec 10 is flipped, amended, and indexed",
+          "**Status:** ☑" in spec and spec.count("- ☑ ") >= 7
+          and all(a in spec for a in ("crux-glossary", "crux-situate", "crux-design"))
+          and re.search(r"\|\s*10\s*\|[^|]*\|[^|]*\|\s*☑\s*\|",
+                        read(os.path.join(repo, ".spec", "README.md"))) is not None)
+
+    check("evals: spec 10 records what it parked rather than dropping it",
+          "PARKED" in spec and "P1" in spec and "do not implement 05" in spec.lower()
+          and "--spawn" in spec)
+
+    check(f"evals: spec 10 is a zero-bump epic (ENGINE_VERSION {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -7124,6 +7223,7 @@ def main():
     run_eval_scorer()
     run_mutation_harness()
     run_ground_truth_fixtures()
+    run_proxy_register()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

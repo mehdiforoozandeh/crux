@@ -8,6 +8,32 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The proxy register, the gate ruling, and spec 10 done** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.4). Six proxy fixtures — `verifiables-01`,
+  `critic-01`, `migrate-01`, `tests-01`, `glossary-01`, `design-01` — so all **ten** agents in
+  the roster now have one. **Spec 10 is done.**
+
+  A **register** in `.spec/10` carries one row per fixture, and `selftest` cross-checks it
+  against every manifest both ways, so a fixture cannot be promoted by editing one side. Its
+  last column is the one that earns its place: `[proxy]` says the eval is weaker, not *in which
+  direction* to distrust it. `design-01` plants exactly one disease per node, because a fixture
+  with two cannot tell a correct diagnosis from a lucky one. `tests-01` declares what the broken
+  implementation actually returns and certification asserts no key row expects it — a key
+  satisfiable by describing the code *is* a description of the code.
+
+  **The gate ruling** (`evolve-crux/SKILL.md` §3): the deterministic half of the eval suite is
+  in gate 1 and runs offline from a fresh clone with no API key; scoring a live submission never
+  gates. **Overnight call — needs morning review.**
+
+  **The pass bands are deliberately not set.** Every manifest ships `band: unset` and the runner
+  reports `UNGRADED`, with no code path that reads an unset band as a pass. A bar invented with
+  no measurement behind it is a guess with a decimal point, so the mechanism ships and the
+  numbers stay the PI's — recorded as spec 10's one open acceptance criterion rather than papered
+  over. Two spec edits ship here and are **overnight calls needing morning review**: the agent
+  table grew from seven rows to ten, and `crux-tests` was demoted from "the strongest available"
+  ground truth to a proxy. Selftest 1406 → **1474**. **`ENGINE_VERSION` unchanged at 3.1 across
+  the whole epic** — asserted, since that is the gate-4 argument.
+
 - **The ground-truth fixtures: `close-01`, `null-01`, `situate-01`** (spec
   [`10`](.spec/10-agent-evals.md), PRD 10.3). Three fixtures whose answer the engine already
   holds, so no new oracle was written.
