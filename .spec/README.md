@@ -19,7 +19,7 @@ being built — do not implement)
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☐ |
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
 | 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☑ |
-| 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☐ |
+| 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☑ |
 | 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☐ |
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☐ |
 | 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ☐ |

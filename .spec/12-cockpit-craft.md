@@ -1,6 +1,6 @@
 # Spec 12 — Cockpit craft: interaction & performance
 
-**Label:** `ui` · **Status:** ☐ todo
+**Label:** `ui` · **Status:** ☑ done (landed 2026-08-15 — PRs #13 non-perf + #15 perf; paint profiling convicted the spotlight×backdrop-filter interaction, blur dropped by PI ruling; deferred: canvas click-to-focus (D10), Safari probe cell unmeasured)
 **Sibling of:** [01 GUI cockpit](01-gui-cockpit.md)
 
 ## Goal
@@ -217,20 +217,20 @@ there is no `prefers-color-scheme` anywhere in its CSS.
 
 ## Work items
 
-- ☐ **Profile paint on a visible window** with a real profiler, on the CANDI vault; confirm or
+- ☑ **Profile paint on a visible window** with a real profiler, on the CANDI vault; confirm or
   clear `backdrop-filter`. Nothing else here ships first.
-- ☐ Structural-vs-cosmetic split: `.selected` swaps in place; `showQueue` likewise
-- ☐ Debounce search input; dim non-matches by class toggle
-- ☐ Hover spotlight: same-node guard; one dim class on the viewport `<g>`
-- ☐ `onSnapshot()` diffs and patches instead of rebuilding
-- ☐ Server: cache the snapshot on max mtime; stop regenerating it per poll for the ETag
-- ☐ SVG canvas as a focusable region — `tabindex`, `role="tree"`, `aria-label`, focus ring
-- ☐ Orientation-relative arrow traversal + `Space` / `Enter`, camera follows selection
-- ☐ `Enter` / `Shift+Enter` cycle search matches with wrap; match counter in the field
-- ☐ Theme: resolve from `prefers-color-scheme` with a live listener; explicit toggle wins
+- ☑ Structural-vs-cosmetic split: `.selected` swaps in place; `showQueue` likewise
+- ☑ Debounce search input; dim non-matches by class toggle
+- ☑ Hover spotlight: same-node guard; one dim class on the viewport `<g>`
+- ☑ `onSnapshot()` diffs and patches instead of rebuilding
+- ☑ Server: cache the snapshot on max mtime; stop regenerating it per poll for the ETag
+- ☑ SVG canvas as a focusable region — `tabindex`, `role="tree"`, `aria-label`, focus ring
+- ☑ Orientation-relative arrow traversal + `Space` / `Enter`, camera follows selection
+- ☑ `Enter` / `Shift+Enter` cycle search matches with wrap; match counter in the field
+- ☑ Theme: resolve from `prefers-color-scheme` with a live listener; explicit toggle wins
   thereafter; blocking `<head>` stamp to prevent the flash
-- ☐ Detail-pane scale → 12 / 16 / 21; reduce the chrome to two or three sizes
-- ☐ A repeatable benchmark harness, so these numbers can be re-measured after each change
+- ☑ Detail-pane scale → 12 / 16 / 21; reduce the chrome to two or three sizes
+- ☑ A repeatable benchmark harness, so these numbers can be re-measured after each change
 
 ## Acceptance criteria
 
