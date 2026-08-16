@@ -19,6 +19,11 @@
   --v-invalid-run: #b8873a;   /* amber: the apparatus, not the claim — deliberately not red */
   --drift: #d98c3f;           /* the commitment was edited after it was locked */
   --root: #8a8f98; --synth: #57c8c0;
+  /* taskhub (spec 08): ONE COLOUR PER CATEGORY is the layer's visual language. The tokens
+     are per-vault and open-ended, so these are the declared defaults plus the reserved
+     `experiment`, which deliberately borrows the tree's accent — an experiment is the one
+     task whose output is evidence, and it should read as belonging to the science. A
+     category with no variable falls back to --t-default rather than rendering invisibly. */
   --t-default: #6a7280;
   --t-data-acquisition: #4f9fe0; --t-hpc-setup: #57c8c0; --t-implementation: #7b93d6;
   --t-visualization: #c08ad9;    --t-manuscript: #d9a13b; --t-admin: #8b949e;
@@ -656,15 +661,35 @@ a.ext { color: var(--accent); }
 #rd-pane[hidden] { display: none; }
 .wr-item.wr-dim { opacity: .55; }
 
-/* taskhub row chrome (spec 08) — used by the node pane's Work / Experiments sections. The
-   Tasks TAB's own layout ships with the tab. */
+/* ---------------------------------------------------------------- taskhub pane (spec 08) */
+#tasks-pane { display: flex; min-height: 0; height: 100%; }
+#tasks-rail { width: 190px; flex: 0 0 auto; border-right: 1px solid var(--line);
+              background: var(--panel); overflow-y: auto; }
+#tasks-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; }
+.tk-view { display: block; width: 100%; text-align: left; background: none; border: 0;
+           color: var(--ink-dim); font: inherit; font-size: var(--fs-ui);
+           padding: 6px 12px; cursor: pointer; }
+.tk-view:hover { background: var(--panel2); color: var(--ink); }
+.tk-view.on { background: var(--panel2); color: var(--ink); font-weight: 600;
+              box-shadow: inset 2px 0 0 var(--accent); }
+.tk-sec { margin: 0 0 6px; font-size: var(--fs-ui); color: var(--ink-dim);
+          text-transform: uppercase; letter-spacing: .04em; }
+.tk-note { margin: 0 0 14px; font-size: var(--fs-ui-sm); color: var(--ink-mute); max-width: 62ch; }
+.tk-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 0;
+          border-bottom: 1px solid var(--line); font-size: var(--fs-ui); }
+.tk-id { color: var(--ink-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         font-size: var(--fs-ui-sm); }
 .tk-cat { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: var(--fs-ui-xs);
           color: var(--ink); background: color-mix(in srgb, var(--tk, var(--t-default)) 26%, var(--panel));
           border: 1px solid var(--tk, var(--t-default)); }
+.tk-title { flex: 1 1 auto; color: var(--ink); }
 .tk-state { color: var(--ink-mute); font-size: var(--fs-ui-sm); }
+.tk-blocked .tk-title, .tk-dropped .tk-title { color: var(--ink-mute); }
+.tk-dropped .tk-title { text-decoration: line-through; }
 .tk-concl { font-size: var(--fs-ui-sm); }
 .tk-c-supported   { color: var(--v-supported); }
 .tk-c-refuted     { color: var(--v-refuted); }
 .tk-c-inconclusive{ color: var(--v-inconclusive); }
 .tk-c-invalid-run { color: var(--v-invalid-run); }
 .tk-pending { color: var(--q-review); font-size: var(--fs-ui-sm); }
+.tk-drift   { color: var(--v-refuted); font-size: var(--fs-ui-sm); }

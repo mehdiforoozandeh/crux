@@ -95,6 +95,9 @@ function computeGeom() {
 
 const state = {
   snap: null,
+  // taskhub (spec 08): which of the four views the Tasks tab is showing. Frontier first —
+  // "what can I do right now" is the question the layer exists to answer.
+  tasks: { view: localStorage.getItem("crux-tasks-view") || "frontier", key: "" },
   lastJSON: "",
   etag: "",                 // /snapshot.json validator — echoed as If-None-Match; 304 = unchanged
   collapsed: new Set(),     // node ids whose subtree is hidden (client-only)
@@ -151,6 +154,7 @@ const LAYERS = {
 const layerOf = (k) => LAYERS[k] || LAYERS.wiki;
 function rdPages() { return (state.snap && state.snap.rd && state.snap.rd.pages) || []; }
 function rdActive() { return !!(state.snap && state.snap.rd && state.snap.rd.active); }
+function tasksActive() { return !!(state.snap && state.snap.tasks && state.snap.tasks.active); }
 
 const $ = (id) => document.getElementById(id);
 const svg = $("tree");
@@ -1909,12 +1913,14 @@ function wikiLink(target, alias) {
 function setTab(tab) {
   if (tab === "wiki" && !wikiActive()) tab = "tree";
   if (tab === "rd" && !rdActive()) tab = "tree";
+  if (tab === "tasks" && !tasksActive()) tab = "tree";
   state.tab = tab;
   localStorage.setItem("crux-tab", tab);
   document.body.dataset.tab = tab;
   $("tree-pane").hidden = tab !== "tree";
   $("wiki-pane").hidden = tab !== "wiki";
   $("rd-pane").hidden = tab !== "rd";
+  $("tasks-pane").hidden = tab !== "tasks";
   document.querySelectorAll("#tabs [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
   $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
@@ -1924,6 +1930,9 @@ function setTab(tab) {
   updateReviewBtn();
   applySearch();
   renderDetail();
+  if (tab === "tasks") {
+    renderTasks();
+  }
   if (tab === "rd") {
     renderRd();
     animateIn([$("rd-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
@@ -1954,8 +1963,17 @@ function updateTabs() {
   }
   if (active && state.tab === "wiki") renderWiki();
   if (rd && state.tab === "rd") renderRd();
+  if (state.tab === "tasks") renderTasks();
 }
 $("tabs").addEventListener("click", (e) => {
+  const tv = e.target.closest("[data-tk-view]");
+  if (tv) {
+    state.tasks.view = tv.getAttribute("data-tk-view");
+    localStorage.setItem("crux-tasks-view", state.tasks.view);
+    state.tasks.key = "";
+    renderTasks();
+    return;
+  }
   const b = e.target.closest("[data-tab]");
   if (b) setTab(b.getAttribute("data-tab"));
 });
@@ -2530,6 +2548,81 @@ function renderRdRail() {
           `title="${esc(p.title || p.slug)} — ${esc(p.status)}">${esc(p.title || p.slug)}</button>`).join("") +
       `</div></div>`;
   }).join("") || `<div class="body muted">no RDs yet</div>`;
+}
+
+// ------------------------------------------------------------------ taskhub pane (spec 08)
+// Four views over ONE list, all client-side over the snapshot. The engine publishes the
+// computed `state` and the vocabularies, so the cockpit never keeps its own copy of the
+// rules — the same reason `limits` publishes the economy budgets.
+const TASK_VIEWS = [["frontier", "Frontier"], ["all", "All"],
+                    ["category", "By category"], ["timeline", "Experiment timeline"]];
+
+function taskCatVar(cat) { return `--t-${cat}`; }
+
+function taskRow(t) {
+  const cat = t.category || "default";
+  const concl = (t.hypothesis_refs || []).map((h) =>
+    `<span class="tk-concl tk-c-${esc(h.conclusion)}">${esc(h.id)} → ${esc(h.conclusion)}` +
+    (h.schema === 0 ? ' <span class="tk-state" title="This hypothesis predates evidence ' +
+      'semantics (spec 15). Its verdict is frozen; this conclusion is a record on the task.' +
+      '">pre-15</span>' : "") + `</span>`).join(" · ");
+  const pending = t.pending_gate ? `<span class="tk-pending">awaiting your acceptance</span>` : "";
+  return `<div class="tk-row tk-${esc(t.state)}">` +
+    `<span class="tk-id">${esc(t.id)}</span>` +
+    `<span class="tk-cat" style="--tk: var(${taskCatVar(cat)}, var(--t-default))">${esc(cat)}</span>` +
+    `<span class="tk-title">${esc(t.title)}</span>` +
+    (concl ? `<span>${concl}</span>` : "") + pending +
+    `<span class="tk-state">${esc(t.state)}</span></div>`;
+}
+
+function renderTasks() {
+  if (!tasksActive() || state.tab !== "tasks") return;
+  const tb = state.snap.tasks, view = state.tasks.view;
+  const key = JSON.stringify([view, tb.items.map((t) => [t.id, t.state, t.pending_gate])]);
+  if (key === state.tasks.key) return;
+  state.tasks.key = key;
+
+  $("tasks-rail-body").innerHTML = TASK_VIEWS.map(([k, label]) =>
+    `<button class="tk-view${view === k ? " on" : ""}" data-tk-view="${k}">${label}</button>`).join("");
+
+  const byId = {};
+  tb.items.forEach((t) => (byId[t.id] = t));
+  let html = "";
+  if (tb.queue.length) {
+    html += `<p class="tk-sec">Awaiting your acceptance</p>` +
+      tb.queue.map((r) => `<div class="tk-row">` +
+        `<span class="tk-id">${esc(r.id)}</span><span class="tk-title">${esc(r.title)}</span>` +
+        r.hypothesis_refs.map((h) => `<span class="tk-concl tk-c-${esc(h.conclusion)}">` +
+          `${esc(h.id)} → ${esc(h.conclusion)}</span>`).join(" ") +
+        (r.drifted.length ? `<span class="tk-drift" title="The commitment was edited after ` +
+          `the run. Flagged, never blocking.">⚠ drift: ${esc(r.drifted.join(", "))}</span>` : "") +
+        `</div>`).join("") +
+      `<p class="tk-note">Accepting is the PI's call: <code>crux task accept &lt;id&gt;</code>. ` +
+      `The cockpit is read-only.</p>`;
+  }
+  if (view === "frontier") {
+    html += `<p class="tk-sec">Frontier — ready to work now</p>` +
+      `<p class="tk-note">Open tasks whose blockers are all discharged. Chores and ` +
+      `experiments in one list — that is the question a PI actually asks.</p>` +
+      (tb.frontier.map((id) => taskRow(byId[id])).join("") || `<p class="tk-note">nothing unblocked</p>`);
+  } else if (view === "timeline") {
+    const exps = tb.items.filter((t) => t.is_experiment)
+      .sort((a, b) => String(a.updated).localeCompare(String(b.updated)));
+    html += `<p class="tk-sec">Experiment timeline</p>` +
+      `<p class="tk-note">Tasks whose output is evidence, in completion order — what we ` +
+      `actually ran, when, and what it concluded. A conclusion is written about a run and ` +
+      `accepted by the PI; a hypothesis's own verdict is derived by the engine from its ` +
+      `ticks and lives on the node.</p>` +
+      (exps.map(taskRow).join("") || `<p class="tk-note">no experiments yet</p>`);
+  } else if (view === "category") {
+    const groups = {};
+    tb.items.forEach((t) => (groups[t.category || "default"] = groups[t.category || "default"] || []).push(t));
+    html += Object.keys(groups).sort().map((c) =>
+      `<p class="tk-sec">${esc(c)}</p>` + groups[c].map(taskRow).join("")).join("");
+  } else {
+    html += `<p class="tk-sec">All tasks</p>` + tb.items.map(taskRow).join("");
+  }
+  $("tasks-body").innerHTML = html;
 }
 
 function renderRd() {

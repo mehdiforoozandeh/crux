@@ -2219,6 +2219,39 @@ def experiments_by_hypothesis(root, tasks=None):
                                             "status": t["status"]})
     return out
 
+def _task_snapshot(root, v=None):
+    """The `tasks` block of snapshot(): the whole work layer as the cockpit reads it.
+
+    Inert-but-present on a vault with no tasks/ (`active: False`), which is the shape
+    `_wiki_snapshot` already uses — copied verbatim so a consumer never has to test for the
+    key. `blocked` and `is_experiment` are published as COMPUTED values: that is not a
+    contradiction of "never stored", it is what stops the cockpit keeping its own copy of the
+    rule, exactly as `limits` publishes the economy budgets."""
+    if not task_active(root):
+        return {"active": False, "categories": list(DEFAULT_TASK_CATEGORIES),
+                "reserved_category": TASK_RESERVED_CATEGORY, "conclusions": list(CONCLUSIONS),
+                "items": [], "frontier": [], "queue": []}
+    v = v or Vault(root)
+    tasks = scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    items = []
+    for t in tasks:
+        d = task_json(root, t["id"], v)
+        d["state"] = task_state(t, by)
+        d["blocks"] = [x["id"] for x in tasks if t["id"] in x["blocked_by"]]
+        d["children"] = [x["id"] for x in tasks if x["parent"] == t["id"]]
+        items.append(d)
+    return {"active": True,
+            "categories": list(task_categories(root)),
+            "reserved_category": TASK_RESERVED_CATEGORY,
+            "conclusions": list(CONCLUSIONS),
+            "items": items,
+            "frontier": [t["id"] for t in task_frontier(root, tasks)],
+            "queue": [{"id": i, "title": ti,
+                       "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                       "drifted": d}
+                      for i, ti, hr, d in cmd_task_review(root)]}
+
 def task_json(root, tid, v=None):
     """One task's read-only JSON — the shape `snapshot` will publish under `tasks.items`
     (2.4). Public so `crux task show --json` reuses the serializer instead of growing a
@@ -3092,6 +3125,7 @@ def snapshot(vault):
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
         "wiki": _wiki_snapshot(v.root),
         "rd": _rd_snapshot(v.root),
+        "tasks": _task_snapshot(v.root, v),
     }
 
 # ----------------------------------------------------------------------------- deck payload (spec 11 / prezit)

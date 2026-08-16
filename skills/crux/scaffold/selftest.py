@@ -507,7 +507,7 @@ def run_snapshot():
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki", "rd"})
+                               "project", "nodes", "tree", "queue", "wiki", "rd", "tasks"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -4546,6 +4546,141 @@ def run_experiment_gate():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_task_gui():
+    print("\n# taskhub — the snapshot block and the cockpit tab (spec 08, PRD 08.4)")
+    root, q, h1 = _task_vault("crux_taskui_")
+    t1, _ = E.cmd_task_add(root, "Dedupe the accessions", category="data-acquisition",
+                           refs=[q], blocked_by=None)
+    t2, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=[t1],
+                           hypothesis_refs=[(h1, "supported")])
+    snap = E.snapshot(root)
+    tb = snap["tasks"]
+    check("ui: snapshot exposes the tasks block",
+          set(tb) == {"active", "categories", "reserved_category", "conclusions",
+                      "items", "frontier", "queue"} and tb["active"] is True)
+    by = E.task_by_id(root)
+    check("ui: snapshot's frontier and state match the engine",
+          tb["frontier"] == [t["id"] for t in E.task_frontier(root)]
+          and {i["id"]: i["state"] for i in tb["items"]}
+          == {t["id"]: E.task_state(t, by) for t in E.scan_tasks(root)})
+    item = {i["id"]: i for i in tb["items"]}
+    check("ui: snapshot's is_experiment and computed category match the role",
+          item[t2]["is_experiment"] and item[t2]["category"] == E.TASK_RESERVED_CATEGORY
+          and item[t2]["declared_category"] == "implementation"
+          and not item[t1]["is_experiment"])
+    check("ui: snapshot publishes the vocabularies the cockpit must render",
+          tb["conclusions"] == list(E.CONCLUSIONS)
+          and tb["reserved_category"] == E.TASK_RESERVED_CATEGORY
+          and tb["categories"] == list(E.task_categories(root)))
+
+    # -- the backlinks reach the node pane, and reach NO node file
+    check("ui: snapshot carries computed task backlinks",
+          snap["nodes"][q]["tasks"] == [t1]
+          and [x["task"] for x in snap["nodes"][h1]["experiments"]] == [t2])
+    check("ui: no node file carries a task backlink",
+          not any(t1 in read(node_path(root, n)) or t2 in read(node_path(root, n))
+                  for n in (q, h1)))
+
+    # -- every category and conclusion must survive `"t-" + cat` / `"v-" + concl` as a CSS
+    #    class. Spec 15 learned this when `invalid run` produced the broken class
+    #    `h-invalid run`; learning it once is the point of asserting it here too.
+    check("ui: every category and conclusion is a valid CSS class suffix",
+          all(c and not re.search(r"\s", c)
+              for c in tb["categories"] + [tb["reserved_category"]] + tb["conclusions"]))
+
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    E.cmd_task_done(root, t2, outputs=[f"[[{q}]]"])
+    tb = E.snapshot(root)["tasks"]
+    check("ui: the acceptance queue reaches the snapshot",
+          [x["id"] for x in tb["queue"]] == [t2]
+          and tb["queue"][0]["hypothesis_refs"][0]["conclusion"] == "supported")
+
+    # -- the webui must know every tab, category colour and conclusion the engine can emit.
+    #    Derived from the constants rather than hand-listed, which is the one thing that made
+    #    the verdict legend impossible to silently drift (selftest's own legend check).
+    ui = read(os.path.join(HERE, "webui", "app.js"))
+    html = read(os.path.join(HERE, "webui", "index.html"))
+    css = read(os.path.join(HERE, "webui", "style.css"))
+    tabs = re.findall(r'data-tab="([a-z]+)"', html)
+    check("ui: the tab list covers tree, wiki, rd and tasks",
+          set(tabs) >= {"tree", "wiki", "rd", "tasks"})
+    check("ui: the cockpit knows the taskhub is inert when absent",
+          "tasksActive" in ui and "tasks-pane" in html)
+    missing = [c for c in tb["categories"] + [tb["reserved_category"]]
+               if f"--t-{c}" not in css]
+    check("ui: every declared category has a colour", not missing)
+    check("ui: both themes carry the category palette",
+          css.count("--t-" + tb["reserved_category"]) >= 2)
+
+    # ---- INTERSECTION WITH 15.6's GUARD. 15.6 added a parity check that derives its
+    # expectation from snapshot()'s live surface, so the taskhub's node-facing fields must
+    # REGISTER with it rather than be excused from it. Two distinct hazards:
+    #   - `experiments` shipped dark and the guard caught it (it did, on the first run after
+    #     the rebase — that is the guard working exactly as designed);
+    #   - `tasks` would have FALSELY PASSED, because the guard's `referenced()` is a
+    #     substring test and app.js already contained the unrelated `state.snap.tasks`.
+    # So this asserts the specific render path, not the substring.
+    check("ui: the node-facing task fields are rendered, not merely mentioned",
+          "function tasksSection" in ui and "function experimentsSection" in ui
+          and "n.tasks" in ui and "n.experiments" in ui
+          and "tasksSection(n)" in ui and "experimentsSection(n)" in ui)
+    check("ui: the taskhub did not grow 15.6's deliberately-unrendered allowlist",
+          "NOT_RENDERED" in read(os.path.join(HERE, "selftest.py"))
+          and "tasks" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
+                                       read(os.path.join(HERE, "selftest.py")), re.S).group(1)
+          and "experiments" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
+                                             read(os.path.join(HERE, "selftest.py")), re.S).group(1))
+    check("ui: a conclusion is narrated as concluded, never as a verdict",
+          "concluded" in ui and "derived by the engine from the ticks" in ui)
+
+    # ---- INTERSECTION: 15.6 narrates drift/rule/kind on the node; 08.4 adds backlinks to
+    # the same pane. ONE node carrying both is the exact overlap, so it gets its own fixture.
+    both = tempfile.mkdtemp(prefix="crux_taskui_both_")
+    E.cmd_init("Both", both, goal="g")
+    bq, _ = E.cmd_ask(both, "does narration coexist with backlinks?")
+    bh, _, _ = E.cmd_hypothesize(both, "it does", parent=bq, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"])
+    E.cmd_test(both, bh, to="running")
+    edit(node_path(both, bh), "- [ ] alpha", "- [x] a check nobody registered")   # -> DRIFT
+    be, _ = E.cmd_task_add(both, "The run", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(bh, "invalid-run")])
+    E.cmd_task_done(both, be, outputs=[f"[[{bq}]]"])
+    bn = E.snapshot(both)["nodes"][bh]
+    check("ui: 15.6's narration and 08.4's backlinks coexist on one node",
+          bn["drift"] is True and bn["rule"] == "all"
+          and [x["task"] for x in bn["experiments"]] == [be]
+          and any(v["kind"] == "outcome-neutral" for v in bn["verifiables"]))
+    # ---- INTERSECTION: drift is now narrated in TWO places, answering two questions —
+    # "this claim's commitment moved" (15.6, the node) and "do you accept this run" (08.3,
+    # the queue). Both must survive; neither replaces the other.
+    tq = E.snapshot(both)["tasks"]["queue"]
+    check("ui: queue drift survives 15.6's node-pane narration",
+          [x["id"] for x in tq] == [be] and tq[0]["drifted"] == [bh]
+          and E.lock_drift(E.Vault(both).get(bh)))
+    shutil.rmtree(both, ignore_errors=True)
+
+    # -- a vault with no tasks/ : present, inert, and the tab hides itself
+    plain = tempfile.mkdtemp(prefix="crux_taskui_none_")
+    E.cmd_init("No Tasks", plain, goal="g")
+    ptb = E.snapshot(plain)["tasks"]
+    check("taskmig: snapshot on a pre-08 vault has an inactive tasks block",
+          ptb["active"] is False and ptb["items"] == [] and ptb["frontier"] == []
+          and ptb["queue"] == [] and set(ptb) == set(tb))
+    shutil.rmtree(plain, ignore_errors=True)
+
+    fx = tempfile.mkdtemp(prefix="crux_taskui_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    s2 = E.snapshot(dst)
+    check("taskmig: snapshotting a pre-08 vault writes nothing and adds no problems",
+          _dir_bytes(dst) == b and s2["tasks"]["active"] is False
+          and not any(n.get("tasks") for n in s2["nodes"].values()))
+    shutil.rmtree(fx, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -4607,6 +4742,7 @@ def main():
     run_task_graph()
     run_experiments()
     run_experiment_gate()
+    run_task_gui()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

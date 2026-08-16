@@ -8,6 +8,19 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The taskhub in the cockpit** (spec [`08`](.spec/08-taskhub.md), PRD 08.4). `snapshot`
+  gains a `tasks` block — items with their **computed** `state` and role, the frontier, the
+  acceptance queue, and the declared vocabularies, so the cockpit never keeps its own copy of
+  the rules. Node → tasks and hypothesis → experiments reach the node pane as computed
+  backlinks that appear in no node file. A fourth tab renders four views over one list —
+  Frontier (default), All, By category, and the experiment timeline — with **one colour per
+  category** as the visual language, in both themes, and a `pre-15` marker on a conclusion
+  about a hypothesis that predates evidence semantics. The tab hides itself on a vault with no
+  `tasks/`, exactly as the Wiki and RD tabs do. Read-only throughout: accepting an experiment
+  stays a CLI act. No `ENGINE_VERSION` bump — pure read paths.
+
+### Added
+
 - **The gating split: work never creates direction** (spec [`08`](.spec/08-taskhub.md),
   PRD 08.3). Completing an ordinary task is act-and-report; completing an **experiment** is
   PI-gated, because its output is evidence. `crux task review` lists experiments awaiting
