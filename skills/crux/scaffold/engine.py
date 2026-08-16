@@ -1801,6 +1801,104 @@ def ensure_glossary(root):
         write_if_changed(p, load_template("glossary"))
     return p
 
+# --- the write path (spec 14, PRD 14.3) -----------------------------------------------
+# THE ONLY PLACE THE ENGINE WRITES glossary.md. Membership is a claim about the PI — "these
+# are words I know" — so only the PI can make it. The agent proposes and never writes; this
+# is what makes that mechanical rather than aspirational, because there is exactly one verb
+# that touches the file and it is in no agent's toolbelt.
+#
+# Entries are rewritten as whole SECTIONS, sorted by key, and everything else in the file
+# (the header prose, a note the PI added by hand, a blank line they liked) is passed through
+# untouched. The file is theirs; the engine only maintains the two lists inside it.
+def _render_glossary(text, terms, declined):
+    """Put `terms` and `declined` back into `text`, replacing ONLY the two section bodies.
+
+    Entry lines are regenerated; every other line — the header prose, the italic hint, a note
+    the PI added by hand, their blank lines — passes through untouched. The file is theirs;
+    the engine maintains the two lists inside it and nothing else.
+
+    Each section is rebuilt as: heading, then any prose the PI kept there (the italic hint),
+    then the entries — with exactly one blank line between groups. Rebuilding rather than
+    patching is what makes it a FIXED POINT: rendering an already-rendered file returns the
+    same bytes, so a no-op accept really is a no-op on disk."""
+    groups, order = {}, []          # section name -> [prose lines]; None = outside both
+    cur = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            h = line[3:].strip().lower()
+            cur = "terms" if h == "terms" else ("declined" if h == "not jargon" else None)
+            if cur is None:
+                groups.setdefault("_tail", []).append(line); order.append("_tail")
+            continue
+        if cur is None:
+            groups.setdefault("_head" if not order else "_tail", []).append(line)
+            continue
+        if _GLOSS_TERM.match(line) or (cur == "declined" and _GLOSS_PLAIN.match(line)
+                                       and not _GLOSS_HINT.match(line)):
+            continue                # an entry: regenerated, never preserved
+        groups.setdefault(cur, []).append(line)
+
+    def block(name, heading, rows):
+        prose = [l for l in groups.get(name, []) if l.strip()]
+        out = [heading]
+        if prose:
+            out += [""] + prose
+        if rows:
+            out += [""] + rows
+        return out
+
+    head = [l for l in groups.get("_head", []) if l.strip() or True]
+    while head and not head[-1].strip():
+        head.pop()
+    lines = head + [""] if head else []
+    lines += block("terms", "## Terms",
+                   [f"- **{t['term']}** — {t['definition']}" for t in terms])
+    lines += [""] + block("declined", "## Not jargon", [f"- {d}" for d in declined])
+    tail = [l for l in groups.get("_tail", []) if l.strip()]
+    if tail:
+        lines += [""] + tail
+    return "\n".join(lines).rstrip() + "\n"
+
+def _glossary_write(root, term, definition, declining):
+    """Shared body of accept/decline: idempotent, and EXCLUSIVE — a term is in exactly one of
+    the two lists, so accepting a declined term moves it and vice versa. The move is reported
+    rather than done silently: a PI who loses track of their own decline list has lost the
+    thing that stops the same question being asked forever."""
+    t = " ".join(str(term or "").split())
+    if not t:
+        raise CruxError("glossary: a term is required")
+    key = _proposal_key(t)
+    if not declining and not str(definition or "").strip():
+        raise CruxError(f"glossary: accepting {t!r} needs a one-line definition (-d) — "
+                        "membership without a read-back line defeats half the file's purpose")
+    p = ensure_glossary(root)
+    g = parse_glossary(read(p))
+    terms = [x for x in g["terms"] if x["key"] != key]
+    declined = [d for d in g["declined"] if glossary_key(d) != key]
+    moved = (len(terms) != len(g["terms"])) if declining else (len(declined) != len(g["declined"]))
+    if declining:
+        declined.append(t)
+    else:
+        terms.append({"term": t, "definition": " ".join(str(definition).split()), "key": key})
+    terms.sort(key=lambda x: x["key"])
+    declined.sort(key=glossary_key)
+    write_if_changed(p, _render_glossary(read(p), terms, declined))
+    return {"term": t, "key": key, "state": "declined" if declining else "accepted",
+            "moved": moved}
+
+def cmd_glossary_accept(root, term, definition):
+    """Record that the PI knows this word. It may now be used bare."""
+    return _glossary_write(root, term, definition, declining=False)
+
+def cmd_glossary_decline(root, term):
+    """Record that the PI does not want this word in the glossary — asked once, ever."""
+    return _glossary_write(root, term, None, declining=True)
+
+def cmd_glossary_list(root):
+    """The vocabulary model, read-only. Creates nothing: a pre-14 vault stays pre-14 until
+    the PI actually says something."""
+    return load_glossary(root)
+
 # ----------------------------------------------------------------------------- wiki layer (Epic 3)
 # A PI-curated literature wiki: immutable sources under raw/, agent-compiled pages under
 # wiki/. The engine owns only the bookkeeping — source hashes, the generated index, and the

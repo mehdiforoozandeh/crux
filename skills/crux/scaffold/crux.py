@@ -283,6 +283,16 @@ def main(argv=None):
     s.add_argument("--strict", action="store_true",
                    help="with --verify: also fail on numerals carrying no address")
 
+    s = sub.add_parser("glossary", aliases=["vocab", "terms"],
+                       help="the project's vocabulary: accept / decline a term, or list them")
+    gs = s.add_subparsers(dest="gcmd", metavar="<accept|decline|list>")
+    g1 = _jsonable(gs.add_parser("accept", help="record that the PI knows this term (it may now be used bare)"))
+    g1.add_argument("term"); g1.add_argument("-d", "--definition", default="",
+                                             help="the one-line definition, for the PI to read back later")
+    g2 = _jsonable(gs.add_parser("decline", help="record that this term is not jargon — asked once, ever"))
+    g2.add_argument("term")
+    _jsonable(gs.add_parser("list", help="print the vocabulary model (terms + the decline list)"))
+
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
     s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
 
@@ -671,6 +681,27 @@ def dispatch(a):
               f"{len(payload['figures'])} figure file(s) · "
               f"{len(payload['metrics'])} addressed metric(s)\n"
               f"  full payload: crux deck {a.anchor} --json")
+    elif c in ("glossary", "vocab", "terms"):
+        root = _vault()
+        if a.gcmd == "list" or not a.gcmd:
+            g = E.cmd_glossary_list(root)
+            if getattr(a, "json", False):
+                return _emit(g)
+            if not g["terms"] and not g["declined"]:
+                print("glossary is empty — no shared vocabulary agreed yet.")
+            for t in g["terms"]:
+                print(f"  {t['term']} — {t['definition']}")
+            for d in g["declined"]:
+                print(f"  (not jargon) {d}")
+            return 0
+        if a.gcmd == "accept":
+            r = E.cmd_glossary_accept(root, a.term, a.definition)
+        else:
+            r = E.cmd_glossary_decline(root, a.term)
+        if a.json:
+            return _emit(r)
+        print(f"✓ {r['term']} → {r['state']}"
+              + ("  (moved from the other list)" if r["moved"] else ""))
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)

@@ -312,6 +312,15 @@ and `crux answer` will refuse until it's signed.
 
 ## Guardrails
 
+- **Vocabulary — read `glossary.md` when you first touch a vault.** It is not a dictionary,
+  it is a model of what the PI already knows. A term under `## Terms` may be used **bare**.
+  Anything else you bring in — gloss it in the same breath, or ask. This holds for node prose
+  *and* for what you say to the PI, who should never be talked at in terminology they have
+  not agreed to. When `crux validate --check=glossary --propose "<term>"` surfaces a
+  candidate, ask about it **inline, one at a time**, and record the answer with
+  `crux glossary accept "<term>" -d "<one line>"` or `crux glossary decline "<term>"`.
+  **Never write to `glossary.md` directly** — membership is a claim about the PI, so only the
+  PI makes it. A term already declined is settled; do not raise it again.
 - **Pre-register verifiables.** A hypothesis isn't testable until its `## Verifiables` state a metric +
   baseline + threshold. The engine refuses to mark an idea `running` with none, with no
   `[outcome-neutral]` control (or a written `neutral_optout:` reason), or — once there is

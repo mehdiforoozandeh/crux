@@ -8,6 +8,27 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux glossary accept | decline | list`** — the write path, and the skill's vocabulary
+  rule (spec [`14`](.spec/14-glossary.md), PRD 14.3). **Spec 14 is done.**
+
+  This is the only verb that touches `glossary.md`, and it is in no agent's toolbelt.
+  Membership is a claim about the PI — *these are words I know* — so only the PI can make it;
+  putting the single write path behind a verb is what makes "the agent proposes, never
+  writes" mechanical instead of aspirational. Every other verb is asserted not to touch the
+  file.
+
+  `accept` and `decline` are idempotent and **exclusive**: accepting a declined term moves it
+  and says so, because a PI who loses track of their own decline list has lost the thing that
+  stops the same question being asked forever. An accept needs a one-line definition —
+  membership with no read-back line defeats half the file's purpose. Entries are rewritten as
+  whole sections, sorted by key, and everything else in the file (header prose, a note added
+  by hand) passes through untouched. The renderer is a **fixed point**, so a no-op accept
+  really is a no-op on disk.
+
+  `SKILL.md` gains the standing rule: read the glossary on first touch, use its terms bare,
+  gloss or ask for everything else — in node prose *and* in what you say to the PI — and
+  answer candidates inline, one at a time.
+
 - **`crux validate --check=glossary --propose <term>`** — the centrality filter (spec
   [`14`](.spec/14-glossary.md), PRD 14.2). A term survives when it appears in **≥2 distinct**
   nodes or wiki pages, **or** in any node or wiki page title. Then four subtractions, all

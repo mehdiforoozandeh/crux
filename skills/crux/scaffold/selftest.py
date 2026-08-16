@@ -5885,6 +5885,194 @@ def run_glossary_filter():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_glossary_write():
+    """Spec 14 PRD 14.3 — `crux glossary accept | decline | list`, and the skill rule.
+
+    THE ONLY WRITE PATH. Membership is a claim about the PI — "these are words I know" — so
+    only the PI can make it. The agent proposes and never writes, and this is what makes that
+    mechanical rather than aspirational: there is exactly one verb that touches glossary.md,
+    it is not in any agent's toolbelt, and every other verb is asserted not to touch it."""
+    print("\n# glossary — accept, decline, and the skill rule (spec 14, PRD 14.3)")
+    root = tempfile.mkdtemp(prefix="crux_gw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Writing", root)
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+
+    E.cmd_glossary_accept(root, "detection floor", "the smallest effect this assay could resolve.")
+    g = E.load_glossary(root)
+    check("gwrite: accept appends to ## Terms", [t["term"] for t in g["terms"]] == ["detection floor"])
+    check("gwrite: accept stores the definition",
+          g["terms"][0]["definition"] == "the smallest effect this assay could resolve.")
+    E.cmd_glossary_accept(root, "Capacity Certificate", "evidence the probe had room to fit.")
+    g = E.load_glossary(root)
+    check("gwrite: accept preserves the PI's capitalization",
+          "Capacity Certificate" in [t["term"] for t in g["terms"]])
+    check("gwrite: ## Terms stays sorted by key",
+          [t["key"] for t in g["terms"]] == sorted(t["key"] for t in g["terms"]))
+    E.cmd_glossary_accept(root, "detection floor", "a second time")
+    check("gwrite: accept is idempotent", len(E.load_glossary(root)["terms"]) == 2)
+    E.cmd_glossary_accept(root, "detection-floors", "a hyphenated plural of the same term")
+    check("gwrite: accept of a differently-keyed existing term is a no-op",
+          len(E.load_glossary(root)["terms"]) == 2)
+    check("gwrite: accept without a definition is refused",
+          _raises(lambda: E.cmd_glossary_accept(root, "bare term", "")))
+
+    E.cmd_glossary_decline(root, "attenuation")
+    check("gwrite: decline appends to ## Not jargon",
+          E.load_glossary(root)["declined"] == ["attenuation"])
+    E.cmd_glossary_decline(root, "attenuation")
+    check("gwrite: decline is idempotent", len(E.load_glossary(root)["declined"]) == 1)
+    moved = E.cmd_glossary_decline(root, "detection floor")
+    g = E.load_glossary(root)
+    check("gwrite: decline of an accepted term moves it out of ## Terms",
+          "detection floor" not in [t["term"] for t in g["terms"]]
+          and "detection floor" in g["declined"])
+    check("gwrite: the move is reported, not silent", moved.get("moved") is True)
+    moved = E.cmd_glossary_accept(root, "detection floor", "back again.")
+    g = E.load_glossary(root)
+    check("gwrite: accept of a declined term moves it out of ## Not jargon",
+          "detection floor" not in g["declined"]
+          and "detection floor" in [t["term"] for t in g["terms"]])
+    check("gwrite: that move is reported too", moved.get("moved") is True)
+
+    # a hand-edited file is the PI's: the engine appends into sections, never rewrites
+    with open(gp, "a", encoding="utf-8") as f:
+        f.write("\n_a note the PI added by hand_\n")
+    E.cmd_glossary_accept(root, "kernel trick", "the thing.")
+    check("gwrite: a hand-written line survives a write", "_a note the PI added by hand_" in read(gp))
+    check("gwrite: an existing definition is untouched by another accept",
+          "the smallest effect this assay could resolve." in read(gp)
+          or "back again." in read(gp))
+    check("gwrite: vault validates clean after accept and decline", E.cmd_validate(root) == [])
+    check("gwrite: the glossary is still not a node", len(E.Vault(root).nodes) == 1)
+
+    lst = E.cmd_glossary_list(root)
+    check("gwrite: list returns terms and declined", set(lst) == {"terms", "declined"})
+    check("gwrite: list is the parsed file", lst == E.load_glossary(root))
+
+    # the round trip: an accepted term stops being a candidate; a declined one stays gone
+    q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is here")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    def surv(*t):
+        return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
+    check("gwrite: an accepted term is dropped by the filter afterwards", surv("kernel trick") == set())
+    E.cmd_glossary_decline(root, "kernel trick")
+    check("gwrite: a declined term is dropped by the filter afterwards", surv("kernel trick") == set())
+    check("gwrite: a declined term stays dropped across case, hyphen and plural",
+          surv("Kernel Trick") == set() and surv("kernel-trick") == set()
+          and surv("kernel tricks") == set())
+
+    # determinism
+    root2 = tempfile.mkdtemp(prefix="crux_gw2_")
+    shutil.rmtree(root2); os.makedirs(root2)
+    E.cmd_init("Writing", root2)
+    for r in (root, root2):
+        pass
+    E.cmd_glossary_accept(root2, "alpha term", "one.")
+    E.cmd_glossary_decline(root2, "beta term")
+    first = read(os.path.join(root2, E.GLOSSARY_FILE))
+    root3 = tempfile.mkdtemp(prefix="crux_gw3_")
+    shutil.rmtree(root3); os.makedirs(root3)
+    E.cmd_init("Writing", root3)
+    E.cmd_glossary_accept(root3, "alpha term", "one.")
+    E.cmd_glossary_decline(root3, "beta term")
+    check("gwrite: writing is deterministic", read(os.path.join(root3, E.GLOSSARY_FILE)) == first)
+
+    # THE FIXED POINT. Rendering an already-rendered file must return the same bytes,
+    # otherwise a no-op accept still dirties the vault and blank lines creep in on every
+    # write — which is exactly what a patch-in-place renderer did before this was asserted.
+    g = E.parse_glossary(first)
+    once = E._render_glossary(first, g["terms"], g["declined"])
+    twice = E._render_glossary(once, g["terms"], g["declined"])
+    check("gwrite: the renderer is a fixed point", once == twice)
+    check("gwrite: a no-op accept does not dirty the file", once == first)
+    check("gwrite: the decline hint stays above its entries",
+          first.index("_(checked") < first.index("- beta term"))
+    check("gwrite: no blank-line run grows", "\n\n\n" not in first)
+    shutil.rmtree(root2, ignore_errors=True); shutil.rmtree(root3, ignore_errors=True)
+
+    # THE INVARIANT: no other verb writes glossary.md
+    ghash = hashlib.sha256(read(gp).encode()).hexdigest()
+    q2, _ = E.cmd_ask(root, "another question")
+    h9, _, _ = E.cmd_hypothesize(root, "another idea", parent=q2, verifiables=["z"],
+                                 neutral=["the control reproduces the known value"])
+    declare_null(root, h9)
+    E.cmd_test(root, h9, to="running")
+    edit(node_path(root, h9), "- [ ] z", "- [x] z")
+    edit(node_path(root, h9), "- [ ] [outcome-neutral] the control reproduces the known value",
+                              "- [x] [outcome-neutral] the control reproduces the known value")
+    E.cmd_close(root, h9)
+    E.cmd_review(root); E.cmd_validate(root); E.snapshot(root); E.refresh(root)
+    E.status_text(root)
+    check("gwrite: no other verb writes glossary.md",
+          hashlib.sha256(read(gp).encode()).hexdigest() == ghash)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- a pre-14 vault gains the file only when the PI actually says something
+    root = tempfile.mkdtemp(prefix="crux_gwo_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old", root)
+    os.remove(os.path.join(root, E.GLOSSARY_FILE))
+    check("gwrite: list on a pre-14 vault returns empty",
+          E.cmd_glossary_list(root) == {"terms": [], "declined": []})
+    check("gwrite: list on a pre-14 vault creates nothing",
+          not os.path.exists(os.path.join(root, E.GLOSSARY_FILE)))
+    E.cmd_glossary_accept(root, "first word", "the PI has spoken.")
+    check("gwrite: accept creates glossary.md in a pre-14 vault",
+          os.path.isfile(os.path.join(root, E.GLOSSARY_FILE)))
+    check("gwrite: and the vault still validates", E.cmd_validate(root) == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the CLI
+    root = tempfile.mkdtemp(prefix="crux_gwc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("CLI", root)
+    def cli(*args):
+        return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
+                              capture_output=True, text=True, encoding="utf-8", cwd=root)
+    r = cli("glossary", "accept", "detection floor", "-d", "the smallest resolvable effect.")
+    check("gwrite: crux glossary accept works from the CLI", r.returncode == 0)
+    r = cli("glossary", "list", "--json")
+    check("gwrite: crux glossary list --json is machine-readable",
+          json.loads(r.stdout)["terms"][0]["term"] == "detection floor")
+    r = cli("glossary", "accept", "another term", "-d", "x", "--json")
+    check("gwrite: accept --json emits the recorded entry",
+          json.loads(r.stdout)["term"] == "another term")
+    r = cli("glossary", "decline", "attenuation", "--json")
+    check("gwrite: decline --json emits the recorded entry",
+          json.loads(r.stdout)["term"] == "attenuation")
+    r = cli("glossary", "accept", "no definition here")
+    check("gwrite: the CLI refuses an accept with no definition", r.returncode == 1)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the skill rule, and the leash
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    check("gwrite: SKILL.md carries the vocabulary rule",
+          "glossary.md" in skill and "gloss" in skill.lower())
+    check("gwrite: SKILL.md tells the agent never to write glossary.md directly",
+          "never write to `glossary.md`" in skill.lower()
+          or "never write to glossary.md" in skill.lower())
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    belts = []
+    for name in sorted(os.listdir(os.path.join(repo, "agents"))):
+        p = os.path.join(repo, "agents", name, "AGENT.md")
+        if os.path.isfile(p):
+            fm, _ = E.parse_doc(read(p))
+            if "crux glossary" in str(fm.get("toolbelt") or ""):
+                belts.append(name)
+    check(f"gwrite: no agent's toolbelt holds the write verb (found: {belts})", not belts)
+
+    # ---- the spec is flipped, with its work items ticked
+    spec = read(os.path.join(repo, ".spec", "14-glossary.md"))
+    check("gwrite: spec 14 is flipped to done", "**Status:** ☑" in spec)
+    check("gwrite: spec 14's work items are ticked", spec.count("- ☑ ") >= 8)
+    check("gwrite: spec 14 records that its counting guess was measured and refuted",
+          "refuted" in spec.lower() and "hyphenation" in spec.lower())
+    readme = read(os.path.join(repo, ".spec", "README.md"))
+    check("gwrite: the backlog index shows 14 done",
+          re.search(r"\|\s*14\s*\|[^|]*\|[^|]*\|\s*☑\s*\|", readme) is not None)
+
+
 def _raises(fn):
     try:
         fn(); return False
@@ -5979,6 +6167,7 @@ def main():
     run_glossary_counting()
     run_glossary_oracle()
     run_glossary_filter()
+    run_glossary_write()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
