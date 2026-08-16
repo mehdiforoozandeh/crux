@@ -1,0 +1,4 @@
+# Byte-stability: the engine hash-registers text files (wiki raw/ sources, and any
+# future lock material). A CRLF-rewriting checkout silently changes every hash, so
+# every platform must see identical bytes. LF everywhere, no exceptions.
+* text=auto eol=lf
