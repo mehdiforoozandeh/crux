@@ -5403,8 +5403,15 @@ def run_agent_roster():
     readme = read(os.path.join(repo, ".spec", "README.md"))
     check("agents: the backlog index shows 09 done",
           re.search(r"\|\s*09\s*\|[^|]*\|[^|]*\|\s*\u2611\s*\|", readme) is not None)
-    check("agents: no engine change — ENGINE_VERSION is untouched by 09.4",
-          E.ENGINE_VERSION == "2.7")
+    # 09.4 was doc-only, and asserted that by pinning ENGINE_VERSION == "2.7" — a literal
+    # that any later, legitimate bump falsifies (spec 14's 14.0 is the first). The property
+    # actually worth locking is the durable one: the roster is VERSION-INDEPENDENT. An agent
+    # definition that named an engine version would have to be revised on every bump, which
+    # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
+    versioned = sorted(n for n, (fm, b) in defs.items()
+                       if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
+    check(f"agents: no agent definition pins an engine version (found: {versioned})",
+          not versioned)
 
 
 def _probe_vault():
@@ -5416,6 +5423,149 @@ def _probe_vault():
     q, _ = E.cmd_ask(root, "q")
     h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY", verifiables=["a"])
     return root, h
+
+
+def run_glossary():
+    """Spec 14 PRD 14.0 — glossary.md, the parser, and the entry key.
+
+    The glossary is a MODEL OF THE PI'S VOCABULARY, not a dictionary: presence means the
+    agent may use the word bare, absence means gloss it or ask. It starts empty, because a
+    seeded glossary asserts the PI knows words they may not.
+
+    The decline list is half the file and not bookkeeping — without it the same term is
+    re-proposed on every audit forever and the PI learns to ignore the prompt."""
+    print("\n# glossary — the file and the parser (spec 14, PRD 14.0)")
+    root = tempfile.mkdtemp(prefix="crux_gloss_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Glossary Demo", root)
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+
+    check("gloss: init creates glossary.md", os.path.isfile(gp))
+    gt = read(gp)
+    check("gloss: fresh glossary has both sections", "## Terms" in gt and "## Not jargon" in gt)
+    g = E.parse_glossary(gt)
+    check("gloss: fresh glossary has zero terms", g["terms"] == [])
+    check("gloss: fresh glossary has zero declined", g["declined"] == [])
+    check("gloss: fresh vault validates clean", E.cmd_validate(root) == [])
+
+    n_before = len(E.Vault(root).nodes)
+    check("gloss: glossary.md is not a node", n_before == 1)
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write("---\nid: gloss1\ntype: idea\ntitle: sneaky\n---\n\n" + gt)
+    check("gloss: glossary.md survives frontmatter (skipped by name, not by luck)",
+          len(E.Vault(root).nodes) == n_before)
+    check("gloss: a frontmatter'd glossary still validates clean", E.cmd_validate(root) == [])
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write(gt)
+
+    # a hand-edited glossary is the PI's; refresh must never rewrite or regenerate it
+    with open(gp, "a", encoding="utf-8") as f:
+        f.write("\nsome prose the PI wrote by hand\n")
+    hand = read(gp)
+    E.refresh(root)
+    check("gloss: refresh does not rewrite a hand-edited glossary", read(gp) == hand)
+    check("gloss: glossary.md is not a generated view",
+          E.GLOSSARY_FILE not in E.GENERATED)
+
+    # ---- the parser, on strings (pure: no vault, no filesystem)
+    sample = ("# Glossary\n\n## Terms\n"
+              "- **detection floor** — the smallest effect this assay could distinguish from noise.\n"
+              "- **capacity certificate** — evidence the probe had room to fit. See [[wiki/probing]].\n"
+              "\nfree prose nobody parses\n"
+              "\n## Not jargon\n_(checked, dismissed, never proposed again)_\n"
+              "- attenuation\n- held-out\n")
+    g = E.parse_glossary(sample)
+    check("gloss: parse reads a term and its definition",
+          ("detection floor", "the smallest effect this assay could distinguish from noise.")
+          in [(t["term"], t["definition"]) for t in g["terms"]])
+    check("gloss: parse reads a term whose definition carries a [[wiki/…]] link",
+          any("[[wiki/probing]]" in t["definition"] for t in g["terms"]))
+    check("gloss: parse reads the decline list", g["declined"] == ["attenuation", "held-out"])
+    check("gloss: parse tolerates a missing file", E.parse_glossary("") == {"terms": [], "declined": []})
+    check("gloss: parse tolerates a missing section",
+          E.parse_glossary("## Terms\n- **a b** — c\n")["declined"] == [])
+    check("gloss: parse ignores the italic hint line under Not jargon",
+          "_(checked, dismissed, never proposed again)_" not in g["declined"])
+    check("gloss: parse tolerates an unrecognized line", len(g["terms"]) == 2)
+    check("gloss: parse carries the derived key on every term",
+          all(t["key"] == E.glossary_key(t["term"]) for t in g["terms"]))
+
+    # ---- entry identity. ONE normalizer for matching and for identity, so the decline
+    #      list cannot be defeated by a change of case, hyphen or plural.
+    k = E.glossary_key
+    check("gloss: key is case-insensitive", k("Detection Floor") == k("detection floor"))
+    check("gloss: key collapses hyphens", k("detection-floor") == k("detection floor"))
+    check("gloss: key collapses underscores", k("detection_floor") == k("detection floor"))
+    check("gloss: key collapses repeated whitespace", k("detection   floor") == k("detection floor"))
+    check("gloss: key depluralizes the final word", k("detection floors") == k("detection floor"))
+    check("gloss: key depluralizes a final -es", k("capacity certificates") == k("capacity certificate"))
+    check("gloss: key does not depluralize a non-final word",
+          k("systems biology") != k("system biology"))
+    check("gloss: a single-word term keys correctly", k("held-out") == "held out")
+    check("gloss: key does not strip a double-s", k("mass") == "mass")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_glossary_migration():
+    """A pre-14 vault has no glossary.md at all. It must load, validate and render — and
+    NOTHING may create the file behind the PI's back. Absence is permanently legal: it means
+    an empty vocabulary model, never a defect.
+
+    These asserts test an ABSENCE, which is the easiest guarantee to break silently later."""
+    print("\n# glossary — a pre-14 vault still reads (spec 14, PRD 14.0)")
+    root = tempfile.mkdtemp(prefix="crux_gmig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Format", root)
+    q1, _ = E.cmd_ask(root, "an old question")
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+    os.remove(gp)
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 2.7")
+
+    check("gmig: the fixture really has no glossary.md", not os.path.exists(gp))
+    check("gmig: a pre-14 vault validates clean", E.cmd_validate(root) == [])
+    check("gmig: a pre-14 vault raises no warning", E.validation_report(root)["warnings"] == [])
+    check("gmig: parse_glossary tolerates the absent file",
+          E.load_glossary(root) == {"terms": [], "declined": []})
+    check("gmig: status still renders the tree", "an old question" in E.status_text(root))
+    check("gmig: review still runs", isinstance(E.cmd_review(root), list))
+    check("gmig: snapshot still serializes", isinstance(E.snapshot(root), dict))
+    E.refresh(root)
+    check("gmig: no read path creates glossary.md", not os.path.exists(gp))
+    warn = E.check_and_stamp_version(root)
+    check("gmig: a 2.7 vault reports drift", warn is not None and "2.7" in warn)
+    check("gmig: drift re-stamps to the current version",
+          str(E.Vault(root).cfg.get("engine_version")) == E.ENGINE_VERSION)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # -- the shipped fixture, byte-compared. The strongest form of "old vaults still load":
+    #    every read path runs and NOTHING on disk moves except the version stamp.
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_gdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    before = _tree_hashes(dst)
+    E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst); E.snapshot(dst)
+    E.refresh(dst); E.check_and_stamp_version(dst)
+    after = _tree_hashes(dst)
+    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    check(f"gmig: demo_vault byte-compare — only .crux.yaml moves (moved: {moved})",
+          moved in ([], [".crux.yaml"]))
+    check("gmig: demo_vault gained no glossary.md",
+          not os.path.exists(os.path.join(dst, E.GLOSSARY_FILE)))
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def _tree_hashes(root):
+    """{relpath: sha256} for every file under root — the byte-compare oracle."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for fn in sorted(filenames):
+            p = os.path.join(dirpath, fn)
+            with open(p, "rb") as f:
+                out[os.path.relpath(p, root).replace(os.sep, "/")] = hashlib.sha256(f.read()).hexdigest()
+    return out
 
 
 def run_cli_help():
@@ -5488,6 +5638,8 @@ def main():
     run_failure_scenarios()
     run_migrate()
     run_agent_roster()
+    run_glossary()
+    run_glossary_migration()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

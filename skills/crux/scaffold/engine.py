@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.7"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.8"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -124,6 +124,14 @@ HYPOTHESIS_REFS = "hypothesis_refs"
 RETIRED_CONCLUSION = "partial"
 
 GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX, TASK_INDEX) # root .md views the node scan must never treat as nodes
+
+# project glossary (spec 14): the PI's vocabulary model, one file per vault.
+GLOSSARY_FILE = "glossary.md"
+# Root .md files the node scan must skip BY NAME. `glossary.md` is PI-owned, not generated,
+# so it does not belong in GENERATED — but it must be excluded just as firmly. Without the
+# name check it is invisible only because it happens to carry no `id:` frontmatter, and the
+# day someone adds one the glossary silently becomes a node with an unknown type.
+NON_NODE_FILES = GENERATED + (GLOSSARY_FILE,)
 
 # evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
 # Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
@@ -731,7 +739,7 @@ class Vault:
         self.cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
         self.nodes = {}
         for fn in sorted(os.listdir(root)):
-            if not fn.endswith(".md") or fn in GENERATED:
+            if not fn.endswith(".md") or fn in NON_NODE_FILES:
                 continue
             fm, body = parse_doc(read(os.path.join(root, fn)))
             if "id" not in fm:
@@ -1488,6 +1496,92 @@ def validate(v):
                 problems.append((nid, "parent cycle detected")); break
             seen.add(cur)
     return problems
+
+# ----------------------------------------------------------------------------- glossary (spec 14)
+# `glossary.md` is NOT a definition store — it is a model of the PI's vocabulary. Presence
+# means the agent may use the word bare; absence means gloss it, or ask. The one-line
+# definition each entry carries is for the PI to read back later; the MEMBERSHIP is what the
+# agent consumes.
+#
+# It is separate from the wiki because the wiki's flow rule (literature → wiki, never the
+# reverse) structurally forbids project-COINED terms — "detection floor", "capacity
+# certificate" — and those are exactly the terms most likely to be used bare at a PI who has
+# never had them defined, because the agent invented them and therefore finds them obvious.
+#
+# The file is the PI's. The engine reads it, and writes it only where the PI said so
+# (`crux glossary accept|decline`). Everything here is total: a missing file, a missing
+# section, a hand-edited line and free prose between entries all read as data, never as an
+# error.
+_GLOSS_TERM = re.compile(r"^\s*[-*]\s+\*\*(?P<term>[^*]+?)\*\*\s*(?:[—:-]\s*(?P<def>.*))?$")
+_GLOSS_PLAIN = re.compile(r"^\s*[-*]\s+(?P<term>.+?)\s*$")
+_GLOSS_HINT = re.compile(r"^\s*_\(.*\)_\s*$")
+
+def _deplural(tok):
+    """Strip ONE trailing plural from a token. Deliberately not a stemmer: `-es` only after
+    a sibilant, `-s` never after `ss`, and never on a token short enough that the `s` is
+    probably part of the word."""
+    if len(tok) > 3 and tok.endswith("es") and tok[-3] in "sxzho":
+        return tok[:-2]
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+        return tok[:-1]
+    return tok
+
+def glossary_key(term):
+    """The canonical key for a term: casefold, collapse every run of spaces/tabs/hyphens/
+    underscores to one space, depluralize the FINAL token only.
+
+    One normalizer serves both matching (spec 14's counting rule) and identity (is this the
+    term the PI already declined?). That is deliberate: if the two could differ, a declined
+    term would come back under a different hyphenation and the PI would answer the same
+    question forever — which is the exact failure the decline list exists to prevent."""
+    toks = [t for t in re.split(r"[-_\s]+", str(term or "").strip().lower()) if t]
+    if not toks:
+        return ""
+    return " ".join(toks[:-1] + [_deplural(toks[-1])])
+
+def parse_glossary(text):
+    """`glossary.md` → {"terms": [{term, definition, key}], "declined": [term, …]}.
+
+    Pure: takes a string, not a path, so it is unit-testable with no vault — the shape
+    `prose_words` and `count_verifiables` already use."""
+    terms, declined, section = [], [], None
+    for line in str(text or "").splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            h = s[3:].strip().lower()
+            section = "terms" if h == "terms" else ("declined" if h == "not jargon" else None)
+            continue
+        if not s or section is None or _GLOSS_HINT.match(line):
+            continue
+        if section == "terms":
+            m = _GLOSS_TERM.match(line)
+            if m:
+                t = " ".join(m.group("term").split())
+                terms.append({"term": t, "definition": (m.group("def") or "").strip(),
+                              "key": glossary_key(t)})
+            continue
+        m = _GLOSS_PLAIN.match(line)
+        if m:
+            declined.append(" ".join(m.group("term").split()))
+    return {"terms": terms, "declined": declined}
+
+def glossary_path(root):
+    return os.path.join(root, GLOSSARY_FILE)
+
+def load_glossary(root):
+    """The vault's vocabulary model. An absent file is an EMPTY model, never an error:
+    a pre-14 vault is correct, not broken, and nothing here may create the file."""
+    p = glossary_path(root)
+    return parse_glossary(read(p) if os.path.isfile(p) else "")
+
+def ensure_glossary(root):
+    """Create `glossary.md` from the template if it is absent. Called at `init`, and by the
+    PI's own accept/decline — never by a read path, so an existing vault gains the file only
+    when the PI has actually said something."""
+    p = glossary_path(root)
+    if not os.path.isfile(p):
+        write_if_changed(p, load_template("glossary"))
+    return p
 
 # ----------------------------------------------------------------------------- wiki layer (Epic 3)
 # A PI-curated literature wiki: immutable sources under raw/, agent-compiled pages under
@@ -2635,6 +2729,7 @@ def cmd_init(title, dirpath=".", goal=""):
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
+    ensure_glossary(root)       # empty: a new project has no shared vocabulary yet
     _write_obsidian_vault(root)
     refresh(root)
     return root, f"{slug}.md"

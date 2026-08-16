@@ -8,6 +8,25 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`glossary.md` — the project's vocabulary model** (spec [`14`](.spec/14-glossary.md),
+  PRD 14.0). One file per vault, created **empty** at `init`, with `## Terms` and
+  `## Not jargon`. It is not a definition store: presence means an agent may use the word
+  bare, absence means gloss it or ask. The decline list is the other half — without it the
+  same term is re-proposed on every audit forever and the PI learns to ignore the prompt.
+
+  Separate from the wiki because the wiki's flow rule forbids project-**coined** terms, and
+  those are exactly the ones most likely to be used bare at a PI who has never had them
+  defined — the agent invented them, so they read as obvious.
+
+  `parse_glossary` is pure and total (a missing file, a missing section and hand-written
+  prose all read as data). `glossary_key` derives one canonical key per entry — casefold,
+  separators collapsed, final word depluralized — so a declined term cannot come back under
+  a different hyphenation. The file is skipped by the node scan **by name**, not by luck.
+
+  `ENGINE_VERSION` → **2.8**. A vault with no `glossary.md` is correct, not broken: absence
+  is permanently legal, no read path creates the file, and the shipped fixture is
+  byte-compared to prove nothing moves but the version stamp.
+
 - **The agent roster, and a convention for what an agent definition is** (spec
   [`09`](.spec/09-specialized-agents.md), PRD 09.4). Eight definitions ship in
   `agents/<name>/AGENT.md`, mirroring the `skills/` layout so there is one mental model:
