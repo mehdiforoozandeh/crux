@@ -1574,6 +1574,107 @@ def load_glossary(root):
     p = glossary_path(root)
     return parse_glossary(read(p) if os.path.isfile(p) else "")
 
+# --- counting a proposed term (spec 14, PRD 14.1) ------------------------------------
+# THE RULE, and it is one sentence on purpose:
+#
+#   A term matches when its words appear consecutively INSIDE ONE MARKDOWN BLOCK,
+#   case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with
+#   the last word optionally carrying a trailing `s` or `es`.
+#
+# Settled empirically rather than by argument. Spec 14 guessed that "normalizing case and
+# trailing plurals is probably enough"; measured against the three shipped example vaults,
+# it is not. That rule fixes every plural case and ZERO hyphenation cases, and hyphenation is
+# where the variance actually lives — "dense contrastive pretraining" is written 9 times
+# unhyphenated and 7 times hyphenated by the same author in the same vault. Under the guess,
+# "mask transformer head" scores 0 documents despite 12 occurrences across 3 documents, two
+# of them node titles, and the centrality filter would silently drop the most obviously
+# coined term in the vault.
+#
+# Block scoping is equally forced: allowing a newline inside the separator run produced 27
+# measured false positives where a heading's last word glued to the body's first
+# ("## Run Links" + "- job 40012" matching 'links job' in 8 documents). Every crux node is
+# built from headings and bullets, so that fires constantly.
+#
+# Depluralizing EVERY token was tested and rejected: identical on all 17 probe terms, with a
+# 114-candidate over-match tail of verbs and function words ("transfers to", "orders of").
+#
+# Derivational morphology is deliberately out: "label efficiency" does not match
+# "label-efficient". Those are different words, and a PI who agreed to one has not agreed to
+# the other.
+_BLOCK_START = re.compile(r"^\s*(?:[-*+>]|\d+[.)]|\|)")
+_TERM_SEP = r"[-_‐‑ \t]+"
+MAX_TERM_WORDS = 5
+
+def glossary_blocks(body, title=""):
+    """Markdown → a list of flattened, lowercased blocks.
+
+    Blocks break on blank lines and at the start of a heading, list item, blockquote or table
+    row, so a term can never be assembled across markdown structure. Within a block, lines
+    are joined — an intra-paragraph line wrap still counts as one phrase.
+
+    Dropped first, for the same reasons `_prose_tokens` drops them: the generated ledger
+    (it repeats child titles, which would let a term reach a second document without a second
+    real use), HTML comments, and `_(placeholder)_` lines (template prompts, not content)."""
+    text = str(body or "")
+    pre = text.split(LEDGER_START)[0]
+    if LEDGER_END in text:
+        pre += "\n\n" + text.split(LEDGER_END)[-1]
+    pre = re.sub(r"<!--.*?-->", " ", pre, flags=re.S)
+    out, cur = ([str(title).strip().lower()] if str(title or "").strip() else []), []
+    for line in pre.splitlines():
+        s = line.strip()
+        if not s or _PLACEHOLDER.match(line):
+            if cur: out.append(" ".join(cur)); cur = []
+            continue
+        if s.startswith("#") or _BLOCK_START.match(line):
+            if cur: out.append(" ".join(cur)); cur = []
+            out.append(s.lstrip("#").strip().lower())
+            continue
+        cur.append(s)
+    if cur:
+        out.append(" ".join(cur))
+    return [b for b in out if b]
+
+def term_pattern(term):
+    """A compiled regex implementing the rule above. Every token is escaped, so a term
+    containing regex metacharacters (`c++ kernel`) is matched literally rather than
+    exploding."""
+    toks = [t for t in re.split(r"[-_\s]+", str(term or "").strip().lower()) if t]
+    if not toks:
+        return re.compile(r"(?!x)x")        # matches nothing
+    parts = [re.escape(t) for t in toks[:-1]] + [re.escape(_deplural(toks[-1])) + r"(?:e?s)?"]
+    return re.compile(r"(?<![\w-])" + _TERM_SEP.join(parts) + r"(?![\w-])", re.I)
+
+def glossary_corpus(v):
+    """The documents a term is counted over: (id, title, body) per node and per compiled wiki
+    page. Excluded by construction — generated views (META/EXPERIMENTS/WIKI/RD/TASKS: counting
+    them would double-count every node), `raw/` sources (the wiki layer's standing invariant
+    is that the engine never reads a source's CONTENT, only its bytes), `results/` artifacts,
+    `wiki/log.md` and `wiki/SCHEMA.md` (not `type: wiki`), and `glossary.md` itself (a term is
+    trivially central in the file that defines it)."""
+    docs = [(nid, n.title or "", n["body"]) for nid, n in v.nodes.items()]
+    for p in scan_wiki_pages(v.root):
+        docs.append(("wiki:" + p["slug"], p["title"] or "",
+                     (p["summary"] or "") + "\n\n" + p["body"]))
+    return docs
+
+def count_term(v, term):
+    """Where a term appears and how often: {"documents": [id…], "occurrences": N,
+    "titles": [id…], "per_document": {id: n}}.
+
+    Pure read — builds nothing, writes nothing, and is deterministic on an unchanged vault,
+    which is what makes a term that fails centrality today pass next month with no memory
+    beyond the vault itself."""
+    rx = term_pattern(term)
+    docs, per, titles, total = [], {}, [], 0
+    for nid, title, body in sorted(glossary_corpus(v)):
+        k = sum(len(rx.findall(b)) for b in glossary_blocks(body, title))
+        if k:
+            docs.append(nid); per[nid] = k; total += k
+        if rx.search(str(title or "").lower()):
+            titles.append(nid)
+    return {"documents": docs, "occurrences": total, "titles": titles, "per_document": per}
+
 def ensure_glossary(root):
     """Create `glossary.md` from the template if it is absent. Called at `init`, and by the
     PI's own accept/decline — never by a read path, so an existing vault gains the file only

@@ -8,6 +8,24 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Counting a multi-word glossary term** (spec [`14`](.spec/14-glossary.md), PRD 14.1).
+  A term matches when its words appear consecutively **inside one markdown block**,
+  case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with the
+  last word optionally carrying a trailing `s`/`es`. That sentence is the whole rule.
+
+  It was settled by measurement, not argument. The spec's own guess — *"normalizing case and
+  trailing plurals is probably enough"* — was run against the three shipped example vaults
+  and **refuted**: it fixes every plural case and **zero** hyphenation cases, and hyphenation
+  is where the variance lives (*"dense contrastive pretraining"* appears 9× unhyphenated and
+  7× hyphenated in one vault, one author). Under the guess, *"mask transformer head"* scores
+  **0 documents** despite 12 occurrences across 3 documents, two of them node titles.
+  Block scoping is equally forced: permitting a newline in the separator produced 27 measured
+  false positives where a heading's last word glued to the body's first.
+
+  `glossary_blocks` · `term_pattern` · `count_term`, all pure reads with no CLI surface yet.
+  A **frozen oracle** of 10 terms across the three example vaults ships as asserts, so a later
+  change to the rule must reproduce the numbers or admit in its own PRD that it moved them.
+
 - **`glossary.md` — the project's vocabulary model** (spec [`14`](.spec/14-glossary.md),
   PRD 14.0). One file per vault, created **empty** at `init`, with `## Terms` and
   `## Not jargon`. It is not a definition store: presence means an agent may use the word

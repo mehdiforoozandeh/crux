@@ -5556,6 +5556,163 @@ def run_glossary_migration():
     shutil.rmtree(dst, ignore_errors=True)
 
 
+def run_glossary_counting():
+    """Spec 14 PRD 14.1 — how a multi-word term is counted.
+
+    THE RULE (ruled by the PI, 2026-08-15): a term matches when its words appear
+    consecutively INSIDE ONE MARKDOWN BLOCK, case-insensitively, separated by any run of
+    spaces, tabs, hyphens or underscores, with the last word optionally carrying a trailing
+    s/es.
+
+    It was settled empirically, not by argument. The spec's own guess — "normalizing case
+    and trailing plurals is probably enough" — was measured against the three shipped
+    example vaults and REFUTED: it fixes every plural case and zero hyphenation cases, and
+    hyphenation is where the variance actually lives. Under it, "mask transformer head"
+    scores 0 documents despite 12 occurrences in 3 documents (two of them node titles).
+
+    Block scoping is not tidiness either: allowing a newline inside the separator produced
+    27 measured false positives where a heading's last word glued to the body's first."""
+    print("\n# glossary — counting a multi-word term (spec 14, PRD 14.1)")
+    B, P = E.glossary_blocks, E.term_pattern
+
+    def n(term, text):
+        rx = P(term)
+        return sum(len(rx.findall(b)) for b in B(text))
+
+    check("gcount: exact match counts", n("detection floor", "the detection floor is 0.4") == 1)
+    check("gcount: case-insensitive", n("detection floor", "The Detection Floor") == 1)
+    check("gcount: trailing plural on the last word", n("detection floor", "two detection floors") == 1)
+    check("gcount: trailing -es on the last word",
+          n("capacity certificate", "the capacity certificates") == 1)
+    check("gcount: hyphen matches space", n("detection floor", "a detection-floor") == 1)
+    check("gcount: space matches hyphen", n("detection-floor", "a detection floor") == 1)
+    check("gcount: underscore matches space", n("detection floor", "a detection_floor") == 1)
+    check("gcount: word-bounded", n("detection floor", "predetection floorboard") == 0)
+    check("gcount: a non-final plural does not match", n("system biology", "systems biology") == 0)
+    check("gcount: no derivational match", n("label efficiency", "label-efficient") == 0)
+    check("gcount: single-word term counts", n("held-out", "the held out set and held-out data") == 2)
+    check("gcount: regex metacharacters in a term are literal",
+          n("c++ kernel", "the c++ kernel") == 1 and n("c++ kernel", "the cxx kernel") == 0)
+
+    # ---- block scoping: the false positives the rule exists to remove. Each of these was
+    #      MEASURED on the example vaults under a newline-permitting separator.
+    check("gcount: a term does not span a heading boundary",
+          n("links job", "## Run Links\n\n- job 40012") == 0)
+    check("gcount: a term does not span two list items",
+          n("floor detection", "- the floor\n- detection is hard") == 0)
+    check("gcount: a term does not span a blank line",
+          n("detection floor", "detection\n\nfloor") == 0)
+    check("gcount: a term DOES span a wrapped paragraph line",
+          n("dense contrastive pretraining", "we use dense contrastive\npretraining here") == 1)
+    check("gcount: html comments are not scanned",
+          n("detection floor", "<!-- detection floor -->") == 0)
+    check("gcount: a _(placeholder)_ line is not scanned",
+          n("detection floor", "_(state the detection floor)_") == 0)
+    check("gcount: a heading's own text is scanned", n("detection floor", "## Detection floor") == 1)
+    check("gcount: the generated ledger is not scanned",
+          n("detection floor", f"body\n\n{E.LEDGER_START}\nthe detection floor\n{E.LEDGER_END}\n") == 0)
+    check("gcount: text after the ledger IS scanned",
+          n("detection floor", f"{E.LEDGER_START}\nx\n{E.LEDGER_END}\n\nthe detection floor\n") == 1)
+
+    # ---- over a vault
+    root = tempfile.mkdtemp(prefix="crux_gc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Counting", root)
+    q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
+    h1, _, _ = E.cmd_hypothesize(root, "the detection floor is reachable", parent=q1,
+                                 problem="the detection floor again", verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"])
+    v = E.Vault(root)
+    c = E.count_term(v, "detection floor")
+    check("gcount: counts across two nodes", len(c["documents"]) == 2)
+    check("gcount: reports occurrences as well as documents", c["occurrences"] >= 3)
+    check("gcount: a node title hit is reported in titles", c["titles"] == [h1])
+    check("gcount: a term nobody used scores zero",
+          E.count_term(v, "capacity certificate")["documents"] == [])
+    check("gcount: two occurrences in one node are one document",
+          len(E.count_term(v, "nothing")["documents"]) == 1)
+    check("gcount: determinism", E.count_term(v, "detection floor") == c)
+
+    before = _tree_hashes(root)
+    E.count_term(E.Vault(root), "detection floor")
+    check("gcount: counting writes nothing", _tree_hashes(root) == before)
+
+    # META/EXPERIMENTS are generated: a term in every node must score the node count, not double
+    check("gcount: generated views are not counted",
+          len(E.count_term(E.Vault(root), "detection floor")["documents"]) == 2)
+
+    # the glossary itself is excluded — a term is trivially central in the file defining it
+    with open(os.path.join(root, E.GLOSSARY_FILE), "a", encoding="utf-8") as f:
+        f.write("- **capacity certificate** — a thing.\n")
+    check("gcount: glossary.md itself is not counted",
+          E.count_term(E.Vault(root), "capacity certificate")["documents"] == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- wiki pages count as documents; log.md and SCHEMA.md do not (they are not `type: wiki`)
+    root = tempfile.mkdtemp(prefix="crux_gcw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Counting Wiki", root)
+    E.ensure_wiki(root)
+    with open(os.path.join(root, "wiki", "probing.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Capacity certificate\nsummary: a probing idea\n---\n\n"
+                "# Capacity certificate\n\nThe detection floor matters here.\n")
+    with open(os.path.join(root, "wiki", "log.md"), "a", encoding="utf-8") as f:
+        f.write("\n## [2026-01-01] ingest | a detection floor paper\n")
+    v = E.Vault(root)
+    check("gcount: a wiki page body counts as a document",
+          len(E.count_term(v, "detection floor")["documents"]) == 1)
+    check("gcount: a wiki page title counts as a title hit",
+          E.count_term(v, "capacity certificate")["titles"] == ["wiki:probing"])
+    check("gcount: wiki/log.md is not counted (it is not `type: wiki`)",
+          len(E.count_term(v, "detection floor")["documents"]) == 1)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_glossary_oracle():
+    """THE FROZEN ORACLE — spec 14 PRD 14.1, ruled 2026-08-15.
+
+    Measured on the three shipped example vaults, on the EXACT corpus the implementation
+    reads (Vault.nodes + scan_wiki_pages), not a filesystem walk. A later change to the
+    counting rule must reproduce these numbers or state in its own PRD that it moved them.
+
+    Three rows earn their place beyond regression:
+      - 'label-efficient segmentation' is the PROJECT ROOT's title. It survives only via the
+        title clause, and it is invisible to exact matching — the hyphen rule and the title
+        bypass in one row.
+      - 'data floor' is 1 document / 2 occurrences: the row that separates the document gate
+        from the occurrence gate.
+      - 'mask transformer head' and 'pre-registered bar' score ZERO under the spec's original
+        case+plural guess. They are why the rule is what it is."""
+    print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
+    ex = os.path.join(HERE, "..", "examples")
+    ORACLE = {
+        "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
+                         ("label efficiency", 17, 26, 0), ("pre-registered bar", 9, 9, 0),
+                         ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
+        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
+        "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
+    }
+    SIZES = {"demo_vault": 8, "scaling_vault": 37, "segssl_vault": 43}
+    for vd, rows in sorted(ORACLE.items()):
+        v = E.Vault(os.path.join(ex, vd))
+        size = len(v.nodes) + len(E.scan_wiki_pages(v.root))
+        check(f"gcount: oracle {vd} corpus size is {SIZES[vd]} documents (got {size})",
+              size == SIZES[vd])
+        for term, docs, occ, titles in rows:
+            c = E.count_term(v, term)
+            check(f"gcount: oracle {vd} {term!r} -> {docs}d/{occ}o/{titles}t "
+                  f"(got {len(c['documents'])}d/{c['occurrences']}o/{len(c['titles'])}t)",
+                  (len(c["documents"]), c["occurrences"], len(c["titles"])) == (docs, occ, titles))
+
+    # the refuted guess, asserted as a REGRESSION LOCK: if someone "simplifies" the rule back
+    # to case+trailing-plural, these two go to zero and this fails loudly.
+    v = E.Vault(os.path.join(ex, "segssl_vault"))
+    naive = re.compile(r"(?<![\w-])mask\s+transformer\s+heads?(?![\w-])", re.I)
+    check("gcount: the refuted case+plural rule really does score 0 on 'mask transformer head'",
+          not any(naive.search(x["body"]) or naive.search(x.title or "") for x in v.nodes.values()))
+    check("gcount: and the shipped rule does not", len(E.count_term(v, "mask transformer head")["documents"]) == 3)
+
+
 def _tree_hashes(root):
     """{relpath: sha256} for every file under root — the byte-compare oracle."""
     out = {}
@@ -5640,6 +5797,8 @@ def main():
     run_agent_roster()
     run_glossary()
     run_glossary_migration()
+    run_glossary_counting()
+    run_glossary_oracle()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
