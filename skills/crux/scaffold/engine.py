@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.6"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.7"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -23,6 +23,9 @@ ENGINE_VERSION = "1.6"          # bumped when verdict/roll-up/view logic or vaul
                                 # on carry `schema: 1`. The stamp is the version boundary:
                                 # spec-15 rules bind stamped nodes only, and ABSENCE of the
                                 # stamp means the node predates them, permanently.
+                                # 1.7: every verifiable carries a `kind` — `hypothesis` (a
+                                # consequence of the claim) or `outcome-neutral` (a control
+                                # that must pass whatever the claim turns out to be).
                                 # 1.5: the RD layer (spec 07) — the engine now scans a new
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
@@ -99,6 +102,44 @@ SCHEMA_GENERATION = 1
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
 INFO_NAMESPACES = ("boundary",)
+
+# Verifiables come in two classes and crux used to flatten them, which is what let a broken
+# apparatus and a false claim produce the same-looking partial pass.
+#
+#   hypothesis       a consequence of the claim. Feeds the verdict.
+#   outcome-neutral  a positive control / manipulation check / floor-ceiling check. It must
+#                    pass REGARDLESS of what the claim turns out to be. Its failure
+#                    invalidates the RUN, and nothing about the claim is learned.
+#
+# Regulators call the property this protects assay sensitivity (ICH E10): without a passing
+# positive control, "the hypothesis is false" and "the apparatus is broken" are
+# indistinguishable. The separability research adds the other half — an outcome-neutral check
+# is the DUAL of a common-mode failure, a detector for the one shared ingredient (a batch, a
+# seed, a preprocessing path, a control arm) that would otherwise sink every bundled
+# hypothesis at once, silently.
+#
+# Syntax is a LEADING bracket tag on the checkbox line:
+#
+#   - [x] [outcome-neutral] the known-good encoder reproduces 0.46 (found: 0.461)
+#         ^^^^^^^^^^^^^^^^^                                       ^^^^^^^^^^^^^^^
+#         the kind (this)                                         the evidence (spec 11)
+#
+# Leading, not trailing, and that is forced rather than chosen: the seed parser strips a
+# trailing `(...)` as the evidence note, so `(outcome-neutral)` would be silently recorded as
+# a finding. Anchoring the kind to the FRONT means it can never compete for that slot.
+DEFAULT_KIND     = "hypothesis"
+NEUTRAL_KIND     = "outcome-neutral"
+VERIFIABLE_KINDS = (DEFAULT_KIND, NEUTRAL_KIND)
+_KIND_ALIASES    = {"hypothesis": DEFAULT_KIND, "hyp": DEFAULT_KIND, "h": DEFAULT_KIND,
+                    "claim": DEFAULT_KIND,
+                    "outcome-neutral": NEUTRAL_KIND, "outcome_neutral": NEUTRAL_KIND,
+                    "neutral": NEUTRAL_KIND, "control": NEUTRAL_KIND, "on": NEUTRAL_KIND,
+                    "positive-control": NEUTRAL_KIND}
+_KIND_TAG_RE     = re.compile(r"^\s*\[([A-Za-z][A-Za-z_-]*)\]\s+")
+# The written opt-out for "this claim genuinely has no meaningful positive control". A
+# non-empty string satisfies the requirement; the reason itself IS the audit trail, which is
+# the point — "there is no control here" has to be SAID, not silently assumed.
+NEUTRAL_OPTOUT   = "neutral_optout"
 
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
@@ -533,6 +574,60 @@ def binds_evidence_semantics(node):
     return node_schema(node) >= 1
 
 # ----------------------------------------------------------------------------- verifiables / verdict
+def verifiable_kind(text):
+    """Split a leading `[kind]` tag off a verifiable's text -> (kind, text_without_tag).
+
+    Total and lossless: an UNKNOWN tag returns (`hypothesis`, text-with-the-tag-still-on-it)
+    rather than swallowing it. A tag crux does not understand must stay visible on the line
+    — `validate` raises it as a problem, and silently deleting it would hide the mistake in
+    the one place a reader would look for it. An untagged line is `hypothesis`, which is what
+    makes every pre-15 verifiable read exactly as it always did."""
+    m = _KIND_TAG_RE.match(text)
+    if not m:
+        return DEFAULT_KIND, text
+    kind = _KIND_ALIASES.get(m.group(1).lower())
+    if kind is None:
+        return DEFAULT_KIND, text
+    return kind, text[m.end():]
+
+def unknown_kind_tag(text):
+    """The raw tag if this line carries a bracket tag crux does not recognize, else None."""
+    m = _KIND_TAG_RE.match(text)
+    if m and m.group(1).lower() not in _KIND_ALIASES:
+        return m.group(1)
+    return None
+
+def _verifiable_lines(body):
+    """[(tick_char, text)] for every checkbox under `## Verifiables`, in document order.
+    One scanner, so the tally, the cockpit reader and the deck reader cannot drift."""
+    out, in_sec = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "verifiables"
+            continue
+        if not in_sec:
+            continue
+        m = re.match(r"\s*- \[(.)\]\s*(.*)$", line)
+        if m:
+            out.append((m.group(1).lower(), m.group(2).strip()))
+    return out
+
+def _tally(states):
+    met = sum(1 for c in states if c == "x")
+    na  = sum(1 for c in states if c == "-")
+    return met, len(states) - met - na, na
+
+def count_verifiables_by_kind(body):
+    """{kind: (met, unmet, na)} over `## Verifiables`. The input to spec 15's verdict.
+
+    Deliberately additive: `count_verifiables` below keeps its exact pre-15 meaning and
+    return type, so every existing caller, view and assert is byte-unchanged. 15.1 parses
+    and requires the split; consuming it is 15.2's job."""
+    by = {k: [] for k in VERIFIABLE_KINDS}
+    for tick, text in _verifiable_lines(body):
+        by[verifiable_kind(text)[0]].append(tick)
+    return {k: _tally(v) for k, v in by.items()}
+
 def count_verifiables(body):
     met = unmet = na = 0
     in_sec = False
@@ -793,6 +888,25 @@ def fanout_pressure(v, qid):
                 f"this one puts it over. Run or close some before proposing more.")
     return None
 
+def neutral_gap(n):
+    """The message for a stamped hypothesis that has no outcome-neutral verifiable and no
+    written opt-out, or None when it is satisfied. Spec 15 §1.
+
+    Gated on the node's stamp, never on its status: a pre-15 hypothesis is *correct* without
+    a control — the bar did not exist when the work was done — and retro-flagging it would
+    put a working vault into permanent red against a rule it could not have known."""
+    if n.type != "idea" or not binds_evidence_semantics(n):
+        return None
+    if count_verifiables_by_kind(n["body"])[NEUTRAL_KIND] != (0, 0, 0):
+        return None
+    if str(n["fm"].get(NEUTRAL_OPTOUT) or "").strip():
+        return None
+    return (f"hypothesis '{n.id}': no outcome-neutral verifiable. Without a passing control, "
+            f"'the claim is false' and 'the apparatus is broken' are indistinguishable "
+            f"(assay sensitivity). Add one with `-n \"<check>\"`, or record an explicit "
+            f"opt-out in frontmatter: `{NEUTRAL_OPTOUT}: <why this claim has no meaningful "
+            f"positive control>`.")
+
 def validate(v):
     problems = []
     req = {"project": ["id","type","title","status"],
@@ -827,6 +941,20 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        # evidence semantics: a kind tag crux does not recognize is a typo, not a kind. It
+        # is left on the line rather than swallowed, and raised here.
+        if t == "idea" and binds_evidence_semantics(n):
+            for _, text in _verifiable_lines(n["body"]):
+                bad = unknown_kind_tag(text)
+                if bad:
+                    problems.append((nid, f"hypothesis '{nid}': unknown verifiable kind "
+                                          f"'[{bad}]' — use "
+                                          f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
+        # ...and once a run has actually started, the control requirement bites
+        if t == "idea" and n.status in ("running", "done"):
+            gap = neutral_gap(n)
+            if gap:
+                problems.append((nid, gap))
         # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
         # produced files links a report among them
         if t == "idea":
@@ -1358,12 +1486,14 @@ def cmd_init(title, dirpath=".", goal=""):
 #       - Q: a nested question
 #         - H: a hypothesis                         (open; not yet run)
 #           - v: metric ≥ threshold vs baseline     (a verifiable)
+#           - vn: known-good baseline reproduces    (an outcome-neutral control)
 #       - H: [tested] an already-run hypothesis     (migration: reconstruct done work)
 #         - v: [x] first check (found: 0.46 → 0.48) (tick = met; parenthetical = evidence)
 #         - v: [ ] second check
 #         - finding: one-line narrative of the result
 #
-# Rules mirror the model: Project→Q ; Q→Q|H ; H→v|finding|problem. Verdicts on
+# Rules mirror the model: Project→Q ; Q→Q|H ; H→v|vn|finding|problem. `vn:` is a `v:`
+# that is outcome-neutral (a control). Verdicts on
 # [tested] hypotheses are still derived mechanically from the ticks — the engine
 # never invents them.
 def _seed_val(line):
@@ -1374,14 +1504,20 @@ def _seed_val(line):
     return len(m.group(1)), m.group(2).lower(), m.group(3).strip()
 
 def _parse_verifiable(val):
+    """A seed `- v:` / `- vn:` value -> {tick, kind, text, evidence}.
+
+    Extraction order is fixed and load-bearing: tick, then the LEADING kind tag, then the
+    TRAILING evidence parenthetical. Reversing the last two is how `(outcome-neutral)` ends
+    up recorded as a finding — the reason the kind tag is anchored to the front."""
     m = re.match(r"\[([ xX-])\]\s*(.*)$", val)
     tick, text = (m.group(1).lower(), m.group(2).strip()) if m else (" ", val)
+    kind, text = verifiable_kind(text)
     evidence = None
     if m:  # only tested verifiables carry a trailing (evidence) note
         em = re.search(r"\s*\((.*)\)\s*$", text)
         if em:
             evidence, text = em.group(1).strip(), text[:em.start()].strip()
-    return {"tick": tick, "text": text, "evidence": evidence}
+    return {"tick": tick, "kind": kind, "text": text.strip(), "evidence": evidence}
 
 def parse_seed(text):
     """Parse the seed outline into a project dict with nested children. Raises CruxError
@@ -1422,10 +1558,13 @@ def parse_seed(text):
             node = {"type": "hypothesis", "title": val, "tested": tested,
                     "problem": "", "finding": "", "verifiables": []}
             parent["children"].append(node)
-        elif key == "v":
+        elif key in ("v", "vn"):
             if parent is None or parent["type"] != "hypothesis":
-                raise CruxError(f"seed: a verifiable (v) must sit under an H (got {val!r})")
-            parent["verifiables"].append(_parse_verifiable(val))
+                raise CruxError(f"seed: a verifiable ({key}) must sit under an H (got {val!r})")
+            vf = _parse_verifiable(val)
+            if key == "vn":                     # `vn:` is sugar for an outcome-neutral `v:`
+                vf["kind"] = NEUTRAL_KIND
+            parent["verifiables"].append(vf)
             node = None
         elif key in ("finding", "problem"):
             if parent is None or parent["type"] != "hypothesis":
@@ -1433,7 +1572,7 @@ def parse_seed(text):
             parent[key] = val
             node = None
         else:
-            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/finding/problem)")
+            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/vn/finding/problem)")
         if node is not None:
             stack.append((indent, node))
     if project is None:
@@ -1445,7 +1584,8 @@ def _render_verifiables(body, verifiables):
     lines = []
     for vf in verifiables:
         ev = f"   ({vf['evidence']})" if vf["evidence"] else ""
-        lines.append(f"- [{vf['tick']}] {vf['text']}{ev}")
+        tag = f"[{vf['kind']}] " if vf.get("kind") == NEUTRAL_KIND else ""
+        lines.append(f"- [{vf['tick']}] {tag}{vf['text']}{ev}")
     block = "\n".join(lines)
     return re.sub(r"(## Verifiables\n\n)(?:<!--.*?-->\n)?(?:- \[.\].*\n?)+",
                   lambda m: m.group(1) + block + "\n", body, count=1)
@@ -1462,11 +1602,20 @@ def _materialize(root, project):
     def _add_hypothesis(root, h, qid):
         if h["tested"] and not h["verifiables"]:
             raise CruxError(f"seed: [tested] hypothesis {h['title']!r} needs at least one verifiable")
-        hid, _, _ = cmd_hypothesize(root, h["title"], parent=qid, problem=h["problem"],
-                                 verifiables=[vf["text"] for vf in h["verifiables"]])
+        hid, _, _ = cmd_hypothesize(
+            root, h["title"], parent=qid, problem=h["problem"],
+            verifiables=[vf["text"] for vf in h["verifiables"] if vf["kind"] != NEUTRAL_KIND],
+            neutral=[vf["text"] for vf in h["verifiables"] if vf["kind"] == NEUTRAL_KIND])
         if not h["tested"]:
             return
         n = Vault(root).get(hid)
+        # Reconstructed past work: drop the schema stamp so evidence semantics do not bind
+        # it. `[tested]` means "this ran before crux was watching" — it cannot retroactively
+        # acquire an outcome-neutral control or a pre-registered combination rule, and
+        # demanding one would be the engine asking the PI to re-declare, after the fact,
+        # what would have settled an already-settled claim. Untested seeded hypotheses are
+        # genuinely new work and keep their stamp.
+        n["fm"].pop("schema", None)
         n["body"] = _render_verifiables(n["body"], h["verifiables"])
         write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
         cmd_close(root, hid, findings=h["finding"] or None)
@@ -1521,7 +1670,7 @@ def cmd_ask(root, title, parent=None, body_text=""):
     refresh(root)
     return nid, fn
 
-def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
+def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -1536,9 +1685,13 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
     text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
                 parent_basename=p.basename, problem=problem or "_(why this is worth testing)_",
                 verifiable=(verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"))
-    if verifiables and len(verifiables) > 1:
-        extra = "\n".join(f"- [ ] {x}" for x in verifiables[1:])
-        text = text.replace(f"- [ ] {verifiables[0]}", f"- [ ] {verifiables[0]}\n{extra}")
+    # claim-directed checks first, then the outcome-neutral controls — the controls gate the
+    # run, and a reader should meet the claim before the apparatus check for it
+    rest = [f"- [ ] {x}" for x in (verifiables or [])[1:]]
+    rest += [f"- [ ] [{NEUTRAL_KIND}] {x}" for x in (neutral or [])]
+    if rest:
+        lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
+        text = text.replace(f"- [ ] {lead}", f"- [ ] {lead}\n" + "\n".join(rest))
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
     return nid, fn, warning
@@ -1580,6 +1733,10 @@ def cmd_test(root, nid, to=None, run=None):
         raise CruxError("test moves an idea to 'staged' or 'running'")
     if target == "running" and sum(count_verifiables(n["body"])) == 0:
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
+    if target == "running":
+        gap = neutral_gap(n)
+        if gap:
+            raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
     if run:
         n["body"] = append_bullet(n["body"], "Run Links", run)
@@ -1800,20 +1957,15 @@ def _summary(body, heading):
     return "" if not _prose_tokens(text) else text
 
 def _verifiables(body):
-    """The `## Verifiables` list as read-only tri-state: [{text, state}] with state in met/unmet/na."""
-    items, in_sec = [], False
-    for line in body.splitlines():
-        if line.startswith("## "):
-            in_sec = line[3:].strip().lower() == "verifiables"
-            continue
-        if not in_sec:
-            continue
-        m = re.match(r"\s*- \[(.)\]\s*(.*)$", line)
-        if not m:
-            continue
-        c = m.group(1).lower()
+    """The `## Verifiables` list as read-only tri-state:
+    [{text, state, kind}] with state in met/unmet/na and kind in VERIFIABLE_KINDS.
+    The `[kind]` tag is lifted into its own field and stripped from `text` — a reader should
+    get a sentence, not markup."""
+    items = []
+    for c, text in _verifiable_lines(body):
+        kind, text = verifiable_kind(text)
         state = "met" if c == "x" else "na" if c == "-" else "unmet"
-        items.append({"text": m.group(2).strip(), "state": state})
+        items.append({"text": text.strip(), "state": state, "kind": kind})
     return items
 
 def _run_links(body):
@@ -2020,14 +2172,18 @@ def _metric_leaves(tree, prefix=""):
 _FOUND_RE = re.compile(r"\s*\(found:\s*(.*?)\)\s*$")
 
 def _deck_verifiables(body):
-    """`## Verifiables` for the payload: [{text, state, found}] where `found` is the
+    """`## Verifiables` for the payload: [{text, state, kind, found}] where `found` is the
     trailing `(found: …)` evidence parenthetical the seed materializer writes (None when
-    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it."""
+    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it.
+
+    `kind` (spec 15) matters to a deck: a failed OUTCOME-NEUTRAL check means the run was
+    invalid, not that the claim was refuted, and a slide must not narrate the second when
+    the vault recorded the first."""
     out = []
     for item in _verifiables(body):
         m = _FOUND_RE.search(item["text"])
         out.append({"text": _FOUND_RE.sub("", item["text"]).strip(), "state": item["state"],
-                    "found": m.group(1).strip() if m else None})
+                    "kind": item["kind"], "found": m.group(1).strip() if m else None})
     return out
 
 def _deck_text(body, heading):

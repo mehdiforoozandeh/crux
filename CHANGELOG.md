@@ -8,6 +8,24 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Verifiables carry a `kind`** (spec [`15`](.spec/15-evidence-semantics.md), PRD 15.1).
+  Two classes, written as a leading bracket tag on the checkbox line:
+  `[hypothesis]` (a consequence of the claim — the default, so every existing verifiable
+  reads exactly as it always did) and `[outcome-neutral]` (a positive control or sanity
+  check that must pass *whatever* the claim turns out to be). Regulators call the property
+  this protects **assay sensitivity**: without a passing control, "the claim is false" and
+  "the apparatus is broken" are indistinguishable, which is what let one flat list
+  manufacture partial answers. A hypothesis created at 1.7 or later **cannot go `running`**
+  without at least one outcome-neutral check or a written `neutral_optout:` reason — the
+  reason itself is the audit trail, because "there is no control here" should be *said*.
+  New `crux hypothesize -n/--neutral`, and a `vn:` line in the seed grammar. The tag is
+  *leading* rather than trailing, and that is forced: the seed parser strips a trailing
+  `(...)` as its evidence note, so `(outcome-neutral)` would be silently recorded as a
+  finding. `ENGINE_VERSION` 1.6 → 1.7.
+
+  This PRD deliberately changes **no verdict**: the kind is parsed, required and displayed,
+  but the tally the verdict runs off is byte-unchanged. Consuming the split is PRD 15.2.
+
 - **The evidence-semantics version boundary** (spec [`15`](.spec/15-evidence-semantics.md),
   PRD 15.0). Questions and hypotheses created from `ENGINE_VERSION` 1.6 on carry a
   `schema: 1` frontmatter stamp; **absence of the stamp means the node predates evidence
@@ -24,6 +42,12 @@ verdict/roll-up/view logic changes.
   recorded verdict, and validates clean.
 
 ### Changed
+
+- **A seeded `[tested]` hypothesis is no longer stamped with the evidence-semantics schema.**
+  `[tested]` means "this ran before crux was watching" — reconstructed history, not new
+  work. Requiring it to declare a control would be the engine asking the PI to invent, after
+  the fact, what would have settled an already-settled claim. Untested seeded hypotheses are
+  genuinely new work and keep their stamp.
 
 - **Version asserts in `selftest.py` no longer pin a literal.** Five checks asserted
   `E.ENGINE_VERSION == "1.5"`, which made every future engine bump drag earlier specs' tests

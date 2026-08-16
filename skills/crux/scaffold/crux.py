@@ -103,7 +103,12 @@ def main(argv=None):
 
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
-    s.add_argument("--problem", default=""); s.add_argument("-v", "--verifiable", action="append", default=[],
+    s.add_argument("--problem", default="")
+    s.add_argument("-n", "--neutral", action="append", default=[],
+                   help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
+                        "pass whatever the hypothesis turns out to be. Its failure invalidates the "
+                        "run, not the claim. At least one is required before `test --to running`.")
+    s.add_argument("-v", "--verifiable", action="append", default=[],
                                                             help="a falsifiable check (repeatable)")
 
     s = _jsonable(sub.add_parser("test", aliases=["experiment", "run", "stage", "launch"], help="advance an idea: idea→staged→running"))
@@ -206,7 +211,8 @@ def dispatch(a):
             return _emit({"id": nid, "file": fn})
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
-        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem, a.verifiable)
+        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
+                                          a.verifiable, a.neutral)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
