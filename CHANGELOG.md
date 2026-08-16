@@ -29,6 +29,15 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- **`demo_vault`'s generated views regenerated through the engine.** The committed fixture
+  was last regenerated at engine 1.3, so its `META.md`, `EXPERIMENTS.md` and in-node ledger
+  blocks predated spec 15's view changes (the `rule` column, `invalid-run` in the verdict
+  counts). Regenerated with `refresh()` — never by hand, per the `evolve-crux` guardrail —
+  so the fixture is honest at 15's tip. **Every recorded verdict, every status and every
+  authored line is byte-unchanged**, and the vault deliberately keeps `engine_version: 1.2`
+  with no `schema` stamp on any node: its whole job is to be the *pre-15* oracle the
+  non-retroactivity proof compares against, and re-stamping it would destroy that.
+
 - **Guard parity for the cockpit.** The legend guard derived from `E.VERDICTS` is what forced
   `invalid-run` into the UI during the 15 build; there was no equivalent for per-node fields,
   which is exactly why three shipped unrendered. A new guard derives the expectation from
