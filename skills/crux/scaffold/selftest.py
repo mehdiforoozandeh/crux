@@ -1685,6 +1685,43 @@ def run_webui():
     check("webui: a rebuild resets the spotlight (no stale canvas-level dim)",
           bool(re.search(r"function renderTree\(\)[\s\S]{0,1200}clearSpot\(\)", app_js)))
 
+    # -- spec 12 perf (PRD-P3): onSnapshot diffs and patches instead of rebuilding.
+    #    Any byte change used to run layout() + renderTree() + renderDetail() (21.4 ms,
+    #    up to 1 Hz while an agent writes — and the detail rebuild reset the reader's
+    #    scroll and replayed its entrance animations). Ruling P-D5, two tiers: a
+    #    structural signature gates layout/renderTree entirely; geometry-neutral changes
+    #    (status/verdict/verifiable-state flips) patch just the changed node groups; the
+    #    detail pane re-renders only when what IT shows changed. The signature's honesty
+    #    is asserted below by tying its field list to the draw path's actual reads.
+    sig_src = fn_src("treeSignatures")
+    check("webui: a structural/cosmetic snapshot signature exists", bool(sig_src))
+    draw_src = "".join(fn_src(f) for f in
+                       ("nodeSVG", "computeGeom", "statusClass", "verifDots",
+                        "vBadgeClass", "bodyLabel", "rootLabel"))
+    drawn_fields = sorted(set(re.findall(r"\bn\.([a-z_]+)\b", draw_src)))
+    sig_missing = [f for f in drawn_fields if f not in sig_src]
+    check(f"webui: every field the draw path reads is in the signature (missing: {sig_missing})",
+          bool(drawn_fields) and not sig_missing)
+    os_src = fn_src("onSnapshot")
+    check("webui: onSnapshot gates layout()+renderTree() on the structural signature",
+          "treeSignatures()" in os_src
+          and bool(re.search(r"if \(structural\)[\s\S]{0,200}renderTree\(\)", os_src))
+          and os_src.count("renderTree()") == 1     # the one call sits inside the gate
+          and os_src.count("layout()") == 1)
+    check("webui: geometry-neutral changes patch single node groups in place",
+          "patchNodeEl(" in os_src and "outerHTML" in fn_src("patchNodeEl")
+          and "nodeSVG(" in fn_src("patchNodeEl"))
+    check("webui: a patched node re-enters the sim's element cache",
+          "TSIM.els[" in fn_src("patchNodeEl"))
+    check("webui: the detail pane re-renders only when its own content changed",
+          "function detailKeyOf" in app_js
+          and "detailKeyOf() !== state._detailKey" in os_src
+          and "state._detailKey = detailKeyOf()" in fn_src("renderDetail"))
+    check("webui: the legend is not rebuilt on every poll (content is filter-static)",
+          "renderLegend()" not in os_src or "_legendRendered" in os_src)
+    check("webui: the match counter still rides every accepted snapshot (PR #13 contract)",
+          "updateMatchCounter()" in os_src)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never

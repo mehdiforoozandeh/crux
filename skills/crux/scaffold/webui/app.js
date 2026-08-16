@@ -156,6 +156,70 @@ async function poll() {
   setTimeout(poll, 1000);
 }
 
+// The two-tier snapshot diff (spec 12, PRD-P3, ruling P-D5). Any byte change used to
+// run the full pipeline — layout() + renderTree() + renderDetail() — at 21.4 ms, up to
+// 1 Hz while an agent writes files (the normal crux workflow), and the renderDetail
+// rebuild reset the reader's scroll and replayed its entrance animations even when the
+// change was in a node nobody was looking at.
+//
+// treeSignatures() walks the DRAWN tree (collapsed nodes as leaves, exactly layout()'s
+// walk) and splits what the draw path reads into two keys:
+//   geo — anything that can change structure or geometry: the walk order itself, type,
+//         title, verifiable COUNT, child count, the collapsed marker. geo changed →
+//         the old full path (layout + renderTree), unchanged in behavior.
+//   cos — drawn fields that only recolor an existing group: status, verdict,
+//         verifiable STATES. cos-only changes patch just the changed node groups.
+// A selftest ties these field lists to the actual `n.<field>` reads in nodeSVG /
+// computeGeom / statusClass / verifDots — a new drawn field cannot be forgotten
+// silently (the failure mode of every diff is the field it forgot).
+let _treeSig = { geo: "", cosMap: {} };
+function treeSignatures() {
+  const cosMap = {}, geo = [];
+  if (!state.snap) return { geo: "", cosMap };
+  (function walk(node) {
+    const n = state.snap.nodes[node.id];
+    if (!n) return;
+    const vs = n.verifiables || [];
+    geo.push(n.id, n.type, n.title, vs.length, (node.children || []).length,
+             state.collapsed.has(node.id) ? 1 : 0);
+    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + vs.map((v) => v.state).join(",");
+    if (state.collapsed.has(node.id)) return;
+    for (const c of node.children || []) walk(c);
+  })(state.snap.tree);
+  return { geo: JSON.stringify(geo), cosMap };
+}
+
+// Regenerate ONE node's group in place (status/verdict/dot flips — geometry-neutral by
+// construction, the geo key pinned everything else). nodeSVG bakes the current cosmetic
+// classes and ARIA, so the patched group is exactly what a full render would emit; the
+// sim's element cache is re-pointed and the group is put back on its live position.
+function patchNodeEl(id) {
+  const el = svg.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+  const n = state.snap.nodes[id], p = state.positions[id];
+  if (!el || !n || !p) return false;
+  el.outerHTML = nodeSVG(n, p);
+  const el2 = svg.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+  if (el2 && TSIM.els[id]) {
+    TSIM.els[id] = el2;
+    const sp = TSIM.nodes.get(id);
+    if (sp) { el2.setAttribute("transform", `translate(${sp.x},${sp.y})`); sp._wx = sp.x; sp._wy = sp.y; }
+  }
+  return true;
+}
+
+// What the right-hand pane is showing, as a key — the poll re-renders the pane only
+// when THIS changes, so an agent editing some other node can no longer reset the
+// reader's scroll position. The wiki reader keys itself (renderWiki/refreshWikiPage).
+function detailKeyOf() {
+  if (!state.snap) return "";
+  if (state.tab === "wiki") return "wiki";
+  if (state.report) return "report:" + state.report.path;
+  if (state.selected)
+    return "node:" + state.selected + ":" + JSON.stringify(state.snap.nodes[state.selected]);
+  return "queue:" + JSON.stringify(state.snap.queue);
+}
+
+let _legendRendered = false;
 function onSnapshot() {
   const snap = state.snap;
   $("project-title").textContent = snap.project.title || "";
@@ -176,14 +240,27 @@ function onSnapshot() {
   updateTabs();
   updateToolbar();     // the focus button's label is contextual — keep it honest
   updateReviewBtn();
-  layout();
+  // ---- two-tier diff (see treeSignatures above): full path only on structural change
+  const sig = treeSignatures();
+  const structural = sig.geo !== _treeSig.geo;
+  if (structural) layout();
   // One-time fit — but a tab opened in the background has a 0×0 rect until it's shown,
   // so keep retrying on each poll until the pane has real geometry to fit against.
   if (!state.centered && fitToView()) state.centered = true;
-  renderLegend();
-  renderTree();
+  if (structural) {
+    renderTree();
+  } else {
+    let patched = 0;
+    for (const id in sig.cosMap)
+      if (sig.cosMap[id] !== _treeSig.cosMap[id] && patchNodeEl(id)) patched++;
+    if (patched) { clearSpot(); applyCosmeticState(); }   // hover marks died with the old groups
+  }
+  _treeSig = sig;
+  // the legend's content depends only on the engine's constant vocabulary and the
+  // active filter (whose own click handler re-renders it) — once is enough
+  if (!_legendRendered) { renderLegend(); _legendRendered = true; }
   renderWiki();
-  renderDetail();
+  if (detailKeyOf() !== state._detailKey) renderDetail();
   updateMatchCounter();   // the poll can add/remove matches under a live query
 }
 
@@ -465,6 +542,10 @@ function renderTree() {
   // the rebuild replaced every .hov/.nbr element — clear the canvas-level spot dim too,
   // or a rebuild mid-hover would leave the whole tree dimmed with nothing highlighted
   clearSpot();
+  // a structural render IS the drawn truth — resync the poll diff's signature so a
+  // client-side reshape (fold, density, orientation) never forces a spurious rebuild
+  // on the next poll
+  _treeSig = treeSignatures();
   // keep the ARIA cursor honest: the canvas names its selected treeitem, or nothing
   if (state.selected && pos[state.selected]) svg.setAttribute("aria-activedescendant", "node-" + state.selected);
   else svg.removeAttribute("aria-activedescendant");
@@ -903,6 +984,7 @@ function resolveRel(p, base) {
 function renderDetail() {
   const pane = $("detail-content");
   if (!state.snap) { pane.innerHTML = ""; return; }
+  state._detailKey = detailKeyOf();   // the snapshot poll re-renders only when this moves
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
   if (state.report) { pane.innerHTML = reportDetail(); return; }

@@ -8,6 +8,16 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec
+  [`12`](.spec/12-cockpit-craft.md)). While an agent writes files — the normal crux
+  workflow — every vault change used to rerun the whole pipeline (21.4 ms up to 1 Hz)
+  and rebuild the detail pane, resetting the reader's scroll and replaying its entrance
+  animations. Now a structural signature (tied by a selftest to the draw path's actual
+  field reads) gates `layout()`/`renderTree()`; status/verdict/verifiable flips patch
+  just the changed node groups in place; and the pane re-renders only when what it shows
+  changed. Verified live: prose-only edits → 0 rebuilds (~2.5 ms per poll); a checkbox
+  flip → one single-node patch; a new node → exactly one full render, as before.
+
 - **Cockpit: the hover spotlight no longer repaints the whole tree, and the blur
   overlays are gone** (spec [`12`](.spec/12-cockpit-craft.md); paint-gate ruling, final).
   The spotlight used to write ~199 classes per `pointerover`, fire ~12× per node crossed
