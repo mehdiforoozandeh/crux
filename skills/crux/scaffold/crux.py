@@ -181,6 +181,15 @@ def main(argv=None):
     s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
     s.add_argument("id")
 
+    s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
+    s.add_argument("--frontier", action="store_true",
+                   help="only tasks whose blockers are all discharged — the default question")
+    s.add_argument("--status", default=None, choices=list(E.TASK_STATUS) + [E.TASK_BLOCKED],
+                   help="`blocked` is a legal filter though it is never a stored value")
+    s.add_argument("--category", default=None)
+    s.add_argument("--ref", default=None, metavar="ID", help="tasks serving this node/page")
+    s.add_argument("--blocks", default=None, metavar="ID", help="tasks blocking this task")
+
     s = _jsonable(tsub.add_parser("show", help="one task's record"))
     s.add_argument("id")
 
@@ -273,6 +282,18 @@ def _dispatch_task(a):
         if a.json:
             return _emit({"id": a.id, "status": st})
         print(f"✓ {a.id} → {st}")
+    elif t in ("list", "ls"):
+        rows = E.cmd_task_list(root, frontier=a.frontier, status=a.status,
+                               category=a.category, ref=a.ref, blocks=a.blocks)
+        by = E.task_by_id(root)
+        recs = [dict(E.task_json(root, x["id"]), state=E.task_state(x, by)) for x in rows]
+        if a.json:
+            return _emit(recs)
+        if not recs:
+            print("no tasks match.")
+        for x in recs:
+            blk = (" ← " + ", ".join(x["blocked_by"])) if x["blocked_by"] else ""
+            print(f"  {x['state']:>7}  {x['id']:>4} [{x['category']}] {x['title']}{blk}")
     elif t == "show":
         rec = E.task_json(root, a.id)
         if a.json:

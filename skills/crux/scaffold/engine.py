@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -40,11 +40,10 @@ ENGINE_VERSION = "2.0"          # bumped when verdict/roll-up/view logic or vaul
                                 # holding the work a research programme has to DO. A source
                                 # artifact: nothing regenerates it, ever. Additive — a pre-2.0
                                 # vault has no tasks/ and loads byte-unchanged. The major bump
-                                # is deliberate: 1.x ended at 1.9, and the next 1.x would be
-                                # "1.10", which sorts BELOW "1.9" in every naive string
-                                # comparison (update.py already ships a parse_version this
-                                # stamp does not use — the day they are wired together, 1.10
-                                # breaks).
+                                # is deliberate: 1.x ended at 1.9, a new artifact class in a
+                                # new directory is the largest format change since the wiki
+                                # layer, and a two-digit minor ("1.10") sorts below "1.9"
+                                # under plain string comparison.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -82,6 +81,7 @@ RD_LINK      = "RD::"           # the node's backlink, written beside `Parent::`
 # structurally outside v.nodes — it can never be a child, never enter ledger_counts, never
 # move a verdict and never trip the review gate. That is not incidental; it is the mechanism.
 TASK_DIR     = "tasks"          # one file per task; ids are engine-allocated and never renumbered
+TASK_INDEX   = "TASKHUB.md"     # generated index, shaped by the frontier query it serves
 TASK_STATUS  = ("open", "done", "dropped")
 TASK_BLOCKED = "blocked"        # COMPUTED (2.1), never stored — a state you can compute cannot drift
 TASK_LINK    = "Refs::"         # the task's own outbound links, written; node -> task stays DERIVED
@@ -101,7 +101,7 @@ DEFAULT_TASK_CATEGORIES = ("data-acquisition", "hpc-setup", "implementation",
 # ambiguous about what the word meant.
 TASK_RESERVED_CATEGORY = "experiment"
 
-GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX) # root .md views the node scan must never treat as nodes
+GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX, TASK_INDEX) # root .md views the node scan must never treat as nodes
 
 # evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
 # Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
@@ -1053,6 +1053,11 @@ def refresh(root):
         if write_if_changed(os.path.join(root, WIKI_INDEX), render.render_wiki(v, root)): changed = True
     if rd_active(root):
         if write_if_changed(os.path.join(root, RD_INDEX), render.render_rd(v, root)):     changed = True
+    # The taskhub's INDEX is generated; a task never is. `refresh` writes TASKHUB.md and
+    # nothing under tasks/ — that asymmetry is the whole spec-kit lesson, and selftest
+    # byte-compares tasks/ across this call to keep it true.
+    if task_active(root):
+        if write_if_changed(os.path.join(root, TASK_INDEX), render.render_taskhub(v, root)): changed = True
     return changed
 
 # ----------------------------------------------------------------------------- validation
@@ -1752,6 +1757,22 @@ def task_blockers(t):
     raw = _csv_field(t["fm"].get("blocked_by"))
     return [x for x in raw if x != NO_BLOCKERS]
 
+def task_ref_link(ref, basenames):
+    """One `refs` entry as a wikilink Obsidian can actually follow.
+
+    A ref is STORED as an id (`q21`), because an id is stable and a filename is not — but a
+    node's file is `q21_<slug>.md`, so `[[q21]]` resolves to nothing in Obsidian. The stored
+    form stays the id and the rendered form carries the basename with the id as its alias:
+    `[[q21_can_jepa…|q21]]`. Full traversability is the point of the layer; a link that only
+    resolves inside crux is half a link."""
+    if "/" in ref:                       # wiki/<slug> or rd/<slug> — already a real path
+        return f"[[{ref}]]"
+    base = basenames.get(ref)
+    return f"[[{base}\\|{ref}]]" if base else f"[[{ref}]]"
+
+def task_basenames(v):
+    return {n.id: n.basename for n in v.nodes.values()}
+
 def scan_tasks(root):
     """Every task (a *.md under tasks/ with `type: task`), in id order. Pure read.
 
@@ -1835,7 +1856,8 @@ def cmd_task_add(root, title, category, refs=None, blocked_by=None, parent=None,
     ensure_tasks(root)
     tid = _new_id(v, "task")
     fn = _task_slug(root, f"{tid}_{title}", {t["fn"][:-3] for t in scan_tasks(root)}) + ".md"
-    links = ", ".join(f"[[{r.split('/')[-1]}]]" for r in (refs or [])) or "_(none)_"
+    bn = task_basenames(v)
+    links = ", ".join(task_ref_link(r, bn) for r in (refs or [])) or "_(none)_"
     text = fill(load_template("task"), id=tid, title=title, category=category,
                 parent=parent or "", refs=", ".join(refs or []),
                 blocked_by=", ".join(blocked_by or []) or NO_BLOCKERS,
@@ -1901,6 +1923,99 @@ def cmd_task_categories(root, add=None):
     _save_cfg(v)
     return cats
 
+# --- the dependency graph (2.1) -----------------------------------------------------------
+# `blocked` is COMPUTED and never stored, for the same reason the role of an experiment is:
+# a state you can compute is a state that cannot drift. External blockers are not a state
+# either — "waiting on cluster quota" is a dependency on a task called *obtain cluster
+# quota*, which keeps one rule instead of two and fits "tasks are actions".
+def task_by_id(root):
+    return {t["id"]: t for t in scan_tasks(root)}
+
+def task_cleared(t):
+    """Is this blocker discharged? `done` OR `dropped`.
+
+    The spec's own acceptance criterion says "blockers are all `done`", and read literally
+    that strands a task forever whenever its blocker is dropped — invisibly, inside the one
+    query the agent is told to work from, which is the "nothing gets forgotten" failure
+    produced by the layer's primary query. A drop is a decision not to do the work, so it
+    discharges the edge; `validate` then reports the promotion as info so it is never silent.
+    """
+    return t["status"] in ("done", "dropped")
+
+def task_cycle(t, by_id, field):
+    """The cycle through `field` (`blocked_by` or `parent`) reachable from `t`, as the list of
+    ids that close it, or None.
+
+    A full coloured DFS, not a single-path walk: `blocked_by` is a LIST, so a task can have a
+    clean first branch and a cycle on its second. Following only the first candidate finds the
+    common case and silently misses that one — which is precisely the class of bug a
+    deterministic check exists to make impossible. Grey = on the current path (closing onto it
+    is the cycle), black = fully explored and proven acyclic, so each task is expanded once."""
+    grey, black, path = set(), set(), []
+
+    def walk(x):
+        xid = x["id"]
+        grey.add(xid); path.append(xid)
+        nxt = [x["parent"]] if field == "parent" else x["blocked_by"]
+        for cand in [c for c in nxt if c]:
+            if cand in grey:
+                return path[path.index(cand):] + [cand]
+            if cand in by_id and cand not in black:
+                found = walk(by_id[cand])
+                if found:
+                    return found
+        grey.discard(xid); black.add(xid); path.pop()
+        return None
+
+    return walk(t)
+
+def task_state(t, by_id):
+    """The task's state as a reader sees it: its stored status, or the computed `blocked`.
+
+    A task in a dependency cycle is reported `blocked` — it genuinely cannot be worked, and
+    `validate` is what says why."""
+    if t["status"] != "open":
+        return t["status"]
+    if task_cycle(t, by_id, "blocked_by"):
+        return TASK_BLOCKED
+    return TASK_BLOCKED if any(b not in by_id or not task_cleared(by_id[b])
+                               for b in t["blocked_by"]) else "open"
+
+def task_frontier(root, tasks=None):
+    """Work the frontier: the open tasks whose blockers are all discharged, in id order.
+    The one question an agent asks at the start of a session and a PI asks on opening the
+    tab — and, since 2.2, it spans chores and experiments in one result."""
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    return [t for t in tasks if task_state(t, by) == "open"]
+
+def task_drop_cleared(root, tasks=None):
+    """Tasks that reached the frontier because a blocker was DROPPED rather than done."""
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    return [t for t in task_frontier(root, tasks)
+            if any(b in by and by[b]["status"] == "dropped" for b in t["blocked_by"])]
+
+def cmd_task_list(root, frontier=False, status=None, category=None, ref=None, blocks=None):
+    """One list verb with filters rather than four verbs. `--ref q21` answers "what is open
+    under q21" and `--blocks t9` answers "what blocks anything currently running" — the
+    spec's other two named queries — without either needing its own command.
+
+    `blocked` is a legal filter value even though it is never a legal stored value. That
+    asymmetry is the point."""
+    tasks = scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    out = task_frontier(root, tasks) if frontier else list(tasks)
+    if status:
+        out = [t for t in out if task_state(t, by) == status]
+    if category:
+        out = [t for t in out if t["category"] == category]
+    if ref:
+        out = [t for t in out if ref in t["refs"]]
+    if blocks:
+        out = [t for t in out if blocks in by and t["id"] in by[blocks]["blocked_by"]]
+    return out
+
 def task_json(root, tid):
     """One task's read-only JSON — the shape `snapshot` will publish under `tasks.items`
     (2.4). Public so `crux task show --json` reuses the serializer instead of growing a
@@ -1918,6 +2033,13 @@ def task_info(root, v=None):
     if not task_active(root):
         return out
     tasks = scan_tasks(root)
+    cleared = task_drop_cleared(root, tasks)
+    if cleared:
+        out.append(("task:drop-cleared",
+                    f"{len(cleared)} task{'' if len(cleared) == 1 else 's'} reached the "
+                    f"frontier because a blocker was dropped, not done "
+                    f"({', '.join(t['id'] for t in cleared)}) — check the work is still "
+                    f"wanted.", len(cleared)))
     n = sum(1 for t in tasks if t["status"] == "dropped")
     if n:
         out.append(("task:dropped",
@@ -1970,6 +2092,11 @@ def validate_tasks(root):
                 problems.append((tid, f"task '{tid}': blocked_by '{b}' is not a task"))
         if t["parent"] and t["parent"] not in ids:
             problems.append((tid, f"task '{tid}': parent '{t['parent']}' is not a task"))
+        for field in ("blocked_by", "parent"):
+            cyc = task_cycle(t, {x["id"]: x for x in tasks}, field)
+            if cyc:
+                problems.append((tid, f"task '{tid}': {field} cycle "
+                                      f"{' → '.join(cyc)}"))
         if t["status"] == "done":
             if not t["outputs"]:
                 problems.append((tid, f"task '{tid}': done with no output recorded under "

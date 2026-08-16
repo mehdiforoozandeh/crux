@@ -8,6 +8,19 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The dependency graph, the frontier query, and `TASKHUB.md`** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.1). `blocked` is computed from the graph and never
+  stored — a state you can compute cannot drift — and external blockers become tasks rather
+  than a second kind of state. `crux task list` answers the three questions actually asked of
+  the layer (`--frontier`, `--ref <node>`, `--blocks <task>`), and the generated `TASKHUB.md`
+  leads with the frontier because that is the query it exists to serve. Dependency cycles are
+  caught deterministically over both `blocked_by` and `parent`, with the cycle path in the
+  message. A **dropped** blocker discharges its edge (the spec's literal "all `done`" would
+  strand the dependent forever, invisibly, inside the layer's own primary query), and the
+  promotion is reported as `info` so it is never silent. `ENGINE_VERSION` 2.0 → 2.1.
+
+### Added
+
 - **The task store — a record the engine allocates and never rewrites** (spec
   [`08`](.spec/08-taskhub.md), PRD 08.0). A third side-layer beside the tree and the wiki:
   `tasks/`, holding the work a research programme has to *do*. `crux task add / done / drop /

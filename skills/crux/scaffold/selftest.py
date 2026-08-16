@@ -3983,6 +3983,134 @@ def run_taskhub():
     shutil.rmtree(fx, ignore_errors=True)
 
     check("task: ENGINE_VERSION bumped to 2.0", at_least_version("2.0"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_task_graph():
+    import json
+    print("\n# taskhub — the dependency graph and the frontier (spec 08, PRD 08.1)")
+    root, q, h = _task_vault("crux_taskdep_")
+
+    #   t1 ─┬─> t2 ─> t3        t4 (free)      t5 blocked by a task that gets DROPPED
+    #       └─> t6
+    t1, _ = E.cmd_task_add(root, "Dedupe the accessions", category="data-acquisition",
+                           refs=[q], blocked_by=None)
+    t2, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=[t1])
+    t3, _ = E.cmd_task_add(root, "Run the full sweep", category="implementation", blocked_by=[t2])
+    t4, _ = E.cmd_task_add(root, "Draft figure 3", category="manuscript", blocked_by=None)
+    t5, _ = E.cmd_task_add(root, "Port the old loader", category="implementation", blocked_by=[t4])
+    t6, _ = E.cmd_task_add(root, "Register the dataset", category="data-acquisition", blocked_by=[t1])
+
+    st = {t["id"]: E.task_state(t, E.task_by_id(root)) for t in E.scan_tasks(root)}
+    check("dep: blocked is computed and agrees with the graph",
+          st == {t1: "open", t2: "blocked", t3: "blocked", t4: "open",
+                 t5: "blocked", t6: "blocked"})
+    check("dep: the frontier is exactly the unblocked open tasks",
+          [t["id"] for t in E.task_frontier(root)] == [t1, t4])
+
+    # completing a blocker promotes its dependents — and only its dependents
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    check("dep: completing a blocker promotes its dependent",
+          [t["id"] for t in E.task_frontier(root)] == [t2, t4, t6])
+
+    # -- the hole in the spec's own acceptance criterion. Read literally ("blockers are all
+    #    `done`"), a task whose blocker was DROPPED is blocked forever, invisibly, inside the
+    #    one query the agent is told to work from. Ruling D9: a drop clears the edge, and the
+    #    promotion is reported as info so it is never silent.
+    E.cmd_task_drop(root, t4)
+    check("dep: a dropped blocker clears the edge",
+          t5 in [t["id"] for t in E.task_frontier(root)])
+    info = {x["id"]: x for x in E.validation_report(root)["info"]}
+    check("dep: a drop-cleared task is reported as info",
+          "task:drop-cleared" in info and info["task:drop-cleared"]["count"] == 1
+          and E.validation_report(root)["ok"] is True)
+
+    # -- cycles, over BOTH edges: blocked_by cycles deadlock the frontier, parent cycles make
+    #    "the gate fires once, on the parent" undefined
+    by = E.task_by_id(root)
+    edit(by[t3]["path"], f"blocked_by: {t2}", f"blocked_by: {t2}, {t6}")
+    edit(by[t6]["path"], f"blocked_by: {t1}", f"blocked_by: {t3}")
+    probs = [m for i, m in E.cmd_validate(root) if i in (t3, t6)]
+    check("dep: a blocked_by cycle is caught with its path",
+          any("cycle" in m and "→" in m for m in probs))
+    edit(by[t6]["path"], f"blocked_by: {t3}", f"blocked_by: {t1}")
+    edit(by[t3]["path"], f"blocked_by: {t2}, {t6}", f"blocked_by: {t2}")
+
+    edit(by[t5]["path"], "parent:", f"parent: {t5}")
+    check("dep: a self-edge is a cycle",
+          any("cycle" in m for i, m in E.cmd_validate(root) if i == t5))
+    edit(by[t5]["path"], f"parent: {t5}", "parent:")
+    check("dep: the graph is clean once the cycles are removed",
+          not any("cycle" in m for _, m in E.cmd_validate(root)))
+
+    # a frontier query must never spin on a cycle — it reports and keeps working
+    edit(by[t3]["path"], f"blocked_by: {t2}", f"blocked_by: {t3}")
+    check("dep: a cyclic task is excluded from the frontier rather than hanging it",
+          t3 not in [t["id"] for t in E.task_frontier(root)])
+    edit(by[t3]["path"], f"blocked_by: {t3}", f"blocked_by: {t2}")
+
+    # -- the query surface: one list verb with filters, not four verbs
+    check("dep: list filters by ref and by blocker",
+          [t["id"] for t in E.cmd_task_list(root, ref=q)] == [t1]
+          and [t["id"] for t in E.cmd_task_list(root, blocks=t3)] == [t2]
+          and [t["id"] for t in E.cmd_task_list(root, status="blocked")] == [t3])
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "list",
+                        "--frontier", "--json"], capture_output=True, text=True,
+                       encoding="utf-8", cwd=root)
+    check("dep: the CLI frontier matches the engine frontier",
+          r.returncode == 0 and [x["id"] for x in json.loads(r.stdout)]
+          == [t["id"] for t in E.task_frontier(root)])
+
+    # -- TASKHUB.md: shaped by the query it serves. The wiki layer taught this the hard way —
+    #    its index resolved pages while queries were pitched at sub-page granularity, so
+    #    retrieval fell back to grep.
+    hub = os.path.join(root, E.TASK_INDEX)
+    text = read(hub)
+    fro, blocked = text.find("## Frontier"), text.find("## Blocked")
+    check("hub: TASKHUB.md leads with the frontier",
+          0 < fro < blocked and all(t["id"] in text for t in E.task_frontier(root)))
+    check("hub: the frontier section lists exactly the frontier",
+          [l for l in text[fro:blocked].splitlines() if l.startswith("- `")].__len__()
+          == len(E.task_frontier(root)))
+    # -- a ref is STORED as an id (stable) but RENDERED with the basename (followable). A
+    #    bare `[[q1]]` resolves to nothing in Obsidian, because the file is `q1_<slug>.md`,
+    #    and "full traversability is the point" is one of this layer's stated goals.
+    qbase = E.Vault(root).get(q).basename
+    check("hub: a node ref renders as a wikilink Obsidian can follow",
+          f"[[{qbase}\\|{q}]]" in text
+          and f"[[{qbase}\\|{q}]]" in E.task_by_id(root)[t1]["body"])
+    check("hub: the stored ref stays the id, not the basename",
+          E.task_by_id(root)[t1]["refs"] == [q])
+
+    before = _dir_bytes(os.path.join(root, E.TASK_DIR))
+    b0 = read(hub)
+    E.refresh(root)
+    check("hub: refresh never rewrites a task file",
+          _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
+    check("hub: TASKHUB.md regeneration is byte-stable", read(hub) == b0 and E.refresh(root) is False)
+    check("hub: TASKHUB.md is generated, not a node",
+          E.TASK_INDEX in E.GENERATED and E.TASK_INDEX[:-3] not in E.Vault(root).nodes
+          and not any(t["fn"] == E.TASK_INDEX for t in E.scan_tasks(root)))
+
+    # a vault with no tasks/ never grows the index — the `wiki_active` guard, copied verbatim
+    plain = tempfile.mkdtemp(prefix="crux_nohub_")
+    E.cmd_init("No Tasks", plain, goal="g")
+    E.refresh(plain)
+    check("taskmig: a vault with no tasks writes no TASKHUB.md",
+          not os.path.exists(os.path.join(plain, E.TASK_INDEX)))
+    shutil.rmtree(plain, ignore_errors=True)
+
+    fx = tempfile.mkdtemp(prefix="crux_dep_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: refresh at 2.1 leaves a pre-08 vault byte-identical",
+          _dir_bytes(dst) == b and not os.path.exists(os.path.join(dst, E.TASK_INDEX)))
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("dep: ENGINE_VERSION bumped to 2.1", at_least_version("2.1"))
 def run_cockpit_evidence():
     """Spec 15 PRD 15.6 — the cockpit narrates evidence semantics.
 
@@ -4150,6 +4278,7 @@ def main():
     run_hash_lock()
     run_rulebook()
     run_taskhub()
+    run_task_graph()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
