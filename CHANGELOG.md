@@ -8,6 +8,12 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Cockpit benchmark harness** (`tools/bench/`, spec [`12`](.spec/12-cockpit-craft.md)).
+  The console-paste paint/interaction probe, a seeded synthetic-vault grower (drives the
+  real CLI, so every node is format-valid), a 1 Hz agent-writes simulator, and committed
+  baseline JSONs — so every cockpit perf claim is re-measurable, env recorded per run.
+  Dev tooling only: nothing ships in the skill or is served by the cockpit.
+
 - **Cockpit: keyboard-first tree canvas** (spec [`12`](.spec/12-cockpit-craft.md)). The tree
   `<svg>` is a real focusable ARIA tree (`tabindex`, `role="tree"`, per-node `treeitem` +
   `aria-activedescendant`, a `:focus-visible` ring that isn't clipped). Orientation-relative

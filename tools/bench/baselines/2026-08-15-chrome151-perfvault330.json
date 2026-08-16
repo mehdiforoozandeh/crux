@@ -1,0 +1,10 @@
+{"env":{"browser":"Chrome 151","dpr":1,"drawnNodes":330,"svgEls":3479,"textRuns":1393,"vault":"perfvault (segssl_vault grown), served :8914"},
+"idle":{"fps":60.3,"worstFrameMs":17.7},
+"hover:baseline":{"fps":54.8,"worstFrameMs":216.5,"liveAnimations":23},
+"hover:no-spotlight":{"fps":60.1,"worstFrameMs":17.6},
+"hover:no-blur":{"fps":60.1,"worstFrameMs":17.4},
+"hover:both-off":{"fps":59.8,"worstFrameMs":33.3},
+"zoom:baseline":{"fps":59.0,"worstFrameMs":49.6},
+"zoom:no-blur":{"fps":60.2,"worstFrameMs":17.5},
+"zoom:no-spotlight":{"fps":60.1,"worstFrameMs":17.6},
+"zoom:both-off":{"fps":60.2,"worstFrameMs":17.6}}
