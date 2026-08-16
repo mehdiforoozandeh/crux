@@ -1020,6 +1020,7 @@ function renderDetail() {
   if (state.tab === "rd") { renderPageReader(LAYERS.rd); return; }
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
+  state.rd.readerKey = "";     // same for the RD reader — a stale key left the pane frozen (spec 07 audit)
   if (state.report) { pane.innerHTML = reportDetail(); return; }
   const n = state.selected ? state.snap.nodes[state.selected] : null;
   pane.innerHTML = n ? nodeDetail(n) : queueDetail();

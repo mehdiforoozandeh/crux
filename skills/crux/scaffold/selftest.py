@@ -3047,6 +3047,10 @@ def run_rd_gui():
     # opening a SUPERSEDED design by default is the one thing this lifecycle exists to prevent
     check("rdgui: the reader defaults to a live design",
           'p.status === "active"' in app)
+    # leaving the RD reader must drop its render key, or returning to a page already
+    # viewed this session shows the previous pane's content (PR #16 audit finding)
+    check("rdgui: leaving the RD reader resets its render key",
+          'state.rd.readerKey = ""' in app.split("function renderDetail()")[1].split("function ")[0])
 
     # a pre-07 vault must not 500 the route
     old = tempfile.mkdtemp(prefix="crux_rdgui0_")
