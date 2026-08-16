@@ -1849,14 +1849,14 @@ def run_deck():
     oq, _ = E.cmd_ask(old, "Old question")
     cfgp = os.path.join(old, ".crux.yaml")
     edit(cfgp, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.3")
-    ro = subprocess.run([sys.executable, CRUX, "status"], capture_output=True, text=True, cwd=old)
+    ro = subprocess.run([sys.executable, CRUX, "status"], capture_output=True, text=True, encoding="utf-8", cwd=old)
     check("deck migration: pre-11 vault loads with only the drift warning",
           ro.returncode == 0 and "v1.3" in ro.stderr)
     check("deck migration: drift re-stamps to the current engine",
           f"engine_version: {E.ENGINE_VERSION}" in read(cfgp))
     check("deck migration: pre-11 vault validates clean", E.cmd_validate(old) == [])
     rq = subprocess.run([sys.executable, CRUX, "deck", oq, "--json"],
-                        capture_output=True, text=True, cwd=old)
+                        capture_output=True, text=True, encoding="utf-8", cwd=old)
     pq = json.loads(rq.stdout) if rq.returncode == 0 and rq.stdout.strip() else {}
     check("deck migration: deck runs on a metrics-less vault, metrics/figures empty",
           rq.returncode == 0 and pq.get("metrics") == [] and pq.get("figures") == [])
@@ -1945,11 +1945,11 @@ def run_deck_verify():
     check("verify: entity minus + comma + string values all match after normalization",
           all(u["numeral"] == "42" for u in rep["unsourced"]))
     r0 = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
-                        text=True, cwd=root)
+                        text=True, encoding="utf-8", cwd=root)
     check("verify CLI: plain verify passes with the unsourced numeral listed",
           r0.returncode == 0 and "42" in r0.stdout)
     rs = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck, "--strict"],
-                        capture_output=True, text=True, cwd=root)
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
     check("verify CLI: --strict fails on the unsourced numeral", rs.returncode != 0)
 
     # --- mismatch: cached value edited to disagree ---------------------------------
@@ -1960,7 +1960,7 @@ def run_deck_verify():
     check("verify: edited cached values fail as mismatch, naming the address",
           f"{hv}#m.delta" in m_addrs and len(rep["mismatch"]) == 2)
     rm = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck], capture_output=True,
-                        text=True, cwd=root)
+                        text=True, encoding="utf-8", cwd=root)
     check("verify CLI: mismatch exits non-zero and names the address",
           rm.returncode != 0 and f"{hv}#m.delta" in rm.stdout + rm.stderr)
 
@@ -1991,12 +1991,12 @@ def run_deck_verify():
           (lambda r: r["problems"] == [] and r["warnings"] != [])(
               E.validation_report(root, ["decks"])))
     rv = subprocess.run([sys.executable, CRUX, "validate", "--check=decks"],
-                        capture_output=True, text=True, cwd=root)
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
     check("validate CLI: stale deck warns but exits 0", rv.returncode == 0 and "⚠" in rv.stdout)
     rvs = subprocess.run([sys.executable, CRUX, "validate", "--check=decks", "--strict"],
-                         capture_output=True, text=True, cwd=root)
+                         capture_output=True, text=True, encoding="utf-8", cwd=root)
     check("validate CLI: --strict + --check=decks fails on the stale deck", rvs.returncode != 0)
-    rp = subprocess.run([sys.executable, CRUX, "validate"], capture_output=True, text=True, cwd=root)
+    rp = subprocess.run([sys.executable, CRUX, "validate"], capture_output=True, text=True, encoding="utf-8", cwd=root)
     check("validate CLI: plain validate ignores presentations/ entirely",
           rp.returncode == 0 and "deck" not in rp.stdout + rp.stderr)
     res = E.deck_refresh(root, deck)
@@ -2006,7 +2006,7 @@ def run_deck_verify():
     check("refresh: verify green after the vault moved and the deck refreshed",
           E.deck_verify(root, deck)["mismatch"] == [])
     rr = subprocess.run([sys.executable, CRUX, "deck", "--refresh", deck], capture_output=True,
-                        text=True, cwd=root)
+                        text=True, encoding="utf-8", cwd=root)
     check("refresh CLI: an already-current deck reports nothing to do",
           rr.returncode == 0 and read(deck) == after2)
 
@@ -2024,7 +2024,7 @@ def run_deck_verify():
           kinds == ["missing-file", "missing-file", "missing-key", "missing-value"]
           and rep["mismatch"] == [])
     rb = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck2], capture_output=True,
-                        text=True, cwd=root)
+                        text=True, encoding="utf-8", cwd=root)
     check("verify CLI: unresolvable exits non-zero, reported distinctly",
           rb.returncode != 0 and "unresolvable" in (rb.stdout + rb.stderr))
     os.remove(deck2)
@@ -2034,7 +2034,7 @@ def run_deck_verify():
     write(deck3, _mini_deck(hv))
     E.deck_refresh(root, deck3)   # vault moved above; bring the copy current first
     rc = subprocess.run([sys.executable, CRUX, "deck", "--verify", deck3, "--strict"],
-                        capture_output=True, text=True, cwd=root)
+                        capture_output=True, text=True, encoding="utf-8", cwd=root)
     check("verify CLI: --strict passes a deck whose only constants are literal-escaped",
           rc.returncode == 0)
 
@@ -2050,7 +2050,7 @@ def run_deck_verify():
     E.cmd_init("Old Strict", old, goal="g")
     E.cmd_ask(old, "Old question")
     ros = subprocess.run([sys.executable, CRUX, "validate", "--strict"], capture_output=True,
-                         text=True, cwd=old)
+                         text=True, encoding="utf-8", cwd=old)
     check("validate: pre-11 vault passes --strict with no migration", ros.returncode == 0)
     shutil.rmtree(base, ignore_errors=True)
 
@@ -2120,13 +2120,13 @@ def run_prezit():
           'data-src="h1#task_a.delta"' in x and "src:'h1#task_a.delta'" in x
           and "data-derived=" in x and 'data-src="literal"' in x)
     rv = subprocess.run([sys.executable, CRUX, "deck", "--verify", exd, "--strict"],
-                        capture_output=True, text=True, cwd=svc)
+                        capture_output=True, text=True, encoding="utf-8", cwd=svc)
     check("prezit: `crux deck --verify --strict` green on the example", rv.returncode == 0)
     rl = subprocess.run([sys.executable, CRUX, "deck", "--lint", exd],
-                        capture_output=True, text=True, cwd=svc)
+                        capture_output=True, text=True, encoding="utf-8", cwd=svc)
     check("prezit: `crux deck --lint` green on the example", rl.returncode == 0)
     rlb = subprocess.run([sys.executable, CRUX, "deck", "--lint", bad],
-                         capture_output=True, text=True, cwd=svc)
+                         capture_output=True, text=True, encoding="utf-8", cwd=svc)
     check("prezit: `crux deck --lint` fails the bad deck", rlb.returncode != 0)
     shutil.rmtree(base, ignore_errors=True)
     shutil.rmtree(tmp, ignore_errors=True)
@@ -2143,7 +2143,7 @@ def run_cli_help():
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
 
     # -- the post-init hint must work from where the user just ran init: the vault is
@@ -2151,7 +2151,7 @@ def run_cli_help():
     tmp = tempfile.mkdtemp(prefix="crux-hint-")
     try:
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "init", "Hint Project"],
-                           capture_output=True, text=True, cwd=tmp)
+                           capture_output=True, text=True, encoding="utf-8", cwd=tmp)
         check("init hint: includes `cd cruxvault`", r.returncode == 0 and "cd cruxvault" in r.stdout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
