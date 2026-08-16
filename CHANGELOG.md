@@ -8,6 +8,30 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The situate output bound, and the `crux-situate` agent** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.1). Spec 13 states situate's success
+  condition more firmly than anything else in the backlog — *brevity is the acceptance
+  criterion, not a preference* — and nothing could check it, because the output is chat prose
+  the engine never sees.
+
+  It can now: `crux brief <node> --lint-situate` reads a composed answer on **stdin** and
+  checks it against a bound in code — one ELI5 paragraph (≤ 60 words), exactly three TL;DR
+  paragraphs, 400 words total, and the anchor id named in the answer. Exit 1 on any finding,
+  `--json` for the list, `situate:<slug>` ids so a caller never matches on a message. The
+  word count reuses the node cap's own tokenizer, so situate's 400 words and a node's 400
+  words are the same 400 words and cannot drift apart. It reads no vault at all, which is why
+  "writes nothing" is true by construction.
+
+  The anchor rule is the one that is not about length: resolving to the *wrong* subtree is
+  situate's worst failure, and the damage is carried by **confident**, not by **wrong**. The
+  lint cannot check that the resolution was right — it can check that it was disclosed.
+
+  `agents/crux-situate/AGENT.md` ships alongside, following 09.4's convention, and `.spec/09`'s
+  roster gains its row: the roster and the shipped directory must always list the same names,
+  so the assert that enforces that was **amended, not relaxed**. `ENGINE_VERSION` 2.9 → 3.0 —
+  the major digit is a counter (2.x ended at 2.9, as 1.x ended at 1.9), not a compatibility
+  era; nothing about a vault changed.
+
 - **`crux brief --mode=situate`** — the orientation payload (spec
   [`13`](.spec/13-situate-and-design.md), PRD 13.0). *"I have been away. Where are we on
   q20?"* is five questions, and four of them are computable: what this is, where we are, what

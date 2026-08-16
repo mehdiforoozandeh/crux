@@ -5328,8 +5328,12 @@ def run_agent_roster():
     print("\n# specialized agents — the roster (spec 09, PRD 09.4)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     adir = os.path.join(repo, "agents")
+    # AMENDED by spec 13, not replaced: 09.4's assert exists to stop a roster that describes
+    # agents nobody shipped and a directory of agents nobody described. 13 is the first spec
+    # to add to the directory, so the list grows and `.spec/09`'s roster grows with it.
     expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
-                "crux-close", "crux-audit", "crux-tests", "crux-glossary"]
+                "crux-close", "crux-audit", "crux-tests", "crux-glossary",
+                "crux-situate"]
 
     defs = {}
     for name in expected:
@@ -5621,6 +5625,100 @@ def run_situate():
           os_["wiki"] == [] and os_["work"] == {"active": False, "open": [], "experiments": []}
           and os_["inbound"] == [])
     shutil.rmtree(old, ignore_errors=True)
+
+
+def run_situate_agent():
+    """Spec 13 PRD 13.1 — the brevity bound, and the `crux-situate` agent.
+
+    Spec 13 states situate's success condition more firmly than anything else in the backlog:
+    "brevity is situate's acceptance criterion, not a preference", and "a verbose /situate has
+    failed at its only job". A criterion nothing can check is a preference with a stern tone —
+    and the spec's own evidence is that instructions will not hold it, since SKILL.md has said
+    "keep the science explicit" since v0.5 and the vault it governs held a 5,725-word node.
+
+    So the bound is a LINT the agent runs on its own draft before it speaks: 09's rule 1, the
+    deterministic check as the goalpost. Word counting reuses the node cap's own tokenizer, so
+    situate's 400 words and a node's 400 words can never become two different numbers."""
+    print("\n# situate — the brevity bound and the agent (spec 13, PRD 13.1)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+    def draft(eli5_words=20, paras=3, para_words=40, anchor="q20"):
+        head = f"{anchor} — " + " ".join(["word"] * eli5_words)
+        body = "\n\n".join(" ".join(["word"] * para_words) for _ in range(paras))
+        return head + "\n\n" + body
+
+    good = draft()
+    check("situate: a compliant draft passes the lint", E.situate_lint(good, ["q20"]) == [])
+    check("situate: the budget is the node prose cap — one number, not two",
+          E.SITUATE_BUDGET["total_words"] == E.PROSE_CAP
+          and E.SITUATE_BUDGET["tldr_paragraphs"] == 3)
+
+    def ids_of(text, anchors=()):
+        return [i for i, _m in E.situate_lint(text, anchors)]
+
+    check("situate: an over-long draft fails the lint",
+          ids_of(draft(para_words=200)) == ["situate:too-long"])
+    check("situate: too few TL;DR paragraphs fail the lint",
+          "situate:tldr-shape" in ids_of(draft(paras=2)))
+    check("situate: too many TL;DR paragraphs fail the lint",
+          "situate:tldr-shape" in ids_of(draft(paras=4)))
+    check("situate: an over-long ELI5 fails the lint",
+          "situate:eli5-shape" in ids_of(draft(eli5_words=90)))
+    check("situate: an empty draft fails rather than passing vacuously",
+          ids_of("   \n  ") == ["situate:empty"])
+    check("situate: an unanchored draft fails — a wrong subtree must be visible, not buried",
+          ids_of(draft(anchor="q99"), ["q20"]) == ["situate:unanchored"])
+    check("situate: with no anchor named, the anchor rule does not fire",
+          ids_of(draft(anchor="q99")) == [])
+    check("situate: lint findings are namespaced ids, never matched on their message",
+          all(i.startswith("situate:") for i in ids_of(draft(paras=9, para_words=90), ["q20"])))
+    # the tokenizer is the same one, proven by behaviour rather than by reading the source:
+    # a placeholder line is free in a node's budget, so it is free here too
+    padded = draft(para_words=95) + "\n\n_(a template placeholder, which is guidance)_"
+    check("situate: the lint counts words with the engine's own prose counter",
+          len(E._prose_tokens(padded)) == len(E._prose_tokens(draft(para_words=95)))
+          and "situate:too-long" not in ids_of(draft(para_words=95)))
+    check("situate: the lint is pure — no vault, no filesystem",
+          E.situate_lint(good, ["q20"]) == E.situate_lint(good, ["q20"]))
+
+    # ---- the CLI: the agent has to be able to actually run it
+    root = tempfile.mkdtemp(prefix="crux_sitlint_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Lint", root)
+    before = _tree_hashes(root)
+    argv = [sys.executable, os.path.join(HERE, "crux.py"), "brief", "q20", "--lint-situate"]
+    rg = subprocess.run(argv, input=good, capture_output=True, cwd=root,
+                        encoding="utf-8", errors="replace")
+    rb = subprocess.run(argv + ["--json"], input=draft(para_words=200, anchor="q99"),
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("situate: the CLI lint reads stdin and exits 0 on a clean draft", rg.returncode == 0)
+    check("situate: the CLI lint exits 1 and reports every finding, not just the first",
+          rb.returncode == 1
+          and {f["id"] for f in json.loads(rb.stdout)["findings"]}
+              == {"situate:too-long", "situate:unanchored"}
+          and json.loads(rb.stdout)["ok"] is False)
+    check("situate: linting writes nothing", _tree_hashes(root) == before)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the agent definition (09.4's convention; the roster loop lints the rest)
+    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-situate", "AGENT.md")))
+    check("agents: crux-situate reads the situate brief, not the isolated one",
+          "--mode=situate" in str(fm.get("cold_input")))
+    check("agents: crux-situate cannot write — no write verb anywhere in its belt",
+          not any(w in str(fm.get("toolbelt")) for w in
+                  ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
+                   "crux task add", "crux glossary accept", "crux rd", "crux ingest")))
+    check("agents: crux-situate declares the ephemeral rule, which is the PI's ruling",
+          "ephemeral" in (str(fm.get("excludes")) + body).lower())
+    check("agents: crux-situate's body carries the lint step, not just the instruction",
+          "--lint-situate" in body)
+    check("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
+          "ELI5" in body and "TL;DR" in body)
+    spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
+    check("agents: spec 09's roster records crux-situate as spec 13's addition",
+          "crux-situate" in spec and "13-situate-and-design.md" in spec)
+
+    check("situate: ENGINE_VERSION at or past 3.0", at_least_version("3.0"))
 
 
 def _probe_vault():
@@ -6428,6 +6526,7 @@ def main():
     run_migrate()
     run_agent_roster()
     run_situate()
+    run_situate_agent()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

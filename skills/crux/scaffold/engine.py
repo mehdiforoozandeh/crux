@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -51,6 +51,13 @@ ENGINE_VERSION = "2.9"          # bumped when verdict/roll-up/view logic or vaul
                                 # boundary, not a convenience — `isolated` stays the default
                                 # so a forgotten flag degrades to over-isolation rather than
                                 # to leaked advocacy, and an unknown mode is REFUSED.
+                                # 3.0: the situate output bound (spec 13) — `situate_lint`
+                                # plus `crux brief --lint-situate`, the deterministic goalpost
+                                # a situate ANSWER must clear. The major digit rolls because
+                                # 2.x ended at 2.9 and a two-digit minor sorts below a
+                                # one-digit one under plain string comparison — the same
+                                # reason 1.x ended at 1.9. It is a counter, not a
+                                # compatibility era: read-only, no vault format change.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -390,6 +397,17 @@ PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidenc
 # "unknown means the wider payload".
 BRIEF_MODES        = ("isolated", "situate")
 BRIEF_DEFAULT_MODE = "isolated"
+
+# What a situate ANSWER owes the PI. Spec 13 is unusually firm here — "brevity is situate's
+# acceptance criterion, not a preference", and "a verbose /situate has failed at its only
+# job" — so it is a bound in code rather than a sentence in an agent body. The spec's own
+# evidence for why: SKILL.md has said "keep the science explicit" since v0.5 and the vault it
+# governs held a 5,725-word node. Instructions did not hold.
+#
+# `total_words` IS `PROSE_CAP` on purpose. A node's budget and an orientation's budget are the
+# same 400 words, counted by the same tokenizer, so the PI carries one number rather than two
+# and no future change can make them drift apart.
+SITUATE_BUDGET = {"eli5_words": 60, "tldr_paragraphs": 3, "total_words": PROSE_CAP}
 
 class CruxError(Exception):
     """Raised on any rule violation; the CLI turns it into a clean message + exit 1."""
@@ -4290,6 +4308,53 @@ def _null_text(n):
 #
 # The engine authors no sentence of it: every string is vault text or a count. That is what
 # keeps the payload assertable, and it is the same discipline `deck_payload` already keeps.
+def situate_lint(text, anchors=()):
+    """Findings on a composed situate ANSWER, as `(id, message)` pairs — empty when clean.
+
+    Pure: no vault, no filesystem, no network. The agent drafts, lints, tightens, then speaks;
+    spec 10's evals get the same oracle instead of inventing a second one.
+
+    Five rules, each for a named failure:
+
+      situate:empty        nothing to check — a silent pass would be the worst outcome
+      situate:eli5-shape   an ELI5 that has quietly become a second TL;DR
+      situate:tldr-shape   "three paragraphs" becoming seven
+      situate:too-long     the failure spec 13 names by name
+      situate:unanchored   the anchor is not named in the answer. Resolving to the WRONG
+                           subtree is situate's worst failure, and the damage is carried by
+                           *confident*, not by *wrong*: a misresolution the PI can see in the
+                           first line costs one correction, one buried under four fluent
+                           paragraphs is believed. The lint cannot check that the resolution
+                           was right; it can check that it was disclosed."""
+    out = []
+    paras = [p for p in re.split(r"\n\s*\n", (text or "").strip()) if _prose_tokens(p)]
+    if not paras:
+        return [("situate:empty", "nothing to lint — a situate answer is one ELI5 paragraph "
+                                  "then three TL;DR paragraphs.")]
+    n_eli5 = len(_prose_tokens(paras[0]))
+    if n_eli5 > SITUATE_BUDGET["eli5_words"]:
+        out.append(("situate:eli5-shape",
+                    f"the ELI5 paragraph runs {n_eli5} words (max "
+                    f"{SITUATE_BUDGET['eli5_words']}). It is the one sentence someone outside "
+                    f"the field could repeat back, not a second TL;DR."))
+    if len(paras) - 1 != SITUATE_BUDGET["tldr_paragraphs"]:
+        out.append(("situate:tldr-shape",
+                    f"{len(paras) - 1} TL;DR paragraph(s) after the ELI5; the shape is "
+                    f"exactly {SITUATE_BUDGET['tldr_paragraphs']} — what this is, where we "
+                    f"are, what remains."))
+    total = len(_prose_tokens(text))
+    if total > SITUATE_BUDGET["total_words"]:
+        out.append(("situate:too-long",
+                    f"{total} words (max {SITUATE_BUDGET['total_words']}). Situating the PI "
+                    f"is the whole job; a verbose orientation has failed at it."))
+    missing = [a for a in (anchors or ()) if a and a not in (text or "")]
+    if missing:
+        out.append(("situate:unanchored",
+                    f"the answer never names what it oriented over ({', '.join(missing)}). "
+                    f"Say which node ids you read, in the first line — a wrong subtree must "
+                    f"be visible, not buried under four fluent paragraphs."))
+    return out
+
 def _situate_child(v, cid):
     """One descendant, summary-shaped and recursive. Deliberately NOT the whole node: an
     orientation that inlines 40,000 words of prose has failed at its only job. Findings ride

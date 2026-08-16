@@ -261,6 +261,11 @@ def main(argv=None):
                    help="isolated (default — the bias-proof cold input for an agent) | "
                         "situate (subtree + ancestry + wiki + what is untested, for "
                         "orienting the PI)")
+    s.add_argument("--lint-situate", action="store_true",
+                   help="read a composed situate answer on stdin and check it against the "
+                        "brevity bound (one ELI5 paragraph, three TL;DR paragraphs, "
+                        f"{E.SITUATE_BUDGET['total_words']} words, the anchor named). "
+                        "Exit 1 on any finding. Reads no vault and writes nothing.")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -561,6 +566,19 @@ def dispatch(a):
             print("  (never written: the schema stamp, the combination rule, the lock, or the "
                   "content of a null — those are the PI's call, one node at a time.)")
     elif c == "brief":
+        if a.lint_situate:
+            # deliberately vault-free: the lint is pure text, so an agent can run it from
+            # anywhere and "writes nothing" is true by construction rather than by promise
+            found = E.situate_lint(sys.stdin.read(), [a.id] if a.id else [])
+            if a.json:
+                _emit({"ok": not found,
+                       "findings": [{"id": i, "message": m} for i, m in found]})
+            else:
+                for i, m in found:
+                    print(f"  {i}: {m}")
+                print("situate: clean" if not found
+                      else f"situate: {len(found)} finding(s) — tighten and re-lint.")
+            return 1 if found else 0
         b = E.brief(_vault_ro(None), a.id, mode=a.mode)
         if a.json:
             return _emit(b)

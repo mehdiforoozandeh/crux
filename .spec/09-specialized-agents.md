@@ -64,6 +64,7 @@ check — checks are not user-facing concepts and N new verbs bloats the surface
 | `crux-verifiables` | `{claim, approved null}` | write checks that discriminate, **and declare their kinds + combination rule** (amended by [15](15-evidence-semantics.md)) |
 | `crux-tests` | a requirement / RD | write tests against the requirement, never the code |
 | `crux-glossary` | vault prose + glossary + decline list | specialist jargon, or public knowledge? (added by [14](14-glossary.md); no write verb in its belt) |
+| `crux-situate` | `crux brief <node> --mode=situate` | where are we on this subtree, and what are the paths forward? (added by [13](13-situate-and-design.md); output is ephemeral — chat only, never a vault write) |
 
 `crux-rd` is deliberately **not** here — it is a skill. See [07](07-rd-layer.md).
 
