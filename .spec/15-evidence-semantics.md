@@ -236,7 +236,7 @@ The version boundary is therefore permanent and visible, not a transition to be 
 | all four rules available | each has a scenario where it is correct (PI ruling) |
 | `crux-verifiables` picks the rule | it writes the checks, it knows what each is for, and it is already isolated from the advocacy |
 | add `invalid run` and `inconclusive` | a run that tells us nothing and a result that does not meet its rule are different from support and refutation |
-| `inconclusive` is derived, never chosen | otherwise it becomes the drawer |
+| `inconclusive` is derived, never chosen — **as a hypothesis's `verdict`** ([08](08-taskhub.md)'s experiment conclusions reuse these tokens but are *written about a run* and PI-accepted; they never write a node's verdict) | otherwise it becomes the drawer |
 | hash-lock at `running`, flag drift loudly | enforced commitment is the only thing shown to work; refusal only launders the edit into a new hypothesis |
 | enforce the verdict at render time | PLATO — the rule failed at narration, not computation |
 | the separability condition governs bundling | the PI's rule; the research supplies the three properties it decomposes into |

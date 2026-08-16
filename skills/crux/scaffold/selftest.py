@@ -4681,6 +4681,60 @@ def run_task_gui():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_taskhub_skill():
+    print("\n# taskhub — the skill rules and the spec amendments (spec 08, PRD 08.5)")
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    spec8 = read(os.path.join(HERE, "..", "..", "..", ".spec", "08-taskhub.md"))
+    spec15 = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
+    spec7 = os.path.join(HERE, "..", "..", "..", ".spec", "07-rd-layer.md")
+
+    check("skill: SKILL.md carries the work-never-creates-direction line",
+          "Work never creates direction" in skill
+          and "an output that is evidence\n> about a hypothesis enters the gated tier" in skill)
+    check("skill: SKILL.md states what gets in and what stays scratch",
+          "would you be annoyed if this vanished next week" in skill.lower()
+          and "session scratch" in skill and "one context window" in skill)
+    check("skill: SKILL.md marks accept as the PI's signature",
+          "crux task accept" in skill and "never run it on your own judgment" in skill.lower())
+    check("skill: SKILL.md distinguishes a derived verdict from a written conclusion",
+          "Two provenances" in skill
+          and "does **not** close h44" in skill)
+    check("skill: SKILL.md carries the escape hatch",
+          "stops being a task" in skill and "goes through the normal gate" in skill.lower()
+          or "go through the normal gate" in skill)
+
+    # every task sub-verb the CLI exposes is documented, derived from argparse rather than
+    # hand-listed, so a verb added later cannot go undocumented silently
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    verbs = {"add", "done", "drop", "list", "show", "categories", "review", "accept"}
+    check("skill: every task verb is documented in CLI help",
+          r.returncode == 0 and all(v in r.stdout for v in verbs))
+    check("skill: the verb table matches the CLI's task verbs",
+          all(f"`task {v}`" in skill or f"`{v}`" in skill for v in ("add", "done", "accept")))
+
+    # -- the three .spec amendments (rulings D6 / D9 / D19)
+    check("skill: .spec/08's conclusion vocabulary matches VERDICTS",
+          all(c in spec8 for c in E.CONCLUSIONS)
+          and "`supports` / `disputes`" not in spec8
+          and "dispute h45" not in spec8)
+    check("skill: .spec/08's frontier criterion matches the shipped rule",
+          "blockers are all **cleared**" in spec8 and "blockers are all `done`" not in spec8)
+    check("skill: .spec/08 records the written-vs-derived link split",
+          "Node-tree lineage is written in node files; the task graph is derived" in spec8
+          and "07-rd-layer.md" in spec8 and "cardinality and churn" in spec8)
+    check("skill: .spec/15 scopes derived-never-chosen to the node verdict",
+          "derived, never chosen — **as a hypothesis's `verdict`**" in spec15)
+    check("skill: .spec/08's work items are ticked for what shipped",
+          spec8.count("- ☑ ") >= 10 and "**Status:** ◐" in spec8)
+
+    # -- 07 is NOT amended: the ruling changed 08's record, not 07's design
+    r = subprocess.run(["git", "diff", "--stat", "HEAD", "--", spec7],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=os.path.join(HERE, "..", "..", ".."))
+    check("skill: .spec/07 is byte-identical", r.returncode == 0 and r.stdout.strip() == "")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -4743,6 +4797,7 @@ def main():
     run_experiments()
     run_experiment_gate()
     run_task_gui()
+    run_taskhub_skill()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

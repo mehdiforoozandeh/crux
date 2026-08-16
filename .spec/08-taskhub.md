@@ -1,6 +1,6 @@
 # Spec 08 — Taskhub
 
-**Label:** `taskhub` · **Status:** ☐ todo
+**Label:** `taskhub` · **Status:** ◐ in progress — 2.0–2.3 shipped (PRDs 08.0–08.5)
 **Depends on:** [06 node economy](06-node-economy.md)
 **Amended 2026-08-14:** experiments merged into this layer — see *Experiments are tasks*.
 **Paired with:** [15 evidence semantics](15-evidence-semantics.md), which owns what an
@@ -156,6 +156,16 @@ Full traversability is the point — task ↔ node ↔ wiki page ↔ artifact �
 resolve, so "investigate h59" can surface what was done for it, what was cited, and what it
 produced.
 
+**This is deliberately not the idiom [07](07-rd-layer.md) uses, and neither is a drift bug.**
+*Node-tree lineage is written in node files; the task graph is derived.* A written link
+(`Parent::`, `Related::`, 07's `RD::`) is one-to-one, written once, effectively permanent,
+**rendered by Obsidian into the graph** — which is why `Parent::` is a body line and not
+merely frontmatter — and cross-checked by `validate` against frontmatter. A task backlink is
+the opposite on every axis: many-to-many, churning weekly, with one source and nothing to
+cross-check. Writing it would mean every `crux task add` edits N node files, which this
+section forbids and which is exactly what makes many-to-many free. The discriminator is
+**cardinality and churn**, not house style. Do not "fix" either layer toward the other.
+
 ### 4. What gets in
 
 > **Would you be annoyed if this vanished next week?**
@@ -216,8 +226,10 @@ Design the taskhub index for the queries actually made against it.
 - `blocked_by` — **mandatory**, task ids or the literal `None`, so a missing edge is a visible
   omission rather than silence *(from `to-tickets`)*
 - `refs` — tree nodes / wiki pages this serves
-- `hypothesis_refs` — optional. Hypothesis ids **plus what this task concluded about each**
-  (`supports` / `disputes` / `inconclusive`). Present ⇒ this task is an experiment.
+- `hypothesis_refs` — optional. Hypothesis ids **plus what this task concluded about each**,
+  in [15](15-evidence-semantics.md)'s verdict tokens — `supported` / `refuted` /
+  `inconclusive` / `invalid-run`; `partial` is retired there and refused here.
+  Present ⇒ this task is an experiment.
 - `status` — `open` / `done` / `dropped` (`blocked` is computed)
 - `output` — required when `done`; must resolve
 
@@ -227,8 +239,8 @@ figures — `to-tickets` is right.
 
 ### Why `hypothesis_refs` carries a per-hypothesis conclusion
 
-One experiment can say **different things about different hypotheses** — a pilot may support
-h44 and dispute h45. A bare list of ids cannot record that, so the conclusion rides on the
+One experiment can say **different things about different hypotheses** — a pilot may conclude
+`supported` for h44 and `refuted` for h45. A bare list of ids cannot record that, so the conclusion rides on the
 ref itself, one line per hypothesis. This is the *only* structured place that fact exists;
 without it the experiment timeline cannot be rendered and no check can be written against it.
 
@@ -330,18 +342,18 @@ happens when orchestration logic that should be code is expressed as prompt text
 
 ## Work items
 
-- ☐ Task schema + storage layout + declared category list, `experiment` reserved
-- ☐ `hypothesis_refs` with per-hypothesis conclusion; `is_experiment` computed from it
-- ☐ Engine: ID allocation (immutable, never renumbered), `blocked` computation, dependency
+- ☑ Task schema + storage layout + declared category list, `experiment` reserved
+- ☑ `hypothesis_refs` with per-hypothesis conclusion; `is_experiment` computed from it
+- ☑ Engine: ID allocation (immutable, never renumbered), `blocked` computation, dependency
   cycle detection, `done`-requires-resolving-output check
-- ☐ Gating split: completing a task with `hypothesis_refs` is PI-gated; without, it is not
-- ☐ `crux task` verbs — add / link / done / drop, and the frontier query
-- ☐ Backlink computation: node → tasks, wiki → tasks; hypothesis → experiments
-- ☐ `TASKHUB.md` generated index, shaped for the frontier query
-- ☐ Structural lint in `validate`
-- ☐ Snapshot key + cockpit tab: one list, status filters, **one colour per category** as the
+- ☑ Gating split: completing a task with `hypothesis_refs` is PI-gated; without, it is not
+- ☑ `crux task` verbs — add / done / drop / list / show / categories / review / accept, and the frontier query
+- ☑ Backlink computation: node → tasks, wiki → tasks; hypothesis → experiments
+- ☑ `TASKHUB.md` generated index, shaped for the frontier query
+- ☑ Structural lint in `validate`
+- ☑ Snapshot key + cockpit tab: one list, status filters, **one colour per category** as the
   visual language, and a chronological experiment view (filter to `hypothesis_refs` present)
-- ☐ Skill rules: what gets in, when status changes, the "work never creates direction" line
+- ☑ Skill rules: what gets in, when status changes, the "work never creates direction" line
 
 ## Acceptance criteria
 
@@ -349,8 +361,10 @@ happens when orchestration logic that should be code is expressed as prompt text
   the task modified no node file.
 - `blocked` is never stored and always agrees with the dependency graph.
 - `done` with an unresolvable output ref fails `validate`.
-- The frontier query returns exactly the open tasks whose blockers are all `done`, and spans
-  ordinary tasks and experiments in one result.
+- The frontier query returns exactly the open tasks whose blockers are all **cleared**
+  (`done` **or** `dropped` — a drop is a decision not to do the work, and leaving the
+  dependent blocked forever would strand it invisibly inside this very query; the promotion
+  is reported as `info`), and spans ordinary tasks and experiments in one result.
 - A dependency cycle is caught deterministically.
 - Task IDs survive add / drop / re-parent without renumbering.
 - `is_experiment` is nowhere stored, and always equals "has `hypothesis_refs`".

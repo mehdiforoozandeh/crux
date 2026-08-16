@@ -8,6 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The taskhub's skill rules, and three spec amendments** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.5). `SKILL.md` gains the rules the engine cannot check:
+  what gets in ("would you be annoyed if this vanished next week?"), when status changes, the
+  hard line — *work never creates direction; an output that is evidence enters the gated
+  tier* — and the escape hatch, that a task which would open a question converts to a tree
+  node. Plus the distinction that matters most now that both share four tokens: a
+  hypothesis's **verdict** is derived by the engine from its ticks; an experiment's
+  **conclusion** is written about a run and PI-accepted, and never closes anything.
+  `.spec/08` is amended for the conclusion vocabulary and the frontier criterion (both wrong
+  as written), and both specs now record the deliberate split between written node-tree
+  lineage and derived task links, so neither layer gets "fixed" toward the other. No
+  `ENGINE_VERSION` bump.
+
+### Added
+
 - **The taskhub in the cockpit** (spec [`08`](.spec/08-taskhub.md), PRD 08.4). `snapshot`
   gains a `tasks` block — items with their **computed** `state` and role, the frontier, the
   acceptance queue, and the declared vocabularies, so the cockpit never keeps its own copy of
