@@ -8,6 +8,43 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The combination rule, and a verdict with no `partial` in it** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.2). A hypothesis now declares **how its
+  claim-directed checks add up**, before the run: `rule: all | any | m-of-n` (with
+  `rule_m:`), settable at creation via `crux hypothesize --rule/--rule-m`. That turns "two of
+  four passed" from an argument into arithmetic. ICH E9 §2.2.5 states the design space as
+  exactly this quantifier — any / some minimum number / all — and those three ship.
+  `ordered` (fixed-sequence gatekeeping) is a **reserved** token: recognized and refused with
+  a pointer to spec 15, so no vault can contain one and adding it later is not a format
+  change. It is the structure PLATO's authors narrated past, and shipping it needs a render
+  contract that is not built.
+
+  The verdict becomes a total function of **(kinds, rule, pass/fail vector)** with a
+  four-value image: `supported` · `refuted` · `inconclusive` · **`invalid-run`** (new). Run
+  validity is read *first and separately* — a failed or unread outcome-neutral control yields
+  `invalid-run`, never `refuted`, because a broken apparatus is not a refutation. Under
+  `m-of-n`, exactly *m−1* passes is `inconclusive` (the "consider" tier) and two or more short
+  is `refuted`, so `inconclusive` stays narrow rather than becoming the drawer. It is
+  **derived, never chosen**: no verb, flag or field sets it. `ENGINE_VERSION` 1.7 → 1.8.
+
+  `partial` is **retired, not removed**. It can never again be derived for a node that binds
+  evidence semantics, but it stays in the vocabulary permanently: `snapshot` clamps any
+  verdict outside `VERDICTS` to `None` and the cockpit renders a `done` node with a `None`
+  verdict as *inconclusive*, so deleting the token would silently re-label every pre-15
+  partial result. A pre-15 node is still closed by the **unchanged** pre-15 function —
+  asserted against its full truth table, captured before the change and pasted into the suite
+  as a literal.
+
+### Changed
+
+- **The verdict roll-up is generated from `VERDICTS` instead of four hard-coded names.**
+  `ledger_counts` hand-picked the four as literal dict keys and `render_meta`'s dashboard
+  listed them in a format string, so adding a fifth verdict raised `KeyError` in
+  `_ledger_summary` and rendered *nowhere* in `META.md`. Both are now derived from the
+  constant, matching what the cockpit legend already did. `EXPERIMENTS.md` gains a `rule`
+  column beside `verdict` — spec 15's render-time requirement that the verdict and the rule
+  that produced it travel together wherever a hypothesis is read.
+
 - **Verifiables carry a `kind`** (spec [`15`](.spec/15-evidence-semantics.md), PRD 15.1).
   Two classes, written as a leading bracket tag on the checkbox line:
   `[hypothesis]` (a consequence of the claim — the default, so every existing verifiable

@@ -3,7 +3,7 @@
    No writes, no build step, no dependencies. */
 "use strict";
 
-const VERDICTS = ["supported", "partial", "refuted", "inconclusive"];
+const VERDICTS = ["supported", "partial", "refuted", "inconclusive", "invalid-run"];
 
 // Node geometry comes in two densities. "detail" (the default) sizes every box to fit its
 // full title, word-wrapped up to MAX_LINES, so a question or hypothesis is readable without
@@ -24,7 +24,8 @@ const KIND = {
 const MAX_LINES = 4;
 const geomOf = (id) => state.nodeGeom[id];
 // verdict glyph shown inside a done hypothesis (colored by verdict)
-const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~" };
+const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~",
+                "invalid-run": "⊘" };
 // Every question & hypothesis carries its short code (Q10 / H13) on the LEFT of the node —
 // monospace so digits align, measured with the same font the CSS renders so the left gutter
 // fits it snugly. Root/synthesis have no code. In compact density the code is ALL a node shows.
@@ -819,7 +820,8 @@ const LEGEND = [
     ["h-supported", "--v-supported", "supported", "Verdict: supported — every verifiable met"],
     ["h-partial", "--v-partial", "partial", "Verdict: partial — some verifiables met"],
     ["h-refuted", "--v-refuted", "refuted", "Verdict: refuted — no verifiable met"],
-    ["h-inconclusive", "--v-inconclusive", "inconclusive", "Verdict: inconclusive — verifiables could not be evaluated"],
+    ["h-inconclusive", "--v-inconclusive", "inconclusive", "Verdict: inconclusive — the combination rule was not met and not clearly failed"],
+    ["h-invalid-run", "--v-invalid-run", "invalid run", "Verdict: invalid run — an outcome-neutral check failed, so the run tells us nothing about the claim. Not a refutation; re-run."],
   ]],
 ];
 

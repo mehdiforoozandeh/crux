@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.7"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.8"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -26,6 +26,9 @@ ENGINE_VERSION = "1.7"          # bumped when verdict/roll-up/view logic or vaul
                                 # 1.7: every verifiable carries a `kind` — `hypothesis` (a
                                 # consequence of the claim) or `outcome-neutral` (a control
                                 # that must pass whatever the claim turns out to be).
+                                # 1.8: a hypothesis declares a combination RULE before the
+                                # run, the verdict becomes a function of (kinds, rule,
+                                # vector), and `invalid-run` joins the vocabulary.
                                 # 1.5: the RD layer (spec 07) — the engine now scans a new
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
@@ -75,7 +78,16 @@ SERVABLE_EXT     = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".pdf",
 TYPES            = ["project", "question", "idea", "synthesis"]
 QUESTION_STATUS  = ["open", "review", "resolved"]
 IDEA_STATUS      = ["idea", "staged", "running", "done"]
-VERDICTS         = ["supported", "partial", "refuted", "inconclusive"]
+# `partial` is RETIRED, not removed. It can never be derived for a node that binds evidence
+# semantics — it *is* the partial answer spec 15 abolishes — but it must stay in the
+# vocabulary forever: `snapshot` clamps any verdict outside this list to None, and the
+# cockpit renders a `done` node with a None verdict as inconclusive, so deleting the token
+# would silently re-label every pre-15 partial result. That is the render path overturning
+# recorded science, which is the one thing the leash forbids.
+#
+# `invalid-run` is hyphenated because the cockpit builds its CSS class as "h-" + verdict; a
+# space would produce the broken class `h-invalid run`. A render fact, not a preference.
+VERDICTS         = ["supported", "partial", "refuted", "inconclusive", "invalid-run"]
 TERMINAL_IDEA    = "done"
 TERMINAL_QUESTION= "resolved"
 
@@ -140,6 +152,22 @@ _KIND_TAG_RE     = re.compile(r"^\s*\[([A-Za-z][A-Za-z_-]*)\]\s+")
 # non-empty string satisfies the requirement; the reason itself IS the audit trail, which is
 # the point — "there is no control here" has to be SAID, not silently assumed.
 NEUTRAL_OPTOUT   = "neutral_optout"
+
+# How a hypothesis' claim-directed checks add up, declared BEFORE the run. This is what turns
+# "two of four passed" from an argument into arithmetic. ICH E9 2.2.5 states the design space
+# as a quantifier — whether an impact on ANY of the variables, SOME MINIMUM NUMBER of them,
+# or ALL of them is required — and those three are what ship.
+#
+# `ordered` (the fixed-sequence / gatekeeping rule: test in order, stop at the first failure)
+# is RESERVED and refused, by PI ruling. It is the exact structure PLATO's authors narrated
+# past — a pre-specified 10-step hierarchy that stopped at endpoint 6 and whose endpoints
+# 7-10 were published anyway — and it is the hardest of the four to render unambiguously.
+# Reserving rather than ignoring the token is the point: no vault can contain one, so adding
+# it later is not a format change.
+COMBINATION_RULES = ("all", "any", "m-of-n")
+RESERVED_RULES    = ("ordered",)
+RULE_FIELD        = "rule"
+RULE_M_FIELD      = "rule_m"
 
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
@@ -345,6 +373,7 @@ schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: idea
+rule:
 verdict:
 metric:
 created: <<now>>
@@ -646,6 +675,101 @@ def count_verifiables(body):
         else:          unmet += 1
     return met, unmet, na
 
+def derive_verdict_15(hyp, neutral, rule, m=None):
+    """The verdict for a node that binds evidence semantics: a total function of
+    (kinds, rule, pass/fail vector). `hyp` and `neutral` are (met, unmet, na) triples from
+    `count_verifiables_by_kind`.
+
+    Run validity is read FIRST and separately from the claim. That order is the whole point
+    of the two kinds: a failed positive control means the experiment tells us nothing, not
+    that the world said no. Reversing these two branches recreates the defect.
+
+    `partial` is not in the image. Every outcome is supported / refuted / inconclusive /
+    invalid-run, and `inconclusive` is DERIVED, never chosen — there is no verb, flag or
+    field that sets it, which is what stops it becoming the drawer."""
+    if rule in RESERVED_RULES:
+        raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see spec 15 "
+                        f"(open question: whether `ordered` should ship at all). Use one of "
+                        f"{', '.join(COMBINATION_RULES)}.")
+    if rule not in COMBINATION_RULES:
+        raise CruxError(f"unknown combination rule '{rule}' — use one of "
+                        f"{', '.join(COMBINATION_RULES)}")
+    hmet, hunmet, hna = hyp
+    nmet, nunmet, nna = neutral
+    n = hmet + hunmet + hna
+    if rule == "m-of-n":
+        if not isinstance(m, int) or not (1 <= m <= max(n, 1)):
+            raise CruxError(f"rule 'm-of-n' needs `{RULE_M_FIELD}` set to an integer in "
+                            f"1..{n} (got {m!r})")
+
+    # 1-2. run validity. A control that failed, or that could not be read at all, leaves
+    # "the claim is false" and "the apparatus is broken" indistinguishable — which is
+    # exactly what `invalid-run` names. Fails safe.
+    if nunmet:
+        return "invalid-run"
+    if nna:
+        return "invalid-run"
+    # 3. nothing was claimed: controls only.
+    if n == 0:
+        return "invalid-run"
+
+    # 4-6. now, and only now, read the claim under its declared rule.
+    if rule == "all":
+        if hunmet:
+            return "refuted"            # one veto decides the conjunction
+        return "inconclusive" if hna else "supported"
+    if rule == "any":
+        if hmet:
+            return "supported"
+        return "inconclusive" if hna else "refuted"
+    # m-of-n. The boundary is exact: m-1 is the "consider" tier (a near miss with a defined
+    # next action), and two or more short is a failure of the declared rule. Making every
+    # sub-threshold outcome inconclusive would mean m-of-n could never refute anything,
+    # which is the drawer the spec warns about.
+    if hmet >= m:
+        return "supported"
+    if hmet + hna >= m:
+        return "inconclusive"           # the threshold is still reachable
+    if hmet == m - 1:
+        return "inconclusive"
+    return "refuted"
+
+def node_rule(n):
+    """(rule, m) as declared in frontmatter, or (None, None) when several checks have no
+    declaration. A hypothesis with exactly one claim-directed check defaults to `all`: for
+    k=1 that is the same as `any` and the same as 1-of-1, so there is nothing to declare and
+    demanding a declaration would be ceremony."""
+    rule = str(n["fm"].get(RULE_FIELD) or "").strip() or None
+    m = n["fm"].get(RULE_M_FIELD)
+    if rule is None:
+        return ("all", None) if sum(count_verifiables_by_kind(n["body"])[DEFAULT_KIND]) <= 1 \
+               else (None, None)
+    return rule, (m if isinstance(m, int) else None)
+
+def rule_gap(n):
+    """The message for a stamped hypothesis whose checks do not add up to anything — several
+    claim-directed checks and no declared rule, or a rule crux will not honor — else None.
+    Gated on the stamp, exactly like `neutral_gap`: a pre-15 hypothesis never declared one
+    and is not asked to."""
+    if n.type != "idea" or not binds_evidence_semantics(n):
+        return None
+    rule, m = node_rule(n)
+    if rule is None:
+        k = sum(count_verifiables_by_kind(n["body"])[DEFAULT_KIND])
+        return (f"hypothesis '{n.id}': {k} claim-directed verifiables and no combination "
+                f"rule. Declare how they add up BEFORE the run — `{RULE_FIELD}: "
+                f"{' | '.join(COMBINATION_RULES)}` in frontmatter (with `{RULE_M_FIELD}: <m>` "
+                f"for m-of-n) — or 'two of four passed' stays an argument instead of "
+                f"arithmetic. Note the cost when choosing `all`: two checks at 80% power "
+                f"each give 64% joint power, and thresholds may not be loosened to "
+                f"compensate.")
+    try:
+        derive_verdict_15(count_verifiables_by_kind(n["body"])[DEFAULT_KIND],
+                          count_verifiables_by_kind(n["body"])[NEUTRAL_KIND], rule, m)
+    except CruxError as e:
+        return f"hypothesis '{n.id}': {e}"
+    return None
+
 def derive_verdict(met, unmet, na):
     total = met + unmet + na
     if total == 0:                 return None
@@ -758,14 +882,14 @@ def ledger_counts(v, qid):
     kids = v.children[qid]
     ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
     subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
+    # Generated from VERDICTS, never a hand-picked list of names: hard-coding the four
+    # meant adding a fifth raised KeyError here and rendered nowhere in META.md.
     vc = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
-    return {"children": len(kids),
-            "ideas_total": len(ideas),
-            "ideas_done": sum(1 for n in ideas if n.status == "done"),
-            "supported": vc["supported"], "partial": vc["partial"],
-            "refuted": vc["refuted"], "inconclusive": vc["inconclusive"],
-            "subq_total": len(subqs),
-            "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}
+    return dict({"children": len(kids),
+                 "ideas_total": len(ideas),
+                 "ideas_done": sum(1 for n in ideas if n.status == "done"),
+                 "subq_total": len(subqs),
+                 "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}, **vc)
 
 def ledger_block(v, qid):
     kids = v.children[qid]
@@ -775,8 +899,7 @@ def ledger_block(v, qid):
     subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
     c = ledger_counts(v, qid)
     summary = (f"**{c['children']} children** · ideas {c['ideas_done']}/{c['ideas_total']} done "
-               f"(supported {c['supported']}, partial {c['partial']}, "
-               f"refuted {c['refuted']}, inconclusive {c['inconclusive']})")
+               f"({', '.join(f'{x} {c[x]}' for x in VERDICTS)})")
     if subqs:
         summary += f" · sub-questions {c['subq_resolved']}/{c['subq_total']} resolved"
     rows = []
@@ -941,6 +1064,16 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        # a declared rule crux will not honor is wrong the moment it is written, not the
+        # moment the run starts — `ordered` in particular is reserved, and a vault must never
+        # be able to carry one
+        if t == "idea" and binds_evidence_semantics(n):
+            declared = str(n["fm"].get(RULE_FIELD) or "").strip()
+            if declared and declared not in COMBINATION_RULES:
+                why = ("is reserved, not implemented — see spec 15"
+                       if declared in RESERVED_RULES else "is not a combination rule")
+                problems.append((nid, f"hypothesis '{nid}': rule '{declared}' {why}. Use one "
+                                      f"of {', '.join(COMBINATION_RULES)}."))
         # evidence semantics: a kind tag crux does not recognize is a typo, not a kind. It
         # is left on the line rather than swallowed, and raised here.
         if t == "idea" and binds_evidence_semantics(n):
@@ -952,9 +1085,9 @@ def validate(v):
                                           f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
         # ...and once a run has actually started, the control requirement bites
         if t == "idea" and n.status in ("running", "done"):
-            gap = neutral_gap(n)
-            if gap:
-                problems.append((nid, gap))
+            for gap in (neutral_gap(n), rule_gap(n)):
+                if gap:
+                    problems.append((nid, gap))
         # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
         # produced files links a report among them
         if t == "idea":
@@ -1670,7 +1803,8 @@ def cmd_ask(root, title, parent=None, body_text=""):
     refresh(root)
     return nid, fn
 
-def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None):
+def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
+                    rule=None, rule_m=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -1692,6 +1826,18 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
     if rest:
         lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
         text = text.replace(f"- [ ] {lead}", f"- [ ] {lead}\n" + "\n".join(rest))
+    if rule is not None:
+        if rule in RESERVED_RULES:
+            raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see "
+                            f"spec 15. Use one of {', '.join(COMBINATION_RULES)}.")
+        if rule not in COMBINATION_RULES:
+            raise CruxError(f"unknown combination rule '{rule}' — use one of "
+                            f"{', '.join(COMBINATION_RULES)}")
+        fm, body = parse_doc(text)
+        fm[RULE_FIELD] = rule
+        if rule_m is not None:
+            fm[RULE_M_FIELD] = int(rule_m)
+        text = render_doc(fm, body)
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
     return nid, fn, warning
@@ -1734,9 +1880,9 @@ def cmd_test(root, nid, to=None, run=None):
     if target == "running" and sum(count_verifiables(n["body"])) == 0:
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
     if target == "running":
-        gap = neutral_gap(n)
-        if gap:
-            raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
+        for gap in (neutral_gap(n), rule_gap(n)):
+            if gap:
+                raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
     if run:
         n["body"] = append_bullet(n["body"], "Run Links", run)
@@ -1753,7 +1899,19 @@ def cmd_close(root, nid, metric=None, findings=None):
     met, unmet, na = count_verifiables(n["body"])
     if met + unmet + na == 0:
         raise CruxError("cannot close: no verifiables to evaluate")
-    verdict = derive_verdict(met, unmet, na)
+    # THE BOUNDARY. Dispatch on the node's stamp, never on "is it already done" —
+    # `cmd_close` has no status precondition and is re-runnable on a done node, so an old
+    # node re-closed after an upgrade must still get the old function. This is the line
+    # that stops the engine overturning recorded science.
+    if binds_evidence_semantics(n):
+        gap = rule_gap(n)
+        if gap:
+            raise CruxError(f"cannot close {nid}: " + gap.split(": ", 1)[1])
+        by = count_verifiables_by_kind(n["body"])
+        rule, m = node_rule(n)
+        verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
+    else:
+        verdict = derive_verdict(met, unmet, na)
     n["fm"]["status"] = "done"
     n["fm"]["verdict"] = verdict
     if metric is not None:
@@ -2043,6 +2201,11 @@ def _node_json(v, n, rd_map=None):
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
         d["verifiables"] = _verifiables(n["body"])
+        # how the checks add up, published beside them — spec 15's render-time rule: the
+        # verdict and the rule that produced it travel together wherever the node is read
+        rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
+        d["rule"], d["rule_m"] = rule, m
+        d["tally"] = {k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
         d["run_links"] = _run_links(n["body"])
         d["artifacts"] = [dict(a,
                                exists=(not artifact_escapes(a["path"])
@@ -2199,7 +2362,9 @@ def _deck_question_fields(n):
 
 def _deck_idea_fields(n):
     verdict = n["fm"].get("verdict")
+    rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
     return {"verdict": verdict if verdict in VERDICTS else None,
+            "rule": rule, "rule_m": m,
             "metric": n["fm"].get("metric") or None,
             "verifiables": _deck_verifiables(n["body"]),
             "findings": _deck_text(n["body"], "Findings"),
@@ -2259,7 +2424,8 @@ def deck_payload(root, anchor):
 
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
-                "verdict": None, "metric": None, "verifiables": [], "findings": None,
+                "verdict": None, "rule": None, "rule_m": None,
+                "metric": None, "verifiables": [], "findings": None,
                 "artifacts": []}
     anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
 

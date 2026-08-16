@@ -108,6 +108,14 @@ def main(argv=None):
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
                         "run, not the claim. At least one is required before `test --to running`.")
+    s.add_argument("--rule", default=None, choices=None,
+                   help="how the claim-directed verifiables ADD UP, declared before the run: "
+                        "all | any | m-of-n. Required once there is more than one of them — "
+                        "without it, 'two of four passed' is an argument rather than "
+                        "arithmetic. Cost of `all`: two checks at 80%% power each give 64%% "
+                        "joint power, and thresholds may not be loosened to compensate.")
+    s.add_argument("--rule-m", dest="rule_m", type=int, default=None,
+                   help="the m in m-of-n (how many of the claim-directed checks must pass)")
     s.add_argument("-v", "--verifiable", action="append", default=[],
                                                             help="a falsifiable check (repeatable)")
 
@@ -212,7 +220,7 @@ def dispatch(a):
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
-                                          a.verifiable, a.neutral)
+                                          a.verifiable, a.neutral, a.rule, a.rule_m)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))

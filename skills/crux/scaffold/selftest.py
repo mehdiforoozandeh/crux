@@ -75,10 +75,10 @@ def run_demo(keep_dir=None):
     check("ask: META lists q1", q1 in read(os.path.join(root, "META.md")))
 
     # 3. hypothesize two leaves with 2 verifiables each
-    h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11,
+    h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11, rule="all",
                                  neutral=["the published stem baseline reproduces to ±0.005"],
                               verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"])
-    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
+    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11, rule="all",
                                  neutral=["the shared preprocessing pass reproduces the reference checksum"],
                               verifiables=["imp-Spearman ≥ +0.005 vs per_conv", "calibration not worse"])
     check("hypothesize: h1 under q1.1", E.Vault(root).get(h1).parent == q11)
@@ -113,13 +113,17 @@ def run_demo(keep_dir=None):
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
 
-    # 6. close: h1 all-met -> supported ; h2 one-unmet -> partial
+    # 6. close: h1 all-met -> supported ; h2 one-unmet -> refuted.
+    #    Under evidence semantics (1.8) a declared `all` makes one unmet a veto, so this is
+    #    `refuted` where the pre-15 engine returned `partial`. A pre-15 node still gets
+    #    `partial` — asserted in run_combination_rule against the captured truth table.
     edit(node_path(root, h1), "- [ ]", "- [x]")               # all met
     v1 = E.cmd_close(root, h1, metric="imp +0.012")
     check("close: h1 supported", v1 == "supported")
     edit(node_path(root, h2), "- [ ]", "- [x]", count=1)       # exactly one met
     v2 = E.cmd_close(root, h2, metric="imp +0.003")
-    check("close: h2 partial", v2 == "partial")
+    check("close: h2 refuted under a declared `all` rule (pre-15 this was `partial`)",
+          v2 == "refuted")
     check("close: verdict in frontmatter", E.Vault(root).get(h1)["fm"]["verdict"] == "supported")
 
     # 7. ledger roll-up walks up to the question + META
@@ -484,12 +488,16 @@ def run_snapshot():
     E.cmd_init("Snap", root, goal="Test the snapshot contract.")
     q1, _ = E.cmd_ask(root, "Q one")
     q2, _ = E.cmd_ask(root, "Q two", parent=q1)
-    h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"], neutral=["control"])
-    h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"], neutral=["control"])
+    h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"],
+                                 neutral=["control"], rule="all")
+    h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"],
+                                 neutral=["control"], rule="all")
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
     E.cmd_close(root, h1, metric="imp +0.012")
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # one met -> partial
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] control",
+                              "- [x] [outcome-neutral] control")   # the run was valid...
+    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # ...one claim met -> refuted
     E.cmd_close(root, h2, metric="imp +0.003")
     syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
 
@@ -547,18 +555,19 @@ def run_snapshot():
     check("snapshot: h1 verdict consistent with derive_verdict",
           h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
     check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
-    check("snapshot: h2 verdict partial", snap["nodes"][h2]["verdict"] == "partial")
+    check("snapshot: h2 verdict refuted", snap["nodes"][h2]["verdict"] == "refuted")
 
     # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
     q2n = snap["nodes"][q2]
     lc = E.ledger_counts(v, q2)
     lb = E.ledger_block(v, q2)
     check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
-    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 partial)",
-          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1 and lc["partial"] == 1)
+    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 refuted)",
+          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1
+          and lc["refuted"] == 1)
     check("snapshot: ledger_counts consistent with ledger_block text",
           f"**{lc['children']} children**" in lb
-          and f"supported {lc['supported']}" in lb and f"partial {lc['partial']}" in lb)
+          and f"supported {lc['supported']}" in lb and f"refuted {lc['refuted']}" in lb)
 
     # -- pure read: constructing a snapshot mutates nothing on disk
     before = _dir_bytes(root)
@@ -2018,7 +2027,7 @@ def run_deck():
     qmid, _ = E.cmd_ask(root, "Mid question", parent=qtop)
     qsib, _ = E.cmd_ask(root, "Sibling question", parent=qtop)
     h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid, neutral=["control"],
-                                 verifiables=["bar one", "bar two"])
+                                 verifiables=["bar one", "bar two"], rule="all")
     h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
     # the optional ## Protocol section (new in 1.4) — fill it on the anchor
     edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
@@ -3006,21 +3015,52 @@ def pre15_vault(prefix, engine_version="1.5"):
 
 
 def fingerprint(root):
-    """{relpath: sha256} for every *.md, plus {nid: verdict} and {nid: status}. `.crux.yaml`
-    is deliberately excluded — the version stamp is the one thing an upgrade may rewrite."""
+    """({node file: sha256}, {nid: verdict}, {nid: status}) for a vault.
+
+    Two exclusions, both deliberate and both narrow:
+
+    - `.crux.yaml` — the engine-version stamp is the one thing an upgrade is *supposed* to
+      rewrite.
+    - the GENERATED views (`META.md`, `EXPERIMENTS.md`, `WIKI.md`, `RD.md`) — they are
+      derived, the engine owns them, and a new column in `EXPERIMENTS.md` is a rendering
+      change rather than a change to the science. Loosening the assert here would be
+      cheating, so the caller pairs it with `generated_verdicts()` below: the views may be
+      re-rendered, but no verdict inside them may be re-labelled.
+
+    What stays strict is the only thing that matters: every NODE file, byte for byte."""
     files = {}
     for dp, dn, fn in os.walk(root):
         dn[:] = sorted(d for d in dn if not d.startswith("."))
         for f in sorted(fn):
-            if not f.endswith(".md"):
+            if not f.endswith(".md") or f in E.GENERATED or f == E.RD_INDEX:
                 continue
             rel = os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/")
-            with open(os.path.join(dp, f), "rb") as fh:
-                files[rel] = hashlib.sha256(fh.read()).hexdigest()
+            with open(os.path.join(dp, f), encoding="utf-8") as fh:
+                # the engine-owned ledger block is split off: it is a GENERATED summary that
+                # lives inside a node file, and growing the verdict vocabulary re-renders it
+                # (a zero count for the new word) without touching a single recorded result.
+                # What must be byte-identical is everything the human wrote.
+                files[rel] = hashlib.sha256(
+                    fh.read().split(E.LEDGER_START)[0].encode("utf-8")).hexdigest()
     v = E.Vault(root)
     return (files,
             {n.id: n["fm"].get("verdict") for n in v.nodes.values()},
             {n.id: n.status for n in v.nodes.values()})
+
+
+def generated_verdicts(root):
+    """Every verdict word in everything the engine GENERATES — the root views and the ledger
+    block inside each question — with its count. A view may be re-rendered and a new word may
+    appear at zero; a verdict that was recorded may never be re-labelled or lose a count."""
+    text = ""
+    for f in list(E.GENERATED) + [E.RD_INDEX]:
+        p = os.path.join(root, f)
+        if os.path.isfile(p):
+            text += read(p)
+    for n in E.Vault(root).nodes.values():
+        if E.LEDGER_START in n["body"]:
+            text += n["body"].split(E.LEDGER_START)[1]
+    return {x: text.count(x) for x in ("supported", "partial", "refuted", "inconclusive")}
 
 
 def run_evidence_boundary():
@@ -3118,10 +3158,14 @@ def run_evidence_boundary():
     dst = tempfile.mkdtemp(prefix="crux_bdemo_")
     shutil.rmtree(dst); shutil.copytree(src, dst)
     f0, v0, s0 = fingerprint(dst)
+    g0 = generated_verdicts(dst)
     warn = E.check_and_stamp_version(dst)
     E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     f1, v1, s1 = fingerprint(dst)
-    check("evmig: pre-15 vault — every node file is byte-identical after upgrade", f0 == f1)
+    check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
+          f0 == f1)
+    check("evmig: pre-15 vault — no verdict is re-labelled or lost in anything generated",
+          generated_verdicts(dst) == g0)
     check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
           v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
     check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
@@ -3251,7 +3295,7 @@ def run_verifiable_kind():
     check("kind: an unknown kind tag is a validate problem",
           any(i == hb and "banana" in m for i, m in E.cmd_validate(root)))
 
-    check("kind: ENGINE_VERSION bumped to 1.7", E.ENGINE_VERSION == "1.7")
+    check("kind: ENGINE_VERSION at or past 1.7", at_least_version("1.7"))
     shutil.rmtree(root, ignore_errors=True)
 
     # -- a seeded [tested] hypothesis is reconstructed history, not new work
@@ -3300,6 +3344,211 @@ def _err_text(fn):
         fn(); return ""
     except E.CruxError as e:
         return str(e)
+
+
+# The pre-15 verdict truth table, captured from the engine BEFORE evidence semantics landed
+# and pasted here as a literal. It is the oracle for "the engine never overturns recorded
+# science": `derive_verdict` is the function a pre-15 node is still closed with, and it must
+# never move again. x = met, u = unmet, - = could not evaluate.
+_LEGACY_TRUTH_TABLE = {
+        '-': 'inconclusive',  'u': 'refuted',  'x': 'supported',
+        '--': 'inconclusive',  '-u': 'refuted',  '-x': 'inconclusive',
+        'u-': 'refuted',  'uu': 'refuted',  'ux': 'partial',
+        'x-': 'inconclusive',  'xu': 'partial',  'xx': 'supported',
+        '---': 'inconclusive',  '--u': 'refuted',  '--x': 'inconclusive',
+        '-u-': 'refuted',  '-uu': 'refuted',  '-ux': 'partial',
+        '-x-': 'inconclusive',  '-xu': 'partial',  '-xx': 'inconclusive',
+        'u--': 'refuted',  'u-u': 'refuted',  'u-x': 'partial',
+        'uu-': 'refuted',  'uuu': 'refuted',  'uux': 'partial',
+        'ux-': 'partial',  'uxu': 'partial',  'uxx': 'partial',
+        'x--': 'inconclusive',  'x-u': 'partial',  'x-x': 'inconclusive',
+        'xu-': 'partial',  'xuu': 'partial',  'xux': 'partial',
+        'xx-': 'inconclusive',  'xxu': 'partial',  'xxx': 'supported',
+    }
+
+
+def run_combination_rule():
+    """Spec 15 PRD 15.2 — the declared combination rule, `invalid-run`, and a verdict with
+    no `partial` in its image.
+
+    "Two of four passed" was an argument, settled after the results were visible. A rule
+    declared BEFORE the run makes it arithmetic. ICH E9 2.2.5 offers the menu as a
+    quantifier — any / some minimum number / all — and that is what ships. `ordered` is
+    reserved and refused (PI ruling D1)."""
+    print("\n# evidence semantics — the combination rule and the verdict (spec 15, PRD 15.2)")
+
+    # -- the legacy path is frozen. This is the whole grandfathering guarantee.
+    moved = {k: (want, E.derive_verdict(k.count("x"), k.count("u"), k.count("-")))
+             for k, want in _LEGACY_TRUTH_TABLE.items()
+             if E.derive_verdict(k.count("x"), k.count("u"), k.count("-")) != want}
+    check(f"evmig: the legacy verdict truth table is byte-identical (moved: {moved})", not moved)
+    check("evmig: the legacy function still refuses the empty vector",
+          E.derive_verdict(0, 0, 0) is None)
+
+    # -- the vocabulary grows, and never shrinks
+    check("rule: VERDICTS is additive-only",
+          set(E.VERDICTS) >= {"supported", "partial", "refuted", "inconclusive"}
+          and "invalid-run" in E.VERDICTS)
+    check("rule: every verdict token is a valid CSS class suffix",
+          all(v and " " not in v and "\t" not in v for v in E.VERDICTS))
+    check("rule: partial is retired from the derivation, not from the vocabulary",
+          "partial" in E.VERDICTS)
+
+    # -- the closed vocabulary of rules, and the reserved token
+    check("rule: the rule vocabulary is closed",
+          E.COMBINATION_RULES == ("all", "any", "m-of-n")
+          and "ordered" in E.RESERVED_RULES)
+    expect_error("rule: an unknown rule is refused",
+                 lambda: E.derive_verdict_15((1, 0, 0), (1, 0, 0), "most", None))
+    err = _err_text(lambda: E.derive_verdict_15((1, 0, 0), (1, 0, 0), "ordered", None))
+    check("rule: ordered is reserved and refused, naming spec 15",
+          "ordered" in err and "15" in err and "reserved" in err.lower())
+    expect_error("rule: m-of-n requires a valid m",
+                 lambda: E.derive_verdict_15((2, 1, 0), (1, 0, 0), "m-of-n", None))
+    expect_error("rule: m-of-n refuses an m outside 1..n",
+                 lambda: E.derive_verdict_15((2, 1, 0), (1, 0, 0), "m-of-n", 4))
+
+    # -- run validity is read FIRST, and it is not a refutation
+    check("rule: a failed control yields invalid-run, not refuted",
+          E.derive_verdict_15((0, 3, 0), (0, 1, 0), "all", None) == "invalid-run"
+          and E.derive_verdict_15((3, 0, 0), (0, 1, 0), "all", None) == "invalid-run")
+    check("rule: an unread control yields invalid-run (assay sensitivity unproven)",
+          E.derive_verdict_15((3, 0, 0), (0, 0, 1), "all", None) == "invalid-run")
+    check("rule: a hypothesis with only controls yields invalid-run",
+          E.derive_verdict_15((0, 0, 0), (1, 0, 0), "all", None) == "invalid-run")
+
+    # -- the three rules
+    ok = (1, 0, 0)      # one passing control, so run validity never masks the claim branch
+    check("rule: all with one unmet is refuted, not partial",
+          E.derive_verdict_15((1, 1, 0), ok, "all", None) == "refuted"
+          and E.derive_verdict((1, 1, 0)[0], 1, 0) == "partial")
+    check("rule: all with every check met is supported",
+          E.derive_verdict_15((3, 0, 0), ok, "all", None) == "supported")
+    check("rule: all with an unread check is inconclusive",
+          E.derive_verdict_15((2, 0, 1), ok, "all", None) == "inconclusive")
+    check("rule: any with one met is supported",
+          E.derive_verdict_15((1, 3, 0), ok, "any", None) == "supported")
+    check("rule: any with none met and none unread is refuted",
+          E.derive_verdict_15((0, 3, 0), ok, "any", None) == "refuted")
+    check("rule: m-of-n at or over the threshold is supported",
+          E.derive_verdict_15((3, 2, 0), ok, "m-of-n", 3) == "supported")
+    check("rule: m-of-n with m-1 passes is inconclusive",
+          E.derive_verdict_15((2, 3, 0), ok, "m-of-n", 3) == "inconclusive")
+    check("rule: m-of-n two or more short is refuted, not inconclusive",
+          E.derive_verdict_15((1, 4, 0), ok, "m-of-n", 3) == "refuted"
+          and E.derive_verdict_15((0, 5, 0), ok, "m-of-n", 3) == "refuted")
+    check("rule: m-of-n still reachable through unread checks is inconclusive",
+          E.derive_verdict_15((1, 0, 2), ok, "m-of-n", 3) == "inconclusive")
+
+    # -- EXHAUSTIVE: every (kinds, rule, vector) maps to exactly one verdict, never partial
+    import itertools
+    bad_total, bad_partial = [], []
+    for k in range(1, 5):
+        for hv in itertools.product("xu-", repeat=k):
+            hyp = (hv.count("x"), hv.count("u"), hv.count("-"))
+            for nk in range(0, 3):
+                for nv in itertools.product("xu-", repeat=nk):
+                    neu = (nv.count("x"), nv.count("u"), nv.count("-"))
+                    for rule in E.COMBINATION_RULES:
+                        for m in (range(1, k + 1) if rule == "m-of-n" else (None,)):
+                            got = E.derive_verdict_15(hyp, neu, rule, m)
+                            if got not in E.VERDICTS:
+                                bad_total.append((hyp, neu, rule, m, got))
+                            if got == "partial":
+                                bad_partial.append((hyp, neu, rule, m))
+    check(f"rule: every (kinds, rule, vector) maps to exactly one verdict "
+          f"(unmapped: {bad_total[:2]})", not bad_total)
+    check(f"rule: partial is unreachable under evidence semantics "
+          f"(reachable: {bad_partial[:2]})", not bad_partial)
+
+    # -- the roll-up and the views survive a new verdict
+    root = tempfile.mkdtemp(prefix="crux_rule_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Rules", root)
+    q1, _ = E.cmd_ask(root, "does the rule bind?")
+    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1,
+                                 verifiables=["c one", "c two"], neutral=["control"])
+    n = E.Vault(root).get(h1); n["fm"]["rule"] = "all"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    edit(node_path(root, h1), "- [ ] c one", "- [x] c one")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
+    E.cmd_test(root, h1, to="running")
+    check("rule: all with one unmet closes refuted (was partial before 1.8)",
+          E.cmd_close(root, h1) == "refuted")
+
+    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1,
+                                 verifiables=["c one"], neutral=["control"])
+    n = E.Vault(root).get(h2); n["fm"]["rule"] = "all"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    edit(node_path(root, h2), "- [ ] c one", "- [x] c one")
+    E.cmd_test(root, h2, to="running")
+    check("rule: a failed control closes invalid-run end to end",
+          E.cmd_close(root, h2) == "invalid-run")
+
+    lc = E.ledger_counts(E.Vault(root), q1)
+    check("rule: ledger_counts is generated from VERDICTS",
+          all(x in lc for x in E.VERDICTS) and lc["invalid-run"] == 1 and lc["refuted"] == 1)
+    check("rule: _ledger_summary survives a new verdict",
+          "1 invalid-run" in E._ledger_summary(lc))
+    meta = R.render_meta(E.Vault(root))
+    check("rule: the META dashboard covers the whole verdict vocabulary",
+          all(f"{x} " in meta.split("**Verdicts**")[1].split("\n")[0] for x in E.VERDICTS))
+    exp = R.render_experiments(E.Vault(root))
+    check("rule: EXPERIMENTS carries a rule column",
+          "| rule |" in exp and "| all |" in exp)
+
+    snap = E.snapshot(root)
+    check("rule: snapshot exposes the combination rule",
+          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None
+          and snap["nodes"][h1]["verdict"] == "refuted")
+    check("rule: snapshot exposes the per-kind tallies",
+          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [1, 0, 0]})
+    dp = E.deck_payload(root, q1)
+    check("rule: the deck payload carries the combination rule",
+          [c["rule"] for c in dp["children"]] == ["all", "all"])
+
+    # -- the gate: a stamped multi-check hypothesis must declare how they add up
+    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1,
+                                 verifiables=["c one", "c two"], neutral=["control"])
+    expect_error("rule: running is refused with no combination rule",
+                 lambda: E.cmd_test(root, h3, to="running"))
+    h4, _, _ = E.cmd_hypothesize(root, "single check", parent=q1,
+                                 verifiables=["only one"], neutral=["control"])
+    check("rule: a single claim-directed check needs no declaration",
+          E.cmd_test(root, h4, to="running") == "running")
+    n = E.Vault(root).get(h3); n["fm"]["rule"] = "ordered"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    check("rule: validate refuses a reserved rule on a stamped node",
+          any("ordered" in m for _, m in E.cmd_validate(root)))
+
+    check("rule: ENGINE_VERSION at or past 1.8", at_least_version("1.8"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_rmig_")
+    edit(node_path(old, oh), "- [ ] first check", "- [x] first check")
+    check("evmig: a pre-15 node closes through the LEGACY function",
+          E.cmd_close(old, oh) == "partial")
+    check("evmig: re-closing a pre-15 node still yields its legacy verdict",
+          E.cmd_close(old, oh) == "partial")
+    check("evmig: a pre-15 node needs no rule to run",
+          E.cmd_test(old, oh, to="running") == "running")
+    check("evmig: a pre-15 vault raises no rule problem", E.cmd_validate(old) == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    # the committed pre-15 fixture keeps its recorded partial through every view
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_rdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    dv = E.Vault(dst)
+    check("evmig: partial survives in the vocabulary and every view",
+          dv.get("h2")["fm"]["verdict"] == "partial"
+          and E.snapshot(dst)["nodes"]["h2"]["verdict"] == "partial"
+          and "partial 1" in R.render_meta(dv)
+          and E.ledger_counts(dv, "q2")["partial"] == 1
+          and "| partial |" in R.render_experiments(dv))
+    shutil.rmtree(dst, ignore_errors=True)
 
 
 def run_cli_help():
@@ -3356,6 +3605,7 @@ def main():
     run_prezit()
     run_evidence_boundary()
     run_verifiable_kind()
+    run_combination_rule()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
