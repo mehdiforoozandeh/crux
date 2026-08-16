@@ -61,10 +61,30 @@ check — checks are not user-facing concepts and N new verbs bloats the surface
 | `crux-audit` | vault path | drive the deterministic checks in a loop; propose fixes |
 | `crux-critic` | a drafted node | is this one question or three? is this falsifiable? is it over cap? |
 | `crux-null` | engine-built brief | name the null and the boring explanations |
-| `crux-verifiables` | `{claim, approved null}` | write checks that discriminate |
+| `crux-verifiables` | `{claim, approved null}` | write checks that discriminate, **and declare their kinds + combination rule** (amended by [15](15-evidence-semantics.md)) |
 | `crux-tests` | a requirement / RD | write tests against the requirement, never the code |
 
 `crux-rd` is deliberately **not** here — it is a skill. See [07](07-rd-layer.md).
+
+### Amendment from [15](15-evidence-semantics.md) — `crux-verifiables` gains a job
+
+Spec 15 shipped the schema; this is the agent-side job that fills it, and it lands when this
+spec is built. `crux-verifiables` writes the checks, so it is the agent that already knows
+what each one is *for*, and it is already isolated from the advocacy that produced the claim.
+At the same moment it writes the checks it must also:
+
+1. **Assign each check a kind** — `[hypothesis]` or `[outcome-neutral]` — and supply at least
+   one outcome-neutral control, or state in writing why this claim has none (the
+   `neutral_optout:` reason is the audit trail, and "there is no positive control here"
+   should be *said*, not silently assumed).
+2. **Choose the combination rule** (`all` / `any` / `m-of-n`) and justify it. The PI approves
+   it alongside the null, exactly as they already approve the null.
+3. **State the joint-power cost when it chooses `all`**: two checks at 80% power each give
+   **64% joint power**, and thresholds may **not** be loosened to compensate.
+
+Until this spec is built, the session agent does the same three things under the same
+discipline — kinds and rule written *with* the checks, before any result exists — and the
+`crux` skill carries the interim instruction.
 
 ### Why `crux-critic` exists
 

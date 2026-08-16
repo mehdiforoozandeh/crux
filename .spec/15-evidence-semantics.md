@@ -1,6 +1,6 @@
 # Spec 15 — Evidence semantics: no more partial answers
 
-**Label:** `evidence` · **Status:** ☐ todo
+**Label:** `evidence` · **Status:** ◐ in progress — 15.0–15.3 + the rulebook built (engine 1.6→1.9); `ordered` deferred by PI ruling, `crux-verifiables` waits on 09
 **Depends on:** [06 node economy](06-node-economy.md) (`--json` surface)
 **Paired with:** [08 taskhub](08-taskhub.md), which owns *where* experiments are stored; this
 spec owns what their results **mean**
@@ -277,17 +277,17 @@ The version boundary is therefore permanent and visible, not a transition to be 
 
 ## Work items
 
-- ☐ `kind` on every verifiable (`hypothesis` / `outcome-neutral`); CLI `-v` gains it
-- ☐ `validate`: ≥1 outcome-neutral before `running`, or a recorded opt-out
-- ☐ Combination rule field on the hypothesis, closed vocabulary, PI-approved with the null
-- ☐ Verdict derivation becomes a total function of (kinds, rule, pass/fail vector)
-- ☐ Verdict states `invalid run` and `inconclusive`; legend, snapshot, cockpit, `META.md`
-- ☐ Hash-lock verifiables + kinds + rule at `running`; drift detection and flag
-- ☐ Render the derived verdict everywhere the hypothesis is read
-- ☐ `crux-verifiables` amended: choose and justify the rule; state the joint-power cost
-- ☐ The separability rulebook sentence into the crux skill
-- ☐ `ENGINE_VERSION` bump; version-boundary gating so the rules bind new nodes only
-- ☐ `validate` reports the boundary as information (*"N hypotheses predate evidence
+- ☑ `kind` on every verifiable (`hypothesis` / `outcome-neutral`); CLI `-v` gains it
+- ☑ `validate`: ≥1 outcome-neutral before `running`, or a recorded opt-out
+- ☑ Combination rule field on the hypothesis, closed vocabulary, PI-approved with the null
+- ☑ Verdict derivation becomes a total function of (kinds, rule, pass/fail vector)
+- ☑ Verdict states `invalid run` and `inconclusive`; legend, snapshot, cockpit, `META.md`
+- ☑ Hash-lock verifiables + kinds + rule at `running`; drift detection and flag
+- ☑ Render the derived verdict everywhere the hypothesis is read
+- ◐ `crux-verifiables` amended: choose and justify the rule; state the joint-power cost — recorded into [09](09-specialized-agents.md), lands when that spec is built
+- ☑ The separability rulebook sentence into the crux skill
+- ☑ `ENGINE_VERSION` bump; version-boundary gating so the rules bind new nodes only
+- ☑ `validate` reports the boundary as information (*"N hypotheses predate evidence
   semantics"*), never as a problem
 
 ## Acceptance criteria

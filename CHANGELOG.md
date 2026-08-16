@@ -8,6 +8,26 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The separability rulebook, and the skill's account of a verdict** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.5). The `crux` skill gains the PI's rule for
+  when one experiment may settle several hypotheses, verbatim — *"each hypothesis turned by
+  its own independently varied knob … and no single shared ingredient could flip all the
+  answers together without a pre-declared outcome-neutral check catching it and voiding the
+  whole run; anything less means you ran one experiment with many labels, not many answers"* —
+  plus the three checks it decomposes into (different lever / different failure / different
+  verdict). A selftest assert compares the skill's copy against the spec's word for word, so
+  the two cannot drift.
+
+  The skill's verdict section is rewritten: it was still teaching *"any unmet →
+  refuted/partial"*, which is the retired rule. It now describes the two verifiable kinds,
+  the combination rule, all five verdicts, `inconclusive` as derived-never-chosen, and — the
+  part an agent most needs — that **the boundary is permanent and an old node must not be
+  "fixed"** to the new schema. Doc-only; no `ENGINE_VERSION` change, no migration.
+
+  Spec 09 records the `crux-verifiables` amendment where it will be built (assign kinds,
+  choose and justify the rule, state the 64%-joint-power cost of `all`), since that agent
+  does not exist yet. Spec 15's shipped work items are ticked and its status is `◐`.
+
 - **The hash-lock: enforced pre-registration, and a permanent drift flag** (spec
   [`15`](.spec/15-evidence-semantics.md), PRD 15.3). When a hypothesis goes `running`, the
   engine content-hashes its **commitment** — the combination rule plus every verifiable, in

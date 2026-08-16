@@ -3709,6 +3709,68 @@ def run_hash_lock():
     shutil.rmtree(sd, ignore_errors=True)
 
 
+def run_rulebook():
+    """Spec 15 PRD 15.5 — the separability rulebook sentence into the crux skill, and the
+    skill's account of a verdict brought in line with what the engine now does.
+
+    All greps, in the style the suite already uses for the cockpit legend: the point is that
+    the docs cannot silently drift from the constants."""
+    print("\n# evidence semantics — the rulebook and the skill (spec 15, PRD 15.5)")
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    spec = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
+
+    def sentence(text):
+        """The rulebook blockquote, unwrapped and whitespace-collapsed, with markdown
+        emphasis stripped — so the two copies are compared on CONTENT, and a re-wrap or a
+        bolded clause cannot make them look different when they are not."""
+        head = "One experiment settles several hypotheses separately only when"
+        # the two copies are wrapped differently and the skill bolds two clauses, so the
+        # comparison is on CONTENT: unwrap, drop blockquote markers and emphasis, collapse
+        # whitespace. Anything short of identical wording still fails.
+        flat = " ".join(text.replace(">", " ").replace("*", "").split())
+        i = flat.find(head)
+        if i < 0:
+            return None
+        j = flat.find("answers.", i)
+        return flat[i:j + len("answers.")] if j > 0 else None
+
+    a, b = sentence(spec), sentence(skill)
+    check("rulebook: the separability sentence is in the skill", b is not None)
+    check("rulebook: the separability sentence matches the spec word for word", a and a == b)
+    check("rulebook: the three separability lines are in the skill",
+          all(x in skill for x in ("**Different lever.**", "**Different failure.**",
+                                   "**Different verdict.**")))
+    check("rulebook: the skill says a shared control is the fix, not the flaw",
+          "the fix, not the" in skill)
+
+    check("rulebook: the skill no longer teaches the retired verdict rule",
+          "→ `refuted`/`partial`" not in skill)
+    check("rulebook: the skill covers the whole verdict vocabulary",
+          all(f"`{x}`" in skill for x in E.VERDICTS))
+    check("rulebook: the skill says invalid-run is not a refutation",
+          "never a refutation" in skill)
+    check("rulebook: the skill states the boundary is permanent",
+          "boundary is permanent" in skill and "schema: 1" in skill
+          and 'Do not "fix" an old node' in skill)
+    check("rulebook: the skill names the combination rule and its CLI flag",
+          "rule: all | any | m-of-n" in skill and "--rule" in skill)
+    check("rulebook: the skill explains inconclusive is derived, never chosen",
+          "derived, never chosen" in skill)
+    check("rulebook: the skill carries the drift rule and says it blocks nothing",
+          "drift" in skill and "blocks nothing" in skill)
+
+    joint = "64% joint power"
+    check("rulebook: the joint-power cost is stated with its constraint",
+          joint in skill and "may\n  not be loosened" in skill.replace("\n  ", "\n  "))
+
+    spec09 = read(os.path.join(HERE, "..", "..", "..", ".spec", "09-specialized-agents.md"))
+    check("rulebook: spec 09 carries the crux-verifiables amendment",
+          "`crux-verifiables` gains a job" in spec09 and joint in spec09
+          and "Choose the combination rule" in spec09)
+    check("rulebook: spec 15's work items are ticked for what shipped",
+          spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -3765,6 +3827,7 @@ def main():
     run_verifiable_kind()
     run_combination_rule()
     run_hash_lock()
+    run_rulebook()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
