@@ -5665,6 +5665,24 @@ def run_glossary_counting():
           E.count_term(v, "capacity certificate")["titles"] == ["wiki:probing"])
     check("gcount: wiki/log.md is not counted (it is not `type: wiki`)",
           len(E.count_term(v, "detection floor")["documents"]) == 1)
+
+    # SCHEMA.md is the other non-`type: wiki` file in wiki/, and it is the more interesting
+    # exclusion: it is where the PI and agent record the vault's own conventions, so coined
+    # vocabulary genuinely does appear there. Excluded all the same — `scan_wiki_pages` keys
+    # on `type`, and a convention note is not a compiled page.
+    with open(os.path.join(root, "wiki", "SCHEMA.md"), "a", encoding="utf-8") as f:
+        f.write("\nWe write ablation ladders as a category here.\n")
+    check("gcount: wiki/SCHEMA.md is not counted (it is not `type: wiki`)",
+          E.count_term(E.Vault(root), "ablation ladder")["documents"] == [])
+
+    # raw/ is the wiki layer's standing invariant, not an accident of this scan: the engine
+    # hashes a source's BYTES and never reads its content. A paper's vocabulary must not
+    # become the PI's just by being ingested.
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    with open(os.path.join(root, "raw", "paper.txt"), "w", encoding="utf-8") as f:
+        f.write("This paper is all about the spectral gap, the spectral gap, the spectral gap.\n")
+    check("gcount: raw/ sources are not counted (the engine never reads a source's content)",
+          E.count_term(E.Vault(root), "spectral gap")["documents"] == [])
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -5794,6 +5812,29 @@ def run_glossary_filter():
     check("gfilter: fifteen terms from one page yield only the central ones",
           surv2(*fifteen) == set())
 
+    # ---- centrality's "or" is inclusive ACROSS document types, not just within nodes.
+    #      Three shapes, each pre-registered separately in PRD 14.2, because each exercises a
+    #      different arm: a wiki TITLE alone, two wiki BODIES, and one of each.
+    with open(os.path.join(root, "wiki", "gap-two.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: The spectral gap in practice\nsummary: s\n---\n\n"
+                "# The spectral gap in practice\n\nAbout the ridge estimator.\n")
+    with open(os.path.join(root, "wiki", "gap-three.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Estimators\nsummary: s\n---\n\n"
+                "# Estimators\n\nThe ridge estimator again, and nothing else.\n")
+    # a term inside a page's title, but NOT equal to it — so the wiki-title subtraction
+    # (which keys on the WHOLE title) cannot mask the title clause being tested
+    check("gfilter: a term in a wiki page title survives on first appearance",
+          "spectral gap" in surv2("spectral gap"))
+    check("gfilter: a term in two wiki pages survives", "ridge estimator" in surv2("ridge estimator"))
+    with open(os.path.join(root, "wiki", "gap-four.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Mixed\nsummary: s\n---\n\n# Mixed\n\nA kernel trick page.\n")
+    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"])
+    mixed = E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"]
+    check("gfilter: a term in one node and one wiki page survives (the 'or' is inclusive)",
+          len(mixed) == 1 and len(mixed[0]["documents"]) == 2
+          and any(d.startswith("wiki:") for d in mixed[0]["documents"])
+          and any(not d.startswith("wiki:") for d in mixed[0]["documents"]))
+
     # ---- report shape and the exit code
     rep = E.validation_report(root, ["glossary"], propose=["data pruning"])
     check("gfilter: candidates ride the info tier, not problems", rep["problems"] == [])
@@ -5803,6 +5844,11 @@ def run_glossary_filter():
           "glossary" in E.INFO_NAMESPACES)
     rep = E.validation_report(root, ["glossary"], propose=["kernel trick", "kernel trick"])
     check("gfilter: a duplicate proposal is counted once", len(rep["candidates"]) <= 1)
+    # `candidates` is the ONE new top-level key, and it is a disclosed refinement of PRD
+    # 14.2's literal "no new report key" sentence: the info tier's entry shape is
+    # {id, message, count}, and a survivor's documents/occurrences/titles/reason has nowhere
+    # to live inside it. What the sentence protected — no new TIER, `ok` untouched, 15.0's
+    # info tier reused rather than forked — is asserted directly above and below this line.
     check("gfilter: no new top-level report key beyond candidates",
           set(rep) == {"ok", "checks", "problems", "warnings", "info", "candidates"})
     check("gfilter: --check=glossary with no proposals is a no-op",
@@ -5855,6 +5901,16 @@ def run_glossary_filter():
           "kernel trick" in r.stdout and "2" in r.stdout)
     r = cli("validate", "--check=glossary", "--propose", "kernel trick", "--strict")
     check("gfilter: --strict does not fail on candidates", r.returncode == 0)
+    # repeatable, and each term evaluated independently — the flag idiom `crux hypothesize -v`
+    # already uses. Two terms in, two candidates out.
+    E.cmd_ask(root, "second", body_text="the ridge estimator lives here")
+    E.cmd_hypothesize(root, "third", parent=q1, problem="the ridge estimator again",
+                      verifiables=["x"])
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick",
+            "--propose", "ridge estimator", "--json")
+    got = {c["term"] for c in json.loads(r.stdout)["candidates"]}
+    check(f"gfilter: repeated --propose accumulates (got {sorted(got)})",
+          got == {"kernel trick", "ridge estimator"})
     with open(os.path.join(root, "props.txt"), "w", encoding="utf-8") as f:
         f.write("# a comment\n\nkernel trick\n\n")
     r = cli("validate", "--check=glossary", "--propose-file", "props.txt", "--json")
@@ -6096,7 +6152,7 @@ def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
-                 ["brief", "--help"]):
+                 ["brief", "--help"], ["glossary", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
