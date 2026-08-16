@@ -259,6 +259,12 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
+    s.add_argument("--propose", action="append", default=[], metavar="TERM",
+                   help="a candidate glossary term to filter by centrality (repeatable). "
+                        "The agent proposes; the engine only filters — see --check=glossary")
+    s.add_argument("--propose-file", dest="propose_file", default=None, metavar="PATH",
+                   help="read proposed terms from a file, one per line (blank lines and "
+                        "'#' comments ignored)")
     s.add_argument("--check", default=None, metavar="LIST",
                    help="comma-separated subset of checks to run: " + ",".join(E.CHECKS)
                         + " (default: all) — plus opt-in: " + ",".join(E.OPT_CHECKS))
@@ -555,7 +561,15 @@ def dispatch(a):
             print(f"  prior:    {pf['id']} ({pf['verdict']}) {pf['findings'][:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
-        rep = E.validation_report(_vault(), checks)
+        propose = list(a.propose)
+        if a.propose_file:
+            root_ = E.find_vault()
+            p = a.propose_file if os.path.isabs(a.propose_file) else os.path.join(root_, a.propose_file)
+            if not os.path.isfile(p):
+                print(f"crux: no such proposal file: {a.propose_file}", file=sys.stderr); return 1
+            propose += [ln.strip() for ln in E.read(p).splitlines()
+                        if ln.strip() and not ln.strip().startswith("#")]
+        rep = E.validation_report(_vault(), checks, propose=propose)
         failed = bool(rep["problems"]) or (a.strict and bool(rep["warnings"]))
         if a.json:
             _emit(rep)
@@ -569,6 +583,12 @@ def dispatch(a):
         # correct, not broken.
         for i in rep["info"]:
             print(f"· {i['message']}")
+        # vocabulary candidates: a question for the PI, never a finding about the vault.
+        # Printed under the info glyph, never counted toward the exit code, never silenced
+        # by --strict — a vault whose prose has repeated a term is not broken.
+        for cd in rep.get("candidates", []):
+            print(f"· candidate term: {cd['term']}  ({cd['reason']}; "
+                  f"{cd['occurrences']} occurrence(s) in {', '.join(cd['documents'])})")
         if rep["problems"]:
             return 1
         if rep["warnings"]:

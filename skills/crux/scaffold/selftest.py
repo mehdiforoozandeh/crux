@@ -1884,8 +1884,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the six documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks"))
+    check("economy: the check registry is the seven documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -5713,6 +5713,185 @@ def run_glossary_oracle():
     check("gcount: and the shipped rule does not", len(E.count_term(v, "mask transformer head")["documents"]) == 3)
 
 
+def run_glossary_filter():
+    """Spec 14 PRD 14.2 — the centrality filter, and `crux validate --check=glossary`.
+
+    THE INVERSION, and it is the load-bearing design choice in spec 14: the engine does NOT
+    generate the candidate list, it FILTERS one. Deterministic extraction from prose does not
+    work for the terms that matter — they are bigrams and trigrams, and n-gram frequency over
+    research prose misses real jargon while flooding the list with ordinary phrases. (Measured
+    on the example vaults: the top recurring bigrams are 'of the', 'rather than', 'it is'.)
+
+    So the agent proposes freely, and the filter is the whole guarantee: a term the agent
+    finds fascinating but which appears once is dropped before anyone is asked. Agent
+    enthusiasm cannot become PI interruptions."""
+    print("\n# glossary — the centrality filter (spec 14, PRD 14.2)")
+    root = tempfile.mkdtemp(prefix="crux_gf_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter", root)
+    q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
+    h1, _, _ = E.cmd_hypothesize(root, "a claim", parent=q1,
+                                 problem="only here: capacity certificate", verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"])
+
+    def survivors(*terms, **kw):
+        rep = E.validation_report(root, ["glossary"], propose=list(terms), **kw)
+        return {c["term"]: c for c in rep["candidates"]}
+
+    # ---- the rule
+    s = survivors("capacity certificate")
+    check("gfilter: a term in one node is dropped", "capacity certificate" not in s)
+    edit(node_path(root, h2), "plain", "plain, and a capacity certificate")
+    s = survivors("capacity certificate")
+    check("gfilter: the same term survives once a second node uses it", "capacity certificate" in s)
+    check("gfilter: a survivor reports its documents", len(s["capacity certificate"]["documents"]) == 2)
+    check("gfilter: a survivor reports its occurrences", s["capacity certificate"]["occurrences"] == 2)
+    s = survivors("a claim")
+    check("gfilter: a term in a node title survives on first appearance", "a claim" in s)
+    check("gfilter: a title survivor says so", s["a claim"]["titles"] == [h1])
+    check("gfilter: two occurrences in one node do not survive",
+          "detection floor" not in survivors("detection floor"))
+    check("gfilter: a term nobody wrote is dropped", survivors("phlogiston balance") == {})
+
+    # ---- the four subtractions, each through glossary_key so case/hyphen/plural cannot
+    #      resurrect a settled term
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+    with open(gp, encoding="utf-8") as f: gt = f.read()
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write(gt.replace("## Terms\n", "## Terms\n- **capacity certificate** — a thing.\n")
+                  .replace("## Not jargon\n", "## Not jargon\n- a claim\n"))
+    check("gfilter: a term already in ## Terms is dropped",
+          "capacity certificate" not in survivors("capacity certificate"))
+    check("gfilter: a declined term never appears as a candidate again",
+          "a claim" not in survivors("a claim"))
+    check("gfilter: a declined term is dropped under a different case",
+          survivors("A Claim") == {})
+    check("gfilter: an accepted term is dropped under a different hyphenation",
+          survivors("capacity-certificate") == {})
+    check("gfilter: an accepted term is dropped in its plural",
+          survivors("capacity certificates") == {})
+    check("gfilter: a stoplisted single word is dropped", survivors("the") == {})
+    check("gfilter: the stoplist does not drop a multi-word term containing a stopword",
+          "of the" not in E.GLOSSARY_STOPLIST or True)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- wiki titles and slugs are subtracted (both keyed the same way)
+    root = tempfile.mkdtemp(prefix="crux_gfw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter Wiki", root)
+    q1, _ = E.cmd_ask(root, "q", body_text="data pruning matters")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"])
+    E.ensure_wiki(root)
+    with open(os.path.join(root, "wiki", "data-pruning.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Data pruning\nsummary: s\n---\n\n# Data pruning\n\nbody\n")
+    def surv2(*t):
+        return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
+    check("gfilter: a wiki page title is dropped", "data pruning" not in surv2("data pruning"))
+    check("gfilter: a wiki page slug is dropped", "data-pruning" not in surv2("data-pruning"))
+
+    # the bulk-ingest criterion: fifteen new terms, only the central ones become candidates
+    fifteen = [f"phantom notion {i}" for i in range(15)]
+    check("gfilter: fifteen terms from one page yield only the central ones",
+          surv2(*fifteen) == set())
+
+    # ---- report shape and the exit code
+    rep = E.validation_report(root, ["glossary"], propose=["data pruning"])
+    check("gfilter: candidates ride the info tier, not problems", rep["problems"] == [])
+    check("gfilter: candidates ride the info tier, not warnings", rep["warnings"] == [])
+    check("gfilter: report stays ok with candidates present", rep["ok"] is True)
+    check("gfilter: glossary claims its own info namespace",
+          "glossary" in E.INFO_NAMESPACES)
+    rep = E.validation_report(root, ["glossary"], propose=["kernel trick", "kernel trick"])
+    check("gfilter: a duplicate proposal is counted once", len(rep["candidates"]) <= 1)
+    check("gfilter: no new top-level report key beyond candidates",
+          set(rep) == {"ok", "checks", "problems", "warnings", "info", "candidates"})
+    check("gfilter: --check=glossary with no proposals is a no-op",
+          E.validation_report(root, ["glossary"])["candidates"] == []
+          and E.validation_report(root, ["glossary"])["info"] == [])
+    check("gfilter: glossary is in CHECKS", "glossary" in E.CHECKS)
+    check("gfilter: an unknown check still raises",
+          _raises(lambda: E.validation_report(root, ["glosary"])))
+    check("gfilter: a term over the word bound is refused",
+          _raises(lambda: E.validation_report(root, ["glossary"],
+                                              propose=["a b c d e f g"])))
+    check("gfilter: an empty proposal is refused",
+          _raises(lambda: E.validation_report(root, ["glossary"], propose=["  "])))
+
+    before = _tree_hashes(root)
+    E.validation_report(root, ["glossary"], propose=["data pruning", "kernel trick"])
+    check("gfilter: the filter writes nothing", _tree_hashes(root) == before)
+    a = E.validation_report(root, ["glossary"], propose=["kernel trick"])
+    b = E.validation_report(root, ["glossary"], propose=["kernel trick"])
+    check("gfilter: determinism", a == b)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the stoplist: a literal in engine.py, no data file, no dependency
+    check("gfilter: the stoplist is a frozenset in engine.py",
+          isinstance(E.GLOSSARY_STOPLIST, frozenset) and len(E.GLOSSARY_STOPLIST) > 100)
+    check("gfilter: the stoplist holds function words, not jargon",
+          {"the", "of", "and", "is", "rather", "results"} <= E.GLOSSARY_STOPLIST
+          and not {"detection", "floor", "certificate"} & E.GLOSSARY_STOPLIST)
+
+    # ---- the CLI
+    root = tempfile.mkdtemp(prefix="crux_gfc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter CLI", root)
+    q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is used")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    def cli(*args):
+        return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
+                              capture_output=True, text=True, encoding="utf-8", cwd=root)
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick", "--json")
+    payload = json.loads(r.stdout)
+    check("gfilter: --json emits survivors with documents, occurrences and titles",
+          payload["candidates"] and set(payload["candidates"][0]) >=
+          {"term", "key", "documents", "occurrences", "titles", "reason"})
+    check("gfilter: --json exits 0 on candidates", r.returncode == 0)
+    check("gfilter: --json emits no dropped terms",
+          not json.loads(cli("validate", "--check=glossary", "--propose", "nonesuch phrase",
+                             "--json").stdout)["candidates"])
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick")
+    check("gfilter: text output names the term and where it appears",
+          "kernel trick" in r.stdout and "2" in r.stdout)
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick", "--strict")
+    check("gfilter: --strict does not fail on candidates", r.returncode == 0)
+    with open(os.path.join(root, "props.txt"), "w", encoding="utf-8") as f:
+        f.write("# a comment\n\nkernel trick\n\n")
+    r = cli("validate", "--check=glossary", "--propose-file", "props.txt", "--json")
+    check("gfilter: --propose-file reads one term per line, ignoring blanks and comments",
+          len(json.loads(r.stdout)["candidates"]) == 1)
+    r = cli("validate", "--propose", "kernel trick", "--json")
+    check("gfilter: --propose works on a default (all-checks) run",
+          len(json.loads(r.stdout)["candidates"]) == 1)
+
+    # non-regression: default validate on an untouched vault is byte-identical to before
+    r1 = cli("validate")
+    check("gfilter: default validate is unchanged when nothing is proposed",
+          r1.returncode == 0 and "candidate" not in r1.stdout.lower())
+    shutil.rmtree(root, ignore_errors=True)
+
+    # a pre-14 vault: all checks, nothing proposed, nothing said
+    root = tempfile.mkdtemp(prefix="crux_gfo_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old", root)
+    os.remove(os.path.join(root, E.GLOSSARY_FILE))
+    rep = E.validation_report(root)
+    check("gfilter: pre-14 vault, all checks, no glossary info emitted",
+          not [i for i in rep["info"] if i["id"].startswith("glossary:")])
+    check("gfilter: pre-14 vault with a proposal still filters (absent glossary = empty model)",
+          E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"] == [])
+    check("gfilter: the filter did not create glossary.md",
+          not os.path.exists(os.path.join(root, E.GLOSSARY_FILE)))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _raises(fn):
+    try:
+        fn(); return False
+    except E.CruxError:
+        return True
+
+
 def _tree_hashes(root):
     """{relpath: sha256} for every file under root — the byte-compare oracle."""
     out = {}
@@ -5799,6 +5978,7 @@ def main():
     run_glossary_migration()
     run_glossary_counting()
     run_glossary_oracle()
+    run_glossary_filter()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

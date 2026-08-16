@@ -8,6 +8,27 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux validate --check=glossary --propose <term>`** — the centrality filter (spec
+  [`14`](.spec/14-glossary.md), PRD 14.2). A term survives when it appears in **≥2 distinct**
+  nodes or wiki pages, **or** in any node or wiki page title. Then four subtractions, all
+  through the one canonical key: already accepted, already declined, already a wiki page
+  (title or slug), or a stoplisted single word.
+
+  The engine does **not** generate the candidate list — it filters one. That inversion is the
+  design: an agent recognizes coined multi-word jargon effortlessly, and counting where it
+  occurs is what code is good at. The filter is the guarantee — a term the agent finds
+  fascinating but which appears once is dropped before the PI ever sees it.
+
+  Candidates ride the **`glossary:` info tier**: never a problem, never a warning, never
+  counted toward the exit code, and **not silenced or failed by `--strict`**. A vault whose
+  prose repeats a term is not broken. With nothing proposed the check says nothing at all,
+  so `crux validate` on every existing vault is unchanged.
+
+  `--propose` is repeatable; `--propose-file` reads one term per line. Dropped terms are
+  never emitted — reporting them would put the PI back in front of what the filter just spared
+  them. The shipped stoplist is a ~250-word hand-written frozenset in `engine.py`: no data
+  file, no dependency, no licence.
+
 - **Counting a multi-word glossary term** (spec [`14`](.spec/14-glossary.md), PRD 14.1).
   A term matches when its words appear consecutively **inside one markdown block**,
   case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with the

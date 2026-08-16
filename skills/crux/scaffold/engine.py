@@ -221,7 +221,7 @@ SCHEMA_GENERATION = 2
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 claims its own next
+INFO_NAMESPACES = ("boundary", "task", "agents", "glossary")  # <namespace>:<slug>
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -367,7 +367,7 @@ PROSE_SECTIONS = {
 # OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
-CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks")
+CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary")
 OPT_CHECKS = ("decks", "gate")
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
@@ -1674,6 +1674,123 @@ def count_term(v, term):
         if rx.search(str(title or "").lower()):
             titles.append(nid)
     return {"documents": docs, "occurrences": total, "titles": titles, "per_document": per}
+
+# --- the centrality filter (spec 14, PRD 14.2) ----------------------------------------
+# THE INVERSION, and it is the load-bearing design choice in spec 14:
+#
+#   The agent proposes candidate terms freely. The engine FILTERS them by centrality.
+#   The engine does not generate the list.
+#
+# Deterministic extraction from prose does not work for the terms that matter. "detection
+# floor", "capacity certificate" and "the separability condition" are bigrams and trigrams,
+# and n-gram frequency over research prose is noisy in both directions — it misses real
+# multi-word jargon and floods the list with ordinary phrases that recur. Measured on the
+# shipped example vaults, the top bigrams are "of the", "rather than", "it is".
+#
+# An agent reading vault prose recognizes a coined multi-word term effortlessly; counting
+# where it occurs is exactly what an agent is bad at and code is good at. Each side does the
+# half it is suited to, and the deterministic part stays the GOALPOST rather than the
+# generator — which is what spec 09's rule 1 actually asks for.
+#
+# The filter is still the whole guarantee: a term the agent finds interesting but which
+# appears once is silently dropped and never reaches the PI. Agent enthusiasm cannot become
+# PI interruptions.
+#
+# Hand-written, ~250 entries, deliberately not sourced from NLTK or scikit-learn: crux takes
+# no third-party dependency, and a pasted word list is a third-party artifact with a licence
+# even when it is only data. Function words only — it exists to stop a proposal of "the data",
+# not to do extraction, which is the agent's job.
+GLOSSARY_STOPLIST = frozenset("""
+a about above after again against all almost along already also although always am among an
+and another any anybody anyone anything are around as at away back be became because become
+becomes been before began begin behind being below beside besides best better between beyond
+both but by came can cannot come could did different do does doing done down due during each
+early either else enough especially even ever every everybody everyone everything except far
+few fewer first five for found four from full further gave get give given go goes going gone
+got great had half has have having he hence her here hers herself him himself his how however
+i if in indeed inside instead into is it its itself just keep kept know known large last late
+later least left less let like likely little long look made main make makes making many may
+maybe me mean means might mine more moreover most mostly much must my myself near nearly need
+neither never new next no nobody none nor not nothing now number of off often on once one only
+onto or other others otherwise ought our ours ourselves out outside over own part particular
+per perhaps possible put quite rather really result results right said same saw say says second
+see seem seems seen several shall she should show shown side similar since six small so some
+somebody someone something sometimes soon still such sure take taken than that the their theirs
+them themselves then thence there therefore these they thing things think third this those
+though three through throughout thus time to together too took toward towards two under unless
+until up upon us use used uses using usually very via want was way we well went were what when
+whence where whereas whether which while who whom whose why will with within without would yes
+yet you your yours yourself
+""".split())
+
+def _proposal_key(term):
+    """Validate and canonicalize one proposed term. Raises rather than silently dropping —
+    a malformed proposal is a bug in the caller, and swallowing it would look identical to
+    the term failing centrality, which is the one thing the filter must be unambiguous about."""
+    t = " ".join(str(term or "").split())
+    if not t:
+        raise CruxError("glossary: an empty term was proposed")
+    n = len([x for x in re.split(r"[-_\s]+", t) if x])
+    if n > MAX_TERM_WORDS:
+        raise CruxError(f"glossary: {t!r} is {n} words; a term is 1–{MAX_TERM_WORDS} "
+                        f"(a longer phrase is a sentence, and its count means nothing)")
+    return glossary_key(t)
+
+def glossary_candidates(root, propose, v=None):
+    """Filter agent-proposed terms by centrality; return the survivors.
+
+    CENTRALITY, exactly as spec 14 settles it: a term survives when it appears in >= 2
+    distinct nodes or wiki pages, OR appears in any node title or wiki page title.
+
+    Documents gate; occurrences ride along in the payload. The spec states the rule in
+    documents and one work item in occurrences — they differ on precisely the case the filter
+    exists to suppress (a term said twice in ONE node), so the document reading wins.
+
+    Then four subtractions, all through `glossary_key`, so a difference of case, hyphen or
+    plural can never resurrect a settled term: already accepted, already declined, already a
+    wiki page (title or slug), or a stoplisted single word.
+
+    Dropped terms are NOT returned. The filter's guarantee is that a dropped term never
+    reaches the PI; emitting it as "dropped" would put it back on the PI's screen through the
+    side door."""
+    if not propose:
+        return []
+    v = v or Vault(root)
+    g = load_glossary(root)
+    settled = {t["key"] for t in g["terms"]} | {glossary_key(d) for d in g["declined"]}
+    for p in scan_wiki_pages(root):
+        settled.add(glossary_key(p["slug"]))
+        if p["title"]:
+            settled.add(glossary_key(p["title"]))
+    out, seen = [], set()
+    for term in propose:
+        key = _proposal_key(term)
+        if key in seen or key in settled:
+            continue
+        seen.add(key)
+        if " " not in key and key in GLOSSARY_STOPLIST:
+            continue
+        c = count_term(v, term)
+        if len(c["documents"]) < 2 and not c["titles"]:
+            continue
+        n, t = len(c["documents"]), len(c["titles"])
+        out.append({"term": " ".join(str(term).split()), "key": key,
+                    "documents": c["documents"], "occurrences": c["occurrences"],
+                    "titles": c["titles"], "per_document": c["per_document"],
+                    "reason": f"{n} document{'' if n == 1 else 's'}"
+                              + (f", {t} title{'' if t == 1 else 's'}" if t else "")})
+    return out
+
+def glossary_info(cands):
+    """The `glossary:` info line. One line for the batch, not one per term — the PI answers
+    them inline, one at a time, and the lint's job is only to say they are waiting."""
+    if not cands:
+        return []
+    n = len(cands)
+    return [("glossary:candidates",
+             f"{n} vocabulary candidate{'' if n == 1 else 's'} passed centrality: "
+             f"{', '.join(repr(c['term']) for c in cands)}. Ask the PI yes/no, one at a "
+             f"time, then record it with `crux glossary accept|decline`.", n)]
 
 def ensure_glossary(root):
     """Create `glossary.md` from the template if it is absent. Called at `init`, and by the
@@ -3416,7 +3533,7 @@ def gate_warnings(v):
                              f"{nid}` is the first step; the PI approves it, then `crux answer`."))
     return out
 
-def validation_report(root, checks=None):
+def validation_report(root, checks=None, propose=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
     CHECKS; None runs them all.
@@ -3441,12 +3558,18 @@ def validation_report(root, checks=None):
         info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
     if "gate"    in names: warnings += gate_warnings(v)
+    # The glossary check is a FILTER, not a scan: with nothing proposed it has nothing to
+    # filter and says nothing at all. That is what lets it sit in the default CHECKS without
+    # changing one byte of output for every vault that exists today.
+    cands = glossary_candidates(root, propose, v) if "glossary" in names else []
+    info += glossary_info(cands)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],
             "warnings": [{"id": i, "message": m} for i, m in warnings],
             "info": [dict({"id": i, "message": m}, **({"count": c} if c is not None else {}))
-                     for i, m, c in info]}
+                     for i, m, c in info],
+            "candidates": cands}
 
 def cmd_validate(root, checks=None):
     """The hard problems only, as (id, message) pairs. Kept at this return type on purpose:
