@@ -188,6 +188,13 @@ def main(argv=None):
     s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
     s.add_argument("id")
 
+    _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
+
+    s = _jsonable(tsub.add_parser("accept", aliases=["sign-off", "signoff"],
+                                  help="the PI accepts what an experiment concluded — never "
+                                       "run this on your own judgment"))
+    s.add_argument("id")
+
     s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
     s.add_argument("--frontier", action="store_true",
                    help="only tasks whose blockers are all discharged — the default question")
@@ -296,9 +303,41 @@ def _dispatch_task(a):
                   f"computed from --concluded)")
     elif t == "done":
         st = E.cmd_task_done(root, a.id, a.outputs)
+        rec = E.task_json(root, a.id)
         if a.json:
-            return _emit({"id": a.id, "status": st})
+            return _emit({"id": a.id, "status": st, "pending_gate": rec["pending_gate"]})
         print(f"✓ {a.id} → {st}")
+        if rec["pending_gate"]:
+            print(f"  ◐ this is an experiment: its output is evidence, so it waits for the "
+                  f"PI.\n    crux task accept {a.id}")
+    elif t == "review":
+        rows = E.cmd_task_review(root)
+        if a.json:
+            return _emit([{"id": i, "title": ti,
+                           "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                           "drifted": d} for i, ti, hr, d in rows])
+        if not rows:
+            print("no experiments awaiting your acceptance.")
+            return 0
+        print("Awaiting your acceptance (what these runs concluded):")
+        for i, ti, hr, d in rows:
+            print(f"  ◐ {i}  {ti}")
+            for hid, concl in hr:
+                print(f"      {hid} → {concl}" + ("   ⚠ commitment drifted" if hid in d else ""))
+    elif t in ("accept", "sign-off", "signoff"):
+        # Drift is printed loudly and blocks NOTHING. Spec 15's ruling D7: the engine derives
+        # and flags, the PI decides. Blocking here would reintroduce, at a touchpoint 15 could
+        # not have known about, the block that ruling declined.
+        drifted = [d for i, _, _, d in E.cmd_task_review(root) if i == a.id]
+        stamp = E.cmd_task_accept(root, a.id)
+        warn = drifted[0] if drifted else []
+        for hid in warn:
+            print(f"  ⚠ {hid}'s commitment was edited after the run — what would have "
+                  f"settled it is not what was pre-registered. Accepting anyway; the flag "
+                  f"is permanent.", file=sys.stderr)
+        if a.json:
+            return _emit({"id": a.id, "accepted": stamp, "drifted": warn})
+        print(f"✓ {a.id} accepted at {stamp}")
     elif t == "drop":
         st = E.cmd_task_drop(root, a.id)
         if a.json:

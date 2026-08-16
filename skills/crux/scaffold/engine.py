@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -1981,6 +1981,107 @@ def cmd_task_drop(root, tid):
     refresh(root)
     return "dropped"
 
+# --- the gating split (2.3) ---------------------------------------------------------------
+# The original rule was "a task may never create direction". It was doing double duty and it
+# breaks the first time someone observes that a RUN is a task. Replaced by:
+#
+#     Work never creates direction. Work produces outputs — and an output that is evidence
+#     about a hypothesis enters the gated tier.
+#
+# The line moves from WHICH LAYER to WHICH OUTPUT, and it becomes computable:
+#   - a task with no hypothesis_refs is act-and-report. Ticking "fetched the antibody lot"
+#     sets no direction, spends no compute, records no scientific result.
+#   - a task WITH them concluded something about a claim, so the PI accepts it — exactly as
+#     `answer` and `approve` are accepted today.
+#
+# What accepting does, and what it deliberately does NOT do: it records the PI's signature on
+# the task and marks the parent question of each refed hypothesis `stale` — the existing
+# "new evidence landed, your interpretation may be out of date" signal that `cmd_close`
+# already sets and `cmd_answer` already clears. It writes no verdict, no status, no tick, and
+# touches no roll-up. Feeding the derivation was considered and DECLINED: spec 15 rules that
+# only `cmd_close` writes a verdict, and a task feeding it would let an agent set a verdict
+# the PI never ticked. Work informs; it does not decide.
+TASK_ACCEPTED = "accepted"
+
+def task_pending_gate(t):
+    """Is this task waiting for the PI? An experiment that has completed and not been
+    accepted. A chore is never here, however large; an experiment always is, however small."""
+    return (task_is_experiment(t) and t["status"] == "done"
+            and not t["fm"].get(TASK_ACCEPTED))
+
+def cmd_task_review(root):
+    """(id, title, hypothesis_refs, drifted) for every experiment awaiting the PI's
+    acceptance.
+
+    A SEPARATE queue from `cmd_review`, deliberately. That function returns 15's
+    `(id, title, drift)` three-tuple and is rendered in three places including
+    `snapshot()["queue"]`; reshaping it would be a contract change on a surface the cockpit
+    already draws. And the two decisions are not the same decision: "is this question
+    settled" is not "do you accept what this run concluded".
+
+    `drifted` lists the refed hypotheses whose commitment was edited after the run. Surfaced
+    HERE because this is the exact moment the PI is deciding — and it BLOCKS NOTHING."""
+    v = Vault(root)
+    out = []
+    for t in scan_tasks(root):
+        if not task_pending_gate(t):
+            continue
+        drifted = [hid for hid, _ in t["hypothesis_refs"]
+                   if hid in v.nodes and lock_drift(v.nodes[hid])]
+        out.append((t["id"], t["title"], t["hypothesis_refs"], drifted))
+    return out
+
+def cmd_task_accept(root, tid):
+    """The PI's signature on what an experiment concluded. Returns the timestamp.
+
+    Idempotent: the first acceptance's timestamp is the record, so re-accepting never
+    rewrites history — the same contract `cmd_approve` has for a synthesis."""
+    t = _get_task(root, tid)
+    if not task_is_experiment(t):
+        raise CruxError(f"'{tid}' is not an experiment — it concluded nothing about a "
+                        f"hypothesis, so there is nothing to accept. Ordinary tasks are "
+                        f"act-and-report: `crux task done {tid}` is the whole of it.")
+    existing = t["fm"].get(TASK_ACCEPTED)
+    if existing:
+        return str(existing)
+    stamp = now()
+    t["fm"][TASK_ACCEPTED] = stamp
+    _write_task(t)
+    # New evidence has landed against these hypotheses, so their questions' standing
+    # interpretations may be out of date. This is the ONLY thing acceptance writes outside
+    # the task, it is a pre-existing flag with pre-existing meaning, and it moves no verdict.
+    v = Vault(root)
+    for hid, _ in t["hypothesis_refs"]:
+        n = v.nodes.get(hid)
+        parent = v.nodes.get(n.parent) if n else None
+        if parent and parent.type == "question" and not parent["fm"].get("stale"):
+            parent["fm"]["stale"] = True
+            write_if_changed(parent["path"], render_doc(parent["fm"], parent["body"]))
+    refresh(root)
+    return stamp
+
+def task_gate_info(root, tasks=None):
+    """`info` lines for the gate. Both are information, never problems: an unaccepted dropped
+    experiment is a real record, and a nested experiment is legitimate."""
+    out = []
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    unacc = [t for t in tasks if task_is_experiment(t) and t["status"] == "dropped"
+             and not t["fm"].get(TASK_ACCEPTED)]
+    if unacc:
+        out.append(("task:unaccepted",
+                    f"{len(unacc)} dropped experiment{'' if len(unacc) == 1 else 's'} "
+                    f"({', '.join(t['id'] for t in unacc)}) recorded a conclusion that was "
+                    f"never accepted — it is history, not evidence.", len(unacc)))
+    nested = [t for t in tasks if task_is_experiment(t) and t["parent"] in by
+              and task_is_experiment(by[t["parent"]])]
+    if nested:
+        out.append(("task:nested-experiment",
+                    f"{len(nested)} experiment{'' if len(nested) == 1 else 's'} sit under "
+                    f"another experiment ({', '.join(t['id'] for t in nested)}) — each fires "
+                    f"its own review gate.", len(nested)))
+    return out
+
 def cmd_task_categories(root, add=None):
     """Read, or grow, the declared category list. Growth is an explicit act with a diff —
     the moment of friction that stops taxonomy drift."""
@@ -2133,6 +2234,8 @@ def task_json(root, tid, v=None):
             # stamp is read from the node, never copied onto the task: a pre-15 hypothesis
             # stays pre-15 forever, and an experiment about it is a record on the task's
             # side, not a retro-stamp on the node's.
+            "accepted": t["fm"].get(TASK_ACCEPTED) or None,
+            "pending_gate": task_pending_gate(t),
             "hypothesis_refs": [{"id": hid, "conclusion": c,
                                  "schema": node_schema(v.nodes[hid]) if hid in v.nodes else None}
                                 for hid, c in t["hypothesis_refs"]],
@@ -2755,7 +2858,9 @@ def validation_report(root, checks=None):
     if "fanout"  in names: warnings += fanout_warnings(v)
     if "tree"    in names: warnings += lock_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
-    if "tasks"   in names: problems += validate_tasks(root); info += task_info(root)
+    if "tasks"   in names:
+        problems += validate_tasks(root)
+        info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),

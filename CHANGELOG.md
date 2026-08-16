@@ -8,6 +8,20 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The gating split: work never creates direction** (spec [`08`](.spec/08-taskhub.md),
+  PRD 08.3). Completing an ordinary task is act-and-report; completing an **experiment** is
+  PI-gated, because its output is evidence. `crux task review` lists experiments awaiting
+  acceptance and `crux task accept` is the PI's signature — a **separate** queue from
+  `crux review`, which keeps spec 15's `(id, title, drift)` three-tuple untouched. Accepting
+  records the signature and sets the existing `stale` signal on the refed hypotheses' parent
+  questions; it writes no verdict, no tick and no roll-up entry, and five asserts prove those
+  negatives. Because only the parent of a decomposition carries `hypothesis_refs`, the gate
+  fires **once per experiment**, not once per sub-task. Drift on a refed hypothesis is printed
+  loudly at both `review` and `accept` and **blocks nothing** — spec 15's ruling D7, given its
+  own guard at this new touchpoint. `ENGINE_VERSION` 2.2 → 2.3.
+
+### Added
+
 - **Experiments are tasks** (spec [`08`](.spec/08-taskhub.md), PRD 08.2). A task that declares
   what it concluded about a hypothesis (`hypothesis_refs: "h44:supported, h45:refuted"`) **is**
   an experiment; the `experiment` category is computed from that and never stored, so there is

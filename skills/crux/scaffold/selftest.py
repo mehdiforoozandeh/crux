@@ -4381,6 +4381,171 @@ def run_experiments():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_experiment_gate():
+    print("\n# taskhub — the gating split: work never creates direction (spec 08, PRD 08.3)")
+    root, q, h1 = _task_vault("crux_gate_")
+    # h2/h3 are moved to `running` below, so they carry the outcome-neutral control spec 15
+    # requires of a stamped hypothesis — the taskhub consumes that gate, it does not bypass it
+    h2, _, _ = E.cmd_hypothesize(root, "the arm separates", parent=q, verifiables=["sep at n=3"],
+                                 neutral=["the known-good encoder reproduces 0.46"])
+    q2, _ = E.cmd_ask(root, "Does the loader matter?")
+    h3, _, _ = E.cmd_hypothesize(root, "the loader is the bottleneck", parent=q2,
+                                 verifiables=["throughput +20%"],
+                                 neutral=["the profiler reports a known baseline"])
+
+    # -- 1. an ordinary task is ACT-AND-REPORT. Ticking "fetched the antibody lot" sets no
+    #       direction, spends no compute and records no scientific result, so the PI needn't
+    #       be concerned with it — which is legal rather than a leash violation.
+    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                           blocked_by=None)
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    check("gate: completing a chore is not PI-gated",
+          E.cmd_task_review(root) == [] and E.task_by_id(root)[t1]["status"] == "done")
+
+    # -- 2/3. an experiment decomposes through the EXISTING parent link, and the gate fires
+    #         ONCE, on the parent — not once per sub-task. That is what keeps the layer's
+    #         founding promise (view it, never manage it) intact after the merge.
+    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported"), (h3, "refuted")])
+    for i, sub in enumerate(("Acquire the data", "Implement the arm", "Make the figures")):
+        s, _ = E.cmd_task_add(root, sub, category="implementation", blocked_by=None, parent=e1)
+        E.cmd_task_done(root, s, outputs=[f"[[{q}]]"])
+    check("gate: sub-tasks do not inherit the role",
+          not any(E.task_is_experiment(t) for t in E.scan_tasks(root) if t["parent"] == e1)
+          and E.cmd_task_review(root) == [])
+    E.cmd_task_done(root, e1, outputs=[f"[[{q}]]"])
+    queue = E.cmd_task_review(root)
+    check("gate: completing an experiment enters the acceptance queue",
+          [x[0] for x in queue] == [e1])
+    check("gate: one experiment with three sub-tasks fires one gate", len(queue) == 1)
+
+    # -- 4/5/6. THE LEASH, proven as three negatives and one positive.
+    v0 = E.Vault(root)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
+    ledger0 = {x: E.ledger_counts(v0, x) for x in (q, q2)}
+    nodes0 = {n: read(node_path(root, n)) for n in (q, q2, h1, h2, h3)}
+    E.cmd_task_accept(root, e1)
+    v1 = E.Vault(root)
+    check("gate: accepting writes no verdict",
+          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
+    check("gate: acceptance never enters the ledger roll-up",
+          {x: E.ledger_counts(v1, x) for x in (q, q2)} == ledger0)
+    changed = [n for n, b in nodes0.items() if read(node_path(root, n)) != b]
+    check("gate: accepting edits only the stale flag, and only on the refed questions",
+          set(changed) == {q, q2}
+          and all(read(node_path(root, n)).replace("stale: true", "stale: false") == nodes0[n]
+                  for n in changed))
+    check("gate: acceptance stales every refed hypothesis's question",
+          v1.get(q)["fm"]["stale"] is True and v1.get(q2)["fm"]["stale"] is True)
+    check("gate: an accepted experiment leaves the queue", E.cmd_task_review(root) == [])
+    check("gate: accepting twice keeps the first signature",
+          E.cmd_task_accept(root, e1) == E.task_by_id(root)[e1]["fm"]["accepted"])
+    expect_error("gate: accept is refused on an ordinary task",
+                 lambda: E.cmd_task_accept(root, t1))
+
+    # -- 8. DRIFT: spec 15's ruling D7 is that drift warns loudly and blocks NOTHING. 08 adds
+    #       a SECOND PI touchpoint 15 could not have known about; blocking here would
+    #       reintroduce the block D7 declined, going around 15.3's own guard assert. This is
+    #       08's copy of that guard.
+    E.cmd_test(root, h2, to="running")
+    hp = node_path(root, h2)
+    edit(hp, "- [ ] sep at n=3", "- [ ] a totally different check")
+    check("gate: the refed hypothesis really is drifted", E.lock_drift(E.Vault(root).get(h2)))
+    e2, _ = E.cmd_task_add(root, "Run the drifted arm", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
+    E.cmd_task_done(root, e2, outputs=[f"[[{q}]]"])
+    row = [x for x in E.cmd_task_review(root) if x[0] == e2][0]
+    check("gate: the queue carries the drift flag of every refed hypothesis", row[3] == [h2])
+    stamp = E.cmd_task_accept(root, e2)
+    check("gate: drift is printed at accept and never blocks",
+          bool(stamp) and E.task_by_id(root)[e2]["fm"].get("accepted")
+          and E.lock_drift(E.Vault(root).get(h2)))
+
+    # -- 9. tasks are outside the roll-up, so an open experiment does not hold its question
+    #       out of review. Pinned because the opposite is a plausible later "fix".
+    E.cmd_test(root, h3, to="running")
+    edit(node_path(root, h3), "- [ ]", "- [x]")          # claim + control both met
+    E.cmd_close(root, h3)
+    E.cmd_task_add(root, "Still running the sweep", category="implementation",
+                   blocked_by=None, hypothesis_refs=[(h3, "inconclusive")])
+    E.refresh(root)
+    check("gate: an open experiment does not hold a question open",
+          E.Vault(root).get(q2).status == "review")
+
+    # -- 10. dropping an unaccepted experiment: leaves the queue, keeps its conclusions,
+    #        propagates nothing, and is reported as info so it never reads as accepted.
+    e3, _ = E.cmd_task_add(root, "Abandoned half-run", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h1, "inconclusive")])
+    E.cmd_task_done(root, e3, outputs=[f"[[{q}]]"])
+    v2 = E.Vault(root)
+    verdicts2 = {k: n["fm"].get("verdict") for k, n in v2.nodes.items()}
+    E.cmd_task_drop(root, e3)
+    info = {x["id"]: x for x in E.validation_report(root)["info"]}
+    check("gate: dropping an unaccepted experiment propagates nothing",
+          e3 not in [x[0] for x in E.cmd_task_review(root)]
+          and E.task_hypothesis_refs(E.task_by_id(root)[e3]) == [(h1, "inconclusive")]
+          and {k: n["fm"].get("verdict") for k, n in E.Vault(root).nodes.items()} == verdicts2)
+    # (`ok` is False here for an unrelated reason — h2's commitment is deliberately drifted
+    #  above, and 15.3 makes drift a problem. What this asserts is that the unaccepted
+    #  experiment is INFORMATION and never a problem or a warning of its own.)
+    rep = E.validation_report(root)
+    check("gate: an unaccepted dropped experiment is reported as info",
+          "task:unaccepted" in info and info["task:unaccepted"]["count"] == 1
+          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
+
+    # -- 13. a sub-task that declares its OWN conclusion is its own experiment and fires its
+    #        own gate. Refusing would make the spec's pilot-blocks-full-run example illegal
+    #        whenever both conclude.
+    n1, _ = E.cmd_task_add(root, "Nested pilot", category="implementation", blocked_by=None,
+                           parent=e1, hypothesis_refs=[(h1, "inconclusive")])
+    E.cmd_task_done(root, n1, outputs=[f"[[{q}]]"])
+    check("gate: a nested experiment fires its own gate",
+          n1 in [x[0] for x in E.cmd_task_review(root)])
+    check("gate: nesting is reported as info",
+          any(x["id"] == "task:nested-experiment"
+              for x in E.validation_report(root)["info"]))
+
+    # -- 11. cmd_review is 15's THREE-tuple and stays exactly that. Extended, not reshaped.
+    qrows = E.cmd_review(root)
+    check("gate: the question review queue is untouched",
+          all(len(r) == 3 and isinstance(r[2], bool) for r in qrows)
+          and set(r[0] for r in qrows) <= set(E.Vault(root).nodes))
+    snap = E.snapshot(root)
+    check("gate: the question queue in snapshot is unchanged in shape",
+          all(set(x) == {"id", "title", "summary"} for x in snap["queue"]))
+
+    fx = tempfile.mkdtemp(prefix="crux_gate_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    rev0 = E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: a pre-08 vault's gate behaviour is unchanged at 2.3",
+          _dir_bytes(dst) == b and E.cmd_review(dst) == rev0 and E.cmd_task_review(dst) == [])
+    shutil.rmtree(fx, ignore_errors=True)
+
+    # -- the CLI: the gate is visible where the PI stands, and drift is loud but never fatal
+    import json as _json
+    e4, _ = E.cmd_task_add(root, "Another drifted run", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "done", e4,
+                        "-o", f"[[{q}]]"], capture_output=True, text=True,
+                       encoding="utf-8", cwd=root)
+    check("gate: `task done` on an experiment prints the gate, not a verdict",
+          r.returncode == 0 and "crux task accept" in r.stdout
+          and "verdict" not in r.stdout.lower())
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "accept", e4,
+                        "--json"], capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("gate: the CLI accept prints drift to stderr and still succeeds",
+          r.returncode == 0 and h2 in r.stderr
+          and "edited after the run" in r.stderr
+          and _json.loads(r.stdout)["drifted"] == [h2]
+          and _json.loads(r.stdout)["accepted"])
+    check("gate: ENGINE_VERSION bumped to 2.3", at_least_version("2.3"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -4441,6 +4606,7 @@ def main():
     run_taskhub()
     run_task_graph()
     run_experiments()
+    run_experiment_gate()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
