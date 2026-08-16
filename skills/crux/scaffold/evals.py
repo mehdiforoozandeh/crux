@@ -284,6 +284,210 @@ def format_score(s):
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------------------------- definitions
+#: Verbs no agent's toolbelt may carry. The TOOLBELT is the authority — what an agent may
+#: actually run — so that is what is checked; prose is not. 09's D9: since spec 15 a tick
+#: decides `invalid-run` versus `refuted`, so an agent writing one sets both the verdict and
+#: its reason.
+LEASH_VERBS = ("crux close", "crux answer", "crux approve", "crux task accept",
+               "crux pursue", "crux migrate --apply")
+#: The wider write surface, for the agents whose whole contract is "propose, never write".
+WRITE_VERBS = ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
+               "crux task add", "crux glossary accept", "crux rd", "crux ingest")
+
+
+def load_definitions(names, repo=None):
+    """{name: (frontmatter, body)} for the agent definitions that exist."""
+    repo = repo or os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    out = {}
+    for n in names:
+        p = os.path.join(repo, "agents", n, "AGENT.md")
+        if os.path.isfile(p):
+            out[n] = E.parse_doc(E.read(p))
+    return out
+
+
+def roster_properties(defs, verbs=""):
+    """Every property of the agent roster that is computable FROM THE DEFINITIONS ALONE, as
+    {slug: (printed_name, bool)}.
+
+    Extracted so two callers can share one source of truth: `selftest` prints these, and
+    `mutate` + `mutation_results` break them on purpose to prove each one can fail. A check
+    whose failure mode has never been demonstrated is a comment with a `check()` around it —
+    reword the sentence a string match looks for and the property silently stops being
+    checked while the suite stays green.
+
+    `verbs` is `crux --help` output, passed in rather than shelled out to, so this stays a
+    pure function of its arguments."""
+    P, fm_of, body_of = {}, lambda n: defs.get(n, ({}, ""))[0], lambda n: defs.get(n, ({}, ""))[1]
+
+    for name, (fm, body) in sorted(defs.items()):
+        P[f"fields:{name}"] = (f"agents: {name} declares the four architecture fields",
+                               all(k in fm for k in ("name", "description", "cold_input", "excludes")))
+        P[f"dirname:{name}"] = (f"agents: {name}'s name matches its directory",
+                                fm.get("name") == name)
+        P[f"workflow:{name}"] = (f"agents: {name} reads as a workflow (when invoked -> steps -> output)",
+                                 "When invoked" in body and "## Output" in body)
+
+    # every toolbelt entry is a real crux verb — 09 is explicit that the belt is CLI verbs,
+    # not agent-private scripts, so selftest can assert them and the PI can run any by hand
+    bad = []
+    for name, (fm, _b) in sorted(defs.items()):
+        for line in str(fm.get("toolbelt") or "").split(";"):
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("crux "):
+                bad.append(f"{name}: {line!r} is not a crux verb")
+            elif line.split()[1] not in verbs:
+                bad.append(f"{name}: no such verb {line.split()[1]!r}")
+    P["belt-verbs"] = (f"agents: every toolbelt entry is a real crux verb (bad: {bad[:3]})", not bad)
+
+    crit = fm_of("crux-critic")
+    P["critic-isolated"] = ("agents: the critic is isolated by construction — no vault, empty toolbelt",
+                            not str(crit.get("toolbelt") or "").strip()
+                            and "vault" in str(crit.get("excludes") or "").lower())
+    P["verifiables-exclusion"] = ("agents: crux-verifiables declares the exclusion the brief actually enforces",
+                                  "Problem Statement" in str(fm_of("crux-verifiables").get("excludes") or ""))
+
+    leash = [f"{n}: {b}" for n, (fm, _) in sorted(defs.items())
+             for b in LEASH_VERBS if b in str(fm.get("toolbelt") or "")]
+    P["leash"] = (f"agents: no agent's toolbelt can set a verdict or a direction (found: {leash})",
+                  not leash)
+    P["close-says-so"] = ("agents: and crux-close says so in words, since it is the one that could",
+                          "you never run `crux close`" in body_of("crux-close").lower())
+
+    gl = fm_of("crux-glossary")
+    P["glossary-contract"] = ("agents: the glossary agent matches spec 14's parked contract",
+                              "propose" in str(gl.get("cold_input") or "")
+                              and "no write verb" in str(gl.get("toolbelt") or "").lower()
+                              and "conversation" in str(gl.get("excludes") or "").lower())
+
+    versioned = sorted(n for n, (fm, b) in defs.items()
+                       if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
+    P["no-version-pin"] = (f"agents: no agent definition pins an engine version (found: {versioned})",
+                           not versioned)
+
+    # ---- spec 13's two, same convention, same table
+    sit, sit_body = fm_of("crux-situate"), body_of("crux-situate")
+    P["situate-mode"] = ("agents: crux-situate reads the situate brief, not the isolated one",
+                         "--mode=situate" in str(sit.get("cold_input")))
+    P["situate-readonly"] = ("agents: crux-situate cannot write — no write verb anywhere in its belt",
+                             not any(w in str(sit.get("toolbelt")) for w in WRITE_VERBS))
+    P["situate-ephemeral"] = ("agents: crux-situate declares the ephemeral rule, which is the PI's ruling",
+                              "ephemeral" in (str(sit.get("excludes")) + sit_body).lower())
+    P["situate-lints"] = ("agents: crux-situate's body carries the lint step, not just the instruction",
+                          "--lint-situate" in sit_body)
+    P["situate-shape"] = ("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
+                          "ELI5" in sit_body and "TL;DR" in sit_body)
+
+    des, des_body = fm_of("crux-design"), body_of("crux-design")
+    P["design-isolated"] = ("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
+                            "crux brief" in str(des.get("cold_input"))
+                            and "--mode=situate" not in str(des.get("cold_input")))
+    P["design-excludes"] = ("agents: crux-design's excludes name the advocacy channel",
+                            "Problem Statement" in str(des.get("excludes")))
+    P["design-readonly"] = ("agents: crux-design cannot write — it proposes, the PI applies",
+                            not any(w in str(des.get("toolbelt")) for w in
+                                    ("crux close", "crux answer", "crux approve", "crux pursue",
+                                     "crux task accept", "crux hypothesize")))
+    P["design-taskhub"] = ("agents: crux-design's belt reaches the taskhub for what was already tried",
+                           "crux task list" in str(des.get("toolbelt")))
+    P["design-question"] = ("agents: crux-design states the central question verbatim",
+                            "Is there any plausible outcome of this run from which we would "
+                            "conclude nothing?" in des_body)
+    P["design-taxonomy"] = ("agents: crux-design names all three causes and both handoff targets",
+                            all(x in des_body for x in ("compound claim", "crux-critic",
+                                                        "crux-verifiables"))
+                            and "does not follow from the claim" in des_body)
+    P["design-handoff"] = ("agents: crux-design hands off by NAMING, never by invoking",
+                           "never invoke" in des_body.lower() or "does not invoke" in des_body.lower())
+    P["design-proposal"] = ("agents: crux-design's output is a proposal, never a vault write",
+                            "proposal" in des_body.lower() and "## Output" in des_body)
+    return P
+
+
+# ----------------------------------------------------------------------------- mutation
+#: Each row: slug -> (agent or None for "any", the property it MUST break, how to degrade it).
+#: Hand-written, and each names its target BEFORE being run — the anti-tautology rule applied
+#: one level up: the thing that writes the test is not the thing that writes the answer.
+MUTATIONS = {
+    "belt-adds-close":            ("crux-audit", "leash"),
+    "belt-adds-answer":           ("crux-migrate", "leash"),
+    "belt-adds-approve":          ("crux-null", "leash"),
+    "belt-fake-verb":             ("crux-tests", "belt-verbs"),
+    "critic-gains-belt":          ("crux-critic", "critic-isolated"),
+    "verifiables-drops-exclusion": ("crux-verifiables", "verifiables-exclusion"),
+    "situate-reads-isolated":     ("crux-situate", "situate-mode"),
+    "situate-gains-write":        ("crux-situate", "situate-readonly"),
+    "design-reads-situate":       ("crux-design", "design-isolated"),
+    "design-drops-never-invoke":  ("crux-design", "design-handoff"),
+    "close-drops-never-run":      ("crux-close", "close-says-so"),
+    "glossary-gains-write":       ("crux-glossary", "glossary-contract"),
+    "drop-output-section":        ("crux-verifiables", "workflow:crux-verifiables"),
+    "drop-cold-input":            ("crux-critic", "fields:crux-critic"),
+    "name-mismatch":              ("crux-audit", "dirname:crux-audit"),
+    "pin-engine-version":         ("crux-design", "no-version-pin"),
+}
+
+
+def mutate(fm, body, mutation):
+    """Degrade one definition, in memory. Returns (fm, body); writes nothing, ever — so no
+    mutated definition can survive a crash into the repo."""
+    fm, body = dict(fm), body
+    belt = str(fm.get("toolbelt") or "")
+    if mutation == "belt-adds-close":       fm["toolbelt"] = belt + "; crux close <hid>"
+    elif mutation == "belt-adds-answer":    fm["toolbelt"] = belt + "; crux answer <qid>"
+    elif mutation == "belt-adds-approve":   fm["toolbelt"] = belt + "; crux approve <sid>"
+    elif mutation == "belt-fake-verb":      fm["toolbelt"] = belt + "; crux autoresearch --loop"
+    elif mutation == "critic-gains-belt":   fm["toolbelt"] = "crux status --json"
+    elif mutation == "situate-gains-write": fm["toolbelt"] = belt + "; crux ask <title>"
+    elif mutation == "glossary-gains-write":
+        fm["toolbelt"] = "crux glossary accept <term>"
+    elif mutation == "verifiables-drops-exclusion":
+        fm["excludes"] = str(fm.get("excludes")).replace("## Problem Statement", "the draft")
+    elif mutation == "situate-reads-isolated":
+        fm["cold_input"] = str(fm.get("cold_input")).replace("--mode=situate", "")
+    elif mutation == "design-reads-situate":
+        fm["cold_input"] = str(fm.get("cold_input")) + " --mode=situate"
+    elif mutation == "design-drops-never-invoke":
+        body = re.sub(r"[Nn]ever invoke|[Dd]oes not invoke", "should avoid calling", body)
+    elif mutation == "close-drops-never-run":
+        body = body.replace("You never run `crux close`.", "Leave `crux close` to the PI.")
+    elif mutation == "drop-output-section":
+        body = body.split("## Output")[0]
+    elif mutation == "drop-cold-input":     fm.pop("cold_input", None)
+    elif mutation == "name-mismatch":       fm["name"] = str(fm.get("name")) + "-v2"
+    elif mutation == "pin-engine-version":
+        body += "\n\nRequires engine version 3.1 or later.\n"
+    else:
+        raise E.CruxError(f"unknown mutation '{mutation}'")
+    return fm, body
+
+
+def mutation_results(defs, verbs=""):
+    """Apply every mutation to a copy of the roster and report what each one broke.
+
+    Two different failures are caught, and they mean different things:
+      - a mutation that reddens NOTHING  -> the property is not actually checked;
+      - a mutation that reddens the WRONG property -> the named check is dead weight, and
+        something else is carrying it by accident."""
+    base = {k: v[1] for k, v in roster_properties(defs, verbs).items()}
+    out = []
+    for mut, (agent, target) in sorted(MUTATIONS.items()):
+        if agent not in defs:
+            out.append({"mutation": mut, "agent": agent, "target": target,
+                        "hit": False, "broke": [], "why": "no such agent"}); continue
+        mutated = dict(defs)
+        mutated[agent] = mutate(*defs[agent], mut)
+        now = {k: v[1] for k, v in roster_properties(mutated, verbs).items()}
+        broke = sorted(k for k in base if base[k] and not now.get(k, True))
+        out.append({"mutation": mut, "agent": agent, "target": target,
+                    "hit": target in broke, "broke": broke,
+                    "why": "" if target in broke else "did not break its target"})
+    return out
+
+
 # ----------------------------------------------------------------------------- cli
 def main(argv=None):
     ap = argparse.ArgumentParser(

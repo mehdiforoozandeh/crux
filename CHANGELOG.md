@@ -8,6 +8,24 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The mutation harness — proof the agent suite can detect a regression** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.2). Spec 10's fourth acceptance criterion is the only
+  one a passing suite cannot fake, and it is the cheapest: a degraded *definition* can be
+  degraded in code, with zero model calls.
+
+  Sixteen hand-written mutations — a toolbelt gaining `crux close`, the critic gaining a
+  toolbelt, `crux-design` losing "never invoke", a definition pinning an engine version — each
+  naming the property it must break **before** it is run. The harness applies each in memory
+  (nothing is ever written to `agents/`) and asserts the named property goes red. Two distinct
+  failures are caught: a mutation that reddens nothing means the property is not actually
+  checked, and one that reddens the *wrong* property means the named check is dead weight.
+
+  To make this possible the roster's definition-derived properties were extracted into
+  `evals.roster_properties`, shared by `run_agent_roster`, `run_situate_agent` and
+  `run_design_agent`. **Every assert name and its order is unchanged** — the suite pins that,
+  because the `evolve-crux` gate counts asserts. All ten agents are covered.
+  **No engine change, no version bump.**
+
 - **The eval scorer: precision and recall, banded over K runs, with no model call** (spec
   [`10`](.spec/10-agent-evals.md), PRD 10.1). `evals.py --fixture X --submission runs.json`
   scores a findings file against a certified fixture: recall and precision **together** (recall

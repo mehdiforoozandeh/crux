@@ -5335,69 +5335,25 @@ def run_agent_roster():
                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
                 "crux-situate", "crux-design"]
 
-    defs = {}
-    for name in expected:
-        p = os.path.join(adir, name, "AGENT.md")
-        if os.path.isfile(p):
-            defs[name] = E.parse_doc(read(p))
+    # The definition-derived properties live in `evals.roster_properties` (spec 10, PRD 10.2),
+    # so that ONE source of truth is both printed here and broken on purpose by the mutation
+    # harness. The assert names below are unchanged by that extraction — `run_mutation_harness`
+    # pins that, because the evolve-crux gate counts asserts.
+    import evals as V
+    defs = V.load_definitions(expected, repo)
     missing = [n for n in expected if n not in defs]
     check(f"agents: every roster entry has a definition file (missing: {missing})", not missing)
 
-    for name, (fm, body) in sorted(defs.items()):
-        check(f"agents: {name} declares the four architecture fields",
-              all(k in fm for k in ("name", "description", "cold_input", "excludes")))
-        check(f"agents: {name}'s name matches its directory", fm.get("name") == name)
-        check(f"agents: {name} reads as a workflow (when invoked -> steps -> output)",
-              "When invoked" in body and "## Output" in body)
-
-    # every toolbelt entry must be a REAL crux verb — 09 is explicit that the belt is CLI
-    # verbs, not agent-private scripts, so selftest can assert them and the PI can run any by hand
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
                        capture_output=True, text=True, encoding="utf-8")
-    bad = []
-    for name, (fm, _b) in sorted(defs.items()):
-        for line in str(fm.get("toolbelt") or "").split(";"):
-            line = line.strip()
-            if not line:
-                continue
-            if not line.startswith("crux "):
-                bad.append(f"{name}: {line!r} is not a crux verb")
-            elif line.split()[1] not in r.stdout:
-                bad.append(f"{name}: no such verb {line.split()[1]!r}")
-    check(f"agents: every toolbelt entry is a real crux verb (bad: {bad[:3]})", not bad)
-
-    # the two isolation guarantees, declared where a reviewer can diff them against behaviour
-    crit_fm, _ = defs.get("crux-critic", ({}, ""))
-    check("agents: the critic is isolated by construction — no vault, empty toolbelt",
-          not str(crit_fm.get("toolbelt") or "").strip()
-          and "vault" in str(crit_fm.get("excludes") or "").lower())
-    ver_fm, _ = defs.get("crux-verifiables", ({}, ""))
-    check("agents: crux-verifiables declares the exclusion the brief actually enforces",
-          "Problem Statement" in str(ver_fm.get("excludes") or ""))
+    P = V.roster_properties(defs, r.stdout)
+    for slug in ([f"{k}:{n}" for n in sorted(defs) for k in ("fields", "dirname", "workflow")]
+                 + ["belt-verbs", "critic-isolated", "verifiables-exclusion"]):
+        check(*P[slug])
     check("agents: and the brief really does enforce it (cross-checked, not just declared)",
           "problem" not in E.brief(*_probe_vault()))
-
-    # THE LEASH. The TOOLBELT is the authority — what an agent may run — so that is what is
-    # checked. Prose is not: crux-close's body says "you do not run `crux close`", which is a
-    # mention and exactly the right thing for it to say.
-    leash = []
-    for name, (fm, _b) in sorted(defs.items()):
-        belt = str(fm.get("toolbelt") or "")
-        for banned in ("crux close", "crux answer", "crux approve", "crux task accept",
-                       "crux pursue", "crux migrate --apply"):
-            if banned in belt:
-                leash.append(f"{name}: {banned}")
-    check(f"agents: no agent's toolbelt can set a verdict or a direction (found: {leash})",
-          not leash)
-    check("agents: and crux-close says so in words, since it is the one that could",
-          "you never run `crux close`" in read(os.path.join(adir, "crux-close", "AGENT.md")).lower())
-
-    # spec 14 parked a precise contract here; it must match what shipped
-    gl_fm, _ = defs.get("crux-glossary", ({}, ""))
-    check("agents: the glossary agent matches spec 14's parked contract",
-          "propose" in str(gl_fm.get("cold_input") or "")
-          and "no write verb" in str(gl_fm.get("toolbelt") or "").lower()
-          and "conversation" in str(gl_fm.get("excludes") or "").lower())
+    for slug in ("leash", "close-says-so", "glossary-contract"):
+        check(*P[slug])
 
     spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
     check("agents: the spec roster and the shipped roster agree",
@@ -5412,10 +5368,7 @@ def run_agent_roster():
     # actually worth locking is the durable one: the roster is VERSION-INDEPENDENT. An agent
     # definition that named an engine version would have to be revised on every bump, which
     # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
-    versioned = sorted(n for n, (fm, b) in defs.items()
-                       if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
-    check(f"agents: no agent definition pins an engine version (found: {versioned})",
-          not versioned)
+    check(*P["no-version-pin"])
 
 
 def _situate_vault():
@@ -5701,19 +5654,11 @@ def run_situate_agent():
     shutil.rmtree(root, ignore_errors=True)
 
     # ---- the agent definition (09.4's convention; the roster loop lints the rest)
-    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-situate", "AGENT.md")))
-    check("agents: crux-situate reads the situate brief, not the isolated one",
-          "--mode=situate" in str(fm.get("cold_input")))
-    check("agents: crux-situate cannot write — no write verb anywhere in its belt",
-          not any(w in str(fm.get("toolbelt")) for w in
-                  ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
-                   "crux task add", "crux glossary accept", "crux rd", "crux ingest")))
-    check("agents: crux-situate declares the ephemeral rule, which is the PI's ruling",
-          "ephemeral" in (str(fm.get("excludes")) + body).lower())
-    check("agents: crux-situate's body carries the lint step, not just the instruction",
-          "--lint-situate" in body)
-    check("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
-          "ELI5" in body and "TL;DR" in body)
+    import evals as V
+    P = V.roster_properties(V.load_definitions(["crux-situate"], repo))
+    for slug in ("situate-mode", "situate-readonly", "situate-ephemeral",
+                 "situate-lints", "situate-shape"):
+        check(*P[slug])
     spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
     check("agents: spec 09's roster records crux-situate as spec 13's addition",
           "crux-situate" in spec and "13-situate-and-design.md" in spec)
@@ -5894,28 +5839,11 @@ def run_design_agent():
     print("\n# design — the crux-design agent and the taxonomy (spec 13, PRD 13.3)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-design", "AGENT.md")))
-
-    check("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
-          "crux brief" in str(fm.get("cold_input"))
-          and "--mode=situate" not in str(fm.get("cold_input")))
-    check("agents: crux-design's excludes name the advocacy channel",
-          "Problem Statement" in str(fm.get("excludes")))
-    check("agents: crux-design cannot write — it proposes, the PI applies",
-          not any(w in str(fm.get("toolbelt")) for w in
-                  ("crux close", "crux answer", "crux approve", "crux pursue",
-                   "crux task accept", "crux hypothesize")))
-    check("agents: crux-design's belt reaches the taskhub for what was already tried",
-          "crux task list" in str(fm.get("toolbelt")))
-    check("agents: crux-design states the central question verbatim",
-          "Is there any plausible outcome of this run from which we would conclude nothing?"
-          in body)
-    check("agents: crux-design names all three causes and both handoff targets",
-          all(x in body for x in ("compound claim", "crux-critic", "crux-verifiables"))
-          and "does not follow from the claim" in body)
-    check("agents: crux-design hands off by NAMING, never by invoking",
-          "never invoke" in body.lower() or "does not invoke" in body.lower())
-    check("agents: crux-design's output is a proposal, never a vault write",
-          "proposal" in body.lower() and "## Output" in body)
+    import evals as V
+    P = V.roster_properties(V.load_definitions(["crux-design"], repo))
+    for slug in ("design-isolated", "design-excludes", "design-readonly", "design-taskhub",
+                 "design-question", "design-taxonomy", "design-handoff", "design-proposal"):
+        check(*P[slug])
     check("agents: crux-design fills the slots spec 13 gave the engine",
           E.MEASUREMENT_FIELD in body and E.REPLICATES_FIELD in body)
 
@@ -6928,6 +6856,79 @@ def run_eval_scorer():
           E.ENGINE_VERSION == "3.1")
 
 
+def run_mutation_harness():
+    """Spec 10 PRD 10.2 — prove the suite can actually detect a regression.
+
+    Spec 10's fourth acceptance criterion is the only one a passing suite cannot fake:
+    *"A deliberately degraded agent prompt fails its eval — i.e. the suite can actually detect
+    regression."* Every other criterion is satisfiable by a suite that returns green on
+    anything. It is also the cheapest, because a degraded DEFINITION can be degraded in code:
+    zero model calls.
+
+    The need is concrete. `crux-design`'s handoff rule is guarded by
+    `"never invoke" in body.lower()`. Reword that sentence — *"you do not call `crux-critic`
+    yourself"* — and the property stops being checked while the suite stays green. A prose
+    assert with no demonstrated failure mode is a comment with a `check()` around it.
+
+    Not circular, for the same reason spec 10's own fixtures are not: the mutations are
+    hand-written, independent of the definitions, and each NAMES the property it must break
+    before it is run."""
+    print("\n# agent evals — the mutation harness (spec 10, PRD 10.2)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate", "crux-close",
+                "crux-audit", "crux-tests", "crux-glossary", "crux-situate", "crux-design"]
+    defs = V.load_definitions(expected, repo)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    verbs = r.stdout
+
+    res = V.mutation_results(defs, verbs)
+    by = {m["mutation"]: m for m in res}
+
+    misses = sorted(m["mutation"] for m in res if not m["hit"])
+    check(f"evals: every mutation breaks the property it targets (missed: {misses})", not misses)
+
+    absorbed = sorted(m["mutation"] for m in res if not m["broke"])
+    check(f"evals: no mutation is absorbed without a failure (absorbed: {absorbed})", not absorbed)
+
+    check("evals: a toolbelt gaining a verdict verb breaks the leash check",
+          by["belt-adds-close"]["broke"] == ["leash"])
+    check("evals: giving the critic a toolbelt breaks its isolation check",
+          "critic-isolated" in by["critic-gains-belt"]["broke"])
+
+    # the two PROSE asserts, each now carrying a demonstrated failure mode (D9). A structural
+    # equivalent is preferred where one exists — the leash reads the toolbelt, not the prose —
+    # but "hand off by naming, never by invoking" has no frontmatter field, and inventing one
+    # to make it structural would be schema design driven by test convenience.
+    check("evals: the crux-close prose assert has a demonstrated failure mode",
+          by["close-drops-never-run"]["broke"] == ["close-says-so"])
+    check("evals: the crux-design handoff assert has a demonstrated failure mode",
+          by["design-drops-never-invoke"]["broke"] == ["design-handoff"])
+    check("evals: pinning an engine version in a definition is still caught",
+          by["pin-engine-version"]["broke"] == ["no-version-pin"])
+
+    # the shipped roster is clean, and the extraction that made this harness possible changed
+    # no assert: every name `roster_properties` returns is one the roster suites print.
+    P = V.roster_properties(defs, verbs)
+    red = sorted(k for k, (_n, ok) in P.items() if not ok)
+    printed = set(_PASS) | set(_FAIL)
+    unprinted = sorted(n for _s, (n, _ok) in P.items() if n not in printed)
+    check(f"evals: the shipped roster is clean and the extraction preserved every assert "
+          f"(red: {red}, unprinted: {unprinted})", not red and not unprinted)
+
+    before = _tree_hashes(os.path.join(repo, "agents"))
+    V.mutation_results(defs, verbs)
+    check("evals: mutation is in-memory only", _tree_hashes(os.path.join(repo, "agents")) == before)
+
+    covered = {m["agent"] for m in res}
+    check(f"evals: every agent has at least one mutation covering it "
+          f"(uncovered: {sorted(set(expected) - covered)})", covered == set(expected))
+
+    check(f"evals: the mutation harness does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -7011,6 +7012,7 @@ def main():
     run_glossary_write()
     run_agent_evals()
     run_eval_scorer()
+    run_mutation_harness()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
