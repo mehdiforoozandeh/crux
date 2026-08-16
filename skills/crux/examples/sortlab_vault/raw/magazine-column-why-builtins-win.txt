@@ -1,0 +1,5 @@
+School magazine column: why built-in sorts win
+
+School magazine column: why built-in sorts win
+
+Why is the sort built into your language so much faster than anything you could write? Three reasons: first, it is compiled to machine code, not interpreted. Python sorts are running compiled C, not Python bytecode. Second, it is hand-tuned by experts over many years. Every detail has been optimized. Third, it is often adaptive—it notices patterns in the data and speeds up. Python's sort is called Timsort and it detects runs of already-sorted data. If your input is already sorted, Timsort finishes in linear time, not quadratic. A programmer writing code in Python cannot easily compete with this. The overhead of the Python interpreter alone is enough to make any Python-based sort slower.

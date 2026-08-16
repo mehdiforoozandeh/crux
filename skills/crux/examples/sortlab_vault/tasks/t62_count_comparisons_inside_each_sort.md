@@ -1,0 +1,33 @@
+---
+id: t62
+type: task
+title: Count comparisons inside each sort
+category: implementation
+parent: 
+blocked_by: None
+refs: 
+hypothesis_refs: 
+status: done
+created: "2026-08-16T16:07:21"
+updated: "2026-08-16T16:07:45"
+---
+
+# t62 — Count comparisons inside each sort
+
+Refs:: _(none)_
+
+## Why
+
+Counting comparisons tells the real story, because the clock cannot be trusted.
+
+## Output
+
+<!-- required before `done`, and the engine checks it resolves. Either form:
+     - [Deduped table](results/dedupe/table.tsv)   - [[wiki/candi-datasets]] -->
+- code/t62_count_comparisons_inside.py
+
+## Evidence
+
+_(experiments only: what this run showed, in prose. The structured fact is
+`hypothesis_refs` in the frontmatter; this is the narrative beside it, and the
+engine never parses it.)_

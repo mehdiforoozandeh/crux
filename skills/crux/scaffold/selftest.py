@@ -4,7 +4,7 @@ invariant. No GPU / tokens / SLURM; pure file ops. Exit non-zero on any failure.
 
     python selftest.py [--keep DIR]   # --keep leaves the demo vault for inspection
 """
-import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re, json
+import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re, json, collections
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
@@ -6199,6 +6199,68 @@ def run_glossary_oracle():
     check("gcount: and the shipped rule does not", len(E.count_term(v, "mask transformer head")["documents"]) == 3)
 
 
+def run_sortlab_fixture():
+    """The committed sortlab_vault, pinned so it cannot rot silently (the stale-fixture
+    lesson from spec 08).
+
+    SortLab is the worked example a newcomer reads before they touch a vault of their own:
+    150 nodes, 200 tasks, 60 wiki pages, and exactly two drifted locks that are the point
+    rather than a defect. Three things are asserted, and each one is a way the fixture could
+    go quietly wrong:
+
+      - the SHAPE: if a later engine change renumbers, drops or duplicates a node, a task or
+        a wiki page, the counts move and this fails before anyone reads a wrong example.
+      - the LINT: exactly two problems, both DRIFT, on h9 and h65, and ZERO warnings. Naming
+        the two ids is what makes a third problem visible instantly; a bare "2 problems"
+        would let one drift heal and another appear without a sound.
+      - the IDEMPOTENCE: `refresh()` on the committed bytes must write nothing. A fixture
+        that reformats itself on every command produces a dirty tree for every contributor
+        and trains everyone to ignore the diff."""
+    print("\n# sortlab_vault — the worked example, pinned")
+    root = os.path.join(HERE, "..", "examples", "sortlab_vault")
+    check("sortlab: the vault is committed", os.path.isfile(os.path.join(root, ".crux.yaml")))
+    v = E.Vault(root)
+    kinds = collections.Counter(n.type for n in v.nodes.values())
+    check(f"sortlab: 150 nodes (got {len(v.nodes)})", len(v.nodes) == 150)
+    check(f"sortlab: 1 project / 35 questions / 108 hypotheses / 6 syntheses (got "
+          f"{kinds['project']}/{kinds['question']}/{kinds['idea']}/{kinds['synthesis']})",
+          (kinds["project"], kinds["question"], kinds["idea"], kinds["synthesis"])
+          == (1, 35, 108, 6))
+    tasks = E.scan_tasks(root)
+    check(f"sortlab: 200 tasks (got {len(tasks)})", len(tasks) == 200)
+    pages = E.scan_wiki_pages(root)
+    check(f"sortlab: 60 wiki pages (got {len(pages)})", len(pages) == 60)
+    check(f"sortlab: 15 registered sources (got {len(E.load_sources(root))})",
+          len(E.load_sources(root)) == 15)
+
+    problems = E.cmd_validate(root)
+    ids = sorted(p[0] for p in problems)
+    check(f"sortlab: validate reports exactly 2 problems (got {len(problems)})",
+          len(problems) == 2)
+    check(f"sortlab: and they are h9 and h65 (got {ids})", ids == ["h65", "h9"])
+    check("sortlab: both problems are DRIFT, nothing else",
+          all("DRIFT" in p[1] for p in problems))
+    warnings = E.economy_warnings(v) + E.lock_warnings(v) + E.fanout_warnings(v)
+    check(f"sortlab: zero warnings, so --strict adds nothing (got {len(warnings)})",
+          not warnings)
+
+    before = _tree_bytes(root)
+    E.refresh(root)
+    check("sortlab: refresh() is a no-op on the committed bytes", _tree_bytes(root) == before)
+
+
+def _tree_bytes(root):
+    """Every file in the vault, path -> bytes. The fixture's idempotence oracle."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != ".obsidian")
+        for fn in sorted(filenames):
+            p = os.path.join(dirpath, fn)
+            with open(p, "rb") as f:
+                out[os.path.relpath(p, root)] = f.read()
+    return out
+
+
 def run_glossary_filter():
     """Spec 14 PRD 14.2 — the centrality filter, and `crux validate --check=glossary`.
 
@@ -7222,6 +7284,7 @@ def main():
     run_glossary_counting()
     run_glossary_oracle()
     run_glossary_filter()
+    run_sortlab_fixture()
     run_glossary_write()
     run_agent_evals()
     run_eval_scorer()

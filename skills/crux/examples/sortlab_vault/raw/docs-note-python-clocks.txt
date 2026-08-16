@@ -1,0 +1,5 @@
+Paraphrased note: Python's clock functions
+
+Paraphrased note: Python's clock functions
+
+Python provides two main functions for timing. time.time() returns the wall clock time—the actual time of day—in seconds since 1970. The problem is that time.time() can jump backwards if the system administrator adjusts the clock, and it has coarse resolution on some systems—as coarse as 15 milliseconds on older Windows. time.perf_counter() is better for measuring elapsed time. It returns a count that only goes forward and has much finer resolution. On modern systems, perf_counter has a resolution in microseconds. The tradeoff is that perf_counter returns arbitrary units—you cannot convert it to wall-clock time. But for measuring how long a code block takes, perf_counter is the right choice. Always use perf_counter for benchmarking and time.time() only when you need the actual time of day.

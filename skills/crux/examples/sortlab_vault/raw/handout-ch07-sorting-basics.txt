@@ -1,0 +1,5 @@
+Class handout: sorting basics (chapter 7)
+
+Class handout: sorting basics (chapter 7)
+
+Sorting is one of the most common tasks a program does. This chapter covers five algorithms that every programmer should know. Each one works by comparing pairs of items and swapping them if they are out of order. The simplest is bubble sort, which walks through the list, compares each pair, and swaps them if needed. It repeats until no swaps happen. Bubble sort is slow but easy to understand. Insertion sort works like sorting playing cards: take one card at a time and slide it into its place among the cards already sorted. Selection sort finds the smallest item, puts it first, then finds the second-smallest and puts it second, and so on. These three are all roughly quadratic—doubling the list roughly quadruples the time. Merge sort and quick sort are different. Merge sort splits the list in half, sorts each half, and merges them back together. Quick sort picks a pivot, puts smaller items on one side and larger on the other, and recurses on each side. Both are much faster than the first three, growing closer to N times log N instead of N squared.

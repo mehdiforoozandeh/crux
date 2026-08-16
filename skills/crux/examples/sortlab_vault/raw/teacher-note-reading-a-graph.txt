@@ -1,0 +1,5 @@
+Teacher's note: reading a timing graph
+
+Teacher's note: reading a timing graph
+
+When you plot the time a program takes versus the input size, the shape of the curve tells you the growth rate. On a linear-linear plot, an N-squared algorithm looks like a parabola. On a log-log plot, it looks like a straight line with slope 2. A log-log plot makes it easy to spot the growth rate: the slope is the exponent. If the line is flat (slope 0), the algorithm is constant time. If the slope is 1, it is linear. If the slope is 2, it is quadratic. If the slope is between 1 and 2, it is something like N log N. When comparing two algorithms, plot both on the same log-log graph. If they cross, there is a crossover point where one becomes faster than the other. Extrapolating past your data is risky—real data might behave differently than your test data. The curve might flatten out, change slope, or bend in unexpected ways.

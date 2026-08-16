@@ -1,0 +1,33 @@
+---
+id: t114
+type: task
+title: Add a flag to cut a run short at ten minutes
+category: benchmarking
+parent: 
+blocked_by: t101
+refs: 
+hypothesis_refs: 
+status: open
+created: 2026-08-16T16:07:27
+updated: 2026-08-16T16:07:27
+---
+
+# t114 — Add a flag to cut a run short at ten minutes
+
+Refs:: _(none)_
+
+## Why
+
+Huge tests can hang the laptop for hours; a ten-minute timeout stops me from wasting my time.
+
+## Output
+
+<!-- required before `done`, and the engine checks it resolves. Either form:
+     - [Deduped table](results/dedupe/table.tsv)   - [[wiki/candi-datasets]] -->
+_(none yet)_
+
+## Evidence
+
+_(experiments only: what this run showed, in prose. The structured fact is
+`hypothesis_refs` in the frontmatter; this is the narrative beside it, and the
+engine never parses it.)_

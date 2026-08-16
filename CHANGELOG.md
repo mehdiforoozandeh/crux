@@ -8,6 +8,25 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`sortlab_vault` — a fourth example vault, and the first one that needs no field
+  knowledge.** SortLab is a high-school computer-science notebook: five hand-written sorts
+  raced against the language's built-in one, over sixteen weeks, ending in defeat. 150 nodes
+  (35 questions / 108 hypotheses / 6 syntheses), 200 tasks, 60 wiki pages, 15 registered
+  sources, 4 RD pages. It is the largest example and deliberately the most legible: a reader
+  who has never written a program can follow every sentence.
+
+  Built by driving the real CLI for every verb that has one — no status, verdict or generated
+  view was hand-written. All 87 closes derive their verdict from ticked, pre-registered
+  verifiables, including four `invalid-run`s produced the only honest way: a failed
+  outcome-neutral control, read before the claim checks.
+
+  `crux validate` on it reports **exactly two problems, both DRIFT, on `h9` and `h65`, and
+  zero warnings** — two verifiables really were edited after their locks, the nodes say so in
+  plain words, and the flag is permanent. That is the fixture's teaching point, not a defect,
+  so it is pinned rather than papered over: new `selftest` asserts fix the counts, the two
+  named drift ids, the zero-warning baseline, and `refresh()` being a byte-level no-op, so the
+  fixture cannot rot silently the way spec 08's did.
+
 - **The proxy register, the gate ruling, and spec 10 done** (spec
   [`10`](.spec/10-agent-evals.md), PRD 10.4). Six proxy fixtures — `verifiables-01`,
   `critic-01`, `migrate-01`, `tests-01`, `glossary-01`, `design-01` — so all **ten** agents in

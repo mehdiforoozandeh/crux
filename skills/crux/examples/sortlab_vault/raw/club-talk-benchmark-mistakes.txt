@@ -1,0 +1,5 @@
+Computer club talk: five benchmark mistakes
+
+Computer club talk: five benchmark mistakes
+
+Measuring program speed is harder than it looks. The first mistake is not warming up. The first run is usually slow because the code has not been compiled or optimized yet. Always run the code once or twice and discard the result before you measure. The second mistake is ignoring background load. If you are running a video call, a backup, or a browser with many tabs during your measurement, the numbers will be wrong. Close other programs and run on a quiet machine. The third mistake is trusting one run. Repeating twenty or thirty times and taking the median gives much more reliable results. The fourth mistake is using an unfair input. If you want to compare sorts, use the same lists for both, and test on sorted, reversed, random, and duplicate-heavy inputs. The fifth mistake is missing the control. Always time a small empty loop to know how much time is just overhead. If you are measuring a sort, also time a loop that does nothing but increments a counter, so you know how much of the measured time is CPU overhead versus the actual sort.

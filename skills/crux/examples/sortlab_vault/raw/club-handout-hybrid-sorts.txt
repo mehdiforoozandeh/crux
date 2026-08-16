@@ -1,0 +1,5 @@
+Computer club handout: mixing two sorts
+
+Computer club handout: mixing two sorts
+
+On small inputs, insertion sort is actually faster than merge sort or quick sort because the overhead of splitting and merging is too high. Large-O notation hides the constant factors. In practice, many library sorts use a hybrid approach: for small chunks, use insertion sort, and for larger inputs, use a divide-and-conquer method. The crossover point—the size where quick sort becomes faster than insertion sort—is often around 10 or 20 items. Introsort combines quick sort with heap sort, falling back to heap sort if the recursion gets too deep. Timsort uses merge sort with insertion sort on small runs, and also exploits the fact that real data often contains sorted runs. Measuring where the crossover occurs on your specific hardware is important because it varies with the machine, the language, and the compiler. A sort that is optimal on a server might not be optimal on a phone or a laptop.

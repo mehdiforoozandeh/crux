@@ -1,0 +1,5 @@
+Class handout: growth rates (chapter 9)
+
+Class handout: growth rates (chapter 9)
+
+When we say an algorithm's time grows as N squared, we mean if you double the input size, the time roughly quadruples. If it grows as N log N, doubling the input roughly doubles the time plus a bit. These growth rates are called big-O notation and are the key to understanding whether an algorithm will scale to large inputs. A quadratic algorithm on a list of 1000 items takes about 1 second, so on 10000 items it takes about 100 seconds. A linear algorithm would take 10 seconds on 10000 items. When comparing algorithms, growth rate matters far more than small constant factors. If one sort is twice as fast as another but has worse growth, the faster one will become slower as the input grows. To measure growth rate, measure the time on inputs of different sizes and plot the results on a log-log graph. A straight line on a log-log plot shows power-law growth, and the slope tells you the exponent. For quadratic time, the slope is 2. For linear, it is 1.
