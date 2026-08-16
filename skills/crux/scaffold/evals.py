@@ -139,22 +139,168 @@ def emitted_ids(manifest):
     return {e["id"] for tier in ("problems", "warnings") for e in r[tier]}
 
 
+#: Ticks, as they appear in a submitted id: `h1:v2=x`. Spelled out rather than reusing the
+#: markdown characters because ` ` (unmet) cannot live inside an id.
+TICKS = {"x": "x", "u": " ", "n": "-"}
+
+
+def _oracle_validation_report(m):
+    """audit-01's shape: the planted set IS the engine's emitted set, exactly."""
+    return emitted_ids(m), []
+
+
+def _oracle_ticks(m):
+    """close-01: the planted ids are `<hid>:v<n>=<tick>`, so a WRONG tick is simultaneously a
+    false positive and a false negative — which is exactly what it is.
+
+    The verdict is not scored as an id. It is `verdict_read` in the submission, checked
+    separately, because an agent can get every tick right and still call an invalid run
+    `refuted` — the confusion `crux-close`'s definition names as the failure the kinds exist
+    to prevent."""
+    hid = str(m["fm"]["node"])
+    n = E.Vault(vault_of(m)).get(hid)
+    lines = E._verifiable_lines(n["body"])
+    avail = {f"{hid}:v{i}={t}" for i in range(1, len(lines) + 1) for t in TICKS}
+
+    # one tick per check, and no phantom check
+    per = {}
+    for pid in m["planted_ids"]:
+        key, _, tick = pid.partition("=")
+        per.setdefault(key, []).append(tick)
+    cross = [(f"every check has exactly one planted tick ({sorted(per)})",
+              sorted(per) == sorted(f"{hid}:v{i}" for i in range(1, len(lines) + 1))
+              and all(len(v) == 1 for v in per.values()))]
+
+    # the fixture must NOT contain the answer: the agent proposes the ticks
+    cross.append(("the fixture's boxes are all unticked — the agent proposes them",
+                  n.status == "running" and all(t == " " for t, _x in lines)))
+
+    # and the manifest's own vector, run through the engine, must give the recorded verdict
+    by = {k: [] for k in E.VERIFIABLE_KINDS}
+    for i, (_t, text) in enumerate(lines, 1):
+        tick = per.get(f"{hid}:v{i}", [None])[0]
+        by[E.verifiable_kind(text)[0]].append(TICKS.get(tick, " "))
+    tallies = {k: E._tally(v) for k, v in by.items()}
+    derived = E.derive_verdict_15(tallies[E.DEFAULT_KIND], tallies[E.NEUTRAL_KIND],
+                                  str(n["fm"].get(E.RULE_FIELD) or "all"))
+    cross.append((f"the planted tick vector derives '{m['fm']['verdict_read']}' "
+                  f"(engine says '{derived}')", derived == str(m["fm"]["verdict_read"])))
+    return avail, cross
+
+
+def _oracle_null(m):
+    """null-01: the planted id is the confound FAMILY, from the engine's closed vocabulary.
+
+    A decoy family is declared too — a second, superficially available boring explanation the
+    fixture explicitly rules out. An agent that names it scores recall 0, which is what should
+    happen."""
+    avail = set(E.CONFOUND_FAMILIES)
+    hid = str(m["fm"]["node"])
+    n = E.Vault(vault_of(m)).get(hid)
+    decoy = str(m["fm"].get("decoy") or "")
+    cross = [("exactly one family is planted", len(m["planted_ids"]) == 1),
+             (f"the decoy '{decoy}' is a real family and is not the answer",
+              decoy in E.CONFOUND_FAMILIES and decoy not in m["planted_ids"]),
+             ("the reference null passes the engine's own null check",
+              E.null_problem(str(m["fm"]["reference_null"]), E.node_schema(n)) is None),
+             ("the fixture's own `## Null` is empty — the agent writes it",
+              not (E._null_text(n) or "").strip())]
+    return avail, cross
+
+
+def _oracle_situate(m):
+    """situate-01: the payload's own facts, as ids.
+
+    `untested:` and `inflight:` are different facts and the agent's definition says to keep
+    them apart — a claim nobody has run and a claim whose run is executing need different next
+    moves. `gap:` is a question with no findings on any child, and it is the invention trap:
+    the submission must say nothing is settled there rather than narrate around it."""
+    anchor = str(m["fm"]["node"])
+    root = vault_of(m)
+    v = E.Vault(root)
+    b = E.brief(root, anchor, mode="situate")
+    def descend(qid):
+        for k in v.children.get(qid, ()):
+            yield v.nodes[k]
+            if v.nodes[k].type == "question":
+                yield from descend(k)
+
+    avail = {f"untested:{u['id']}" for u in b["untested"]["unrun_ideas"]}
+    avail |= {f"inflight:{n.id}" for n in descend(anchor)
+              if n.type == "idea" and n.status == "running"}
+
+    def settled(qid):
+        """Any hypothesis anywhere under `qid` that carries findings. A question with none is
+        one where nothing is settled yet, and saying so is the agent's job — filling the hole
+        with plausible narrative is the failure a fluent model is most likely to have."""
+        for k in v.children.get(qid, ()):
+            n = v.nodes[k]
+            if n.type == "idea" and E._deck_text(n["body"], "Findings"):
+                return True
+            if n.type == "question" and settled(k):
+                return True
+        return False
+
+    avail |= {f"gap:{q}" for q in b["untested"]["open_questions"] if not settled(q)}
+    ref = _section(m["body"], "Reference answer")
+    cross = [("the reference answer lints clean",
+              ref.strip() != "" and E.situate_lint(ref, [anchor]) == [])]
+    return avail, cross
+
+
+ORACLES = {"validation_report": _oracle_validation_report,
+           "verifiable_ticks": _oracle_ticks,
+           "null_vocabulary": _oracle_null,
+           "situate_payload": _oracle_situate}
+
+
+def _section(body, heading):
+    """The text under `## <heading>`. When the section contains a fenced block, ONLY the fence
+    is returned — a committed reference answer is the fence, and the sentences introducing it
+    are commentary. Without that rule the commentary counts as a paragraph and the shape check
+    fails on the manifest's own prose rather than on the answer."""
+    lines, on = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            on = line[3:].strip().lower() == heading.lower()
+            continue
+        if on:
+            lines.append(line)
+    fenced, out, inside = [], [], False
+    for line in lines:
+        if line.strip().startswith("```"):
+            inside = not inside
+            continue
+        (fenced if inside else out).append(line)
+    return "\n".join(fenced if fenced else out).strip("\n")
+
+
 def certify(name, root=None):
     """Prove the manifest true. Read-only; the fixture tree is never written.
 
     Three ways a hand-authored fixture goes wrong, and all three are caught here:
-      missing — a planted id the engine does not emit (the defect was never planted, or was
+      missing — a planted id the oracle does not offer (the defect was never planted, or was
                 planted as something `validate` does not report at all: a task `blocked_by`
                 cycle is a *status*, not a problem);
-      extra   — an id the engine emits that nobody planted, which would score a CORRECT agent
-                finding as invented;
+      extra   — an id the oracle offers that nobody planted. For `validation_report` this is
+                fatal: it would score a CORRECT agent finding as invented. For the fixtures
+                whose oracle offers a *menu* (every family in the closed vocabulary, every
+                tick a check could carry), extra is expected and is not a failure — what
+                matters there is that no planted id is outside the menu.
       band    — `unset` is legal and reported, never silently treated as a pass."""
     m = load_manifest(name, root)
-    got = emitted_ids(m)
-    missing = sorted(m["planted_ids"] - got)
-    extra = sorted(got - m["planted_ids"])
+    if m["oracle"] not in ORACLES:
+        raise E.CruxError(f"fixture '{name}': unknown oracle '{m['oracle']}' — known oracles "
+                          f"are {', '.join(sorted(ORACLES))}")
+    avail, cross = ORACLES[m["oracle"]](m)
+    exact = m["oracle"] == "validation_report"
+    missing = sorted(m["planted_ids"] - avail)
+    extra = sorted(avail - m["planted_ids"]) if exact else []
+    failed = [c for c, ok in cross if not ok]
     return {"fixture": name, "agent": m["agent"], "ground_truth": m["ground_truth"],
-            "ok": not missing and not extra, "missing": missing, "extra": extra,
+            "oracle": m["oracle"],
+            "ok": not missing and not extra and not failed,
+            "missing": missing, "extra": extra, "cross_failed": failed,
             "planted": len(m["planted_ids"]), "band": m["band"],
             "band_set": m["band"] != BAND_UNSET}
 
@@ -253,8 +399,14 @@ def score(manifest, submission, repo=None):
         vals = sorted(r[k] for r in out["runs"])
         out[k] = {"min": vals[0], "median": vals[len(vals) // 2], "max": vals[-1]}
 
+    out["hard"] = hard_checks(m, submission)
+
     band = parse_band(m["band"])
-    if band is None:
+    if any(not ok for _n, ok, _w in out["hard"]):
+        # a HARD check is not a band. An agent can tick every box right and still read an
+        # invalid run as `refuted`, and no distribution over K runs makes that acceptable.
+        out["verdict"] = FAIL
+    elif band is None:
         out["verdict"] = UNGRADED           # the PI has not set the bar; claim nothing
     else:
         # the band is the WORST run, not the average: "across K runs" is what stops one lucky
@@ -262,6 +414,32 @@ def score(manifest, submission, repo=None):
         out["verdict"] = (PASS if out["recall"]["min"] >= band["recall"]
                           and out["precision"]["min"] >= band["precision"] else FAIL)
     return out
+
+
+def hard_checks(m, submission):
+    """Pass/fail checks that sit BESIDE the band, never inside it, as [(name, ok, why)].
+
+    Some things a distribution cannot express. `crux-close` can propose a perfect tick vector
+    and still call the run `refuted` rather than `invalid-run` — a different sentence, and
+    confusing the two is the failure spec 15's kinds exist to prevent. `crux-situate` can be
+    accurate and four times too long, and brevity is that agent's stated acceptance criterion.
+    Both are one bit, so both are graded as one bit."""
+    out = []
+    want = m["fm"].get("verdict_read")
+    if want:
+        got = str(submission.get("verdict_read") or "")
+        out.append((f"verdict_read {got or '(none)'!r}", got == str(want),
+                    f"the run reads as '{want}'"))
+    if m["oracle"] == "situate_payload":
+        answer = str(submission.get("answer") or "")
+        findings = situate_findings(answer, str(m["fm"]["node"]))
+        out.append((f"the answer lints clean ({[i for i, _x in findings]})", not findings,
+                    "brevity is situate's acceptance criterion, not a preference"))
+    return out
+
+
+def situate_findings(answer, anchor):
+    return E.situate_lint(answer, [anchor]) if answer.strip() else [("situate:empty", "no answer")]
 
 
 def format_score(s):
@@ -279,6 +457,8 @@ def format_score(s):
                  f"max {s['recall']['max']:.2f}")
     lines.append(f"    precision min {s['precision']['min']:.2f}  med {s['precision']['median']:.2f}  "
                  f"max {s['precision']['max']:.2f}")
+    for name, ok, why in s.get("hard") or []:
+        lines.append(f"    hard: {'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f" — {why}"))
     lines.append(f"    {s['verdict']}" + ("  — band unset, nothing is claimed"
                                           if s["verdict"] == UNGRADED else f"  (band: {s['band']})"))
     return "\n".join(lines)
@@ -520,6 +700,8 @@ def main(argv=None):
                     print(f"       missing: {i}")
                 for i in r["extra"]:
                     print(f"       extra:   {i}")
+                for c in r["cross_failed"]:
+                    print(f"       cross:   {c}")
         return 0 if all(r["ok"] for r in rows) else 1
 
     r = certify(a.fixture)

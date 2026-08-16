@@ -6929,6 +6929,116 @@ def run_mutation_harness():
           E.ENGINE_VERSION == "3.1")
 
 
+def run_ground_truth_fixtures():
+    """Spec 10 PRD 10.3 — the three fixtures whose answer the engine already holds.
+
+    Spec 10 divides its fixtures into genuine ground truth and proxies, and is blunt about why:
+    *"an eval that overstates its own rigour is the same failure mode this whole backlog exists
+    to fix."* Two things moved since it was written. `crux-tests` LOSES its ground truth — its
+    oracle needs executing model-written code, which is parked — and `crux-situate` GAINS one,
+    because PRD 13.1 shipped `situate_lint` saying in as many words that *"spec 10 inherits an
+    oracle instead of inventing one."*
+
+    So: close-01 against `derive_verdict_15`, null-01 against the closed confound vocabulary,
+    situate-01 against the situate payload and its lint. No new oracle is written; three are
+    inherited."""
+    print("\n# agent evals — the ground-truth fixtures (spec 10, PRD 10.3)")
+    import evals as V
+
+    def sub(fix, name):
+        return V.load_submission(os.path.join(V.FIXTURES, fix, "submissions", name))
+
+    def sc(fix, name):
+        return V.score(V.load_manifest(fix), sub(fix, name))
+
+    certs = {c["fixture"]: c for c in V.certify_all()}
+    three = ("close-01", "null-01", "situate-01")
+    check(f"evals: the three ground-truth fixtures certify "
+          f"({[(n, certs[n]['ok']) for n in three if n in certs]})",
+          all(n in certs and certs[n]["ok"] for n in three))
+
+    # ---- close-01: the verdict is the ENGINE's, so the fixture cannot disagree with it.
+    #      `certify` derives it from the manifest's own tick vector and compares.
+    m = V.load_manifest("close-01")
+    hid = str(m["fm"]["node"])
+    node = E.Vault(V.vault_of(m)).get(hid)
+    lines = E._verifiable_lines(node["body"])
+    ticks = {p.partition("=")[0]: p.partition("=")[2] for p in m["planted_ids"]}
+    by = {k: [] for k in E.VERIFIABLE_KINDS}
+    for i, (_t, text) in enumerate(lines, 1):
+        by[E.verifiable_kind(text)[0]].append(V.TICKS[ticks[f"{hid}:v{i}"]])
+    tal = {k: E._tally(v) for k, v in by.items()}
+    derived = E.derive_verdict_15(tal[E.DEFAULT_KIND], tal[E.NEUTRAL_KIND],
+                                  str(node["fm"].get(E.RULE_FIELD)))
+    check(f"evals: close-01's known verdict is the engine's own ({derived})",
+          derived == str(m["fm"]["verdict_read"]) == "invalid-run")
+    check("evals: close-01 discriminates invalid-run from refuted",
+          tal[E.NEUTRAL_KIND][1] == 1 and tal[E.DEFAULT_KIND][:2] == (2, 0))
+
+    s = sc("close-01", "refuted-misread.json")
+    check("evals: reading an invalid run as refuted fails close-01",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0
+          and s["verdict"] == V.FAIL
+          and any(not ok for _n, ok, _w in s["hard"]))
+
+    # ---- null-01
+    m = V.load_manifest("null-01")
+    check(f"evals: null-01 plants a family from the closed vocabulary ({m['planted_ids']})",
+          m["planted_ids"] <= set(E.CONFOUND_FAMILIES) and len(m["planted_ids"]) == 1)
+    n = E.Vault(V.vault_of(m)).get(str(m["fm"]["node"]))
+    check("evals: null-01's reference null passes the engine's own null check",
+          E.null_problem(str(m["fm"]["reference_null"]), E.node_schema(n)) is None
+          and not (E._null_text(n) or "").strip())
+
+    s = sc("null-01", "decoy.json")
+    check(f"evals: null-01's decoy family scores zero recall (r={s['recall']['min']})",
+          str(m["fm"]["decoy"]) in E.CONFOUND_FAMILIES and s["recall"]["min"] == 0.0)
+    # and the shape spec 10 rejects by name: recall-only scoring would call this perfect
+    s = sc("null-01", "everything.json")
+    check(f"evals: naming every family is recall 1.0 and precision {s['precision']['min']:.2f}",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] < 0.2)
+
+    # ---- situate-01
+    m = V.load_manifest("situate-01")
+    anchor = str(m["fm"]["node"])
+    ref = V._section(m["body"], "Reference answer")
+    check("evals: situate-01's reference answer lints clean",
+          ref.strip() and E.situate_lint(ref, [anchor]) == [])
+
+    payload = E.brief(V.vault_of(m), anchor, mode="situate")
+    check(f"evals: situate-01 plants both a gap and an invention trap ({sorted(m['planted_ids'])})",
+          any(i.startswith("untested:") for i in m["planted_ids"])
+          and any(i.startswith("inflight:") for i in m["planted_ids"])
+          and any(i.startswith("gap:") for i in m["planted_ids"])
+          and payload["untested"]["unrun_ideas"])
+
+    s = sc("situate-01", "invented.json")
+    check(f"evals: inventing a finding costs situate-01 precision (p={s['precision']['min']:.2f})",
+          s["precision"]["min"] < 1.0 and s["recall"]["min"] < 1.0)
+    # brevity is situate's stated acceptance criterion, so it is one bit beside the band
+    s = sc("situate-01", "verbose.json")
+    check("evals: a verbose situate answer fails on the lint, whatever its recall",
+          s["recall"]["min"] == 1.0 and s["verdict"] == V.FAIL
+          and any(not ok for _n, ok, _w in s["hard"]))
+
+    # ---- the two properties that hold across every fixture in the epic
+    ms = [V.load_manifest(n) for n in V.fixture_names()]
+    check("evals: the ground-truth fixtures declare their status and leave the band to the PI",
+          all(V.load_manifest(n)["ground_truth"] == "yes"
+              and V.load_manifest(n)["band"] == V.BAND_UNSET for n in three))
+    # P7: no fixture may make a scientific judgment a deterministic predicate by fiat. Spec 09's
+    # staleness warning is a PI ruling — a claim that recorded answers no longer reflect what we
+    # know is on the footing of `answer` and `pursue`, gated one node at a time.
+    banned = ("stale", "outdated", "no longer reflect", "wrong answer", "should be reopened")
+    smell = [f"{m['name']}:{p['id']}" for m in ms for p in m["planted"]
+             if any(b in (p["class"] + " " + p["note"]).lower() for b in banned)]
+    check(f"evals: every planted defect is structural, never a research judgment ({smell})",
+          not smell)
+
+    check(f"evals: the ground-truth fixtures do not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -7013,6 +7123,7 @@ def main():
     run_agent_evals()
     run_eval_scorer()
     run_mutation_harness()
+    run_ground_truth_fixtures()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

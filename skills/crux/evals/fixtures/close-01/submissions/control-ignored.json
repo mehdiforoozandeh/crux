@@ -1,0 +1,44 @@
+{
+ "fixture": "close-01",
+ "agent": "crux-close",
+ "agent_sha": "29f410f4dc52b8d08652b7979caea3dcd0185e4336e0c0a2998ad9a9f22c5213",
+ "_note": "CANNED \u2014 the control ticked MET when it plainly failed, and the run read as supported. A wrong tick is both a miss and an invention, so it costs recall and precision at once.",
+ "verdict_read": "supported",
+ "runs": [
+  {
+   "findings": [
+    "h1:v1=x",
+    "h1:v2=x",
+    "h1:v3=x"
+   ]
+  },
+  {
+   "findings": [
+    "h1:v1=x",
+    "h1:v2=x",
+    "h1:v3=x"
+   ]
+  },
+  {
+   "findings": [
+    "h1:v1=x",
+    "h1:v2=x",
+    "h1:v3=x"
+   ]
+  },
+  {
+   "findings": [
+    "h1:v1=x",
+    "h1:v2=x",
+    "h1:v3=x"
+   ]
+  },
+  {
+   "findings": [
+    "h1:v1=x",
+    "h1:v2=x",
+    "h1:v3=x"
+   ]
+  }
+ ]
+}

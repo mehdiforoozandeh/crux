@@ -1,0 +1,5 @@
+CONTROL — shuffled-label arm, held-out split, mIoU
+  linear   0.402  0.398  0.407  0.399  0.401     mean 0.4014
+  pooled   0.517  0.523  0.509  0.521  0.515     mean 0.5170
+  chance for this label distribution is 0.083.
+  Both arms score far above chance on SHUFFLED labels: the split leaks into training.

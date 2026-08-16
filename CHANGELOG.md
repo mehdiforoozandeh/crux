@@ -8,6 +8,29 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The ground-truth fixtures: `close-01`, `null-01`, `situate-01`** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.3). Three fixtures whose answer the engine already
+  holds, so no new oracle was written.
+
+  `close-01` is a `running` hypothesis with canned results in which every check's outcome is
+  unambiguous — and a **failing outcome-neutral control**, so the correct reading is
+  `invalid-run` and not `refuted`. `derive_verdict_15` supplies the verdict from the manifest's
+  own tick vector, so the fixture cannot disagree with the engine. Ticks are scored as
+  `h1:v3=u` ids, which makes a wrong tick both a miss and an invention — because that is what
+  it is. `null-01` plants `capacity` (84M vs 121M parameters, stated as fact and never as a
+  concern) with `normalization` as a **decoy**: named in the vault, shared across both arms,
+  and therefore recall 0 for anyone who grabs it. `situate-01` runs backwards — the planted set
+  is the payload's own facts (`untested:h2`, `inflight:h3`) plus `gap:q3`, a question with no
+  hypotheses at all, which is the invention trap.
+
+  Two things sit **beside** the band rather than inside it, because they are one bit and no
+  distribution over K runs makes them acceptable: reading an invalid run as `refuted`, and a
+  situate answer that is accurate and four times too long.
+
+  Also recorded: `crux-tests` **loses** its ground truth (its oracle needs executing
+  model-written code, which is parked) and `crux-situate` **gains** one, since PRD 13.1 shipped
+  `situate_lint` for exactly this. **No engine change, no version bump.**
+
 - **The mutation harness — proof the agent suite can detect a regression** (spec
   [`10`](.spec/10-agent-evals.md), PRD 10.2). Spec 10's fourth acceptance criterion is the only
   one a passing suite cannot fake, and it is the cheapest: a degraded *definition* can be

@@ -1,0 +1,44 @@
+{
+ "fixture": "situate-01",
+ "agent": "crux-situate",
+ "agent_sha": "98ceca03a8e762be87e4d4dfd91372dd83b392e003b27b41fe7b395d4cc69585",
+ "_note": "CANNED \u2014 the reference answer, carrying all three planted facts.",
+ "answer": "Resolved: q1 \u2014 \"How do we cut the label budget?\", with q2 and q3 beneath it. We are teaching a system to label pictures using far fewer hand-labelled examples than usual. One idea worked, one is still running, and one branch is empty.\n\nq1 asks how to cut the label budget for the segmenter, under a goal of making the segmenter work with fewer labels. Two questions sit beneath it: q2, on whether pretraining helps when labels are scarce, and q3, on which augmentation family matters. The linked literature page on pretraining for dense prediction says the benefit is largest exactly where labels are scarce.\n\nUnder q2, h1 is closed and supported: pretraining beat training from scratch by 4.1 mIoU at 100 labels over three seeds, and the control reproduced the published scratch number at 1000 labels, so the harness reads correctly. Its findings note the catch \u2014 the declared null was capacity, the pretrained encoder is larger, and a width-matched scratch arm was never run, so that null is not ruled out. h3 is running now on cluster job 8812, asking whether a longer schedule widens the gap. Nothing is settled under q3 yet: it has no hypotheses at all.\n\nWhat remains is three different kinds of thing. h2 \u2014 does pretraining still help at 20 labels \u2014 has never been run. h3 is in flight, so the move there is to wait rather than to start anything. q3 is empty, so the move there is to write a first hypothesis. My recommendation is to run h2 next: it is the cheapest check on whether h1's result survives at the label count you actually care about, with the width-matched scratch arm a close second. Which to pursue is yours to decide.",
+ "runs": [
+  {
+   "findings": [
+    "untested:h2",
+    "inflight:h3",
+    "gap:q3"
+   ]
+  },
+  {
+   "findings": [
+    "untested:h2",
+    "inflight:h3",
+    "gap:q3"
+   ]
+  },
+  {
+   "findings": [
+    "untested:h2",
+    "inflight:h3",
+    "gap:q3"
+   ]
+  },
+  {
+   "findings": [
+    "untested:h2",
+    "inflight:h3",
+    "gap:q3"
+   ]
+  },
+  {
+   "findings": [
+    "untested:h2",
+    "inflight:h3",
+    "gap:q3"
+   ]
+  }
+ ]
+}
