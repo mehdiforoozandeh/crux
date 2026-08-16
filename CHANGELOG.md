@@ -20,6 +20,19 @@ verdict/roll-up/view logic changes.
   document costs nothing from the budget it exists to free. `ENGINE_VERSION` 1.4 → 1.5;
   a pre-1.5 vault has no `rd/` and loads byte-unchanged.
 
+- **`crux validate --check=rd`: the RD structural lint** (spec
+  [`07`](.spec/07-rd-layer.md), PRD 07.2). Four mechanical checks plus the status enum: the
+  node's `RD::` backlink resolves; the two ownership records (the RD's `node:`, the node's
+  link) agree; exactly one design is live per node; the supersession chain resolves and is
+  acyclic. Findings are **problems**, matching the wiki lint — an integrity break, not an
+  economy warning — and the check is always-on but returns immediately on a vault with no
+  `rd/`. Two wiki-lint corrections ride along: a wiki page citing `[[rd/…]]` is now a **flow
+  violation** (the one-way rule extended — the literature layer must not cite the project's
+  own design) instead of an unhelpful "broken link", and a wiki page cited only by an RD is
+  no longer reported as an orphan. Deliberately **not** checked: whether a superseded RD was
+  edited — `git log -p rd/<slug>.md` is the audit trail, the same call made for a node's
+  decision history.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec

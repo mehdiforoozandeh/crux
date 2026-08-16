@@ -98,7 +98,7 @@ PROSE_SECTIONS = {
 # OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
-CHECKS     = ("tree", "wiki", "economy", "fanout")
+CHECKS     = ("tree", "wiki", "economy", "fanout", "rd")
 OPT_CHECKS = ("decks",)
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
@@ -990,8 +990,16 @@ def validate_wiki(root):
     page_slugs = {p["slug"] for p in pages}
     tree_targets = set(v.nodes) | {n.basename for n in v.nodes.values()}
 
+    # explicit `[[rd/…]]` references, kept prefixed: `link_targets` strips the directory,
+    # so without this the flow violation below would read as a bare "broken link" and send
+    # the reader hunting for a wiki page that was never meant to exist.
+    def _rd_refs(text):
+        return {m.strip().split("/")[-1] for m in
+                re.findall(r"\[\[\s*" + RD_DIR + r"/([^\]|#]+?)(?:\.md)?\s*(?:[|#][^\]]*)?\]\]", text)}
+
     # per-page: required frontmatter + cited-source integrity + link resolution
     for p in pages:
+        rd_refs = _rd_refs(p["body"])
         for field in ("title", "summary"):
             if not str(p["fm"].get(field) or "").strip():
                 problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': missing required field '{field}'"))
@@ -999,6 +1007,12 @@ def validate_wiki(root):
             if not os.path.isfile(os.path.join(root, s)):
                 problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': cites missing source '{s}' (not a file under the vault)"))
         for t in p["links"]:
+            if t in rd_refs:
+                # the one-way rule, extended: the literature layer must not cite the
+                # project's own design reasoning any more than it may cite the tree
+                problems.append((f"wiki:{p['slug']}", f"wiki page '{p['slug']}': flow violation — links "
+                                 f"RD page [[{RD_DIR}/{t}]] (the wiki must not cite the project's own design)"))
+                continue
             if t in page_slugs:
                 continue
             if t in tree_targets:
@@ -1016,6 +1030,12 @@ def validate_wiki(root):
                 inbound[t] += 1
     for n in v.nodes.values():
         for t in link_targets(n["body"]):
+            if t in inbound:
+                inbound[t] += 1
+    # an RD citing a wiki page is intended usage — grounding a design in the literature is
+    # the flow rule working, so it must not leave that page reported as an orphan
+    for r in scan_rd_pages(root):
+        for t in r["links"]:
             if t in inbound:
                 inbound[t] += 1
     for p in pages:
@@ -1161,6 +1181,71 @@ def cmd_rd(root, nid, title, supersedes=None):
     write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
     refresh(root)
     return slug, fn
+
+def validate_rd(root):
+    """Structural lint over the RD layer — mechanical checks only: the node's backlink
+    resolves, the two ownership records agree, exactly one design is live per node, and the
+    supersession chain resolves and is acyclic. Whether an RD is warranted, current or good
+    is judgment; that lives in the `crux-rd` skill, exactly as the wiki's semantics live in
+    `crux-wiki`.
+
+    Deliberately NOT checked: whether a superseded RD was edited (spec 07 D7). The engine has
+    no memory of a file's previous bytes, and `git log -p rd/<slug>.md` already is the record
+    — the same call spec 06 made when it sent decision history to git."""
+    problems = []
+    if not rd_active(root):
+        return problems
+    v = Vault(root)
+    pages = scan_rd_pages(root)
+    by_slug = {p["slug"]: p for p in pages}
+
+    # the node half of the ownership pair: which RD each node's `RD::` line points at
+    node_link = {}
+    for n in v.nodes.values():
+        for m in re.findall(r"\[\[\s*" + RD_DIR + r"/([^\]|#]+?)(?:\.md)?\s*(?:[|#][^\]]*)?\]\]", n["body"]):
+            node_link[n.id] = m.strip().split("/")[-1]
+    for nid in sorted(node_link, key=natkey):
+        if node_link[nid] not in by_slug:
+            problems.append((f"node:{nid}", f"node '{nid}': broken RD link "
+                                            f"[[{RD_DIR}/{node_link[nid]}]]"))
+
+    active = {}
+    for p in pages:
+        sid = f"rd:{p['slug']}"
+        if p["status"] not in RD_STATUS:
+            problems.append((sid, f"rd page '{p['slug']}': bad status '{p['status']}' "
+                                  f"(expected one of {', '.join(RD_STATUS)})"))
+        node = p["node"]
+        if not node or node not in v.nodes:
+            problems.append((sid, f"rd page '{p['slug']}': owning node '{node}' does not exist"))
+        else:
+            if p["status"] == "active":
+                active.setdefault(node, []).append(p["slug"])
+                linked = node_link.get(node)
+                if linked and linked in by_slug and linked != p["slug"]:
+                    problems.append((sid, f"rd page '{p['slug']}': claims node '{node}', but "
+                                          f"'{node}' links [[{RD_DIR}/{linked}]]"))
+        if p["supersedes"] and p["supersedes"] not in by_slug:
+            problems.append((sid, f"rd page '{p['slug']}': supersedes missing page "
+                                  f"'{p['supersedes']}'"))
+    for node in sorted(active, key=natkey):
+        slugs = sorted(active[node])
+        if len(slugs) > 1:
+            problems.append((f"node:{node}", f"node '{node}': {len(slugs)} active RDs "
+                                             f"({', '.join(slugs)}) — an RD is superseded, "
+                                             f"never duplicated"))
+
+    # the chain must terminate. Walked per page with a seen-set rather than trusting the
+    # data, so a hand-edited cycle reports instead of spinning.
+    for p in pages:
+        seen, cur = {p["slug"]}, p["supersedes"]
+        while cur in by_slug:
+            if cur in seen:
+                problems.append((f"rd:{p['slug']}", f"rd page '{p['slug']}': supersession cycle"))
+                break
+            seen.add(cur)
+            cur = by_slug[cur]["supersedes"]
+    return problems
 
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
 def _write_obsidian_vault(root):
@@ -1561,6 +1646,7 @@ def validation_report(root, checks=None):
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
+    if "rd"      in names: problems += validate_rd(root)
     if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,
             "checks": list(names),

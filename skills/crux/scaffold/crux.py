@@ -141,7 +141,7 @@ def main(argv=None):
     s.add_argument("--supersedes", default=None, metavar="SLUG",
                    help="replace this node's active RD — an active RD is never amended in place")
 
-    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy)"))
+    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
     s.add_argument("--check", default=None, metavar="LIST",

@@ -1813,8 +1813,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the four documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout"))
+    check("economy: the check registry is the five documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -2600,6 +2600,146 @@ def run_rd_migration():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_rd_lint():
+    """Spec 07, PRD 07.2 — the RD structural lint. Mechanical checks only: does the link
+    resolve, do the two ownership records agree, is there exactly one live design, is the
+    chain acyclic. Whether an RD is GOOD, current, or warranted is judgment and lives in the
+    crux-rd skill — the same line validate_wiki already draws.
+
+    The negative cases carry the weight: anything can flag everything, so what matters is
+    that a tidy vault, a pre-07 vault and a superseded chain all stay silent. Dirty cases run
+    one at a time and are removed after, so every finding is attributable."""
+    print("\n# RD lint (validate --check=rd)")
+    root = tempfile.mkdtemp(prefix="crux_rdlint_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD Lint", root)
+    q1, _ = E.cmd_ask(root, "a question")
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+
+    # the check is registered, and it is always-on rather than opt-in: an RD is vault
+    # content, not a derived document like a deck
+    check("rdlint: rd is a first-class check, not opt-in",
+          "rd" in E.CHECKS and "rd" not in E.OPT_CHECKS)
+
+    # a pre-07 vault: no findings, and the check must not even build a Vault to say so
+    _V, seen = E.Vault, []
+    class _Spy(_V):
+        def __init__(self, *a, **kw):
+            seen.append(1); super().__init__(*a, **kw)
+    E.Vault = _Spy
+    try:
+        empty = E.validate_rd(root)
+    finally:
+        E.Vault = _V
+    check("rdlint: no rd/ means no findings", empty == [])
+    check("rdlint: the rd check short-circuits on an inactive layer", seen == [])
+
+    # a tidy set, including a full supersession chain, is silent
+    a1, _ = E.cmd_rd(root, h1, "first design")
+    a2, _ = E.cmd_rd(root, h1, "second design", supersedes=a1)
+    b1, _ = E.cmd_rd(root, q1, "question design")
+    check("rdlint: a tidy RD set validates clean", E.cmd_validate(root) == [])
+
+    def probs():
+        return [m for _, m in E.cmd_validate(root)]
+    rdpath = lambda s: os.path.join(root, "rd", s + ".md")
+
+    # --- one dirty condition at a time, each undone afterwards ---
+    # a node pointing at an RD that does not exist
+    edit(node_path(root, h1), "[[rd/%s]]" % a2, "[[rd/ghost]]")
+    check("rdlint: a dangling RD link is caught",
+          any("broken RD link" in m and "ghost" in m for m in probs()))
+    check("rdlint: RD findings are problems, not warnings",
+          E.validation_report(root)["warnings"] == []
+          and any("broken RD link" in p["message"] for p in E.validation_report(root)["problems"]))
+    check("rdlint: findings carry a namespaced id",
+          any(p["id"] == "node:%s" % h1 for p in E.validation_report(root)["problems"]))
+    edit(node_path(root, h1), "[[rd/ghost]]", "[[rd/%s]]" % a2)
+
+    # two live designs for one node — the invariant the whole lifecycle exists to hold
+    edit(rdpath(a1), "status: superseded", "status: active")
+    msgs = [m for m in probs() if "active RDs" in m]
+    check("rdlint: two active RDs for one node caught", len(msgs) == 1)
+    check("rdlint: the two-active message names both slugs",
+          bool(msgs) and a1 in msgs[0] and a2 in msgs[0])
+    edit(rdpath(a1), "status: active", "status: superseded")
+
+    # the two ownership records disagreeing (this is what recording it twice buys)
+    edit(node_path(root, h1), "[[rd/%s]]" % a2, "[[rd/%s]]" % b1)
+    check("rdlint: an ownership disagreement is caught",
+          any("claims node" in m and a2 in m for m in probs()))
+    edit(node_path(root, h1), "[[rd/%s]]" % b1, "[[rd/%s]]" % a2)
+
+    # a chain link pointing nowhere, then a chain that closes on itself
+    edit(rdpath(a2), "supersedes: %s" % a1, "supersedes: nowhere")
+    check("rdlint: supersedes pointing nowhere is caught",
+          any("supersedes missing page" in m and "nowhere" in m for m in probs()))
+    edit(rdpath(a2), "supersedes: nowhere", "supersedes: %s" % a1)
+    edit(rdpath(a1), "supersedes: \n", "supersedes: %s\n" % a2)
+    done = []
+    cyc = probs(); done.append(1)
+    check("rdlint: a supersession cycle is caught", any("cycle" in m for m in cyc))
+    check("rdlint: a supersession cycle does not hang", done == [1])
+    edit(rdpath(a1), "supersedes: %s\n" % a2, "supersedes: \n")
+
+    # an RD whose owning node was deleted / never existed
+    edit(rdpath(b1), "node: %s" % q1, "node: q99")
+    check("rdlint: an orphaned RD is caught",
+          any("does not exist" in m and b1 in m for m in probs()))
+    edit(rdpath(b1), "node: q99", "node: %s" % q1)
+
+    # the status enum
+    edit(rdpath(b1), "status: active", "status: final")
+    check("rdlint: a bad RD status is caught", any("bad status" in m and "final" in m for m in probs()))
+    edit(rdpath(b1), "status: final", "status: active")
+    check("rdlint: the vault is tidy again", E.cmd_validate(root) == [])
+
+    # the check selector
+    edit(rdpath(b1), "node: %s" % q1, "node: q99")
+    check("rdlint: --check=rd isolates the RD findings",
+          all("does not exist" in p["message"] for p in E.validation_report(root, ["rd"])["problems"]))
+    check("rdlint: --check=tree excludes the RD findings",
+          E.validation_report(root, ["tree"])["problems"] == [])
+    edit(rdpath(b1), "node: q99", "node: %s" % q1)
+
+    # --- the two wiki-lint interactions (spec 07 D16 / D17) ---
+    # the one-way flow rule extended: the literature layer must not cite the project's own
+    # design reasoning either. Before 07 this read as a bare "broken link", which sent the
+    # reader hunting for a wiki page that was never meant to exist.
+    E.ensure_wiki(root)
+    write(os.path.join(root, "raw", "s.txt"), "a source\n")
+    E.cmd_ingest(root, "raw/s.txt", title="A Source")
+    wiki_page(root, "cited", "Cited", "Only an RD links here.", sources="raw/s.txt")
+    wiki_page(root, "flow", "Flow", "Cites an RD.", sources="raw/s.txt",
+              extra="See [[rd/%s]]." % b1)
+    E.refresh(root)
+    check("rdlint: a wiki page citing an RD is a flow violation",
+          any("flow violation" in m and b1 in m for m in probs()))
+    check("rdlint: it is not reported as a broken link",
+          not any("broken link" in m and b1 in m for m in probs()))
+    os.remove(os.path.join(root, "wiki", "flow.md"))
+    # an RD grounding itself in the literature is intended usage — the page it cites is not
+    # an orphan, and before 07 it was reported as one
+    check("rdlint: a wiki page cited only by an RD starts as an orphan",
+          any("orphan" in m and "cited" in m for m in probs()))
+    edit(rdpath(b1), "## Design\n", "## Design\n\nGrounded in [[cited]].\n")
+    check("rdlint: an RD citation rescues a wiki page from orphan",
+          not any("orphan" in m and "cited" in m for m in probs()))
+
+    # --- blast radius: the shipped fixture must be untouched by any of the above ---
+    fx = os.path.join(HERE, "..", "examples", "demo_vault")
+    if os.path.isdir(fx):
+        cp = tempfile.mkdtemp(prefix="crux_rdfx_")
+        shutil.rmtree(cp); shutil.copytree(fx, cp)
+        check("rdlint: the demo fixture validates clean with the rd check",
+              E.validation_report(cp)["problems"] == [])
+        check("rdlint: the demo fixture's finding list is unchanged",
+              E.validation_report(cp) ["problems"]
+              == E.validation_report(cp, ["tree", "wiki"])["problems"])
+        shutil.rmtree(cp, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2645,6 +2785,7 @@ def main():
     run_agent_cli()
     run_rd()
     run_rd_migration()
+    run_rd_lint()
     run_deck()
     run_deck_verify()
     run_prezit()
