@@ -5261,6 +5261,109 @@ def run_migrate():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def run_agent_roster():
+    """Spec 09 PRD 09.4 — the agent-definition convention and the roster.
+
+    Six of 09's seven agents were described and none existed. More basic: crux had no
+    convention for what an agent definition IS. Spec 14's PARKED-09.md names exactly that as
+    its blocker — "the agent file format is a 09 deliverable; there is no convention to write
+    it against" — and spec 13 waits on the same thing plus `crux brief`.
+
+    Doc-only: no engine change, no version bump. What makes it assertable is that the three
+    fields carrying 09's architecture (cold_input, toolbelt, excludes) are checkable."""
+    print("\n# specialized agents — the roster (spec 09, PRD 09.4)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    adir = os.path.join(repo, "agents")
+    expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
+                "crux-close", "crux-audit", "crux-tests", "crux-glossary"]
+
+    defs = {}
+    for name in expected:
+        p = os.path.join(adir, name, "AGENT.md")
+        if os.path.isfile(p):
+            defs[name] = E.parse_doc(read(p))
+    missing = [n for n in expected if n not in defs]
+    check(f"agents: every roster entry has a definition file (missing: {missing})", not missing)
+
+    for name, (fm, body) in sorted(defs.items()):
+        check(f"agents: {name} declares the four architecture fields",
+              all(k in fm for k in ("name", "description", "cold_input", "excludes")))
+        check(f"agents: {name}'s name matches its directory", fm.get("name") == name)
+        check(f"agents: {name} reads as a workflow (when invoked -> steps -> output)",
+              "When invoked" in body and "## Output" in body)
+
+    # every toolbelt entry must be a REAL crux verb — 09 is explicit that the belt is CLI
+    # verbs, not agent-private scripts, so selftest can assert them and the PI can run any by hand
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    bad = []
+    for name, (fm, _b) in sorted(defs.items()):
+        for line in str(fm.get("toolbelt") or "").split(";"):
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("crux "):
+                bad.append(f"{name}: {line!r} is not a crux verb")
+            elif line.split()[1] not in r.stdout:
+                bad.append(f"{name}: no such verb {line.split()[1]!r}")
+    check(f"agents: every toolbelt entry is a real crux verb (bad: {bad[:3]})", not bad)
+
+    # the two isolation guarantees, declared where a reviewer can diff them against behaviour
+    crit_fm, _ = defs.get("crux-critic", ({}, ""))
+    check("agents: the critic is isolated by construction — no vault, empty toolbelt",
+          not str(crit_fm.get("toolbelt") or "").strip()
+          and "vault" in str(crit_fm.get("excludes") or "").lower())
+    ver_fm, _ = defs.get("crux-verifiables", ({}, ""))
+    check("agents: crux-verifiables declares the exclusion the brief actually enforces",
+          "Problem Statement" in str(ver_fm.get("excludes") or ""))
+    check("agents: and the brief really does enforce it (cross-checked, not just declared)",
+          "problem" not in E.brief(*_probe_vault()))
+
+    # THE LEASH. The TOOLBELT is the authority — what an agent may run — so that is what is
+    # checked. Prose is not: crux-close's body says "you do not run `crux close`", which is a
+    # mention and exactly the right thing for it to say.
+    leash = []
+    for name, (fm, _b) in sorted(defs.items()):
+        belt = str(fm.get("toolbelt") or "")
+        for banned in ("crux close", "crux answer", "crux approve", "crux task accept",
+                       "crux pursue", "crux migrate --apply"):
+            if banned in belt:
+                leash.append(f"{name}: {banned}")
+    check(f"agents: no agent's toolbelt can set a verdict or a direction (found: {leash})",
+          not leash)
+    check("agents: and crux-close says so in words, since it is the one that could",
+          "you never run `crux close`" in read(os.path.join(adir, "crux-close", "AGENT.md")).lower())
+
+    # spec 14 parked a precise contract here; it must match what shipped
+    gl_fm, _ = defs.get("crux-glossary", ({}, ""))
+    check("agents: the glossary agent matches spec 14's parked contract",
+          "propose" in str(gl_fm.get("cold_input") or "")
+          and "no write verb" in str(gl_fm.get("toolbelt") or "").lower()
+          and "conversation" in str(gl_fm.get("excludes") or "").lower())
+
+    spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
+    check("agents: the spec roster and the shipped roster agree",
+          all(n in spec for n in expected))
+    check("agents: spec 09 is flipped to done with its work items ticked",
+          "**Status:** \u2611" in spec and spec.count("- \u2611 ") >= 8)
+    readme = read(os.path.join(repo, ".spec", "README.md"))
+    check("agents: the backlog index shows 09 done",
+          re.search(r"\|\s*09\s*\|[^|]*\|[^|]*\|\s*\u2611\s*\|", readme) is not None)
+    check("agents: no engine change — ENGINE_VERSION is untouched by 09.4",
+          E.ENGINE_VERSION == "2.7")
+
+
+def _probe_vault():
+    """A throwaway vault whose hypothesis has a sentinel problem statement, for the
+    cross-check that the brief's behaviour matches what the roster declares."""
+    root = tempfile.mkdtemp(prefix="crux_probe_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Probe", root)
+    q, _ = E.cmd_ask(root, "q")
+    h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY", verifiables=["a"])
+    return root, h
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -5330,6 +5433,7 @@ def main():
     run_null()
     run_failure_scenarios()
     run_migrate()
+    run_agent_roster()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

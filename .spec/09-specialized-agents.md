@@ -1,6 +1,6 @@
 # Spec 09 — Specialized agents
 
-**Label:** `agents` · **Status:** ☐ todo
+**Label:** `agents` · **Status:** ☑ done — built as PRDs 09.0–09.4 (engine 2.3→2.7); the roster ships in `agents/`, and 13 and 14 are unparked
 **Depends on:** [06 node economy](06-node-economy.md) (for the `--json` CLI surface)
 **Supersedes parts of:** [05 autoresearch](05-autoresearch.md)
 
@@ -63,6 +63,7 @@ check — checks are not user-facing concepts and N new verbs bloats the surface
 | `crux-null` | engine-built brief | name the null and the boring explanations |
 | `crux-verifiables` | `{claim, approved null}` | write checks that discriminate, **and declare their kinds + combination rule** (amended by [15](15-evidence-semantics.md)) |
 | `crux-tests` | a requirement / RD | write tests against the requirement, never the code |
+| `crux-glossary` | vault prose + glossary + decline list | specialist jargon, or public knowledge? (added by [14](14-glossary.md); no write verb in its belt) |
 
 `crux-rd` is deliberately **not** here — it is a skill. See [07](07-rd-layer.md).
 
@@ -262,18 +263,21 @@ predates six findings that cite it" is computable — and stops there.
 
 ## Work items
 
-- ☐ Move audit health checks into `validate` as selectable checks
-- ☐ `crux migrate` verb for schema bridging
-- ☐ `crux brief <node> --json` — deterministic brief assembly
-- ☐ `## Null` section in `templates/idea.md`; closed confound vocabulary; ≤25-word check
-- ☐ Failure-scenario field per verifiable — schema, CLI (`-v` gains a second argument),
-  snapshot, cockpit
-- ☐ `validate` check: ≥1 verifiable discriminates against the null; every verifiable has a
+- ☑ Move audit health checks into `validate` as selectable checks — most already shipped with 06/v0.5; only the gate backlog was new (`--check=gate`)
+- ☑ `crux migrate` verb for schema bridging — with `MIGRATE_FORBIDDEN`: it cannot write `schema`, the rule, the lock or a null's content (15's ruling wins on the overlap)
+- ☑ `crux brief <node> --json` — deterministic brief assembly
+- ☑ `## Null` section in `templates/idea.md`; closed confound vocabulary; ≤25-word check
+- ☑ Failure-scenario field per verifiable — schema, CLI (**additive `--fails-if`**, not a
+  second `-v` argument: `nargs=2` was measured to break every existing caller), snapshot,
+  cockpit
+- ☑ `validate` check: ≥1 verifiable discriminates against the null; every verifiable has a
   non-empty distinct failure scenario
-- ☐ Agent definitions: `crux-migrate`, `crux-close`, `crux-audit`, `crux-critic`, `crux-null`,
-  `crux-verifiables`, `crux-tests`
-- ☐ PI gate between `crux-null` and `crux-verifiables`
-- ☐ `ENGINE_VERSION` bump + migration proof
+- ☑ Agent definitions in `agents/<name>/AGENT.md`: `crux-migrate`, `crux-close`, `crux-audit`,
+  `crux-critic`, `crux-null`, `crux-verifiables`, `crux-tests`, `crux-glossary`
+- ☑ PI gate between `crux-null` and `crux-verifiables` (`crux approve-null`; editing an
+  approved null voids the approval)
+- ☑ `ENGINE_VERSION` bump + migration proof (2.3 → 2.7; `SCHEMA_GENERATION` → 2, and a
+  generation-1 lock is proven not to drift)
 
 ## Acceptance criteria
 

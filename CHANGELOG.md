@@ -8,6 +8,30 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The agent roster, and a convention for what an agent definition is** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.4). Eight definitions ship in
+  `agents/<name>/AGENT.md`, mirroring the `skills/` layout so there is one mental model:
+  `crux-null` · `crux-verifiables` · `crux-critic` · `crux-migrate` · `crux-close` ·
+  `crux-audit` · `crux-tests` · `crux-glossary`.
+
+  Three frontmatter fields carry 09's architecture and are **asserted**, not just written:
+  **`cold_input`** (the only thing the agent receives), **`toolbelt`** — every entry must be a
+  real `crux ` verb, because 09 is explicit that the belt is CLI verbs rather than
+  agent-private scripts, so `selftest` can assert them and the PI can run any of them by hand
+  — and **`excludes`**, which makes each isolation boundary reviewable. `crux-verifiables`
+  declares that it never sees `## Problem Statement`, and the suite **cross-checks that the
+  brief actually enforces it** rather than trusting the declaration.
+
+  The leash is checked against the **toolbelt**, not prose: no agent may run `crux close`,
+  `answer`, `approve`, `pursue` or `task accept`. `crux-critic` ships with an **empty**
+  toolbelt and no vault access at all — isolation by construction, since it cannot pour the
+  vault into a node it cannot see.
+
+  This **unparks specs 13 and 14**: `crux-glossary`'s row matches the contract spec 14 parked
+  in `PARKED-09.md` exactly (propose-only cold input, no write verb, conversation excluded),
+  and `crux brief` from PRD 09.0 is the dependency spec 13 was waiting on. Doc-only: no
+  engine change, no `ENGINE_VERSION` bump. Spec 09 flips to ☑ with its work items ticked.
+
 - **`crux migrate` — schema bridging, with evidence fields structurally unmigratable** (spec
   [`09`](.spec/09-specialized-agents.md), PRD 09.3). Adds the structural sections a newer
   engine expects (`## ELI5`, `## TL;DR`, `## Null`, `## Artifacts`, `## Protocol`), empty.
