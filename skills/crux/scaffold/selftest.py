@@ -2053,7 +2053,7 @@ def run_deck():
     check("deck: child artifacts parsed with kinds",
           any(a["path"] == f"results/{h1}/report.md" and a["kind"] == "report"
               for a in k1["artifacts"]))
-    check("deck: rd present and empty until spec 07", p1["rd"] == [])
+    check("deck: rd is present and empty on a vault with no RD layer", p1["rd"] == [])
     check("deck: anchor question + protocol surfaced",
           p1["anchor"]["question"] == "Mid question"
           and p1["anchor"]["protocol"] == "Rules locked up front.")
@@ -2784,6 +2784,59 @@ def run_rd_skill():
         check("rdskill: spec 07 is marked done in .spec/README.md", bool(row) and "☑" in row[0])
 
 
+def run_deck_rd():
+    """Spec 07, PRD 07.5 — RD pages reach the deck payload. Spec 11 cut the `rd` slot and
+    shipped it empty on the bargain that 07 would be picked up for free; this is that pickup.
+
+    The trap this suite exists to catch: the neighbouring `wiki` block walks anchor +
+    ANCESTORS, because the wiki supplies the deck's intro. RDs are the METHODS slot for the
+    anchor's own story, so the traversal is anchor + DESCENDANTS. Copying the wiki loop would
+    put a parent's design on a child's method slide."""
+    print("\n# deck payload — RD pages in the methods slot")
+    root = tempfile.mkdtemp(prefix="crux_rddeck_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Deck RD", root)
+    q1, _ = E.cmd_ask(root, "the ancestor")
+    q2, _ = E.cmd_ask(root, "the anchor", parent=q1)
+    q4, _ = E.cmd_ask(root, "the sibling", parent=q1)
+    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"])
+
+    check("rddeck: rd is present and empty with no RD layer", E.deck_payload(root, q2)["rd"] == [])
+
+    anc, _ = E.cmd_rd(root, q1, "ancestor design")
+    sib, _ = E.cmd_rd(root, q4, "sibling design")
+    own, _ = E.cmd_rd(root, q2, "anchor design")
+    kid, _ = E.cmd_rd(root, h1, "descendant design")
+    p = E.deck_payload(root, q2)
+    slugs = [r["slug"] for r in p["rd"]]
+    check("rddeck: the anchor's RD reaches the payload", own in slugs)
+    check("rddeck: a descendant's RD reaches the payload", kid in slugs)
+    check("rddeck: an ancestor's RD stays out of the methods slot", anc not in slugs)
+    check("rddeck: a sibling's RD stays out", sib not in slugs)
+    check("rddeck: the rd entry carries slug, title and path",
+          all(set(r) == {"slug", "title", "path"} for r in p["rd"])
+          and p["rd"][0]["title"] == "anchor design")
+    check("rddeck: rd order is tree order then slug", slugs == [own, kid])
+    check("rddeck: rd paths are vault-relative",
+          all(r["path"] == "rd/%s.md" % r["slug"] for r in p["rd"]))
+    import json as J
+    dumped = J.dumps(p)
+    check("rddeck: no absolute path in the payload with RDs present", root not in dumped)
+    check("rddeck: the payload stays byte-identical with RDs",
+          J.dumps(E.deck_payload(root, q2)) == dumped)
+
+    # a superseded design is history, not the methods of the current story
+    own2, _ = E.cmd_rd(root, q2, "anchor design, second cut", supersedes=own)
+    slugs = [r["slug"] for r in E.deck_payload(root, q2)["rd"]]
+    check("rddeck: only active RDs enter the payload", own not in slugs)
+    check("rddeck: a superseded RD's successor appears", own2 in slugs)
+
+    # spec 11: "a hypothesis anchor is legal and yields a shorter payload"
+    check("rddeck: a hypothesis anchor carries its RD",
+          [r["slug"] for r in E.deck_payload(root, h1)["rd"]] == [kid])
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2831,6 +2884,7 @@ def main():
     run_rd_migration()
     run_rd_lint()
     run_rd_skill()
+    run_deck_rd()
     run_deck()
     run_deck_verify()
     run_prezit()

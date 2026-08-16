@@ -45,6 +45,14 @@ verdict/roll-up/view logic changes.
   points: "one RD per node" is now "one *active* RD per node", and the written-vs-computed
   backlink split with spec 08 is recorded on both sides.
 
+- **Decks pick up RD pages** (specs [`07`](.spec/07-rd-layer.md) +
+  [`11`](.spec/11-prezit.md), PRD 07.5). `crux deck <anchor> --json` now fills the `rd` slot
+  spec 11 cut and shipped empty: the **active** RDs owned by the anchor and everything under
+  it, as `{slug, title, path}`, in tree order then slug. The traversal is anchor +
+  *descendants*, not the neighbouring `wiki` block's anchor + *ancestors* — RDs are the
+  methods source for the anchor's own story, so a parent's design must not land on a child's
+  method slide. A vault with no `rd/` still gets `[]` and the command still cannot fail.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec

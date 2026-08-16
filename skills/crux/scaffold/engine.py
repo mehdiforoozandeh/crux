@@ -1951,6 +1951,15 @@ def _deck_child(v, cid):
     d["children"] = [_deck_child(v, c) for c in v.children.get(cid, ())]
     return d
 
+def _subtree_ids(v, nid):
+    """Every node id at or under `nid`, in tree order (the anchor first). The RD walk's
+    traversal — deliberately NOT the wiki walk's anchor+ancestors, because RDs fill the
+    methods slot for the anchor's own story and a parent's design is not it."""
+    out = [nid]
+    for c in v.children.get(nid, ()):
+        out += _subtree_ids(v, c)
+    return out
+
 def _subtree_hids(v, nid):
     """Every idea id at or under `nid`, in tree order (the anchor itself included when it
     is an idea)."""
@@ -2008,6 +2017,18 @@ def deck_payload(root, anchor):
                 wiki.append({"slug": t, "title": pages[t]["title"],
                              "path": _rel(root, pages[t]["path"])})
 
+    # RD pages owned by the anchor or anything under it (spec 07). Active only: a superseded
+    # design is history, and putting it on a methods slide is exactly what the supersession
+    # lifecycle exists to prevent. Order is defined — tree order of the owning node, then
+    # slug — because the payload's contract is byte-identical output for identical state.
+    rd_by_node = {}
+    for r in scan_rd_pages(root):
+        if r["status"] == "active" and r["node"]:
+            rd_by_node.setdefault(r["node"], []).append(r)
+    rds = [{"slug": r["slug"], "title": r["title"], "path": _rel(root, r["path"])}
+           for mid in _subtree_ids(v, n.id)
+           for r in sorted(rd_by_node.get(mid, ()), key=lambda x: x["slug"])]
+
     sid = approved_synthesis(v, n.id) if n.type == "question" else None
     synthesis = None
     if sid:
@@ -2041,7 +2062,7 @@ def deck_payload(root, anchor):
                      for s in siblings],
         "children": [_deck_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
-        "rd": [],   # empty until spec 07 lands; present so callers need no probe
+        "rd": rds,  # spec 07: the anchor's subtree's design documents — the methods source
         "synthesis": synthesis,
         "scope": {"executed": by_state["running"] + by_state["done"],
                   "parked": by_state["idea"] + by_state["staged"],
