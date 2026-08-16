@@ -1,0 +1,63 @@
+{
+ "fixture": "audit-01",
+ "agent": "crux-audit",
+ "agent_sha": "dc5dbfbd3c20bf298636daf6935b5e9f44b3022b9927e09e5fe002af9f90c7fc",
+ "_note": "CANNED \u2014 a regression test on the SCORER's arithmetic, not an agent eval. A committed transcript is frozen at the moment it was committed: it would stay green forever while the agent drifted. Every planted id, nothing else.",
+ "runs": [
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  }
+ ]
+}

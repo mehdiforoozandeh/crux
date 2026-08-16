@@ -1,0 +1,78 @@
+{
+ "fixture": "audit-01",
+ "agent": "crux-audit",
+ "agent_sha": "dc5dbfbd3c20bf298636daf6935b5e9f44b3022b9927e09e5fe002af9f90c7fc",
+ "_note": "CANNED \u2014 every planted id plus three inventions. Recall stays 1.0; precision falls. This is the failure spec 10 names: an agent optimising recall alone learns to report everything.",
+ "runs": [
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor",
+    "h1",
+    "q1",
+    "wiki:linear-probes"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor",
+    "h1",
+    "q1",
+    "wiki:linear-probes"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor",
+    "h1",
+    "q1",
+    "wiki:linear-probes"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor",
+    "h1",
+    "q1",
+    "wiki:linear-probes"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor",
+    "h1",
+    "q1",
+    "wiki:linear-probes"
+   ]
+  }
+ ]
+}

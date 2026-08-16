@@ -8,6 +8,24 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The eval scorer: precision and recall, banded over K runs, with no model call** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.1). `evals.py --fixture X --submission runs.json`
+  scores a findings file against a certified fixture: recall and precision **together** (recall
+  alone teaches an agent to report everything), the tp/fp/fn listed by id so a failure is
+  readable, and the band taken as the **worst** run across K rather than the mean.
+
+  **The harness never invokes an agent.** A program that launches one K times, decides when to
+  stop and caps what it spends is spec 05's runner, budget cap and autonomy envelope pointed at
+  a fixture — and 05 is deferred. So whoever ran the agent, attended, writes the submission;
+  this reads it. There is no `--spawn`, and `selftest` proves the property by walking
+  `evals.py`'s own AST for a network import or a spawn call rather than trusting the docstring.
+
+  Four refusals rather than a misleading number: an empty report scores precision **0.0** (not
+  the vacuous 1.0), fewer runs than the declared K is `UNDER-K`, a stale `agent_sha` means the
+  submission measured a different definition, and an unset band reports `UNGRADED` — a bar
+  nobody has set never reads as a pass. Proxies carry `[proxy]` on every path.
+  **No engine change, no version bump.**
+
 - **Agent-eval fixtures, and the certifier that keeps them honest** (spec
   [`10`](.spec/10-agent-evals.md), PRD 10.0). A fixture is a hand-authored vault with defects
   planted **one per emitted id**, plus a `PLANTED.md` manifest naming them. `evals.py`

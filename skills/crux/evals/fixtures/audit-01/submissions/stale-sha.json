@@ -1,0 +1,63 @@
+{
+ "fixture": "audit-01",
+ "agent": "crux-audit",
+ "agent_sha": "0000000000000000000000000000000000000000000000000000000000000000",
+ "_note": "CANNED \u2014 a stale hash: this submission measured a different definition, so the scorer must refuse rather than compare one agent to another.",
+ "runs": [
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  },
+  {
+   "findings": [
+    "h2",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "t2",
+    "wiki:detection-floor"
+   ]
+  }
+ ]
+}

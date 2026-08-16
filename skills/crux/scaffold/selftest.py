@@ -6799,6 +6799,135 @@ def run_agent_evals():
           and "evals/fixtures" in read(os.path.join(ex, "README.md")))
 
 
+def run_eval_scorer():
+    """Spec 10 PRD 10.1 — precision and recall, banded over K runs, with no model call.
+
+    Spec 10 is blunt about the pair: *"'Did it find things' is not a result"*, and in its
+    rejected alternatives, *"Recall-only scoring. An agent optimizing recall alone learns to
+    report everything."* So both are computed or neither is.
+
+    THE STRUCTURAL DECISION: the scorer reads a SUBMITTED findings file and never invokes an
+    agent. A program that launches an agent K times, decides when to stop and caps what it
+    spends is spec 05's three unbuilt work items pointed at a fixture — and `.spec/README.md`
+    says do not implement 05. The loop is the risk, not the target. That is not a promise
+    here; it is the assert below that reads evals.py's own source."""
+    print("\n# agent evals — the scorer (spec 10, PRD 10.1)")
+    import evals as V
+    SUB = os.path.join(V.FIXTURES, "audit-01", "submissions")
+    m = V.load_manifest("audit-01")
+
+    def sc(name, mf=m):
+        return V.score(mf, V.load_submission(os.path.join(SUB, name)))
+
+    s = sc("perfect.json")
+    check("evals: a perfect submission scores 1.0 / 1.0",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0)
+
+    s = sc("noisy.json")
+    check(f"evals: invented findings cost precision, not recall "
+          f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] < 1.0
+          and s["runs"][0]["fp"] == ["h1", "q1", "wiki:linear-probes"])
+
+    s = sc("partial.json")
+    check(f"evals: missed defects cost recall, not precision "
+          f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
+          s["recall"]["min"] < 1.0 and s["precision"]["min"] == 1.0
+          and s["runs"][0]["fn"] == ["q4", "wiki:detection-floor"])
+
+    # the vacuous-truth trap: |tp|/|reported| is 0/0 for an empty report. Reading that as 1.0
+    # hands a perfect precision to an agent that did nothing.
+    s = sc("silent.json")
+    check("evals: reporting nothing scores zero precision",
+          s["precision"]["min"] == 0.0 and s["recall"]["min"] == 0.0)
+
+    # -- the band is the WORST run. Proven on a COPY with a band written in, because every
+    #    shipped fixture ships `band: unset` and the numbers are the PI's.
+    tmp = tempfile.mkdtemp(prefix="crux_evalband_")
+    try:
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        edit(os.path.join(tmp, "audit-01", "PLANTED.md"),
+             "band: unset", "band: recall>=0.9, precision>=0.9")
+        banded = V.load_manifest("audit-01", root=tmp)
+        ids = sorted(banded["planted_ids"])
+        sha = V.agent_sha("crux-audit")
+        # four perfect runs and one that misses two. The MEAN clears 0.9; the WORST does not.
+        four_good_one_bad = {"fixture": "audit-01", "agent": "crux-audit", "agent_sha": sha,
+                             "runs": [{"findings": ids}] * 4 + [{"findings": ids[:5]}]}
+        s = V.score(banded, four_good_one_bad)
+        mean_r = sum(r["recall"] for r in s["runs"]) / 5
+        check(f"evals: the band is the worst run, not the average "
+              f"(min {s['recall']['min']:.2f} vs mean {mean_r:.2f})",
+              s["verdict"] == V.FAIL and mean_r >= 0.9 and s["recall"]["min"] < 0.9)
+        check("evals: a band states both recall and precision, never recall alone",
+              _raises(lambda: V.parse_band("recall>=0.8")))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    s = sc("short.json")
+    check(f"evals: a short submission is refused, not graded ({s['verdict']})",
+          s["verdict"] == V.REFUSED and "UNDER-K" in s["refusal"])
+
+    s = sc("perfect.json")
+    check("evals: an unset band is ungraded, never a pass",
+          m["band"] == V.BAND_UNSET and V.parse_band(m["band"]) is None
+          and s["verdict"] == V.UNGRADED and s["verdict"] != V.PASS)
+
+    s = sc("stale-sha.json")
+    check("evals: a submission is pinned to the definition that produced it",
+          s["verdict"] == V.REFUSED and "different definition" in s["refusal"])
+
+    # -- THE LEASH, read off this module's own source rather than believed. P1 (the
+    #    model-invoking runner) and P3 (an agent write path) are parked, and a parked item
+    #    that is only parked in prose is a preference.
+    #    Read as an AST, not as text: the module's own prose SAYS "there is no --spawn", and a
+    #    grep over prose would flag the sentence that promises the property it is checking.
+    import ast
+    tree = ast.parse(read(os.path.join(HERE, "evals.py")))
+    BANNED = {"urllib", "http", "socket", "requests", "ssl", "ftplib", "telnetlib",
+              "anthropic", "openai", "subprocess", "importlib", "ctypes"}
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    called = {n.func.id for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    leaks = sorted((imported & BANNED) | (called & {"eval", "exec", "compile", "__import__"}))
+    check(f"evals: the harness cannot invoke a model or reach the network (leaks: {leaks})",
+          not leaks)
+
+    # -- spec 10: "Label the proxies as proxies… an eval that overstates its own rigour is the
+    #    same failure mode this whole backlog exists to fix." A label with a code path that
+    #    drops it is not a label.
+    proxy_m = dict(m, ground_truth="proxy")
+    txt = V.format_score(V.score(proxy_m, V.load_submission(os.path.join(SUB, "perfect.json"))))
+    check("evals: a proxy can never print as ground truth",
+          "[proxy]" in txt and "[ground truth]" not in txt
+          and "[ground truth]" in V.format_score(sc("perfect.json")))
+
+    before = _tree_hashes(V.FIXTURES)
+    a, b = sc("perfect.json"), sc("perfect.json")
+    check("evals: scoring is deterministic and read-only",
+          json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+          and _tree_hashes(V.FIXTURES) == before)
+
+    r = subprocess.run([sys.executable, os.path.join(HERE, "evals.py"), "--certify-all"],
+                       capture_output=True, text=True, encoding="utf-8")
+    check(f"evals: every shipped fixture certifies (rc={r.returncode})", r.returncode == 0)
+
+    def rc(sub):
+        return subprocess.run([sys.executable, os.path.join(HERE, "evals.py"),
+                               "--fixture", "audit-01", "--submission", os.path.join(SUB, sub)],
+                              capture_output=True, text=True, encoding="utf-8").returncode
+    check("evals: the runner is exit-coded",
+          rc("perfect.json") == 0 and rc("short.json") == 1 and rc("stale-sha.json") == 1)
+
+    check(f"evals: the scorer does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -6881,6 +7010,7 @@ def main():
     run_glossary_filter()
     run_glossary_write()
     run_agent_evals()
+    run_eval_scorer()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

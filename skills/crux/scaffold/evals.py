@@ -37,7 +37,7 @@ The defect key is **the id the engine already emits** — a node id (`h2`), or a
 (`wiki:<slug>`, `task:<file>`). Nobody matches a message. A fixture plants at most one defect
 per id; two defects means two nodes.
 """
-import os, re, sys, json, argparse
+import os, re, sys, json, hashlib, argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -163,6 +163,127 @@ def certify_all(root=None):
     return [certify(n, root) for n in fixture_names(root)]
 
 
+# ----------------------------------------------------------------------------- scoring
+#: verdicts. UNGRADED is the one that matters: a band nobody has set must never read as a
+#: pass, because a bar invented with no measurement behind it is a guess with a decimal point.
+PASS, FAIL, UNGRADED, REFUSED = "PASS", "FAIL", "UNGRADED", "REFUSED"
+
+
+def agent_sha(agent, repo=None):
+    """sha256 of an agent's definition — what pins a submission to the prompt that produced
+    it. Without it a score is a number with no provenance, and re-scoring after an edit
+    silently compares one agent to a different one."""
+    repo = repo or os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    p = os.path.join(repo, "agents", agent, "AGENT.md")
+    with open(p, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def parse_band(band):
+    """`recall>=0.8, precision>=0.9` -> {'recall': 0.8, 'precision': 0.9}; `unset` -> None."""
+    if str(band).strip() == BAND_UNSET:
+        return None
+    out = {}
+    for part in _csv(band):
+        m = re.fullmatch(r"(recall|precision)\s*>=\s*([01](?:\.\d+)?)", part.strip())
+        if not m:
+            raise E.CruxError(f"bad band term '{part}' (use `recall>=0.8, precision>=0.9`, "
+                              f"or `{BAND_UNSET}`)")
+        out[m.group(1)] = float(m.group(2))
+    if set(out) != {"recall", "precision"}:
+        raise E.CruxError("a band states BOTH recall and precision — recall-only scoring "
+                          "teaches an agent to report everything")
+    return out
+
+
+def score_run(planted, reported):
+    """One run's precision and recall over id sets, with the tp/fp/fn listed by id so a
+    failure is readable rather than a decimal.
+
+    Reporting NOTHING scores precision 0.0, not 1.0 and not an error. An empty report is
+    total failure, and the vacuous-truth reading of precision is the one way a scorer can
+    hand a perfect mark to an agent that did nothing."""
+    planted, reported = set(planted), set(reported)
+    tp, fp, fn = planted & reported, reported - planted, planted - reported
+    return {"recall": (len(tp) / len(planted)) if planted else 1.0,
+            "precision": (len(tp) / len(reported)) if reported else (0.0 if planted else 1.0),
+            "tp": sorted(tp), "fp": sorted(fp), "fn": sorted(fn)}
+
+
+def load_submission(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def score(manifest, submission, repo=None):
+    """Score a submission against a fixture. Pure apart from reading the agent definition
+    whose hash the submission claims; writes nothing anywhere.
+
+    The harness never ran the agent — spec 05's runner, budget cap and autonomy envelope are
+    parked, and building them here would be building them under another name. Whoever ran the
+    agent, attended, wrote this file."""
+    m = manifest
+    out = {"fixture": m["name"], "agent": m["agent"], "ground_truth": m["ground_truth"],
+           "proxy": m["ground_truth"] == "proxy", "band": m["band"], "k": m["k"],
+           "runs": [], "verdict": None, "refusal": None}
+
+    claimed = str(submission.get("agent_sha") or "")
+    actual = agent_sha(m["agent"], repo)
+    if claimed != actual:
+        out["verdict"] = REFUSED
+        out["refusal"] = (f"submission claims agent_sha {claimed[:12] or '(none)'}… but "
+                          f"{m['agent']}/AGENT.md hashes to {actual[:12]}… — this submission "
+                          f"measured a different definition")
+        return out
+    if str(submission.get("fixture") or "") != m["name"]:
+        out["verdict"] = REFUSED
+        out["refusal"] = f"submission names fixture '{submission.get('fixture')}', not '{m['name']}'"
+        return out
+
+    out["runs"] = [score_run(m["planted_ids"], r.get("findings") or [])
+                   for r in submission.get("runs") or []]
+    if len(out["runs"]) < m["k"]:
+        out["verdict"] = REFUSED
+        out["refusal"] = (f"UNDER-K: {len(out['runs'])} run(s) submitted, band is declared over "
+                          f"{m['k']}. Scoring fewer runs than the band declares is the quiet "
+                          f"version of moving the goalposts.")
+        return out
+
+    for k in ("recall", "precision"):
+        vals = sorted(r[k] for r in out["runs"])
+        out[k] = {"min": vals[0], "median": vals[len(vals) // 2], "max": vals[-1]}
+
+    band = parse_band(m["band"])
+    if band is None:
+        out["verdict"] = UNGRADED           # the PI has not set the bar; claim nothing
+    else:
+        # the band is the WORST run, not the average: "across K runs" is what stops one lucky
+        # run carrying four bad ones
+        out["verdict"] = (PASS if out["recall"]["min"] >= band["recall"]
+                          and out["precision"]["min"] >= band["precision"] else FAIL)
+    return out
+
+
+def format_score(s):
+    """One readable block. The `[proxy]` tag has no code path that omits it — spec 10 asks
+    for proxies to be labelled, and a label that can be dropped is a preference."""
+    tag = "[proxy]" if s["proxy"] else "[ground truth]"
+    lines = [f"  {s['fixture']}  ({s['agent']})  {tag}"]
+    if s["verdict"] == REFUSED:
+        lines.append(f"    REFUSED — {s['refusal']}")
+        return "\n".join(lines)
+    for i, r in enumerate(s["runs"]):
+        lines.append(f"    run {i + 1}: recall {r['recall']:.2f}  precision {r['precision']:.2f}"
+                     f"   missed {r['fn'] or '—'}  invented {r['fp'] or '—'}")
+    lines.append(f"    recall    min {s['recall']['min']:.2f}  med {s['recall']['median']:.2f}  "
+                 f"max {s['recall']['max']:.2f}")
+    lines.append(f"    precision min {s['precision']['min']:.2f}  med {s['precision']['median']:.2f}  "
+                 f"max {s['precision']['max']:.2f}")
+    lines.append(f"    {s['verdict']}" + ("  — band unset, nothing is claimed"
+                                          if s["verdict"] == UNGRADED else f"  (band: {s['band']})"))
+    return "\n".join(lines)
+
+
 # ----------------------------------------------------------------------------- cli
 def main(argv=None):
     ap = argparse.ArgumentParser(
@@ -171,8 +292,15 @@ def main(argv=None):
     ap.add_argument("--certify-all", action="store_true",
                     help="prove every fixture's manifest against the engine, and stop")
     ap.add_argument("--fixture", help="the fixture to score against")
+    ap.add_argument("--submission", help="a findings file produced by an ATTENDED agent run "
+                                         "(this harness never invokes one)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     a = ap.parse_args(argv)
+
+    if a.fixture and a.submission:
+        s = score(load_manifest(a.fixture), load_submission(a.submission))
+        print(json.dumps(s, indent=1) if a.json else format_score(s))
+        return 1 if s["verdict"] in (FAIL, REFUSED) else 0     # UNGRADED is undecided, not failed
 
     if a.certify_all or not a.fixture:
         rows = certify_all()
