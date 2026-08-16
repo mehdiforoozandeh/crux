@@ -38,6 +38,7 @@ for _s in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine as E
+NEUTRAL_KIND_LABEL = E.NEUTRAL_KIND
 
 
 def _vault():
@@ -209,6 +210,12 @@ def main(argv=None):
 
     s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
     s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("brief", help="the deterministic cold input for an isolated agent: "
+                                          "one hypothesis' claim, question, pre-registered checks "
+                                          "and the shared factual record — assembled from vault "
+                                          "state, never authored by a calling agent"))
+    s.add_argument("id")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -471,6 +478,21 @@ def dispatch(a):
         print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
+    elif c == "brief":
+        b = E.brief(_vault_ro(None), a.id)
+        if a.json:
+            return _emit(b)
+        print(f"{b['id']}  {b['claim']}")
+        if b["question"]:
+            print(f"  question: {b['question']}")
+        if b["null"]:
+            print(f"  null:     {b['null']}")
+        print(f"  rule:     {b['rule'] or '—'}" + (f" (m={b['rule_m']})" if b["rule_m"] else ""))
+        for x in b["verifiables"]:
+            tag = " [control]" if x["kind"] == NEUTRAL_KIND_LABEL else ""
+            print(f"    - {x['text']}{tag}")
+        for pf in b["prior_findings"]:
+            print(f"  prior:    {pf['id']} ({pf['verdict']}) {pf['findings'][:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
         rep = E.validation_report(_vault(), checks)

@@ -8,6 +8,26 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux brief <hypothesis> --json`** (spec [`09`](.spec/09-specialized-agents.md), PRD 09.0).
+  The deterministic cold input every isolated agent receives: one hypothesis' claim, its
+  question, its ancestry, its pre-registered checks with kinds and combination rule, the
+  findings of **closed siblings**, linked wiki pages, and the *addresses* of available
+  metrics. Assembled from vault state; **the calling agent never authors a sentence of it.**
+
+  crux pre-registers verifiables, which defends against changing the bar *after* seeing
+  results — it says nothing about *who sets it*, and an agent that has spent an hour helping
+  argue for a hypothesis will pick a bar that clears. Zero context does not fix that alone,
+  because the parent writes the prompt: *"verify that JEPA improves imputation"* has already
+  said which way to lean. Same node, same brief, every time — which is what makes the
+  isolation testable rather than merely claimed.
+
+  Three exclusions, each for its own reason: **`## Problem Statement`** (spec 09 names it as
+  where the advocacy lives); **the hypothesis' own findings and its own `(found: …)` values**
+  (an agent writing checks must not see that hypothesis' results, or "pre-registration" is
+  being performed after the fact — sibling findings stay, those are the shared record); and
+  **metric values** (the brief says what *can* be measured, never what *was*).
+  `ENGINE_VERSION` 2.3 → 2.4. Read-only; works on pre-15 and pre-08 vaults unchanged.
+
 - **The taskhub's skill rules, and three spec amendments** (spec
   [`08`](.spec/08-taskhub.md), PRD 08.5). `SKILL.md` gains the rules the engine cannot check:
   what gets in ("would you be annoyed if this vanished next week?"), when status changes, the

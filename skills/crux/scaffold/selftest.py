@@ -4,7 +4,7 @@ invariant. No GPU / tokens / SLURM; pure file ops. Exit non-zero on any failure.
 
     python selftest.py [--keep DIR]   # --keep leaves the demo vault for inspection
 """
-import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re
+import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re, json
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
@@ -4735,10 +4735,108 @@ def run_taskhub_skill():
     check("skill: .spec/07 is byte-identical", r.returncode == 0 and r.stdout.strip() == "")
 
 
+def run_brief():
+    """Spec 09 PRD 09.0 — `crux brief <node> --json`, the deterministic bias-proof payload.
+
+    crux pre-registers verifiables. Pre-registration defends against changing the bar AFTER
+    seeing results — it says nothing about WHO sets it. An agent that has spent an hour
+    helping the PI argue for a hypothesis will pick a bar that hypothesis clears.
+
+    Zero context does not fix that on its own, because the PARENT writes the prompt.
+    "Verify that JEPA improves imputation" has already told the fresh agent which way to
+    lean. So the payload is assembled by the engine from vault state, and the calling agent
+    never authors a sentence of it."""
+    print("\n# specialized agents — the deterministic brief (spec 09, PRD 09.0)")
+    root = tempfile.mkdtemp(prefix="crux_brief_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Brief", root, goal="the program goal")
+    q1, _ = E.cmd_ask(root, "the parent question")
+    SENTINEL = "ADVOCACY-LIVES-HERE-AND-MUST-NOT-LEAK"
+    h1, _, _ = E.cmd_hypothesize(root, "the claim under test", parent=q1, rule="all",
+                                 problem=SENTINEL, verifiables=["alpha check", "beta check"],
+                                 neutral=["the control"])
+    # a CLOSED sibling: its findings ARE the shared factual record a skeptical colleague reads
+    h2, _, _ = E.cmd_hypothesize(root, "an earlier sibling", parent=q1, rule="all",
+                                 verifiables=["gamma"], neutral=["the control"])
+    edit(node_path(root, h2), "- [ ] gamma", "- [x] gamma   (found: 0.71)")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    E.cmd_test(root, h2, to="running")
+    E.cmd_close(root, h2, findings="the earlier run settled the preprocessing question")
+    # the anchor's OWN results: present in the vault, and they must not reach its own brief
+    edit(node_path(root, h1), "- [ ] alpha check", "- [x] alpha check   (found: 0.99-ANCHORS-OWN)")
+    os.makedirs(os.path.join(root, "results", h1), exist_ok=True)
+    with open(os.path.join(root, "results", h1, "metrics.json"), "w", encoding="utf-8") as f:
+        f.write('{"auroc": {"value": 0.815, "ci": [0.79, 0.84]}}')
+
+    b = E.brief(root, h1)
+    blob = json.dumps(b, sort_keys=True)
+
+    # ---- the three exclusions
+    check("brief: the advocacy channel never reaches the brief", SENTINEL not in blob)
+    check("brief: a hypothesis' own findings never reach its brief",
+          "ANCHORS-OWN" not in blob
+          and all(x.get("found") in (None, "") for x in b["verifiables"]))
+    check("brief: metrics are advertised by address, never by value",
+          b["metrics_available"] == ["auroc"] and "0.815" not in blob and "0.79" not in blob)
+
+    # ---- the shared factual record IS present
+    check("brief: the claim and the question are present",
+          b["claim"] == "the claim under test" and b["question"] == "the parent question")
+    check("brief: ancestry is ids and titles, root -> parent",
+          [a["id"] for a in b["ancestry"]] == ["root", q1])
+    check("brief: a closed sibling's findings are the shared record",
+          any(p["id"] == h2 and "preprocessing question" in p["findings"]
+              for p in b["prior_findings"]))
+    check("brief: the anchor is never its own prior finding",
+          all(p["id"] != h1 for p in b["prior_findings"]))
+    check("brief: the pre-registered checks are present, with kinds and no results",
+          [x["kind"] for x in b["verifiables"]] == ["hypothesis", "hypothesis", "outcome-neutral"])
+    check("brief: the combination rule travels with the checks",
+          b["rule"] == "all" and b["rule_m"] is None)
+    check("brief: the payload names the evidence-semantics boundary", b["schema"] == 1)
+
+    # ---- determinism, which is what makes isolation testable at all
+    check("brief: the payload is byte-identical across runs",
+          json.dumps(E.brief(root, h1), sort_keys=True) == blob)
+    other = tempfile.mkdtemp(prefix="crux_brief2_")
+    shutil.rmtree(other); shutil.copytree(root, other)
+    check("brief: the payload is a pure function of vault state, not of its path",
+          json.dumps(E.brief(other, h1), sort_keys=True) == blob)
+    shutil.rmtree(other, ignore_errors=True)
+
+    # ---- the CLI
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", h1, "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("brief: --json emits JSON and nothing else",
+          r.returncode == 0 and json.loads(r.stdout) == b)
+    r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", h1],
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("brief: a bare brief prints a human summary and never mixes the two",
+          r2.returncode == 0 and "the claim under test" in r2.stdout
+          and not r2.stdout.lstrip().startswith("{"))
+    expect_error("brief: a question anchor is refused (the brief is per-hypothesis)",
+                 lambda: E.brief(root, q1))
+
+    check("brief: ENGINE_VERSION at or past 2.4", at_least_version("2.4"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_bmig09_")
+    ob = E.brief(old, oh)
+    check("evmig: brief works on a pre-15 node",
+          ob["schema"] == 0 and ob["rule"] is None
+          and [x["kind"] for x in ob["verifiables"]] == ["hypothesis", "hypothesis"])
+    check("evmig: a pre-15 brief still excludes the advocacy channel",
+          "problem" not in ob)
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"]):
+                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
+                 ["brief", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -4799,6 +4897,7 @@ def main():
     run_task_gui()
     run_taskhub_skill()
     run_cockpit_evidence()
+    run_brief()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

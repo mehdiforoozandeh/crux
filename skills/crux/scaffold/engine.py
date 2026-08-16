@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -184,7 +184,7 @@ SCHEMA_GENERATION = 1
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary", "task")   # <namespace>:<slug>; spec 14 claims its own next
+INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 claims its own next
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -3356,6 +3356,95 @@ def deck_payload(root, anchor):
         "figures": figures,
         "metrics": metrics,
     }
+
+# ----------------------------------------------------------------------------- brief (spec 09)
+# `crux brief <hid> --json` is the cold input every isolated agent receives.
+#
+# crux pre-registers verifiables. Pre-registration defends against changing the bar AFTER
+# seeing results — it says nothing about WHO sets it, and an agent that has just spent an
+# hour helping the PI argue for a hypothesis will pick a bar that hypothesis clears.
+#
+# Zero context does not fix that on its own, because the PARENT writes the prompt. "Verify
+# that JEPA improves imputation" has already told the fresh agent which way to lean, and a
+# selectively-quoted brief finishes the job. So the payload is assembled HERE, from vault
+# state, and the calling agent never authors a sentence of it. Same node, same brief, every
+# time — which is also what makes the isolation testable rather than merely claimed.
+#
+# Three exclusions, each for its own reason:
+#
+#   `## Problem Statement`  — spec 09 names it: that section is precisely where the
+#                             advocacy lives.
+#   the node's OWN findings and its own `(found: …)` values — an agent writing checks for a
+#                             hypothesis must not see that hypothesis' results, or
+#                             "pre-registration" is being performed after the fact. Sibling
+#                             findings stay: those are the shared record a skeptical
+#                             colleague would read.
+#   metric VALUES             — the brief advertises what can be measured (key paths), never
+#                             what was measured.
+def brief(root, hid):
+    """The deterministic cold input for an isolated agent. Pure read; byte-stable."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n.type != "idea":
+        raise CruxError(f"brief is per-hypothesis (got a '{n.type}' for '{hid}'); an agent's "
+                        f"cold input is one claim, not a subtree")
+    parent = v.nodes.get(n.parent)
+
+    # ancestry: ids and titles only, root -> parent. Enough to orient, too little to argue.
+    anc, cur, seen = [], n, {n.id}
+    while cur.parent and cur.parent in v.nodes and cur.parent not in seen:
+        cur = v.nodes[cur.parent]
+        seen.add(cur.id)
+        anc.append({"id": cur.id, "type": cur.type, "title": cur.title})
+    anc.reverse()
+
+    # the shared factual record: what CLOSED siblings under the same question found.
+    prior = []
+    for cid in (v.children.get(n.parent, ()) if parent else ()):
+        c = v.nodes[cid]
+        if cid == hid or c.type != "idea" or c.status != TERMINAL_IDEA:
+            continue
+        prior.append({"id": c.id, "title": c.title, "verdict": c["fm"].get("verdict"),
+                      "findings": _section(c["body"], "Findings")})
+
+    # the pre-registered checks, stripped of their results
+    vfs = []
+    for item in _verifiables(n["body"]):
+        vfs.append({"text": _FOUND_RE.sub("", item["text"]).strip(),
+                    "kind": item["kind"], "state": item["state"]})
+
+    pages = {p["slug"]: p for p in scan_wiki_pages(root)}
+    wiki, seen_slugs = [], set()
+    for body in [n["body"]] + [v.nodes[a["id"]]["body"] for a in anc]:
+        for tgt in link_targets(body):
+            if tgt in pages and tgt not in seen_slugs:
+                seen_slugs.add(tgt)
+                wiki.append({"slug": tgt, "title": pages[tgt]["title"],
+                             "path": _rel(root, pages[tgt]["path"])})
+
+    tree = load_metrics(root, hid)
+    rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
+    return {
+        "engine_version": ENGINE_VERSION,
+        "id": n.id,
+        "claim": _section(n["body"], "Idea / Hypothesis"),
+        "question": _section(parent["body"].split(LEDGER_START)[0], "Question") if parent else None,
+        "ancestry": anc,
+        "null": _null_text(n),
+        "verifiables": vfs,
+        "rule": rule, "rule_m": m,
+        "schema": node_schema(n),
+        "prior_findings": prior,
+        "wiki": wiki,
+        # addresses only. What CAN be measured, never what WAS.
+        "metrics_available": [path for path, _leaf in _metric_leaves(tree or {})],
+    }
+
+def _null_text(n):
+    """The declared null, or None. Defined here so `brief` can carry it from the moment the
+    section exists (PRD 09.1) without the brief needing a second edit."""
+    txt = _summary(n["body"], "Null")
+    return re.sub(r"<!--.*?-->", "", txt, flags=re.S).strip() or None
 
 # ----------------------------------------------------------------------------- deck verify / refresh (spec 11 §5d/5e)
 # `--verify` walks the deck SOURCE (never a rendered DOM): chart tick/value/axis text is
