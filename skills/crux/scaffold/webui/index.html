@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>crux cockpit</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!-- blocking theme stamp — BEFORE the stylesheet, so the first paint is already in the
+       right theme and neither theme ever flashes the other (spec 12): a saved ☀/☾ choice
+       wins, else the OS decides. app.js keeps following the OS live until that first
+       explicit choice is written. -->
+  <script>
+    document.documentElement.dataset.theme =
+      localStorage.getItem("crux-theme") ||
+      (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -32,14 +41,23 @@
         <button id="density-btn" type="button" aria-label="Toggle full-text / compact nodes"></button>
         <button id="focus-btn" type="button" aria-label="Focus open questions"></button>
       </div>
-      <input id="search" type="search" placeholder="Search nodes · ↵ jump" title="Search the tree — Enter jumps to the first match, Esc clears" autocomplete="off" spellcheck="false">
+      <!-- the match counter (spec 12) overlays the field's right edge: "11" before you
+           cycle (the set size), "3 / 11" once Enter / Shift+Enter start walking it -->
+      <div id="search-wrap">
+        <input id="search" type="search" placeholder="Search nodes · ↵ jump" title="Search the tree — Enter / Shift+Enter cycle the matches, Esc clears" autocomplete="off" spellcheck="false">
+        <span id="search-count" hidden></span>
+      </div>
       <button id="review-btn" type="button">Review (0)</button>
       <button id="theme-btn" type="button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
     </div>
   </header>
   <main id="cockpit">
     <section id="tree-pane">
-      <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="crux tree"></svg>
+      <!-- a real focusable ARIA tree (spec 12): Tab reaches it, arrows move the selection,
+           Space folds, Enter opens the detail pane. app.js keeps aria-activedescendant and
+           the per-node treeitem states current on every render. -->
+      <svg id="tree" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="tree"
+           aria-label="crux tree — arrow keys move the selection"></svg>
       <button id="legend-btn" type="button" title="Show the color key" aria-label="Show the color key" hidden>Key</button>
       <div id="legend" title="Color key — click a chip to highlight only those nodes"></div>
       <div id="focus-crumb" hidden></div>
@@ -51,7 +69,7 @@
       </div>
       <div id="help">
         <button id="help-btn" type="button" title="Controls help" aria-label="Toggle controls help">?</button>
-        <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse</span>
+        <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse · arrows = move · space = fold</span>
       </div>
     </section>
     <section id="wiki-pane" hidden>
@@ -84,7 +102,9 @@
         <button data-font="large" type="button" aria-label="Large text">A</button>
         <button data-max="right" type="button" class="fc-max" title="Full-screen this panel ( ] )" aria-label="Full-screen the detail panel">⛶</button>
       </div>
-      <div id="detail-content"></div>
+      <!-- tabindex="-1": Enter on the tree canvas hands this pane the focus (spec 12, D6)
+           so PageUp/Down scroll the detail without a pointer -->
+      <div id="detail-content" tabindex="-1"></div>
       <div id="ro-footer" title="The cockpit never writes to the vault. To change the tree, ask your agent (it drives the crux engine) or run the crux CLI.">
         Read-only view — ask your agent to edit the tree <span class="ro-sub">(or use the crux CLI)</span>
       </div>

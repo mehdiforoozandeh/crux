@@ -8,6 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Cockpit: keyboard-first tree canvas** (spec [`12`](.spec/12-cockpit-craft.md)). The tree
+  `<svg>` is a real focusable ARIA tree (`tabindex`, `role="tree"`, per-node `treeitem` +
+  `aria-activedescendant`, a `:focus-visible` ring that isn't clipped). Orientation-relative
+  arrows move the selection (child points where the children visibly are — in radial, ↓ is
+  outward), siblings stop at the ends, `Space` folds, `Enter` hands the detail pane the
+  focus, and the camera follows every move via the existing `tweenView()` (instant under
+  reduced motion). Keyboard costs the mouse nothing: every pointer gesture is unchanged, and
+  a guard keeps keyboard-driven camera glides from lighting the hover spotlight.
+
+- **Cockpit: search that cycles** (spec [`12`](.spec/12-cockpit-craft.md)). `Enter` advances
+  to the next match and wraps; `Shift+Enter` goes back; a counter in the field shows the set
+  size before you cycle ("11") and your position once you do ("3 / 11"). One match set feeds
+  both, in deterministic order — the tree's own walk order, the wiki's index order — over
+  visible nodes only, in both tabs. (Before: Enter re-jumped to the first match forever.)
+
 - **Node economy — crux now enforces economy the way it already enforced falsifiability**
   (engine **1.3**, spec [`06`](.spec/06-node-economy.md)). Every guardrail used to push toward
   more rigor and none toward less volume, so nodes grew until the vault stopped being readable
@@ -51,6 +66,19 @@ verdict/roll-up/view logic changes.
 
 ### Fixed
 
+- **Cockpit: a type scale that reads** (spec [`12`](.spec/12-cockpit-craft.md)). The detail
+  pane's three text steps were 12.5 / 14 / 16.5 px — ratios under 1.2, which does not read
+  as a step. Now 12 / 16 / 21 (a perfect fourth): small is a genuine overview, large a
+  genuine reading mode, and the whole pane scales in `em` off the step as before. The
+  chrome went the opposite way: ~12 distinct sizes between 8.5 and 15.5 px collapsed to
+  three named variables (10 / 11.5 / 12.5), with hierarchy carried by ink tier and weight —
+  SVG canvas labels are exempt because their sizes feed the node-geometry `measureText`.
+- **Cockpit: the theme now actually follows the OS** (spec
+  [`12`](.spec/12-cockpit-craft.md)). The stylesheet header promised "saved preference,
+  else system"; the code defaulted to dark and never consulted the OS. Now: with no saved
+  preference the cockpit resolves from `prefers-color-scheme` and follows OS flips live;
+  the first ☀/☾ press writes an explicit choice that sticks. A blocking `<head>` stamp sets
+  the theme before first paint, so neither theme ever flashes the other on load.
 - **An artifact bullet may now carry a note after a markdown link.** `parse_artifacts()`
   anchored its link regex to end-of-line, so `- [Report](results/h1/report.md) — a note`
   fell through to the bare-path branch and split into the path `'[Report'` — surfacing as
