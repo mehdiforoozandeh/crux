@@ -32,6 +32,7 @@
       <nav id="tabs" role="tablist" aria-label="Cockpit views" hidden>
         <button data-tab="tree" type="button" role="tab" class="on">Tree</button>
         <button data-tab="wiki" type="button" role="tab">Wiki</button>
+        <button data-tab="rd" type="button" role="tab">RD</button>
       </nav>
     </div>
     <div class="tools">
@@ -71,6 +72,12 @@
         <button id="help-btn" type="button" title="Controls help" aria-label="Toggle controls help">?</button>
         <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse · arrows = move · space = fold</span>
       </div>
+    </section>
+    <section id="rd-pane" hidden>
+      <aside id="rd-rail">
+        <div class="wr-head"><span>Requirements documents</span></div>
+        <div id="rd-rail-body"></div>
+      </aside>
     </section>
     <section id="wiki-pane" hidden>
       <aside id="wiki-rail">

@@ -114,7 +114,7 @@ const state = {
   matchId: null,            // where the Enter/Shift+Enter search cycle is parked (node id / wiki slug)
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
-  tab: "tree",              // "tree" | "wiki" — applied from localStorage once wiki.active is known
+  tab: "tree",              // "tree" | "wiki" | "rd" — applied from localStorage once the layer is known
   wiki: {
     selected: localStorage.getItem("crux-wiki-slug") || null,  // slug, or null => the _index page
     page: null,             // fetched /wiki/<slug>.json payload for the reader
@@ -128,7 +128,28 @@ const state = {
     folds: new Set(),       // collapsed rail folders (category names, or "sources")
     railHidden: localStorage.getItem("crux-wiki-rail") === "1",
   },
+  // The RD layer reuses the wiki's READER wholesale (see LAYERS below) — the only thing it
+  // needs of its own is which page is open. No graph: RDs form per-node chains, not a web,
+  // and laying out a forest of two-node paths would be the third pattern spec 07 warns about
+  // wearing the second one's clothes.
+  rd: {
+    selected: localStorage.getItem("crux-rd-slug") || null,
+    page: null, pageKey: "", readerKey: "", railKey: "",
+  },
 };
+
+// The two page layers, described rather than duplicated. Everything below that reads a page
+// — fetch, key, reader render, rail clicks — takes one of these instead of hard-coding
+// "wiki", which is what makes the RD tab reuse the reader instead of growing a second one.
+// (selftest counts this file's network calls: three, forever. A copied reader would need a
+// fourth and fail that assert — which is what makes "the reader is shared" checkable.)
+const LAYERS = {
+  wiki: { key: "wiki", route: "/wiki/", store: "crux-wiki-slug", label: "wiki" },
+  rd:   { key: "rd",   route: "/rd/",   store: "crux-rd-slug",   label: "rd" },
+};
+const layerOf = (k) => LAYERS[k] || LAYERS.wiki;
+function rdPages() { return (state.snap && state.snap.rd && state.snap.rd.pages) || []; }
+function rdActive() { return !!(state.snap && state.snap.rd && state.snap.rd.active); }
 
 const $ = (id) => document.getElementById(id);
 const svg = $("tree");
@@ -985,6 +1006,7 @@ function renderDetail() {
   const pane = $("detail-content");
   if (!state.snap) { pane.innerHTML = ""; return; }
   state._detailKey = detailKeyOf();   // the snapshot poll re-renders only when this moves
+  if (state.tab === "rd") { renderPageReader(LAYERS.rd); return; }
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
   if (state.report) { pane.innerHTML = reportDetail(); return; }
@@ -1052,6 +1074,16 @@ function nodeDetail(n) {
 
 function head(kind, title) { return `<div class="d-kind">${kind}</div><div class="d-title">${esc(title)}</div>`; }
 
+// "where the detail lives" — the third thing a node is supposed to answer. Absent when the
+// node has no RD, so it never becomes chrome on the majority of nodes that do not need one.
+function rdSection(n) {
+  if (!n.rd) return "";
+  const p = rdPages().find((x) => x.slug === n.rd);
+  return section("Design", `<button class="rowlink" data-rd="${esc(n.rd)}">` +
+    `<span class="rid">rd</span>${esc((p && p.title) || n.rd)}` +
+    `<span class="rsum">the design detail displaced by the ${state.snap.limits.prose_cap}-word cap</span></button>`);
+}
+
 function projectDetail(n) {
   return head("project", n.title) + section("Goal", bodyOr(state.snap.project.goal, "—"));
 }
@@ -1077,6 +1109,7 @@ function questionDetail(n) {
     summaryLead(n) +
     stmt +
     section("Answer so far", bodyOr(n.answer, "not yet interpreted")) +
+    rdSection(n) +
     syn +
     section("Evidence ledger", ledger) +
     (kids ? section("Children", `<div>${kids}</div>`) : "");
@@ -1136,6 +1169,7 @@ function ideaDetail(n) {
   return head("hypothesis", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` + openReportBtn +
     summaryLead(n) +
     foldedSection("Problem", n.problem, "—") +
+    rdSection(n) +
     section("Verifiables", vs) +
     section("Run links", runs) +
     artifactsSection(n) +
@@ -1419,6 +1453,8 @@ $("detail-pane").addEventListener("click", (e) => {
   if (e.target.closest("[data-close-report]")) { closeReport(); return; }
   const rep = e.target.closest("[data-report]");
   if (rep) { openReport(rep.getAttribute("data-report"), state.selected); return; }
+  const rl = e.target.closest("[data-rd]");
+  if (rl) { openRdPage(rl.getAttribute("data-rd")); return; }       // RD rail + reader links
   const wl = e.target.closest("[data-wiki]");
   if (wl) { openWikiPage(wl.getAttribute("data-wiki")); return; }   // [[wiki/…]] citations + reader links
   const go = e.target.closest("[data-go]");
@@ -1805,11 +1841,13 @@ function wikiLink(target, alias) {
 // ------------------------------------------------------------------ tabs
 function setTab(tab) {
   if (tab === "wiki" && !wikiActive()) tab = "tree";
+  if (tab === "rd" && !rdActive()) tab = "tree";
   state.tab = tab;
   localStorage.setItem("crux-tab", tab);
   document.body.dataset.tab = tab;
   $("tree-pane").hidden = tab !== "tree";
   $("wiki-pane").hidden = tab !== "wiki";
+  $("rd-pane").hidden = tab !== "rd";
   document.querySelectorAll("#tabs [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
   $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
@@ -1819,7 +1857,10 @@ function setTab(tab) {
   updateReviewBtn();
   applySearch();
   renderDetail();
-  if (tab === "wiki") {
+  if (tab === "rd") {
+    renderRd();
+    animateIn([$("rd-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
+  } else if (tab === "wiki") {
     renderWiki();
     if (!state.wiki.centered && fitWikiGraph()) state.wiki.centered = true;
     wikiReheat(0.1);   // a gentle settle-in breath; resumes any pending motion
@@ -1832,14 +1873,20 @@ function setTab(tab) {
 }
 let _tabsBooted = false;
 function updateTabs() {
-  const active = wikiActive();
-  $("tabs").hidden = !active;
+  const active = wikiActive(), rd = rdActive();
+  $("tabs").hidden = !(active || rd);
+  document.querySelector('#tabs [data-tab="wiki"]').hidden = !active;
+  document.querySelector('#tabs [data-tab="rd"]').hidden = !rd;
   if (!active && state.tab === "wiki") { setTab("tree"); return; }
-  if (!_tabsBooted && active) {
+  if (!rd && state.tab === "rd") { setTab("tree"); return; }
+  if (!_tabsBooted && (active || rd)) {
     _tabsBooted = true;
-    if (localStorage.getItem("crux-tab") === "wiki") { setTab("wiki"); return; }
+    const want = localStorage.getItem("crux-tab");
+    if (want === "wiki" && active) { setTab("wiki"); return; }
+    if (want === "rd" && rd) { setTab("rd"); return; }
   }
   if (active && state.tab === "wiki") renderWiki();
+  if (rd && state.tab === "rd") renderRd();
 }
 $("tabs").addEventListener("click", (e) => {
   const b = e.target.closest("[data-tab]");
@@ -2351,7 +2398,16 @@ function openWikiPage(slug) {
   renderWikiRail();
   wsvg.querySelectorAll(".wnode").forEach((el) =>
     el.classList.toggle("on", el.getAttribute("data-slug") === slug));
-  fetchWikiPage(slug);
+  fetchPage(LAYERS.wiki, slug);
+}
+
+function openRdPage(slug) {
+  if (state.tab !== "rd") setTab("rd");
+  state.rd.selected = slug;
+  localStorage.setItem("crux-rd-slug", slug);
+  state.rd.railKey = "";
+  renderRdRail();
+  fetchPage(LAYERS.rd, slug);
 }
 
 // what the open page's content is *supposed* to be, per the polled index (specials aren't
@@ -2367,37 +2423,93 @@ function pageKeyOf(slug) {
 function refreshWikiPage() {
   let slug = state.wiki.selected || "_index";
   if (pageKeyOf(slug) == null) { slug = "_index"; state.wiki.selected = null; }
-  if (pageKeyOf(slug) !== state.wiki.pageKey) fetchWikiPage(slug);
+  if (pageKeyOf(slug) !== state.wiki.pageKey) fetchPage(LAYERS.wiki, slug);
   else renderWikiReader();
 }
 
-async function fetchWikiPage(slug) {
-  const key = pageKeyOf(slug);
-  try {
-    const r = await fetch("/wiki/" + encodeURIComponent(slug) + ".json", { cache: "no-store" });
-    if (!r.ok) throw new Error(String(r.status));
-    state.wiki.page = await r.json();
-    state.wiki.pageKey = key;
-  } catch (e) {
-    state.wiki.page = { slug, title: null, summary: null, category: null, sources: [],
-                        updated: null, body: "_could not load this page (" + e.message + ")_",
-                        backlinks: [], error: true };
-    state.wiki.pageKey = key;
+// the RD twin of pageKeyOf / refreshWikiPage — no specials, so it is the simpler half
+function rdKeyOf(slug) {
+  const p = rdPages().find((x) => x.slug === slug);
+  return p ? slug + " " + p.hash : null;
+}
+function refreshRdPage() {
+  let slug = state.rd.selected;
+  if (slug == null || rdKeyOf(slug) == null) {
+    const live = rdPages().filter((p) => p.status === "active");
+    slug = ((live[0] || rdPages()[0]) || {}).slug || null;
   }
-  renderWikiReader();
+  state.rd.selected = slug;
+  if (slug == null) { state.rd.page = null; state.rd.readerKey = ""; return; }
+  if (rdKeyOf(slug) !== state.rd.pageKey) fetchPage(LAYERS.rd, slug);
+  else renderPageReader(LAYERS.rd);
 }
 
-function renderWikiReader() {
-  if (state.tab !== "wiki") return;
-  const pane = $("detail-content"), pg = state.wiki.page;
-  if (!pg) { pane.innerHTML = `<div class="d-kind">wiki</div><p class="d-empty">loading…</p>`; return; }
-  const key = JSON.stringify([pg.slug, state.wiki.pageKey, pg.body, pg.backlinks]);
-  if (key === state.wiki.readerKey) return;   // steady state: don't stomp selection/animation
-  state.wiki.readerKey = key;
-  const special = pg.slug in RESERVED;
-  const kind = special ? "wiki · " + RESERVED[pg.slug] : "wiki · " + (pg.category || "page");
+// the rail: RDs grouped by the node that owns them, active first, then its history
+function renderRdRail() {
+  const pages = rdPages();
+  const key = JSON.stringify([pages.map((p) => [p.slug, p.status, p.node]), state.rd.selected]);
+  if (key === state.rd.railKey) return;
+  state.rd.railKey = key;
+  const byNode = {};
+  pages.forEach((p) => (byNode[p.node] = byNode[p.node] || []).push(p));
+  const order = (p) => (p.status === "active" ? 0 : p.status === "draft" ? 1 : 2);
+  $("rd-rail-body").innerHTML = Object.keys(byNode).sort().map((nid) => {
+    const n = state.snap.nodes[nid];
+    return `<div class="wr-folder"><div class="wr-fold">${esc(nid)}${n ? " · " + esc(n.title) : ""}</div>` +
+      `<div class="wr-items">` +
+      byNode[nid].slice().sort((a, b) => order(a) - order(b) || a.slug.localeCompare(b.slug))
+        .map((p) => `<button class="wr-item${state.rd.selected === p.slug ? " on" : ""}` +
+          `${p.status === "superseded" ? " wr-dim" : ""}" data-rd="${esc(p.slug)}" ` +
+          `title="${esc(p.title || p.slug)} — ${esc(p.status)}">${esc(p.title || p.slug)}</button>`).join("") +
+      `</div></div>`;
+  }).join("") || `<div class="body muted">no RDs yet</div>`;
+}
+
+function renderRd() {
+  if (!rdActive() || state.tab !== "rd") return;
+  renderRdRail();
+  refreshRdPage();
+}
+
+// one fetch for both layers — the route comes from the layer descriptor
+async function fetchPage(layer, slug) {
+  const st = state[layer.key], key = layer.key === "wiki" ? pageKeyOf(slug) : rdKeyOf(slug);
+  try {
+    const r = await fetch(layer.route + encodeURIComponent(slug) + ".json", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    st.page = await r.json();
+  } catch (e) {
+    st.page = { slug, title: null, summary: null, category: null, sources: [],
+                updated: null, body: "_could not load this page (" + e.message + ")_",
+                backlinks: [], error: true };
+  }
+  st.pageKey = key;
+  renderPageReader(layer);
+}
+
+function renderWikiReader() { renderPageReader(LAYERS.wiki); }
+
+// THE shared reader: markdown body + backlinks, for whichever page layer is open. The RD
+// tab renders through this exact function — spec 07's "reuse that reader, do not build a
+// third", honoured by parameterising the one that existed rather than copying it.
+function renderPageReader(layer) {
+  if (state.tab !== layer.key) return;
+  const st = state[layer.key];
+  const pane = $("detail-content"), pg = st.page;
+  if (!pg) { pane.innerHTML = `<div class="d-kind">${esc(layer.label)}</div><p class="d-empty">loading…</p>`; return; }
+  const key = JSON.stringify([pg.slug, st.pageKey, pg.body, pg.backlinks]);
+  if (key === st.readerKey) return;   // steady state: don't stomp selection/animation
+  st.readerKey = key;
+  const special = layer.key === "wiki" && pg.slug in RESERVED;
+  const kind = special ? "wiki · " + RESERVED[pg.slug]
+             : layer.key === "rd" ? "rd · " + (pg.node || "unowned")
+             : "wiki · " + (pg.category || "page");
   let badges = "";
-  if (!special && pg.category)
+  if (layer.key === "rd" && pg.status)
+    badges += `<span class="badge">${esc(pg.status)}</span>`;
+  if (layer.key === "rd" && pg.supersedes)
+    badges += `<span class="badge">supersedes <span class="inline">${esc(pg.supersedes)}</span></span>`;
+  if (!special && layer.key === "wiki" && pg.category)
     badges += `<span class="badge dot" style="--b:${catColor(pg.category)}">${esc(pg.category)}</span>`;
   if (pg.updated) badges += `<span class="badge">updated <span class="inline">${esc(pg.updated)}</span></span>`;
   const srcs = (pg.sources || []).length
@@ -2407,12 +2519,13 @@ function renderWikiReader() {
   // snippets render INERT (mention highlighted, not linkified): the row itself is the link
   // to the citing page — a live link inside it would nest interactives and point back here
   const snip = (s) => esc(s).replace(/\[\[[^\]]*\]\]/g, (m) => `<span class="wl-mark">${m}</span>`);
+  const attr = layer.key === "rd" ? "data-rd" : "data-wiki";
   const backs = special ? "" : section(`Linked from — ${pg.backlinks.length} page${pg.backlinks.length === 1 ? "" : "s"}`,
     pg.backlinks.length
       ? pg.backlinks.map((b) =>
-          `<button class="rowlink" data-wiki="${esc(b.slug)}"><span class="rid">${esc(b.slug)}</span>${esc(b.title || "")}` +
+          `<button class="rowlink" ${attr}="${esc(b.slug)}"><span class="rid">${esc(b.slug)}</span>${esc(b.title || "")}` +
           `<span class="rsum">${snip(b.snippet || "")}</span></button>`).join("")
-      : `<div class="body muted">nothing links here yet — an orphan by wiki-graph degree</div>`);
+      : `<div class="body muted">nothing links here yet</div>`);
   pane.innerHTML = `<div class="d-kind">${esc(kind)}</div>` +
     `<div class="d-title">${esc(pg.title || pg.slug)}</div>` +
     (badges ? `<div class="badges">${badges}</div>` : "") +

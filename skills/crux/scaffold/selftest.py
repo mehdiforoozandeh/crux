@@ -384,7 +384,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
+    check("wmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -481,7 +481,7 @@ def run_snapshot():
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki"})
+                               "project", "nodes", "tree", "queue", "wiki", "rd"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -1813,8 +1813,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the four documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout"))
+    check("economy: the check registry is the five documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -1829,7 +1829,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.4", E.ENGINE_VERSION == "1.4")
+    check("economy: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1864,7 +1864,7 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.4", E.Vault(root).cfg.get("engine_version") == "1.4")
+    check("emig: drift re-stamps to 1.5", E.Vault(root).cfg.get("engine_version") == "1.5")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1988,7 +1988,7 @@ def run_deck():
     import json
     print("\n# deck payload (crux deck <anchor> --json)")
     CRUX = os.path.join(HERE, "crux.py")
-    check("deck: ENGINE_VERSION is 1.4", E.ENGINE_VERSION == "1.4")
+    check("deck: ENGINE_VERSION is 1.5", E.ENGINE_VERSION == "1.5")
 
     base = tempfile.mkdtemp(prefix="crux_deck_")
     root = os.path.join(base, "vault")
@@ -2053,7 +2053,7 @@ def run_deck():
     check("deck: child artifacts parsed with kinds",
           any(a["path"] == f"results/{h1}/report.md" and a["kind"] == "report"
               for a in k1["artifacts"]))
-    check("deck: rd present and empty until spec 07", p1["rd"] == [])
+    check("deck: rd is present and empty on a vault with no RD layer", p1["rd"] == [])
     check("deck: anchor question + protocol surfaced",
           p1["anchor"]["question"] == "Mid question"
           and p1["anchor"]["protocol"] == "Rules locked up front.")
@@ -2433,6 +2433,528 @@ def run_prezit():
         check(f"prezit: SKILL.md states '{needle}'", needle in s)
 
 
+def run_rd():
+    """Spec 07 — the RD layer. Requirements Documents: one active RD per node, living in
+    rd/, linked from the node, OUTSIDE the roll-up tree. This is the overflow channel spec 06
+    deliberately warned-rather-than-errored without: the 400-word cap had nowhere to send the
+    design detail it displaced. Shape copied from the wiki layer on purpose — a parentless
+    side-layer of markdown pages with a generated index."""
+    print("\n# RD layer (rd/ · crux rd · generated RD.md)")
+    root = tempfile.mkdtemp(prefix="crux_rd_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD Demo", root, goal="Exercise the RD layer.")
+    q1, _ = E.cmd_ask(root, "Does the RD layer hold?")
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+
+    # -- 1. creation + the backlink
+    slug, fn = E.cmd_rd(root, h1, "Probe ladder and estimand")
+    page = os.path.join(root, "rd", slug + ".md")
+    check("rd: crux rd creates the page", os.path.isfile(page))
+    fm, body = E.parse_doc(read(page))
+    check("rd: the created page carries type: rd", fm.get("type") == "rd")
+    check("rd: the page records its owning node", fm.get("node") == h1)
+    ntext = read(node_path(root, h1))
+    check("rd: the node gains an RD:: backlink", "RD:: [[rd/%s]]" % slug in ntext)
+    check("rd: the backlink resolves to the created file",
+          E.link_targets(ntext)[-1] == slug or slug in E.link_targets(ntext))
+    lines = [l for l in ntext.splitlines() if l.startswith(("Parent::", "RD::"))]
+    check("rd: the backlink sits beside Parent::",
+          len(lines) == 2 and lines[0].startswith("Parent::") and lines[1].startswith("RD::"))
+    # the whole point of the preamble placement: text before the first `## ` is invisible to
+    # _section, so linking a design document costs nothing from the budget it exists to free
+    bare = read(node_path(root, h1)).replace("RD:: [[rd/%s]]" % slug, "")
+    check("rd: the backlink does not consume the 400-word budget",
+          E.prose_words(ntext, "idea") == E.prose_words(bare, "idea"))
+
+    # -- 2. which nodes may own one (D2: both; q21 — the motivating case — is a question)
+    qslug, _ = E.cmd_rd(root, q1, "Why this question needs a design")
+    check("rd: an RD may attach to a question", os.path.isfile(os.path.join(root, "rd", qslug + ".md")))
+    check("rd: an RD may attach to a hypothesis", E.scan_rd_pages(root)[0]["node"] in (q1, h1))
+    expect_error("rd: an RD may not attach to the project root",
+                 lambda: E.cmd_rd(root, "root", "nope"))
+    s1, _ = E.cmd_synthesize(root, "a synthesis", [q1])
+    expect_error("rd: an RD may not attach to a synthesis", lambda: E.cmd_rd(root, s1, "nope"))
+
+    # -- 3. one ACTIVE RD per node (D11), and the refusal names the remedy (D12)
+    try:
+        E.cmd_rd(root, h1, "a second design")
+        check("rd: a second active RD is refused with the remedy", False)
+        check("rd: the refusal names --supersedes", False)
+    except E.CruxError as e:
+        check("rd: a second active RD is refused with the remedy", True)
+        check("rd: the refusal names --supersedes", "--supersedes" in str(e))
+
+    # -- 4. supersession is the ONLY way a design changes (never an in-place amendment)
+    before = read(page)
+    slug2, _ = E.cmd_rd(root, h1, "Probe ladder, second cut", supersedes=slug)
+    pages = {p["slug"]: p for p in E.scan_rd_pages(root)}
+    check("rd: --supersedes creates the new RD active", pages[slug2]["status"] == "active")
+    check("rd: --supersedes flips the old RD to superseded", pages[slug]["status"] == "superseded")
+    check("rd: --supersedes records supersedes: on the new RD", pages[slug2]["supersedes"] == slug)
+    check("rd: --supersedes rewrites the node's RD:: line",
+          "RD:: [[rd/%s]]" % slug2 in read(node_path(root, h1))
+          and "RD:: [[rd/%s]]" % slug not in read(node_path(root, h1)))
+    # D7 ruled git is the audit trail, so nothing hashes the old file — but the engine itself
+    # must still never touch its BODY, or the chain stops being a record of what was thought
+    check("rd: superseding never edits the superseded body",
+          E.parse_doc(read(page))[1] == E.parse_doc(before)[1])
+
+    # -- 5. an RD is a document, not evidence: outside the tree, the roll-up and the gate
+    v = E.Vault(root)
+    check("rd: an RD page never becomes a node", set(v.nodes) == {"root", q1, h1, s1})
+    check("rd: no node has type rd", not any(n.type == "rd" for n in v.nodes.values()))
+    led_before = E.ledger_counts(E.Vault(root), q1)
+    st_before = E.Vault(root).get(q1).status
+    E.cmd_rd(root, h1, "third cut", supersedes=slug2)
+    E.refresh(root)
+    check("rd: an RD does not move ledger_counts", E.ledger_counts(E.Vault(root), q1) == led_before)
+    check("rd: an RD does not trip the review gate", E.Vault(root).get(q1).status == st_before)
+
+    # -- 6. the generated index
+    idx = os.path.join(root, "RD.md")
+    check("rd: RD.md is generated when rd/ is active", os.path.isfile(idx))
+    itext = read(idx)
+    check("rd: RD.md lists the page with its title", "Probe ladder, second cut" in itext)
+    check("rd: RD.md shows the page status", "superseded" in itext)
+    check("rd: RD.md derives the reverse chain", "superseded by" in itext.lower())
+    check("rd: refresh #1 no-op after an RD", E.refresh(root) is False)
+    check("rd: refresh #2 no-op after an RD", E.refresh(root) is False)
+    first = read(idx); E.refresh(root)
+    check("rd: RD.md is byte-stable across renders", read(idx) == first)
+    check("rd: RD.md is in GENERATED", "RD.md" in E.GENERATED)
+    check("rd: RD.md is not a node", "RD.md" not in [n["fn"] for n in E.Vault(root).nodes.values()])
+    E.ensure_rd(root)
+    check("rd: ensure_rd is idempotent", E.refresh(root) is False)
+
+    # -- 7. the agent surface (spec 06's convention: --json on every verb an agent drives)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "rd", q1,
+                        "another design", "--supersedes", qslug, "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    try:
+        j = __import__("json").loads(r.stdout)
+    except Exception:
+        j = None
+    check("rd: crux rd emits parseable JSON",
+          isinstance(j, dict) and {"slug", "file", "node", "status"} <= set(j))
+    check("rd: crux rd --json exits 0", r.returncode == 0)
+
+    # -- 8. the criterion the whole epic exists for (D19: on a fixture, not on the real q21).
+    #       The engine never moves text — the PI does. What is asserted is that the move WORKS:
+    #       an over-cap node comes back under the cap and the words survive in the RD.
+    q2, _ = E.cmd_ask(root, "Is this node over the cap?")
+    design = " ".join(["estimand"] * 500)
+    edit(node_path(root, q2), "## Question\n\nIs this node over the cap?",
+         "## Question\n\nIs this node over the cap? " + design)
+    check("rd: the fixture question really is over the cap",
+          any(w["id"] == q2 for w in E.validation_report(root)["warnings"]))
+    dslug, _ = E.cmd_rd(root, q2, "The displaced design")
+    dpath = os.path.join(root, "rd", dslug + ".md")
+    edit(node_path(root, q2), " " + design, "")                       # PI moves it out
+    edit(dpath, "## Design\n", "## Design\n\n" + design + "\n")        # ...and into the RD
+    check("rd: moving design into an RD brings a node back under the cap",
+          not any(w["id"] == q2 for w in E.validation_report(root)["warnings"]))
+    check("rd: the moved words survive in the RD file", design in read(dpath))
+    check("rd: an RD body is not capped",
+          "rd" not in E.PROSE_SECTIONS and
+          not any(dslug in w["message"] for w in E.validation_report(root)["warnings"]))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_rd_migration():
+    """A pre-07 vault has no rd/ directory at all. It must load, validate, refresh and render
+    exactly as before — byte for byte (evolve-crux gate 4). These asserts are deliberate
+    regression locks: they assert an ABSENCE, which is the easiest thing to break silently
+    later by scanning one directory too many."""
+    print("\n# RD layer — a pre-07 vault still reads")
+    root = tempfile.mkdtemp(prefix="crux_rdmig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Vault", root)
+    q1, _ = E.cmd_ask(root, "an old question")
+    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    check("rdmig: a pre-07 vault has no rd/", not os.path.isdir(os.path.join(root, "rd")))
+    check("rdmig: a pre-07 vault grows no RD.md", not os.path.exists(os.path.join(root, "RD.md")))
+    check("rdmig: status still renders on a pre-07 vault", "an old question" in E.status_text(root))
+    check("rdmig: review still runs on a pre-07 vault", isinstance(E.cmd_review(root), list))
+
+    # an rd/ directory full of pages changes nothing until something looks at it
+    before = _dir_bytes(root)
+    os.makedirs(os.path.join(root, "rd"))
+    write(os.path.join(root, "rd", "stray.md"),
+          "---\ntype: rd\nnode: %s\ntitle: Stray\nstatus: active\n---\n\n# Stray\n" % q1)
+    check("rdmig: an rd/ directory adds no nodes", set(E.Vault(root).nodes) == set(E.Vault(root).nodes) and
+          not any(n.type == "rd" for n in E.Vault(root).nodes.values()))
+    check("rdmig: a pre-07 vault validates clean", E.cmd_validate(root) == [])
+    after = {k: v for k, v in _dir_bytes(root).items() if "/rd/" not in k.replace(os.sep, "/")
+             and not k.endswith("RD.md")}
+    check("rdmig: the vault is byte-identical across the upgrade", after == before)
+    shutil.rmtree(os.path.join(root, "rd"))
+    check("rdmig: a pre-07 vault refresh is a no-op", E.refresh(root) is False)
+
+    # the drift path, exactly as the wiki and economy migrations prove it
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.4")
+    warn = E.check_and_stamp_version(root)
+    check("rdmig: an old-stamped vault reports drift", warn is not None and "1.4" in warn)
+    check("rdmig: drift re-stamps to the new ENGINE_VERSION",
+          E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("rdmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_rd_lint():
+    """Spec 07, PRD 07.2 — the RD structural lint. Mechanical checks only: does the link
+    resolve, do the two ownership records agree, is there exactly one live design, is the
+    chain acyclic. Whether an RD is GOOD, current, or warranted is judgment and lives in the
+    crux-rd skill — the same line validate_wiki already draws.
+
+    The negative cases carry the weight: anything can flag everything, so what matters is
+    that a tidy vault, a pre-07 vault and a superseded chain all stay silent. Dirty cases run
+    one at a time and are removed after, so every finding is attributable."""
+    print("\n# RD lint (validate --check=rd)")
+    root = tempfile.mkdtemp(prefix="crux_rdlint_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD Lint", root)
+    q1, _ = E.cmd_ask(root, "a question")
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+
+    # the check is registered, and it is always-on rather than opt-in: an RD is vault
+    # content, not a derived document like a deck
+    check("rdlint: rd is a first-class check, not opt-in",
+          "rd" in E.CHECKS and "rd" not in E.OPT_CHECKS)
+
+    # a pre-07 vault: no findings, and the check must not even build a Vault to say so
+    _V, seen = E.Vault, []
+    class _Spy(_V):
+        def __init__(self, *a, **kw):
+            seen.append(1); super().__init__(*a, **kw)
+    E.Vault = _Spy
+    try:
+        empty = E.validate_rd(root)
+    finally:
+        E.Vault = _V
+    check("rdlint: no rd/ means no findings", empty == [])
+    check("rdlint: the rd check short-circuits on an inactive layer", seen == [])
+
+    # a tidy set, including a full supersession chain, is silent
+    a1, _ = E.cmd_rd(root, h1, "first design")
+    a2, _ = E.cmd_rd(root, h1, "second design", supersedes=a1)
+    b1, _ = E.cmd_rd(root, q1, "question design")
+    check("rdlint: a tidy RD set validates clean", E.cmd_validate(root) == [])
+
+    def probs():
+        return [m for _, m in E.cmd_validate(root)]
+    rdpath = lambda s: os.path.join(root, "rd", s + ".md")
+
+    # --- one dirty condition at a time, each undone afterwards ---
+    # a node pointing at an RD that does not exist
+    edit(node_path(root, h1), "[[rd/%s]]" % a2, "[[rd/ghost]]")
+    check("rdlint: a dangling RD link is caught",
+          any("broken RD link" in m and "ghost" in m for m in probs()))
+    check("rdlint: RD findings are problems, not warnings",
+          E.validation_report(root)["warnings"] == []
+          and any("broken RD link" in p["message"] for p in E.validation_report(root)["problems"]))
+    check("rdlint: findings carry a namespaced id",
+          any(p["id"] == "node:%s" % h1 for p in E.validation_report(root)["problems"]))
+    edit(node_path(root, h1), "[[rd/ghost]]", "[[rd/%s]]" % a2)
+
+    # two live designs for one node — the invariant the whole lifecycle exists to hold
+    edit(rdpath(a1), "status: superseded", "status: active")
+    msgs = [m for m in probs() if "active RDs" in m]
+    check("rdlint: two active RDs for one node caught", len(msgs) == 1)
+    check("rdlint: the two-active message names both slugs",
+          bool(msgs) and a1 in msgs[0] and a2 in msgs[0])
+    edit(rdpath(a1), "status: active", "status: superseded")
+
+    # the two ownership records disagreeing (this is what recording it twice buys)
+    edit(node_path(root, h1), "[[rd/%s]]" % a2, "[[rd/%s]]" % b1)
+    check("rdlint: an ownership disagreement is caught",
+          any("claims node" in m and a2 in m for m in probs()))
+    edit(node_path(root, h1), "[[rd/%s]]" % b1, "[[rd/%s]]" % a2)
+
+    # a chain link pointing nowhere, then a chain that closes on itself
+    edit(rdpath(a2), "supersedes: %s" % a1, "supersedes: nowhere")
+    check("rdlint: supersedes pointing nowhere is caught",
+          any("supersedes missing page" in m and "nowhere" in m for m in probs()))
+    edit(rdpath(a2), "supersedes: nowhere", "supersedes: %s" % a1)
+    edit(rdpath(a1), "supersedes: \n", "supersedes: %s\n" % a2)
+    done = []
+    cyc = probs(); done.append(1)
+    check("rdlint: a supersession cycle is caught", any("cycle" in m for m in cyc))
+    check("rdlint: a supersession cycle does not hang", done == [1])
+    edit(rdpath(a1), "supersedes: %s\n" % a2, "supersedes: \n")
+
+    # an RD whose owning node was deleted / never existed
+    edit(rdpath(b1), "node: %s" % q1, "node: q99")
+    check("rdlint: an orphaned RD is caught",
+          any("does not exist" in m and b1 in m for m in probs()))
+    edit(rdpath(b1), "node: q99", "node: %s" % q1)
+
+    # the status enum
+    edit(rdpath(b1), "status: active", "status: final")
+    check("rdlint: a bad RD status is caught", any("bad status" in m and "final" in m for m in probs()))
+    edit(rdpath(b1), "status: final", "status: active")
+    check("rdlint: the vault is tidy again", E.cmd_validate(root) == [])
+
+    # the check selector
+    edit(rdpath(b1), "node: %s" % q1, "node: q99")
+    check("rdlint: --check=rd isolates the RD findings",
+          all("does not exist" in p["message"] for p in E.validation_report(root, ["rd"])["problems"]))
+    check("rdlint: --check=tree excludes the RD findings",
+          E.validation_report(root, ["tree"])["problems"] == [])
+    edit(rdpath(b1), "node: q99", "node: %s" % q1)
+
+    # --- the two wiki-lint interactions (spec 07 D16 / D17) ---
+    # the one-way flow rule extended: the literature layer must not cite the project's own
+    # design reasoning either. Before 07 this read as a bare "broken link", which sent the
+    # reader hunting for a wiki page that was never meant to exist.
+    E.ensure_wiki(root)
+    write(os.path.join(root, "raw", "s.txt"), "a source\n")
+    E.cmd_ingest(root, "raw/s.txt", title="A Source")
+    wiki_page(root, "cited", "Cited", "Only an RD links here.", sources="raw/s.txt")
+    wiki_page(root, "flow", "Flow", "Cites an RD.", sources="raw/s.txt",
+              extra="See [[rd/%s]]." % b1)
+    E.refresh(root)
+    check("rdlint: a wiki page citing an RD is a flow violation",
+          any("flow violation" in m and b1 in m for m in probs()))
+    check("rdlint: it is not reported as a broken link",
+          not any("broken link" in m and b1 in m for m in probs()))
+    os.remove(os.path.join(root, "wiki", "flow.md"))
+    # an RD grounding itself in the literature is intended usage — the page it cites is not
+    # an orphan, and before 07 it was reported as one
+    check("rdlint: a wiki page cited only by an RD starts as an orphan",
+          any("orphan" in m and "cited" in m for m in probs()))
+    edit(rdpath(b1), "## Design\n", "## Design\n\nGrounded in [[cited]].\n")
+    check("rdlint: an RD citation rescues a wiki page from orphan",
+          not any("orphan" in m and "cited" in m for m in probs()))
+
+    # --- blast radius: the shipped fixture must be untouched by any of the above ---
+    fx = os.path.join(HERE, "..", "examples", "demo_vault")
+    if os.path.isdir(fx):
+        cp = tempfile.mkdtemp(prefix="crux_rdfx_")
+        shutil.rmtree(cp); shutil.copytree(fx, cp)
+        check("rdlint: the demo fixture validates clean with the rd check",
+              E.validation_report(cp)["problems"] == [])
+        check("rdlint: the demo fixture's finding list is unchanged",
+              E.validation_report(cp) ["problems"]
+              == E.validation_report(cp, ["tree", "wiki"])["problems"])
+        shutil.rmtree(cp, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_rd_skill():
+    """Spec 07, PRD 07.4 — the crux-rd skill. Prose is reviewed by reading it; these asserts
+    only stop the documentation from drifting out of sync with the code that ships beside it,
+    which is the specific way skill docs rot."""
+    print("\n# crux-rd skill (write-vs-skip filter · immutability)")
+    sk = os.path.abspath(os.path.join(HERE, "..", "..", "crux-rd", "SKILL.md"))
+    check("rdskill: crux-rd ships with the standard frontmatter", os.path.isfile(sk))
+    if not os.path.isfile(sk):
+        return
+    s = read(sk)
+    fm = s.split("---")[1] if s.startswith("---") else ""
+    check("rdskill: crux-rd frontmatter carries name/description/license/metadata",
+          all(k in fm for k in ("name: crux-rd", "description:", "license:", "metadata:")))
+    # the filter is the reason the skill exists: without it every node grows an RD
+    check("rdskill: the write-vs-skip filter is written down",
+          all(x in s for x in (str(E.PROSE_CAP), "re-litigate", "distortion")))
+    check("rdskill: the filter states its negative case",
+          "verifiables" in s and "not warranted" in s.lower())
+    check("rdskill: the skill documents supersession, not amendment",
+          "--supersedes" in s and "never amended in place" in s)
+    # D7 made this paragraph the ONLY thing holding the invariant, so it must say so
+    check("rdskill: the skill says the engine does not police immutability",
+          "git log -p" in s)
+    check("rdskill: the skill declares disable-model-invocation",
+          "disable-model-invocation: true" in fm)
+    crux_skill = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
+    check("rdskill: the crux verb table lists rd",
+          os.path.isfile(crux_skill) and "| `rd` |" in read(crux_skill))
+    # every invocation the skill shows must be one the CLI actually accepts
+    bad = []
+    for m in re.findall(r"crux rd ([^\n`\"']*)", s):
+        for flag in re.findall(r"--[a-z-]+", m):
+            if flag not in ("--supersedes", "--json"):
+                bad.append(flag)
+    check("rdskill: documented invocations parse", not bad)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "rd", "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    check("rdskill: crux rd --help works", r.returncode == 0 and "--supersedes" in r.stdout)
+    spec = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".spec", "README.md"))
+    if os.path.isfile(spec):
+        row = [l for l in read(spec).splitlines() if "07-rd-layer.md" in l]
+        check("rdskill: spec 07 is marked done in .spec/README.md", bool(row) and "☑" in row[0])
+
+
+def run_deck_rd():
+    """Spec 07, PRD 07.5 — RD pages reach the deck payload. Spec 11 cut the `rd` slot and
+    shipped it empty on the bargain that 07 would be picked up for free; this is that pickup.
+
+    The trap this suite exists to catch: the neighbouring `wiki` block walks anchor +
+    ANCESTORS, because the wiki supplies the deck's intro. RDs are the METHODS slot for the
+    anchor's own story, so the traversal is anchor + DESCENDANTS. Copying the wiki loop would
+    put a parent's design on a child's method slide."""
+    print("\n# deck payload — RD pages in the methods slot")
+    root = tempfile.mkdtemp(prefix="crux_rddeck_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Deck RD", root)
+    q1, _ = E.cmd_ask(root, "the ancestor")
+    q2, _ = E.cmd_ask(root, "the anchor", parent=q1)
+    q4, _ = E.cmd_ask(root, "the sibling", parent=q1)
+    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"])
+
+    check("rddeck: rd is present and empty with no RD layer", E.deck_payload(root, q2)["rd"] == [])
+
+    anc, _ = E.cmd_rd(root, q1, "ancestor design")
+    sib, _ = E.cmd_rd(root, q4, "sibling design")
+    own, _ = E.cmd_rd(root, q2, "anchor design")
+    kid, _ = E.cmd_rd(root, h1, "descendant design")
+    p = E.deck_payload(root, q2)
+    slugs = [r["slug"] for r in p["rd"]]
+    check("rddeck: the anchor's RD reaches the payload", own in slugs)
+    check("rddeck: a descendant's RD reaches the payload", kid in slugs)
+    check("rddeck: an ancestor's RD stays out of the methods slot", anc not in slugs)
+    check("rddeck: a sibling's RD stays out", sib not in slugs)
+    check("rddeck: the rd entry carries slug, title and path",
+          all(set(r) == {"slug", "title", "path"} for r in p["rd"])
+          and p["rd"][0]["title"] == "anchor design")
+    check("rddeck: rd order is tree order then slug", slugs == [own, kid])
+    check("rddeck: rd paths are vault-relative",
+          all(r["path"] == "rd/%s.md" % r["slug"] for r in p["rd"]))
+    import json as J
+    dumped = J.dumps(p)
+    check("rddeck: no absolute path in the payload with RDs present", root not in dumped)
+    check("rddeck: the payload stays byte-identical with RDs",
+          J.dumps(E.deck_payload(root, q2)) == dumped)
+
+    # a superseded design is history, not the methods of the current story
+    own2, _ = E.cmd_rd(root, q2, "anchor design, second cut", supersedes=own)
+    slugs = [r["slug"] for r in E.deck_payload(root, q2)["rd"]]
+    check("rddeck: only active RDs enter the payload", own not in slugs)
+    check("rddeck: a superseded RD's successor appears", own2 in slugs)
+
+    # spec 11: "a hypothesis anchor is legal and yields a shorter payload"
+    check("rddeck: a hypothesis anchor carries its RD",
+          [r["slug"] for r in E.deck_payload(root, h1)["rd"]] == [kid])
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_rd_gui():
+    """Spec 07, PRD 07.3 — the RD read surfaces: the snapshot `rd` key (index only, never a
+    body), the lazy /rd/<slug>.json route, and each node's pointer at its active RD.
+
+    The reader itself is SHARED with the wiki tab, not copied: the pre-registered
+    `webui: app.js is pure-read (three GETs…)` assert is what proves it — a second reader
+    would need a fourth fetch and would fail that count."""
+    print("\n# RD GUI contract (snapshot rd key + /rd/<slug>.json route)")
+    import json, threading, urllib.request, urllib.error, builtins
+    import serve as S
+    root = tempfile.mkdtemp(prefix="crux_rdgui_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("RD GUI", root)
+    q1, _ = E.cmd_ask(root, "a question")
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+
+    snap = E.snapshot(root)
+    check("rdgui: snapshot reports an inactive RD layer",
+          snap["rd"] == {"active": False, "pages": []})
+    check("rdgui: a node with no RD reports null", snap["nodes"][h1]["rd"] is None)
+
+    a1, _ = E.cmd_rd(root, h1, "the design")
+    edit(os.path.join(root, "rd", a1 + ".md"), "## Design\n", "## Design\n\nThe substance.\n")
+    a2, _ = E.cmd_rd(root, h1, "the second design", supersedes=a1)
+    snap = E.snapshot(root)
+    pages = {p["slug"]: p for p in snap["rd"]["pages"]}
+    check("rdgui: the RD index carries the public fields",
+          set(pages[a1]) == {"slug", "title", "node", "status", "supersedes", "hash"})
+    check("rdgui: the RD index reports status and chain",
+          pages[a1]["status"] == "superseded" and pages[a2]["supersedes"] == a1)
+    check("rdgui: the RD index carries a content hash",
+          isinstance(pages[a1]["hash"], str) and len(pages[a1]["hash"]) == 16)
+    check("rdgui: snapshot never carries an RD body", "The substance." not in json.dumps(snap))
+    check("rdgui: a node points at its active RD", snap["nodes"][h1]["rd"] == a2)
+    check("rdgui: node_json agrees with snapshot", E.node_json(root, h1)["rd"] == a2)
+
+    httpd = S.make_server(root, port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = "http://127.0.0.1:%d" % httpd.server_address[1]
+
+    def get(path):
+        try:
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    try:
+        st, body = get("/rd/%s.json" % a1)
+        pg = json.loads(body) if st == 200 else {}
+        check("rdgui: the RD route returns a body", st == 200 and "The substance." in pg.get("body", ""))
+        check("rdgui: the RD route returns backlinks", isinstance(pg.get("backlinks"), list))
+        check("rdgui: an unknown RD slug is a 404", get("/rd/nope.json")[0] == 404)
+
+        # the slug is matched against the scan, never used as a path — rejected before disk
+        opened, _open = [], builtins.open
+        def spy(f, *a, **kw):
+            opened.append(str(f)); return _open(f, *a, **kw)
+        builtins.open = spy
+        try:
+            codes = [get("/rd/%s.json" % s)[0] for s in ("..%2f..%2fetc%2fpasswd", ".hidden", "a%2fb")]
+        finally:
+            builtins.open = _open
+        check("rdgui: a traversal slug is rejected without a disk touch",
+              set(codes) == {404} and not any("passwd" in o for o in opened))
+
+        before = _dir_bytes(root)
+        get("/snapshot.json"); get("/rd/%s.json" % a2)
+        check("rdgui: the RD route writes nothing", _dir_bytes(root) == before)
+    finally:
+        httpd.shutdown(); httpd.server_close()
+
+    # the two layers are separate namespaces: the same slug may exist in both and each
+    # route resolves its own (wiki_page_payload rejects a "/" in a slug, so a shared route
+    # could never have carried a prefix)
+    E.ensure_wiki(root)
+    write(os.path.join(root, "raw", "s.txt"), "src\n")
+    E.cmd_ingest(root, "raw/s.txt", title="S")
+    wiki_page(root, a2, "Same Slug, Wiki Side", "the wiki one", sources="raw/s.txt")
+    check("rdgui: RD and wiki slugs are separate namespaces",
+          E.wiki_page_payload(root, a2)["title"] == "Same Slug, Wiki Side"
+          and E.rd_page_payload(root, a2)["title"] == "the second design")
+
+    # the pane must hide by CSS as well as by the hidden attribute: an ID selector outranks
+    # the UA's [hidden] rule, and the first live walk of this tab found the rail rendering
+    # underneath the tree because of it
+    css = read(os.path.join(HERE, "webui", "style.css"))
+    check("rdgui: the RD pane opts back in to [hidden]", "#rd-pane[hidden]" in css)
+    idx = read(os.path.join(HERE, "webui", "index.html"))
+    check("rdgui: the RD pane ships hidden", 'id="rd-pane" hidden' in idx)
+    check("rdgui: the RD tab is registered", 'data-tab="rd"' in idx)
+
+    # the node -> RD pointer has to be reachable from the pane, or it is a snapshot key
+    # nothing uses. Absent on a node with no RD, so it never becomes chrome.
+    check("rdgui: the node pane offers a way into the design",
+          "function rdSection" in read(os.path.join(HERE, "webui", "app.js"))
+          and "if (!n.rd) return \"\";" in read(os.path.join(HERE, "webui", "app.js")))
+
+    # the rail must reuse the wiki rail's DOM contract, or it inherits none of its styling
+    # (the first live walk rendered the rail as a horizontal run of text because of this)
+    app = read(os.path.join(HERE, "webui", "app.js"))
+    check("rdgui: the RD rail reuses the wiki rail's DOM classes",
+          'class="wr-folder"' in app and '"wr-items"' in app)
+    check("rdgui: the rail's scroll rule is shared, not restated",
+          "#wiki-rail-body, #rd-rail-body" in css)
+    # opening a SUPERSEDED design by default is the one thing this lifecycle exists to prevent
+    check("rdgui: the reader defaults to a live design",
+          'p.status === "active"' in app)
+
+    # a pre-07 vault must not 500 the route
+    old = tempfile.mkdtemp(prefix="crux_rdgui0_")
+    shutil.rmtree(old); os.makedirs(old)
+    E.cmd_init("No RDs", old)
+    check("rdgui: the RD route is safe on a pre-07 vault", E.rd_page_payload(old, "anything") is None)
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -2476,6 +2998,12 @@ def main():
     run_economy()
     run_economy_migration()
     run_agent_cli()
+    run_rd()
+    run_rd_migration()
+    run_rd_lint()
+    run_rd_skill()
+    run_deck_rd()
+    run_rd_gui()
     run_deck()
     run_deck_verify()
     run_prezit()

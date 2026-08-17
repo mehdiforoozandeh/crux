@@ -1,6 +1,6 @@
 # Spec 07 — RD layer
 
-**Label:** `rd` · **Status:** ☐ todo
+**Label:** `rd` · **Status:** ☑ done (engine 1.5, 2026-08-15)
 **Depends on:** [06 node economy](06-node-economy.md)
 
 ## Goal
@@ -41,7 +41,21 @@ codebase. Do not invent a second pattern.
 | `Wiki` tab, markdown reader + backlinks | reuse that reader — do not build a third |
 
 New verb: `crux rd <node> "<title>"` — creates the file and writes the backlink into the
-node. One RD per node maximum; an RD belongs to exactly one node, though it may cite others.
+node. An RD belongs to exactly one node, though it may cite others.
+
+**One *active* RD per node** — superseded ones accumulate and are kept; the chain is the
+record. *(Amended on build, PI ruling D11: the original text said "one RD per node maximum",
+which cannot be reconciled with a `draft → active → superseded` chain. The rejected
+alternative below — "multiple RDs per node" — is still rejected: you cannot have two live
+designs, only one live one and a history.)*
+
+**The backlink is WRITTEN into the node file** (`RD:: [[rd/<slug>]]`, beside `Parent::`), not
+computed. Spec 08's task work-graph uses the opposite convention, and that split is
+deliberate (PI ruling, 2026-08-15): **tree-lineage links are written**, following the
+`Parent::` idiom the vault has used since v0.1, because an RD belongs to exactly one node and
+travels with it; **the taskhub's work-graph stays computed**, because a task may touch many
+nodes and is re-derived. Two layers, two idioms. [08](08-taskhub.md) carries the mirror-image
+sentence — neither spec should be edited to match the other's convention.
 
 ### Template
 
@@ -116,23 +130,36 @@ a reference implementation.)*
 - **Multiple RDs per node.** Invites the same accretion in a new location. One node, one
   active RD, supersession for change.
 
-## Open questions
+## Open questions — both settled 2026-08-15
 
-- Whether RDs get their own cockpit tab or share the wiki tab's reader with a filter.
-- Whether an RD may be attached to a *question* or only to a hypothesis. q21 argues for
-  questions; the counter-argument is that a question needing a design document may just be
-  more than one question.
+- **Cockpit surface → its own tab, reusing an extracted reader.** Sharing the Wiki tab behind
+  a filter was cheaper and conceptually wrong: that tab's whole design rests on the one-way
+  flow rule (literature in, project findings never), and an RD is the project's own design
+  reasoning. The spec's *"reuse that reader — do not build a third"* is honoured by
+  extracting the reader first and re-basing the wiki tab onto it; there is no shared reader
+  today, only a wiki-shaped one. (PRD 07.3.)
+- **An RD may attach to a question or a hypothesis.** q21 — a question — is the motivating
+  case, so refusing questions would have excluded the node that forced the feature. The
+  counter-argument is real but is a *skill* rule, not an engine refusal: crux's house style
+  is to say the number out loud and let the PI decide, exactly as fan-out back-pressure does.
+  The project root and syntheses do not carry RDs.
 
 ## Work items
 
-- ☐ `rd/` directory, `type: rd` frontmatter, `templates/rd.md` from the evolve-crux PRD shape
-- ☐ `crux rd <node> "<title>"` verb — creates + backlinks
-- ☐ Generated `RD.md` index
-- ☐ Structural lint in `validate`: link resolves, one active RD per node, supersession chain
-  is acyclic, superseded RDs are not edited
-- ☐ Snapshot key + cockpit reader (reuse the wiki reader)
-- ☐ `crux-rd` skill with `disable-model-invocation: true`
-- ☐ The write-vs-skip filter, written into the skill
+- ☑ `rd/` directory, `type: rd` frontmatter, `templates/rd.md` from the evolve-crux PRD shape
+- ☑ `crux rd <node> "<title>"` verb — creates + backlinks
+- ☑ Generated `RD.md` index
+- ☑ Structural lint in `validate --check=rd`: link resolves, the two ownership records agree,
+  one active RD per node, supersession chain resolves and is acyclic
+- ⛔ **~~superseded RDs are not edited~~ — retired on build (PI ruling D7).** The engine has no
+  memory of a file's previous bytes, and the only mechanism available was a second
+  engine-owned hash registry the spec never budgeted for. `git log -p rd/<slug>.md` is the
+  audit trail instead — the same call [06](06-node-economy.md) §3 made when it sent decision
+  history to git. Immutability is now a discipline the `crux-rd` skill teaches, not an
+  invariant the engine enforces; that cost is recorded here so it is not rediscovered.
+- ☐ Snapshot key + cockpit reader (reuse the wiki reader) — PRD 07.3, builds last
+- ☑ `crux-rd` skill with `disable-model-invocation: true`
+- ☑ The write-vs-skip filter, written into the skill
 
 ## Acceptance criteria
 

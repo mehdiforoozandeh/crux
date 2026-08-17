@@ -135,7 +135,13 @@ def main(argv=None):
     s.add_argument("path", help="path (under raw/, relative to the vault) to the source to register")
     s.add_argument("-t", "--title", default=None, help="human title for the source (default: filename)")
 
-    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy)"))
+    s = _jsonable(sub.add_parser("rd", aliases=["design", "requirements"], help="write the Requirements Document for a node's design"))
+    s.add_argument("node", help="the question or hypothesis this design belongs to")
+    s.add_argument("title")
+    s.add_argument("--supersedes", default=None, metavar="SLUG",
+                   help="replace this node's active RD — an active RD is never amended in place")
+
+    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
     s.add_argument("--check", default=None, metavar="LIST",
@@ -267,6 +273,15 @@ def dispatch(a):
         if a.json:
             return _emit({"state": state, "path": rel})
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
+    elif c in ("rd", "design", "requirements"):
+        root = _vault()
+        slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)
+        if a.json:
+            return _emit({"slug": slug, "file": f"{E.RD_DIR}/{fn}", "node": a.node,
+                          "status": "active", "supersedes": a.supersedes})
+        print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
+              + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
+              + "\n  next: write the design into it — the node's TL;DR must still stand alone")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
         rep = E.validation_report(_vault(), checks)

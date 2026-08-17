@@ -6,6 +6,64 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **The RD layer: `crux rd <node> "<title>"`** (spec [`07`](.spec/07-rd-layer.md), PRD 07.1).
+  Requirements Documents — a home for the design detail the 400-word node cap displaces.
+  One active RD per node, living in `rd/<slug>.md` as `type: rd`, linked from the node by an
+  `RD::` line beside `Parent::`, indexed by a generated `RD.md`. An RD is a **document, not
+  evidence**: it is outside the roll-up, never moves `ledger_counts`, and never trips the
+  review gate. An active RD is never amended in place — `--supersedes` writes a new one and
+  flips the old, and the chain is the reasoning history (the direct fix for a node body
+  treated as the only durable record). The backlink sits in the body preamble on purpose:
+  text before the first heading is invisible to the prose counter, so linking a design
+  document costs nothing from the budget it exists to free. `ENGINE_VERSION` 1.4 → 1.5;
+  a pre-1.5 vault has no `rd/` and loads byte-unchanged.
+
+- **`crux validate --check=rd`: the RD structural lint** (spec
+  [`07`](.spec/07-rd-layer.md), PRD 07.2). Four mechanical checks plus the status enum: the
+  node's `RD::` backlink resolves; the two ownership records (the RD's `node:`, the node's
+  link) agree; exactly one design is live per node; the supersession chain resolves and is
+  acyclic. Findings are **problems**, matching the wiki lint — an integrity break, not an
+  economy warning — and the check is always-on but returns immediately on a vault with no
+  `rd/`. Two wiki-lint corrections ride along: a wiki page citing `[[rd/…]]` is now a **flow
+  violation** (the one-way rule extended — the literature layer must not cite the project's
+  own design) instead of an unhelpful "broken link", and a wiki page cited only by an RD is
+  no longer reported as an orphan. Deliberately **not** checked: whether a superseded RD was
+  edited — `git log -p rd/<slug>.md` is the audit trail, the same call made for a node's
+  decision history.
+
+- **The `crux-rd` skill** (spec [`07`](.spec/07-rd-layer.md), PRD 07.4). Carries the two
+  things the engine must not hold: the **write-vs-skip filter** (an RD is warranted when the
+  design would blow the cap on its own, or makes a choice a reader would re-litigate, or
+  carries a distortion that must travel with every result — and is explicitly *not* warranted
+  for a hypothesis whose design is its verifiables), and the **invocation rule** — the PI
+  decides when a design has settled, so the skill ships `disable-model-invocation: true` and
+  never offers unprompted. It also now carries the immutability rule outright: since the
+  engine deliberately does not detect an edited superseded RD, the skill names
+  `git log -p rd/<slug>.md` as the audit trail. Spec 07 is marked done and amended on two
+  points: "one RD per node" is now "one *active* RD per node", and the written-vs-computed
+  backlink split with spec 08 is recorded on both sides.
+
+- **Decks pick up RD pages** (specs [`07`](.spec/07-rd-layer.md) +
+  [`11`](.spec/11-prezit.md), PRD 07.5). `crux deck <anchor> --json` now fills the `rd` slot
+  spec 11 cut and shipped empty: the **active** RDs owned by the anchor and everything under
+  it, as `{slug, title, path}`, in tree order then slug. The traversal is anchor +
+  *descendants*, not the neighbouring `wiki` block's anchor + *ancestors* — RDs are the
+  methods source for the anchor's own story, so a parent's design must not land on a child's
+  method slide. A vault with no `rd/` still gets `[]` and the command still cannot fail.
+
+- **The cockpit reads RDs** (spec [`07`](.spec/07-rd-layer.md), PRD 07.3). A third tab, which
+  appears only when the vault has an `rd/`: a rail grouped by owning node (superseded entries
+  dimmed under their successor) and a reader. The reader is the **wiki tab's, extracted and
+  shared** rather than copied — the pre-registered "app.js is pure-read (three GETs)" assert
+  is what keeps it honest, since a second reader would need a fourth fetch. `snapshot` gains
+  an `rd` index block (slug, title, node, status, supersedes, content hash — never a body,
+  because the cockpit polls it about once a second) and every question and hypothesis gains
+  `rd`: the slug of its active RD, or `null`. Nodes that have one now show a **Design** row
+  that opens it; nodes that do not show nothing. New route `/rd/<slug>.json`, with the wiki
+  route's traversal guard: the slug is matched against the scan and never used as a path.
+
 ### Fixed
 
 - **Cockpit: the snapshot poll diffs and patches instead of rebuilding** (spec

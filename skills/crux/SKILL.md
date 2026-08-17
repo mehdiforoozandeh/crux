@@ -197,6 +197,7 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `status` | map, tree, where, show | ○ | print the tree / a node's ledger |
 | `synthesize` | weave, rollup | ◆ | draft the synthesis that closes a question (`--for q3`), or weave several |
 | `approve` | sign-off, signoff | ◆ | **the PI's signature on a synthesis** — never run this on your own judgment |
+| `rd` | design, requirements | ◆ | write the Requirements Document for a node's design — the detail the 400-word cap displaces; one active RD per node, `--supersedes` to replace one (see the **crux-rd** skill) |
 | `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
 | `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit (localhost; view-only — tree, review gate, rendered reports + figures; launch playbook: the **crux-cockpit** skill) |
 | `validate` | lint, check | ○ | integrity checks (tree + wiki lint, plus the economy warnings). `--strict` fails on warnings; `--check=tree,economy` runs a subset |

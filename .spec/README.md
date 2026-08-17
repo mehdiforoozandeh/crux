@@ -14,7 +14,7 @@ being built — do not implement)
 | 03 | [LLM wiki](03-llm-wiki.md) | `wiki` | ☑ |
 | 05 | [Autoresearch: autonomous loops](05-autoresearch.md) | `autoresearch` | ⏸ |
 | 06 | [Node economy](06-node-economy.md) | `economy` | ☑ |
-| 07 | [RD layer](07-rd-layer.md) | `rd` | ☐ |
+| 07 | [RD layer](07-rd-layer.md) | `rd` | ☑ |
 | 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ☐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☐ |
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
@@ -40,7 +40,7 @@ be built before the machinery that makes them safe exists: [15](15-evidence-sema
 what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
 what stops it grading its own homework.
 
-01, 02, 03 and 06 are `☑ done` and are reference material, not work.
+01, 02, 03, 06, 07, 11 and 12 are `☑ done` and are reference material, not work.
 
 ## Dependency order
 
