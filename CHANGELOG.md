@@ -8,6 +8,90 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The taskhub's skill rules, and three spec amendments** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.5). `SKILL.md` gains the rules the engine cannot check:
+  what gets in ("would you be annoyed if this vanished next week?"), when status changes, the
+  hard line — *work never creates direction; an output that is evidence enters the gated
+  tier* — and the escape hatch, that a task which would open a question converts to a tree
+  node. Plus the distinction that matters most now that both share four tokens: a
+  hypothesis's **verdict** is derived by the engine from its ticks; an experiment's
+  **conclusion** is written about a run and PI-accepted, and never closes anything.
+  `.spec/08` is amended for the conclusion vocabulary and the frontier criterion (both wrong
+  as written), and both specs now record the deliberate split between written node-tree
+  lineage and derived task links, so neither layer gets "fixed" toward the other. No
+  `ENGINE_VERSION` bump.
+
+### Added
+
+- **The taskhub in the cockpit** (spec [`08`](.spec/08-taskhub.md), PRD 08.4). `snapshot`
+  gains a `tasks` block — items with their **computed** `state` and role, the frontier, the
+  acceptance queue, and the declared vocabularies, so the cockpit never keeps its own copy of
+  the rules. Node → tasks and hypothesis → experiments reach the node pane as computed
+  backlinks that appear in no node file. A fourth tab renders four views over one list —
+  Frontier (default), All, By category, and the experiment timeline — with **one colour per
+  category** as the visual language, in both themes, and a `pre-15` marker on a conclusion
+  about a hypothesis that predates evidence semantics. The tab hides itself on a vault with no
+  `tasks/`, exactly as the Wiki and RD tabs do. Read-only throughout: accepting an experiment
+  stays a CLI act. No `ENGINE_VERSION` bump — pure read paths.
+
+### Added
+
+- **The gating split: work never creates direction** (spec [`08`](.spec/08-taskhub.md),
+  PRD 08.3). Completing an ordinary task is act-and-report; completing an **experiment** is
+  PI-gated, because its output is evidence. `crux task review` lists experiments awaiting
+  acceptance and `crux task accept` is the PI's signature — a **separate** queue from
+  `crux review`, which keeps spec 15's `(id, title, drift)` three-tuple untouched. Accepting
+  records the signature and sets the existing `stale` signal on the refed hypotheses' parent
+  questions; it writes no verdict, no tick and no roll-up entry, and five asserts prove those
+  negatives. Because only the parent of a decomposition carries `hypothesis_refs`, the gate
+  fires **once per experiment**, not once per sub-task. Drift on a refed hypothesis is printed
+  loudly at both `review` and `accept` and **blocks nothing** — spec 15's ruling D7, given its
+  own guard at this new touchpoint. `ENGINE_VERSION` 2.2 → 2.3.
+
+### Added
+
+- **Experiments are tasks** (spec [`08`](.spec/08-taskhub.md), PRD 08.2). A task that declares
+  what it concluded about a hypothesis (`hypothesis_refs: "h44:supported, h45:refuted"`) **is**
+  an experiment; the `experiment` category is computed from that and never stored, so there is
+  no way to have an experiment that forgot to be marked one. The conclusion vocabulary is spec
+  15's, derived from `VERDICTS` so the two cannot be edited apart: `supported` / `refuted` /
+  `inconclusive` / `invalid-run`, with the retired `partial` refused by name. One experiment
+  can conclude opposite things about two hypotheses — the fact the tree structurally cannot
+  hold. Node → tasks and hypothesis → experiments are **computed** backlinks, so adding an
+  experiment still edits no node file; the experiment timeline is a filtered section of
+  `TASKHUB.md`, leaving the per-hypothesis `EXPERIMENTS.md` registry untouched. An experiment
+  may bear on a **pre-15** hypothesis, and every view records which schema each refed
+  hypothesis carries — the record sits on the task's side, so nothing is retro-stamped.
+  `crux task add --concluded h44:supported`. `ENGINE_VERSION` 2.1 → 2.2.
+
+### Added
+
+- **The dependency graph, the frontier query, and `TASKHUB.md`** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.1). `blocked` is computed from the graph and never
+  stored — a state you can compute cannot drift — and external blockers become tasks rather
+  than a second kind of state. `crux task list` answers the three questions actually asked of
+  the layer (`--frontier`, `--ref <node>`, `--blocks <task>`), and the generated `TASKHUB.md`
+  leads with the frontier because that is the query it exists to serve. Dependency cycles are
+  caught deterministically over both `blocked_by` and `parent`, with the cycle path in the
+  message. A **dropped** blocker discharges its edge (the spec's literal "all `done`" would
+  strand the dependent forever, invisibly, inside the layer's own primary query), and the
+  promotion is reported as `info` so it is never silent. `ENGINE_VERSION` 2.0 → 2.1.
+
+### Added
+
+- **The task store — a record the engine allocates and never rewrites** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.0). A third side-layer beside the tree and the wiki:
+  `tasks/`, holding the work a research programme has to *do*. `crux task add / done / drop /
+  show / categories`, one file per task, engine-allocated ids that are never renumbered, a
+  per-vault declared category list, and a `--check=tasks` structural lint. `done` hard-requires
+  an output that resolves — a vault path or a `[[wikilink]]` — because a bare ticked box
+  discards the thing that makes the layer traversable. The load-bearing property is negative
+  and is the direct lesson from spec-kit, whose `tasks.md` is regenerated from its spec and
+  loses state: **nothing regenerates the taskhub**. `experiment` is a reserved category from
+  day one, refused by the engine, so assigning it later (2.2) is not a format change.
+  `ENGINE_VERSION` 1.9 → 2.0; a pre-2.0 vault has no `tasks/` and loads byte-unchanged.
+
+### Added
 - **The cockpit narrates evidence semantics** (spec
   [`15`](.spec/15-evidence-semantics.md), PRD 15.6). The engine had been publishing `drift`,
   `rule`/`rule_m`, `locked`/`lock_at` and per-verifiable `kind` in `snapshot()` since 1.9, and

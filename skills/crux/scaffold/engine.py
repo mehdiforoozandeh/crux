@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -36,6 +36,14 @@ ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vaul
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
                                 # rd/ at all and loads byte-unchanged.
+                                # 2.0: the taskhub (spec 08) — a third side-layer, tasks/,
+                                # holding the work a research programme has to DO. A source
+                                # artifact: nothing regenerates it, ever. Additive — a pre-2.0
+                                # vault has no tasks/ and loads byte-unchanged. The major bump
+                                # is deliberate: 1.x ended at 1.9, a new artifact class in a
+                                # new directory is the largest format change since the wiki
+                                # layer, and a two-digit minor ("1.10") sorts below "1.9"
+                                # under plain string comparison.
 CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -59,7 +67,63 @@ RD_INDEX     = "RD.md"          # generated index of RD pages, rendered at the v
 RD_STATUS    = ("draft", "active", "superseded")
 RD_LINK      = "RD::"           # the node's backlink, written beside `Parent::`
 
-GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX) # root .md views the node scan must never treat as nodes
+# taskhub layer (Epic 8): the project's work layer — data prep, infrastructure, code,
+# manuscript figures, and (from 2.2) the experiments themselves. Deliberately the wiki/RD
+# shape again: a parentless side-layer of markdown files, scanned separately, with a
+# generated index and a structural lint.
+#
+# The load-bearing property is NEGATIVE and it is the direct lesson from spec-kit, whose
+# `tasks.md` is generated from the spec and whose documented workflow REGENERATES it,
+# destroying checkbox state. So: the tree can trigger a task; it can never own one. Nothing
+# regenerates the taskhub. `refresh` writes the index and never a task.
+#
+# A task is not a node. `Vault` scans the vault root only, so a file under tasks/ is
+# structurally outside v.nodes — it can never be a child, never enter ledger_counts, never
+# move a verdict and never trip the review gate. That is not incidental; it is the mechanism.
+TASK_DIR     = "tasks"          # one file per task; ids are engine-allocated and never renumbered
+TASK_INDEX   = "TASKHUB.md"     # generated index, shaped by the frontier query it serves
+TASK_STATUS  = ("open", "done", "dropped")
+TASK_BLOCKED = "blocked"        # COMPUTED (2.1), never stored — a state you can compute cannot drift
+TASK_LINK    = "Refs::"         # the task's own outbound links, written; node -> task stays DERIVED
+NO_BLOCKERS  = "None"           # the literal, so a missing edge is a visible omission (`to-tickets`)
+
+# Category is a tag from a per-vault declared list, not a parent: categories are not actions,
+# so they are not tasks. The cockpit renders one colour per category as `t-<category>`, which
+# is why a token may not contain whitespace — spec 15 learned that the hard way when
+# `invalid run` produced the broken CSS class `h-invalid run`.
+TASK_CATEGORIES_KEY = "task_categories"
+DEFAULT_TASK_CATEGORIES = ("data-acquisition", "hpc-setup", "implementation",
+                           "visualization", "manuscript", "admin")
+# `experiment` is RESERVED: it cannot be typed by hand, and from 2.2 the engine assigns it to
+# any task carrying `hypothesis_refs`. Reserved from 2.0 rather than introduced later, for
+# exactly the reason spec 15 reserves `ordered`: refusing rather than ignoring is what makes
+# the later addition NOT a format change, because no vault written in between can be
+# ambiguous about what the word meant.
+TASK_RESERVED_CATEGORY = "experiment"
+
+# An EXPERIMENT is a task whose output is evidence. That is the entire difference: strip both
+# records down and exactly one row differs — what the output is. Two record types differing in
+# one field are one record type, which is why the proposed separate experiment layer was
+# designed in full and then merged here.
+#
+# The role is COMPUTED, never stored: a task that declares what it concluded about a
+# hypothesis IS an experiment. There is no way to have an experiment that forgot to be marked
+# one, and no way to mislabel a chore as one.
+#
+# The conclusion vocabulary is spec 15's, DERIVED from VERDICTS rather than restated, so it
+# can never drift from the engine's own list. `partial` is excluded: 15 retired it from the
+# image of the derivation (it *is* the partial answer that spec abolishes), and a new record
+# must never reintroduce it. The rest — including `invalid-run` — carry over exactly, so the
+# legend, the theme colours and the CSS class suffixes 15 already built cover both.
+#
+# Note the two PROVENANCES that share these tokens, because they are not the same thing:
+# a hypothesis's `verdict` is DERIVED BY THE ENGINE from the tick vector under a declared
+# rule; an experiment's conclusion is WRITTEN about a run and PI-accepted (2.3). Sharing the
+# vocabulary is deliberate; sharing the mechanism would be a leash violation.
+HYPOTHESIS_REFS = "hypothesis_refs"
+RETIRED_CONCLUSION = "partial"
+
+GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX, TASK_INDEX) # root .md views the node scan must never treat as nodes
 
 # evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
 # Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
@@ -91,6 +155,10 @@ IDEA_STATUS      = ["idea", "staged", "running", "done"]
 # `invalid-run` is hyphenated because the cockpit builds its CSS class as "h-" + verdict; a
 # space would produce the broken class `h-invalid run`. A render fact, not a preference.
 VERDICTS         = ["supported", "partial", "refuted", "inconclusive", "invalid-run"]
+# spec 08's experiment conclusions: VERDICTS minus the retired `partial`. Derived here,
+# immediately after the list it depends on, so a verdict added to the engine is automatically
+# available as a conclusion and the two can never be edited apart.
+CONCLUSIONS      = tuple(x for x in VERDICTS if x != RETIRED_CONCLUSION)
 TERMINAL_IDEA    = "done"
 TERMINAL_QUESTION= "resolved"
 
@@ -116,7 +184,7 @@ SCHEMA_GENERATION = 1
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary",)   # <namespace>:<slug>; specs 08 and 14 claim their own
+INFO_NAMESPACES = ("boundary", "task")   # <namespace>:<slug>; spec 14 claims its own next
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -214,7 +282,7 @@ PROSE_SECTIONS = {
 # OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
-CHECKS     = ("tree", "wiki", "economy", "fanout", "rd")
+CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks")
 OPT_CHECKS = ("decks",)
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
@@ -550,7 +618,9 @@ _(list the categories this vault uses, so pages stay consistent)_
 def load_template(kind):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", kind + ".md")
     text = read(path) if os.path.exists(path) else _BUILTIN[kind]
-    return text.replace("<<ledger_start>>", LEDGER_START).replace("<<ledger_end>>", LEDGER_END)
+    return (text.replace("<<ledger_start>>", LEDGER_START)
+                .replace("<<ledger_end>>", LEDGER_END)
+                .replace("<<TASK_LINK>>", TASK_LINK))
 
 def fill(text, **kw):
     kw.setdefault("now", now())
@@ -846,7 +916,7 @@ def artifact_kind(path):
             return kind
     return "other"
 
-def parse_artifacts(body):
+def parse_artifacts(body, heading="artifacts"):
     """Bullets under `## Artifacts` as [{label, path, kind}], in document order. Two forms:
 
         - [Full report](results/h1/report.md)
@@ -857,11 +927,15 @@ def parse_artifacts(body):
 
     The `_(placeholder)_` line and any prose are ignored. Pure — no filesystem access, so
     a node body can be parsed without a vault (and a pre-1.2 node with no such section
-    simply yields [])."""
+    simply yields []).
+
+    `heading` is parameterised so the taskhub's `## Output` reuses this grammar verbatim
+    rather than growing a second, subtly different one. The default keeps every existing
+    caller byte-identical."""
     out, in_sec, in_comment = [], False, False
     for line in body.splitlines():
         if line.startswith("## "):
-            in_sec = line[3:].strip().lower() == "artifacts"
+            in_sec = line[3:].strip().lower() == heading
             continue
         if not in_sec:
             continue
@@ -1005,6 +1079,11 @@ def refresh(root):
         if write_if_changed(os.path.join(root, WIKI_INDEX), render.render_wiki(v, root)): changed = True
     if rd_active(root):
         if write_if_changed(os.path.join(root, RD_INDEX), render.render_rd(v, root)):     changed = True
+    # The taskhub's INDEX is generated; a task never is. `refresh` writes TASKHUB.md and
+    # nothing under tasks/ — that asymmetry is the whole spec-kit lesson, and selftest
+    # byte-compares tasks/ across this call to keep it true.
+    if task_active(root):
+        if write_if_changed(os.path.join(root, TASK_INDEX), render.render_taskhub(v, root)): changed = True
     return changed
 
 # ----------------------------------------------------------------------------- validation
@@ -1110,6 +1189,13 @@ def validate(v):
            "synthesis":["id","type","title"]}
     for nid, n in v.nodes.items():
         t = n.type
+        if t == "task":
+            # `Vault` keys on the presence of `id`, not on `type`, so a task written to the
+            # vault root lands in v.nodes and would otherwise be reported as `unknown type
+            # 'task'` — a true message pointing at entirely the wrong thing.
+            problems.append((nid, f"task '{nid}': a task must live under {TASK_DIR}/ "
+                                  f"(found at the vault root); move the file, or create it "
+                                  f"with `crux task add`")); continue
         if t not in TYPES:
             problems.append((nid, f"unknown type '{t}'")); continue
         for k in req[t]:
@@ -1662,6 +1748,647 @@ def validate_rd(root):
             cur = by_slug[cur]["supersedes"]
     return problems
 
+# ----------------------------------------------------------------------------- taskhub layer (Epic 8)
+# Science goes in the tree. Doing goes in the taskhub. A task is an ACTION: if it is a claim
+# about the world that could be true or false, it is a hypothesis and belongs in the tree.
+#
+# What gets in: "would you be annoyed if this vanished next week?" If yes it belongs here,
+# however small. If no it is session scratch and stays in the agent's own todo list. Tasks
+# can be fine-grained; they cannot be ephemeral.
+def task_dir(root):    return os.path.join(root, TASK_DIR)
+def task_active(root): return os.path.isdir(task_dir(root))
+
+def ensure_tasks(root):
+    """Lazily stand up the taskhub (idempotent, safe on a pre-2.0 vault)."""
+    os.makedirs(task_dir(root), exist_ok=True)
+
+def task_categories(root):
+    """The vault's declared category list. Falls back to the defaults when the key is absent,
+    so a vault created before 2.0 can add its first task without being told to configure
+    something first."""
+    cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
+    raw = [c.strip() for c in str(cfg.get(TASK_CATEGORIES_KEY) or "").split(",") if c.strip()]
+    return tuple(raw) if raw else DEFAULT_TASK_CATEGORIES
+
+def _csv_field(val):
+    """A comma-separated frontmatter scalar -> [str]. The engine's YAML is a flat map of
+    scalars by design (no list type), so every multi-valued field is one string — the wiki
+    layer's `sources:` idiom."""
+    return [x.strip() for x in str(val or "").split(",") if x.strip()]
+
+def task_blockers(t):
+    """The blocker ids on a task. The literal `None` means "no edge, and I said so" — which
+    is the whole point of the field being mandatory (`to-tickets`): a missing edge must be a
+    visible omission rather than silence."""
+    raw = _csv_field(t["fm"].get("blocked_by"))
+    return [x for x in raw if x != NO_BLOCKERS]
+
+def task_hypothesis_refs(t):
+    """[(hypothesis id, conclusion)] for a task, in declared order. Empty for an ordinary task.
+
+    One experiment can say DIFFERENT things about different hypotheses — a pilot may support
+    h44 and refute h45 — so the conclusion rides on the ref itself, one pair per hypothesis.
+    This is the only structured place that fact exists; without it the timeline cannot be
+    rendered and no check can be written against it."""
+    out = []
+    for item in _csv_field(t["fm"].get(HYPOTHESIS_REFS)):
+        hid, _, concl = item.partition(":")
+        out.append((hid.strip(), concl.strip()))
+    return out
+
+def task_is_experiment(t):
+    """A task that declares what it concluded about a hypothesis IS an experiment. Nothing is
+    stored to say so — the same move this layer makes for `blocked`, and for the same reason,
+    with higher stakes: this is the one category that changes whether the PI gets asked."""
+    return bool(task_hypothesis_refs(t))
+
+def task_category(t):
+    """The task's category as every view must show it: `experiment` when the role is present,
+    otherwise the declared tag. Computed, so the one category with gating consequences is
+    the one category that cannot drift."""
+    return TASK_RESERVED_CATEGORY if task_is_experiment(t) else t["category"]
+
+def task_ref_link(ref, basenames):
+    """One `refs` entry as a wikilink Obsidian can actually follow.
+
+    A ref is STORED as an id (`q21`), because an id is stable and a filename is not — but a
+    node's file is `q21_<slug>.md`, so `[[q21]]` resolves to nothing in Obsidian. The stored
+    form stays the id and the rendered form carries the basename with the id as its alias:
+    `[[q21_can_jepa…|q21]]`. Full traversability is the point of the layer; a link that only
+    resolves inside crux is half a link."""
+    if "/" in ref:                       # wiki/<slug> or rd/<slug> — already a real path
+        return f"[[{ref}]]"
+    base = basenames.get(ref)
+    return f"[[{base}\\|{ref}]]" if base else f"[[{ref}]]"
+
+def task_basenames(v):
+    return {n.id: n.basename for n in v.nodes.values()}
+
+def scan_tasks(root):
+    """Every task (a *.md under tasks/ with `type: task`), in id order. Pure read.
+
+    A second scanner rather than widening `Vault`, and that is deliberate: widening `Vault`
+    to walk subdirectories would put tasks into the roll-up in one line."""
+    out, d = [], task_dir(root)
+    if not os.path.isdir(d):
+        return out
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            fm, body = parse_doc(read(os.path.join(dirpath, fn)))
+            if fm.get("type") != "task":
+                continue
+            out.append({"id": fm.get("id"), "fn": fn, "path": os.path.join(dirpath, fn),
+                        "fm": fm, "body": body, "title": fm.get("title") or fn[:-3],
+                        "category": fm.get("category"), "status": fm.get("status") or "open",
+                        "parent": fm.get("parent") or None,
+                        "blocked_by": task_blockers({"fm": fm}),
+                        "refs": _csv_field(fm.get("refs")),
+                        "hypothesis_refs": task_hypothesis_refs({"fm": fm}),
+                        "outputs": parse_artifacts(body, "output")})
+    out.sort(key=lambda t: natkey(str(t["id"] or "")))
+    return out
+
+def _link_universe(root, v=None):
+    """Everything a task's `refs` (or a wikilink output) may legally point at: tree node ids
+    and basenames, plus `wiki/<slug>` and `rd/<slug>`."""
+    v = v or Vault(root)
+    out = set(v.nodes) | {n.basename for n in v.nodes.values()}
+    out |= {f"{WIKI_DIR}/{p['slug']}" for p in scan_wiki_pages(root)}
+    out |= {f"{RD_DIR}/{p['slug']}" for p in scan_rd_pages(root)}
+    return out
+
+def _task_slug(root, title, taken):
+    base = slugify(title)
+    slug, n = base, 1
+    while slug in taken:
+        n += 1
+        slug = f"{base}_{n}"
+    return slug
+
+def _check_category(root, category):
+    """Refuse an undeclared category, and refuse the reserved one BY NAME.
+
+    The refusal lives here rather than in argparse `choices=`: argparse exits 2 instead of 1,
+    prints nothing useful under `--json`, and — decisively — never fires on a hand-edited
+    file, which is where a category actually drifts."""
+    if not category:
+        raise CruxError(f"a task needs a category — one of {', '.join(task_categories(root))}")
+    if category == TASK_RESERVED_CATEGORY:
+        raise CruxError(
+            f"'{TASK_RESERVED_CATEGORY}' is a reserved category and cannot be typed by hand. "
+            f"It is computed: a task is an experiment when it declares what it concluded "
+            f"about a hypothesis (see spec 08). Use one of "
+            f"{', '.join(task_categories(root))}.")
+    if category not in task_categories(root):
+        raise CruxError(f"unknown task category '{category}' — this vault declares "
+                        f"{', '.join(task_categories(root))}. Add one with "
+                        f"`crux task categories --add {category}`.")
+
+def _check_conclusion(concl):
+    """One conclusion token, checked against spec 15's vocabulary.
+
+    `partial` gets its own message: it is not an unknown word, it is a RETIRED one, and a
+    reader who typed it deserves to be told which spec retired it and why rather than being
+    handed a list."""
+    if concl == RETIRED_CONCLUSION:
+        raise CruxError(
+            f"'{RETIRED_CONCLUSION}' is retired as a conclusion (spec 15): it is the partial "
+            f"answer evidence semantics exists to abolish. Say what the run actually showed — "
+            f"{', '.join(CONCLUSIONS)}.")
+    if concl not in CONCLUSIONS:
+        raise CruxError(f"unknown conclusion '{concl}' — an experiment concludes one of "
+                        f"{', '.join(CONCLUSIONS)} about each hypothesis it refs")
+
+def cmd_task_add(root, title, category, refs=None, blocked_by=None, parent=None, why=None,
+                 hypothesis_refs=None):
+    """Append one task. Returns (id, filename).
+
+    Append-only, always: nothing here rewrites, renumbers, reorders or deletes an existing
+    task, and no other command in the engine writes under tasks/ at all."""
+    v = Vault(root)
+    _check_category(root, category)
+    for hid, concl in (hypothesis_refs or []):
+        n = v.nodes.get(hid)
+        if n is None or n.type != "idea":
+            raise CruxError(f"hypothesis_refs must name a hypothesis (an `idea` node); '{hid}' "
+                            + (f"is a '{n.type}'" if n else "is not in this vault")
+                            + ". A task bearing on a question rather than a hypothesis wants "
+                              "plain `--ref`.")
+        _check_conclusion(concl)
+    universe = _link_universe(root, v)
+    for r in (refs or []):
+        if r not in universe:
+            raise CruxError(f"task ref '{r}' resolves to nothing — refs point at a tree node, "
+                            f"a `{WIKI_DIR}/<slug>` page or an `{RD_DIR}/<slug>` document")
+    known = {t["id"] for t in scan_tasks(root)}
+    for b in (blocked_by or []):
+        if b not in known:
+            raise CruxError(f"cannot block on '{b}': no such task")
+    if parent is not None and parent not in known:
+        raise CruxError(f"cannot parent under '{parent}': no such task")
+    ensure_tasks(root)
+    tid = _new_id(v, "task")
+    fn = _task_slug(root, f"{tid}_{title}", {t["fn"][:-3] for t in scan_tasks(root)}) + ".md"
+    bn = task_basenames(v)
+    links = ", ".join(task_ref_link(r, bn) for r in (refs or [])) or "_(none)_"
+    hyp = ", ".join(f"{hid}:{c}" for hid, c in (hypothesis_refs or []))
+    text = fill(load_template("task"), id=tid, title=title, category=category,
+                hypothesis_refs=hyp,
+                parent=parent or "", refs=", ".join(refs or []),
+                blocked_by=", ".join(blocked_by or []) or NO_BLOCKERS,
+                ref_links=links, why=why or "_(what this unblocks)_")
+    write_if_changed(os.path.join(task_dir(root), fn), text)
+    refresh(root)
+    return tid, fn
+
+def _get_task(root, tid):
+    for t in scan_tasks(root):
+        if t["id"] == tid:
+            return t
+    raise CruxError(f"no task with id '{tid}'")
+
+def _write_task(t):
+    t["fm"]["updated"] = now()
+    write_if_changed(t["path"], render_doc(t["fm"], t["body"]))
+
+def cmd_task_done(root, tid, outputs=None):
+    """Close a task. An output ref is HARD-REQUIRED and must resolve.
+
+    An action that completed almost always produced something — code at a path, a dataset, a
+    figure, a registered page — and a bare ticked box discards exactly the thing that makes
+    this layer traversable."""
+    t = _get_task(root, tid)
+    for o in (outputs or []):
+        t["body"] = append_bullet(t["body"], "Output", o)
+    if not parse_artifacts(t["body"], "output"):
+        raise CruxError(f"cannot close {tid}: record what it produced first — "
+                        f"`crux task done {tid} --output <path|[[node]]>`. A task that "
+                        f"genuinely produced nothing was probably `drop`ped, not done.")
+    t["fm"]["status"] = "done"
+    _write_task(t)
+    refresh(root)
+    return "done"
+
+def cmd_task_drop(root, tid):
+    """Drop a task. No output required: a drop is a decision not to do the work, and the
+    reason belongs in the body and in `git log`, not in a field nobody reads (spec 06)."""
+    t = _get_task(root, tid)
+    t["fm"]["status"] = "dropped"
+    _write_task(t)
+    refresh(root)
+    return "dropped"
+
+# --- the gating split (2.3) ---------------------------------------------------------------
+# The original rule was "a task may never create direction". It was doing double duty and it
+# breaks the first time someone observes that a RUN is a task. Replaced by:
+#
+#     Work never creates direction. Work produces outputs — and an output that is evidence
+#     about a hypothesis enters the gated tier.
+#
+# The line moves from WHICH LAYER to WHICH OUTPUT, and it becomes computable:
+#   - a task with no hypothesis_refs is act-and-report. Ticking "fetched the antibody lot"
+#     sets no direction, spends no compute, records no scientific result.
+#   - a task WITH them concluded something about a claim, so the PI accepts it — exactly as
+#     `answer` and `approve` are accepted today.
+#
+# What accepting does, and what it deliberately does NOT do: it records the PI's signature on
+# the task and marks the parent question of each refed hypothesis `stale` — the existing
+# "new evidence landed, your interpretation may be out of date" signal that `cmd_close`
+# already sets and `cmd_answer` already clears. It writes no verdict, no status, no tick, and
+# touches no roll-up. Feeding the derivation was considered and DECLINED: spec 15 rules that
+# only `cmd_close` writes a verdict, and a task feeding it would let an agent set a verdict
+# the PI never ticked. Work informs; it does not decide.
+TASK_ACCEPTED = "accepted"
+
+def task_pending_gate(t):
+    """Is this task waiting for the PI? An experiment that has completed and not been
+    accepted. A chore is never here, however large; an experiment always is, however small."""
+    return (task_is_experiment(t) and t["status"] == "done"
+            and not t["fm"].get(TASK_ACCEPTED))
+
+def cmd_task_review(root):
+    """(id, title, hypothesis_refs, drifted) for every experiment awaiting the PI's
+    acceptance.
+
+    A SEPARATE queue from `cmd_review`, deliberately. That function returns 15's
+    `(id, title, drift)` three-tuple and is rendered in three places including
+    `snapshot()["queue"]`; reshaping it would be a contract change on a surface the cockpit
+    already draws. And the two decisions are not the same decision: "is this question
+    settled" is not "do you accept what this run concluded".
+
+    `drifted` lists the refed hypotheses whose commitment was edited after the run. Surfaced
+    HERE because this is the exact moment the PI is deciding — and it BLOCKS NOTHING."""
+    v = Vault(root)
+    out = []
+    for t in scan_tasks(root):
+        if not task_pending_gate(t):
+            continue
+        drifted = [hid for hid, _ in t["hypothesis_refs"]
+                   if hid in v.nodes and lock_drift(v.nodes[hid])]
+        out.append((t["id"], t["title"], t["hypothesis_refs"], drifted))
+    return out
+
+def cmd_task_accept(root, tid):
+    """The PI's signature on what an experiment concluded. Returns the timestamp.
+
+    Idempotent: the first acceptance's timestamp is the record, so re-accepting never
+    rewrites history — the same contract `cmd_approve` has for a synthesis."""
+    t = _get_task(root, tid)
+    if not task_is_experiment(t):
+        raise CruxError(f"'{tid}' is not an experiment — it concluded nothing about a "
+                        f"hypothesis, so there is nothing to accept. Ordinary tasks are "
+                        f"act-and-report: `crux task done {tid}` is the whole of it.")
+    existing = t["fm"].get(TASK_ACCEPTED)
+    if existing:
+        return str(existing)
+    stamp = now()
+    t["fm"][TASK_ACCEPTED] = stamp
+    _write_task(t)
+    # New evidence has landed against these hypotheses, so their questions' standing
+    # interpretations may be out of date. This is the ONLY thing acceptance writes outside
+    # the task, it is a pre-existing flag with pre-existing meaning, and it moves no verdict.
+    v = Vault(root)
+    for hid, _ in t["hypothesis_refs"]:
+        n = v.nodes.get(hid)
+        parent = v.nodes.get(n.parent) if n else None
+        if parent and parent.type == "question" and not parent["fm"].get("stale"):
+            parent["fm"]["stale"] = True
+            write_if_changed(parent["path"], render_doc(parent["fm"], parent["body"]))
+    refresh(root)
+    return stamp
+
+def task_gate_info(root, tasks=None):
+    """`info` lines for the gate. Both are information, never problems: an unaccepted dropped
+    experiment is a real record, and a nested experiment is legitimate."""
+    out = []
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    unacc = [t for t in tasks if task_is_experiment(t) and t["status"] == "dropped"
+             and not t["fm"].get(TASK_ACCEPTED)]
+    if unacc:
+        out.append(("task:unaccepted",
+                    f"{len(unacc)} dropped experiment{'' if len(unacc) == 1 else 's'} "
+                    f"({', '.join(t['id'] for t in unacc)}) recorded a conclusion that was "
+                    f"never accepted — it is history, not evidence.", len(unacc)))
+    nested = [t for t in tasks if task_is_experiment(t) and t["parent"] in by
+              and task_is_experiment(by[t["parent"]])]
+    if nested:
+        out.append(("task:nested-experiment",
+                    f"{len(nested)} experiment{'' if len(nested) == 1 else 's'} sit under "
+                    f"another experiment ({', '.join(t['id'] for t in nested)}) — each fires "
+                    f"its own review gate.", len(nested)))
+    return out
+
+def cmd_task_categories(root, add=None):
+    """Read, or grow, the declared category list. Growth is an explicit act with a diff —
+    the moment of friction that stops taxonomy drift."""
+    cats = task_categories(root)
+    if add is None:
+        return cats
+    add = add.strip()
+    if not add or re.search(r"\s", add):
+        raise CruxError(f"a category is a single token with no whitespace (got {add!r}) — the "
+                        f"cockpit renders it as the CSS class `t-{add}`")
+    if add == TASK_RESERVED_CATEGORY:
+        raise CruxError(f"'{TASK_RESERVED_CATEGORY}' is reserved and computed; it cannot be declared")
+    if add in cats:
+        return cats
+    v = Vault(root)
+    cats = cats + (add,)
+    v.cfg[TASK_CATEGORIES_KEY] = ", ".join(cats)
+    _save_cfg(v)
+    return cats
+
+# --- the dependency graph (2.1) -----------------------------------------------------------
+# `blocked` is COMPUTED and never stored, for the same reason the role of an experiment is:
+# a state you can compute is a state that cannot drift. External blockers are not a state
+# either — "waiting on cluster quota" is a dependency on a task called *obtain cluster
+# quota*, which keeps one rule instead of two and fits "tasks are actions".
+def task_by_id(root):
+    return {t["id"]: t for t in scan_tasks(root)}
+
+def task_cleared(t):
+    """Is this blocker discharged? `done` OR `dropped`.
+
+    The spec's own acceptance criterion says "blockers are all `done`", and read literally
+    that strands a task forever whenever its blocker is dropped — invisibly, inside the one
+    query the agent is told to work from, which is the "nothing gets forgotten" failure
+    produced by the layer's primary query. A drop is a decision not to do the work, so it
+    discharges the edge; `validate` then reports the promotion as info so it is never silent.
+    """
+    return t["status"] in ("done", "dropped")
+
+def task_cycle(t, by_id, field):
+    """The cycle through `field` (`blocked_by` or `parent`) reachable from `t`, as the list of
+    ids that close it, or None.
+
+    A full coloured DFS, not a single-path walk: `blocked_by` is a LIST, so a task can have a
+    clean first branch and a cycle on its second. Following only the first candidate finds the
+    common case and silently misses that one — which is precisely the class of bug a
+    deterministic check exists to make impossible. Grey = on the current path (closing onto it
+    is the cycle), black = fully explored and proven acyclic, so each task is expanded once."""
+    grey, black, path = set(), set(), []
+
+    def walk(x):
+        xid = x["id"]
+        grey.add(xid); path.append(xid)
+        nxt = [x["parent"]] if field == "parent" else x["blocked_by"]
+        for cand in [c for c in nxt if c]:
+            if cand in grey:
+                return path[path.index(cand):] + [cand]
+            if cand in by_id and cand not in black:
+                found = walk(by_id[cand])
+                if found:
+                    return found
+        grey.discard(xid); black.add(xid); path.pop()
+        return None
+
+    return walk(t)
+
+def task_state(t, by_id):
+    """The task's state as a reader sees it: its stored status, or the computed `blocked`.
+
+    A task in a dependency cycle is reported `blocked` — it genuinely cannot be worked, and
+    `validate` is what says why."""
+    if t["status"] != "open":
+        return t["status"]
+    if task_cycle(t, by_id, "blocked_by"):
+        return TASK_BLOCKED
+    return TASK_BLOCKED if any(b not in by_id or not task_cleared(by_id[b])
+                               for b in t["blocked_by"]) else "open"
+
+def task_frontier(root, tasks=None):
+    """Work the frontier: the open tasks whose blockers are all discharged, in id order.
+    The one question an agent asks at the start of a session and a PI asks on opening the
+    tab — and, since 2.2, it spans chores and experiments in one result."""
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    return [t for t in tasks if task_state(t, by) == "open"]
+
+def task_drop_cleared(root, tasks=None):
+    """Tasks that reached the frontier because a blocker was DROPPED rather than done."""
+    tasks = tasks if tasks is not None else scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    return [t for t in task_frontier(root, tasks)
+            if any(b in by and by[b]["status"] == "dropped" for b in t["blocked_by"])]
+
+def cmd_task_list(root, frontier=False, status=None, category=None, ref=None, blocks=None):
+    """One list verb with filters rather than four verbs. `--ref q21` answers "what is open
+    under q21" and `--blocks t9` answers "what blocks anything currently running" — the
+    spec's other two named queries — without either needing its own command.
+
+    `blocked` is a legal filter value even though it is never a legal stored value. That
+    asymmetry is the point."""
+    tasks = scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    out = task_frontier(root, tasks) if frontier else list(tasks)
+    if status:
+        out = [t for t in out if task_state(t, by) == status]
+    if category:
+        out = [t for t in out if t["category"] == category]
+    if ref:
+        out = [t for t in out if ref in t["refs"]]
+    if blocks:
+        out = [t for t in out if blocks in by and t["id"] in by[blocks]["blocked_by"]]
+    return out
+
+def tasks_by_node(root, tasks=None):
+    """{node id: [task ids]} — the COMPUTED backlink, node -> tasks.
+
+    Computed rather than written, exactly as the wiki tab's backlinks are: a task ref is
+    many-to-many and churns weekly, so writing it would mean every `crux task add` edits N
+    node files. (07's `RD::` is written instead, and that is not an inconsistency — an RD is
+    one-per-node, permanent, and belongs in the Obsidian graph. Node-tree lineage is written;
+    the task graph is derived.)"""
+    out = {}
+    for t in (tasks if tasks is not None else scan_tasks(root)):
+        for r in t["refs"]:
+            out.setdefault(r, []).append(t["id"])
+    return out
+
+def experiments_by_hypothesis(root, tasks=None):
+    """{hypothesis id: [{task, conclusion, status}]} — the computed hypothesis -> experiments
+    backlink. Nothing here is written into the node, and nothing here moves its verdict."""
+    out = {}
+    for t in (tasks if tasks is not None else scan_tasks(root)):
+        for hid, concl in t["hypothesis_refs"]:
+            out.setdefault(hid, []).append({"task": t["id"], "conclusion": concl,
+                                            "status": t["status"]})
+    return out
+
+def _task_snapshot(root, v=None):
+    """The `tasks` block of snapshot(): the whole work layer as the cockpit reads it.
+
+    Inert-but-present on a vault with no tasks/ (`active: False`), which is the shape
+    `_wiki_snapshot` already uses — copied verbatim so a consumer never has to test for the
+    key. `blocked` and `is_experiment` are published as COMPUTED values: that is not a
+    contradiction of "never stored", it is what stops the cockpit keeping its own copy of the
+    rule, exactly as `limits` publishes the economy budgets."""
+    if not task_active(root):
+        return {"active": False, "categories": list(DEFAULT_TASK_CATEGORIES),
+                "reserved_category": TASK_RESERVED_CATEGORY, "conclusions": list(CONCLUSIONS),
+                "items": [], "frontier": [], "queue": []}
+    v = v or Vault(root)
+    tasks = scan_tasks(root)
+    by = {t["id"]: t for t in tasks}
+    items = []
+    for t in tasks:
+        d = task_json(root, t["id"], v)
+        d["state"] = task_state(t, by)
+        d["blocks"] = [x["id"] for x in tasks if t["id"] in x["blocked_by"]]
+        d["children"] = [x["id"] for x in tasks if x["parent"] == t["id"]]
+        items.append(d)
+    return {"active": True,
+            "categories": list(task_categories(root)),
+            "reserved_category": TASK_RESERVED_CATEGORY,
+            "conclusions": list(CONCLUSIONS),
+            "items": items,
+            "frontier": [t["id"] for t in task_frontier(root, tasks)],
+            "queue": [{"id": i, "title": ti,
+                       "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                       "drifted": d}
+                      for i, ti, hr, d in cmd_task_review(root)]}
+
+def task_json(root, tid, v=None):
+    """One task's read-only JSON — the shape `snapshot` will publish under `tasks.items`
+    (2.4). Public so `crux task show --json` reuses the serializer instead of growing a
+    second one that can drift from it."""
+    t = _get_task(root, tid)
+    v = v or Vault(root)
+    return {"id": t["id"], "title": t["title"], "category": task_category(t),
+            "declared_category": t["category"],
+            "is_experiment": task_is_experiment(t),
+            "status": t["status"], "parent": t["parent"], "blocked_by": t["blocked_by"],
+            "refs": t["refs"], "outputs": t["outputs"],
+            # each refed hypothesis carries WHICH SIDE of spec 15's boundary it sits on. The
+            # stamp is read from the node, never copied onto the task: a pre-15 hypothesis
+            # stays pre-15 forever, and an experiment about it is a record on the task's
+            # side, not a retro-stamp on the node's.
+            "accepted": t["fm"].get(TASK_ACCEPTED) or None,
+            "pending_gate": task_pending_gate(t),
+            "hypothesis_refs": [{"id": hid, "conclusion": c,
+                                 "schema": node_schema(v.nodes[hid]) if hid in v.nodes else None}
+                                for hid, c in t["hypothesis_refs"]],
+            "created": t["fm"].get("created"), "updated": t["fm"].get("updated")}
+
+def task_info(root, v=None):
+    """The taskhub's `info` lines — namespace `task:`. Information, never a problem: a
+    dropped task is a decision, not a defect, and `ok` must never turn on one."""
+    out = []
+    if not task_active(root):
+        return out
+    tasks = scan_tasks(root)
+    cleared = task_drop_cleared(root, tasks)
+    if cleared:
+        out.append(("task:drop-cleared",
+                    f"{len(cleared)} task{'' if len(cleared) == 1 else 's'} reached the "
+                    f"frontier because a blocker was dropped, not done "
+                    f"({', '.join(t['id'] for t in cleared)}) — check the work is still "
+                    f"wanted.", len(cleared)))
+    n = sum(1 for t in tasks if t["status"] == "dropped")
+    if n:
+        out.append(("task:dropped",
+                    f"{n} task{'' if n == 1 else 's'} {'is' if n == 1 else 'are'} dropped — "
+                    f"work deliberately not done. `git log` carries why.", n))
+    return out
+
+def validate_tasks(root):
+    """Structural lint over the taskhub — mechanical checks only. Whether a task is worth
+    recording, and whether `done` is honest, is judgment: that lives in the skill."""
+    problems = []
+    if not task_active(root):
+        return problems
+    v = Vault(root)
+    tasks = scan_tasks(root)
+    ids = {t["id"] for t in tasks}
+    cats = task_categories(root)
+    universe = _link_universe(root, v)
+    for t in tasks:
+        tid = t["id"]
+        if not tid:
+            problems.append((f"task:{t['fn']}", f"task file '{t['fn']}': missing required field 'id'"))
+            continue
+        for k in ("title", "category", "status"):
+            if t["fm"].get(k) in (None, ""):
+                problems.append((tid, f"task '{tid}': missing required field '{k}'"))
+        # `blocked_by` is mandatory so that a missing edge is a visible omission rather than
+        # silence. `None` is the literal for "no edge, deliberately".
+        if t["fm"].get("blocked_by") in (None, ""):
+            problems.append((tid, f"task '{tid}': missing required field 'blocked_by' "
+                                  f"(use `{NO_BLOCKERS}` when nothing blocks it)"))
+        if t["status"] == TASK_BLOCKED:
+            problems.append((tid, f"task '{tid}': '{TASK_BLOCKED}' is computed from the "
+                                  f"dependency graph and is never stored — set "
+                                  f"{'/'.join(TASK_STATUS)} instead"))
+        elif t["status"] not in TASK_STATUS:
+            problems.append((tid, f"task '{tid}': bad status '{t['status']}'"))
+        c = t["category"]
+        if c == TASK_RESERVED_CATEGORY:
+            problems.append((tid, f"task '{tid}': category '{TASK_RESERVED_CATEGORY}' is "
+                                  f"reserved and computed, never written by hand"))
+        elif c and c not in cats:
+            problems.append((tid, f"task '{tid}': undeclared category '{c}' (this vault "
+                                  f"declares {', '.join(cats)})"))
+        for r in t["refs"]:
+            if r not in universe:
+                problems.append((tid, f"task '{tid}': ref '{r}' resolves to nothing"))
+        # the experiment half: each ref names a hypothesis, and says what this run concluded
+        # about it. A pre-15 (unstamped) hypothesis is refable without restriction — the
+        # conclusion lives on the TASK's record, so nothing about the old node is
+        # retro-checked, re-verdicted or flagged, which is exactly what 15.0 guarantees.
+        for hid, concl in t["hypothesis_refs"]:
+            n = v.nodes.get(hid)
+            if n is None:
+                problems.append((tid, f"task '{tid}': hypothesis_refs names '{hid}', which is "
+                                      f"not in this vault"))
+            elif n.type != "idea":
+                problems.append((tid, f"task '{tid}': hypothesis_refs names '{hid}', a "
+                                      f"'{n.type}' — an experiment bears on a hypothesis"))
+            if concl == RETIRED_CONCLUSION:
+                problems.append((tid, f"task '{tid}': conclusion '{RETIRED_CONCLUSION}' for "
+                                      f"'{hid}' is retired (spec 15); use one of "
+                                      f"{', '.join(CONCLUSIONS)}"))
+            elif concl not in CONCLUSIONS:
+                problems.append((tid, f"task '{tid}': unknown conclusion '{concl}' for "
+                                      f"'{hid}' (use {', '.join(CONCLUSIONS)})"))
+        for b in t["blocked_by"]:
+            if b not in ids:
+                problems.append((tid, f"task '{tid}': blocked_by '{b}' is not a task"))
+        if t["parent"] and t["parent"] not in ids:
+            problems.append((tid, f"task '{tid}': parent '{t['parent']}' is not a task"))
+        for field in ("blocked_by", "parent"):
+            cyc = task_cycle(t, {x["id"]: x for x in tasks}, field)
+            if cyc:
+                problems.append((tid, f"task '{tid}': {field} cycle "
+                                      f"{' → '.join(cyc)}"))
+        if t["status"] == "done":
+            if not t["outputs"]:
+                problems.append((tid, f"task '{tid}': done with no output recorded under "
+                                      f"'## Output'"))
+            for o in t["outputs"]:
+                problems += _task_output_problem(root, tid, o, universe)
+    return problems
+
+def _task_output_problem(root, tid, o, universe):
+    """One output ref, checked. Two forms, both reusing machinery that already exists: a
+    vault-relative path (the `## Artifacts` rules — inside the vault, and it resolves), or a
+    `[[wikilink]]` to a node, a wiki page or an RD, for the many research outputs that are
+    real but are not files."""
+    path = o["path"]
+    link = link_targets(path) or link_targets(o["label"])
+    if link:
+        return [] if any(x in universe or x.split("/")[-1] in
+                         {y.split("/")[-1] for y in universe} for x in link) else \
+               [(tid, f"task '{tid}': output [[{link[0]}]] resolves to nothing")]
+    if artifact_escapes(path):
+        return [(tid, f"task '{tid}': output path must be inside the vault: '{path}'")]
+    if not os.path.isfile(os.path.join(root, path)):
+        return [(tid, f"task '{tid}': output '{path}' does not exist")]
+    return []
+
 # ----------------------------------------------------------------------------- commands (called by CLI + selftest)
 def _write_obsidian_vault(root):
     """Make the vault a recognized Obsidian vault out of the box: the presence of
@@ -1679,7 +2406,12 @@ def cmd_init(title, dirpath=".", goal=""):
         raise CruxError("a crux vault already exists here")
     slug = slugify(title)
     cfg = {"title": title, "slug": slug, "root_id": "root", "engine_version": ENGINE_VERSION,
-           "counter_q": 0, "counter_h": 0, "counter_s": 0}
+           "counter_q": 0, "counter_h": 0, "counter_s": 0, "counter_t": 0,
+           # the declared task-category list: seeded here so a vault is usable from minute
+           # one, and grown only by `crux task categories --add` — an explicit act with a
+           # diff, which is what makes "declared" mean anything. Without a declared list you
+           # get `data-prep`, `datasets` and `data-related` as siblings after six months.
+           TASK_CATEGORIES_KEY: ", ".join(DEFAULT_TASK_CATEGORIES)}
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
@@ -1860,9 +2592,14 @@ def _save_cfg(v):
     write_if_changed(os.path.join(v.root, VAULT_MARKER), yaml_dump(v.cfg) + "\n")
 
 def _new_id(v, kind):
-    key = {"question": "counter_q", "idea": "counter_h", "synthesis": "counter_s"}[kind]
-    v.cfg[key] += 1
-    prefix = {"question": "q", "idea": "h", "synthesis": "s"}[kind]
+    """Allocate the next id of `kind`. The counter is read with a DEFAULT rather than indexed:
+    every vault written before a counter existed simply lacks the key, and `v.cfg[key] += 1`
+    would raise KeyError on the first allocation after an upgrade — which is the most likely
+    first action a user takes. (`counter_t` on any pre-2.0 vault is exactly this case.)"""
+    key = {"question": "counter_q", "idea": "counter_h", "synthesis": "counter_s",
+           "task": "counter_t"}[kind]
+    v.cfg[key] = int(v.cfg.get(key) or 0) + 1
+    prefix = {"question": "q", "idea": "h", "synthesis": "s", "task": "t"}[kind]
     _save_cfg(v)
     return f"{prefix}{v.cfg[key]}"
 
@@ -2154,6 +2891,9 @@ def validation_report(root, checks=None):
     if "fanout"  in names: warnings += fanout_warnings(v)
     if "tree"    in names: warnings += lock_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
+    if "tasks"   in names:
+        problems += validate_tasks(root)
+        info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
@@ -2268,12 +3008,19 @@ def _rd_by_node(root):
     return {p["node"]: p["slug"] for p in reversed(scan_rd_pages(root))
             if p["status"] == "active" and p["node"]}
 
-def _node_json(v, n, rd_map=None):
+def _node_json(v, n, rd_map=None, task_map=None):
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
     if n.type in ("question", "idea"):
         # the slug of this node's active RD, or None — so the pane can offer "open the
         # design" without walking the index
         d["rd"] = (_rd_by_node(v.root) if rd_map is None else rd_map).get(n.id)
+        # the taskhub backlinks, COMPUTED here and stored nowhere. `tasks` is everything
+        # serving this node; `experiments` is what was actually run against a hypothesis and
+        # what it concluded — the one question the tree structurally cannot answer.
+        tt = scan_tasks(v.root) if task_map is None else task_map
+        d["tasks"] = tasks_by_node(v.root, tt).get(n.id, [])
+        if n.type == "idea":
+            d["experiments"] = experiments_by_hypothesis(v.root, tt).get(n.id, [])
         # which side of the evidence-semantics boundary this node sits on (0 = predates it),
         # published so the cockpit and an agent never re-read frontmatter to find out
         d["schema"] = node_schema(n)
@@ -2360,6 +3107,9 @@ def snapshot(vault):
     root_id = v.cfg["root_id"]
     root = v.get(root_id)
     rd_map = _rd_by_node(v.root)
+    # scanned ONCE and threaded through, like rd_map: re-scanning tasks/ per node would make
+    # the snapshot quadratic in a vault that uses the layer heavily
+    task_map = scan_tasks(v.root)
     return {
         "engine_version": ENGINE_VERSION,
         "crux_version": CRUX_VERSION,
@@ -2369,12 +3119,13 @@ def snapshot(vault):
         "limits": {"prose_cap": PROSE_CAP, "fanout_max": FANOUT_MAX},
         "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
                     "status": root.status, "goal": _section(root["body"], "Goal")},
-        "nodes": {nid: _node_json(v, n, rd_map) for nid, n in v.nodes.items()},
+        "nodes": {nid: _node_json(v, n, rd_map, task_map) for nid, n in v.nodes.items()},
         "tree": _subtree(v, root_id),
         "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
                   for n in v.nodes.values() if n.type == "question" and n.status == "review"],
         "wiki": _wiki_snapshot(v.root),
         "rd": _rd_snapshot(v.root),
+        "tasks": _task_snapshot(v.root, v),
     }
 
 # ----------------------------------------------------------------------------- deck payload (spec 11 / prezit)

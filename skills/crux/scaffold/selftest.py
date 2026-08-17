@@ -507,7 +507,7 @@ def run_snapshot():
     # -- top-level shape / serializability
     check("snapshot: top-level keys exact",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki", "rd"})
+                               "project", "nodes", "tree", "queue", "wiki", "rd", "tasks"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -1840,8 +1840,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the five documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd"))
+    check("economy: the check registry is the six documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -3792,6 +3792,325 @@ def run_rulebook():
           spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
 
 
+def _task_vault(prefix="crux_task_"):
+    """A small vault with one question and one hypothesis — the substrate every taskhub
+    test needs before it can ref anything."""
+    root = tempfile.mkdtemp(prefix=prefix)
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"])
+    return root, q, h
+
+
+def run_taskhub():
+    print("\n# taskhub — the task store (spec 08, PRD 08.0)")
+    root, q, h = _task_vault()
+
+    # -- 1. the record lands under tasks/ with an engine-allocated id
+    t1, fn1 = E.cmd_task_add(root, "Dedupe the reused accessions", category="data-acquisition",
+                             refs=[q, h], blocked_by=None)
+    tp1 = os.path.join(root, E.TASK_DIR, fn1)
+    check("task: add writes a file under tasks/ with an allocated id",
+          t1 == "t1" and os.path.isfile(tp1) and fn1.startswith("t1_"))
+
+    # -- 2. ids are immutable across add / drop / re-parent. spec-kit's append-only
+    #       convergence, minus the part it left to LLM discipline.
+    t2, _ = E.cmd_task_add(root, "Stand up the H100 partition", category="hpc-setup", blocked_by=None)
+    t3, _ = E.cmd_task_add(root, "Implement the arm", category="implementation", blocked_by=[t1])
+    t4, _ = E.cmd_task_add(root, "Draft figure 3", category="manuscript", blocked_by=None)
+    E.cmd_task_drop(root, t2)
+    p4 = E.Vault(root) and [x for x in E.scan_tasks(root) if x["id"] == t4][0]["path"]
+    edit(p4, "parent:", f"parent: {t3}")
+    t5, _ = E.cmd_task_add(root, "Write the caption", category="manuscript", blocked_by=None)
+    ids = [x["id"] for x in E.scan_tasks(root)]
+    check("task: ids survive add, drop and re-parent without renumbering",
+          ids == ["t1", "t2", "t3", "t4", "t5"] and t5 == "t5")
+
+    # -- 4. NOTHING regenerates a task. True on `main` before this PRD (the layer did not
+    #       exist), so this is a REGRESSION LOCK: it fails the day someone adds tasks/ to
+    #       refresh's write set, which is the one thing spec-kit got wrong.
+    before = _dir_bytes(os.path.join(root, E.TASK_DIR))
+    E.refresh(root); E.cmd_validate(root); E.validation_report(root)
+    E.snapshot(root); E.status_text(root); E.cmd_review(root)
+    check("task: a task file is byte-identical after every read path",
+          _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
+
+    # -- 5. adding a task never edits a node. This is what makes many-to-many free, and it
+    #       is the half of the backlink split that stays DERIVED (07's RD:: is written).
+    nodes_before = {n: read(node_path(root, n)) for n in (q, h)}
+    E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                   refs=[q, h], blocked_by=None)
+    check("task: adding a task modifies no node file",
+          all(read(node_path(root, n)) == b for n, b in nodes_before.items()))
+
+    # -- 6. a task is not a node: outside v.nodes, outside the roll-up, outside the gate
+    v = E.Vault(root)
+    ledger_before = E.ledger_counts(v, q)
+    check("task: a task is invisible to the roll-up tree",
+          not any(x.startswith("t") for x in v.nodes)
+          and t1 not in v.nodes and E.ledger_counts(E.Vault(root), q) == ledger_before)
+
+    # -- 7/8. category is a closed, declared list, and `experiment` is RESERVED — refused by
+    #         the ENGINE (not argparse), exactly as 15.2 reserves `ordered`. In this PRD no
+    #         task can legitimately be one, so the refusal is total.
+    expect_error("task: category experiment is reserved and refused",
+                 lambda: E.cmd_task_add(root, "run the pilot", category="experiment",
+                                        blocked_by=None))
+    expect_error("task: an undeclared category is refused",
+                 lambda: E.cmd_task_add(root, "do a thing", category="proteomics",
+                                        blocked_by=None))
+    cats = E.task_categories(root) + (E.TASK_RESERVED_CATEGORY,)
+    check("task: every category token is a valid CSS class suffix",
+          all(c and not re.search(r"\s", c) for c in cats))
+
+    # -- 9. refs must resolve. ISA-Tab's join-by-shared-string is the failure mode to avoid:
+    #       N:M machinery with no referential integrity.
+    edit(tp1, f"refs: {q}, {h}", f"refs: {q}, h99")
+    check("task: an unresolvable ref is a validate problem",
+          any("h99" in m for _, m in E.cmd_validate(root)))
+    edit(tp1, f"refs: {q}, h99", f"refs: {q}, {h}")
+
+    # -- 10. `blocked` is COMPUTED (08.1) and therefore must never be storable
+    edit(tp1, "status: open", "status: blocked")
+    check("task: blocked is never a storable status",
+          any("blocked" in m and t1 in i for i, m in E.cmd_validate(root)))
+    edit(tp1, "status: blocked", "status: open")
+
+    # -- 11/12/13. `done` hard-requires an output that resolves
+    expect_error("task: done without an output is refused",
+                 lambda: E.cmd_task_done(root, t1))
+    E.cmd_task_done(root, t1, outputs=["results/dedupe/table.tsv the deduped accessions"])
+    check("task: done with an unresolvable output fails validate",
+          any("table.tsv" in m for _, m in E.cmd_validate(root)))
+    write(os.path.join(root, "results", "dedupe", "table.tsv"), "a\tb\n")
+    check("task: a resolving path output clears validate",
+          not any("table.tsv" in m for _, m in E.cmd_validate(root)))
+    E.cmd_task_done(root, t3, outputs=[f"[[{h}]]"])
+    check("task: a wikilink output resolves",
+          not any(t3 in i for i, _ in E.cmd_validate(root)))
+    check("task: dropping needs no output",
+          [x for x in E.scan_tasks(root) if x["id"] == t2][0]["status"] == "dropped"
+          and not any(t2 in i for i, _ in E.cmd_validate(root)))
+
+    # -- 14/15. blocked_by is MANDATORY so a missing edge is a visible omission, and a
+    #           dangling edge is a broken one
+    p5 = [x for x in E.scan_tasks(root) if x["id"] == t5][0]["path"]
+    check("task: blocked_by is mandatory and None is the literal for no edge",
+          "blocked_by: None" in read(p5))
+    edit(p5, "blocked_by: None", "blocked_by: t99")
+    check("task: a dangling blocked_by edge is a validate problem",
+          any("t99" in m for _, m in E.cmd_validate(root)))
+    edit(p5, "blocked_by: t99", "")
+    check("task: a missing blocked_by is a validate problem",
+          any("blocked_by" in m and t5 in i for i, m in E.cmd_validate(root)))
+    edit(p5, "refs:", "blocked_by: None\nrefs:")
+
+    # -- 16. a task written to the vault ROOT is caught BY NAME. Vault keys on `id`, not
+    #        `type`, so it would otherwise land in v.nodes and report `unknown type 'task'`
+    #        — a true message pointing at the wrong thing.
+    stray = os.path.join(root, "t99_stray.md")
+    write(stray, "---\nid: t99\ntype: task\ntitle: stray\n---\n\n# t99\n")
+    msgs = [m for i, m in E.cmd_validate(root) if i == "t99"]
+    check("task: a task at the vault root is refused by name",
+          any(E.TASK_DIR in m for m in msgs) and not any("unknown type" in m for m in msgs))
+    os.remove(stray)
+
+    # -- 17. the dropped count is INFORMATION. 15.0 built the tier; 08 claims a namespace
+    #        and consumes it. A dropped task is a decision, not a defect.
+    rep = E.validation_report(root)
+    ti = [x for x in rep["info"] if x["id"].startswith("task:")]
+    check("task: the dropped count is info and does not affect ok",
+          ti and ti[0]["count"] == 1 and rep["ok"] is True and not rep["problems"])
+    check("task: the task info namespace is declared",
+          "task" in E.INFO_NAMESPACES and all(x["id"].split(":")[0] in E.INFO_NAMESPACES
+                                              for x in rep["info"]))
+
+    # -- 18. the lint is independently selectable
+    edit(p5, "blocked_by: None", "blocked_by: t99")
+    check("task: the tasks check is selectable",
+          any("t99" in m for _, m in E.cmd_validate(root, ["tasks"]))
+          and not any("t99" in m for _, m in E.cmd_validate(root, ["tree"])))
+    edit(p5, "blocked_by: t99", "blocked_by: None")
+
+    # -- 3. M3: every vault that exists today has no `counter_t`. The naive
+    #       `v.cfg[key] += 1` raises KeyError on the FIRST task ever added after an upgrade,
+    #       which is the most likely first action a user takes.
+    old, _, _ = _task_vault("crux_task_pre08_")
+    cfg = os.path.join(old, ".crux.yaml")
+    write(cfg, "\n".join(l for l in read(cfg).splitlines()
+                         if not l.startswith(("counter_t", "task_categories"))) + "\n")
+    tid, _ = E.cmd_task_add(old, "first task after the upgrade", category="implementation",
+                            blocked_by=None)
+    check("taskmig: a pre-08 vault allocates t1 without a KeyError", tid == "t1")
+    check("taskmig: a pre-08 vault falls back to the default categories",
+          E.task_categories(old) == E.DEFAULT_TASK_CATEGORIES)
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- 19. the committed pre-08 fixture, upgraded.
+    #
+    #    NOTE ON WHAT THIS ASSERTS, AND WHY IT IS NOT A NAIVE BYTE-COMPARE. The committed
+    #    demo_vault was last regenerated at 1.3, and `refresh` at 1.9 ALREADY rewrites its
+    #    generated views: spec 15 added `invalid-run` to the dashboard and to every ledger
+    #    summary line, and a `rule` column to EXPERIMENTS.md. That drift is spec 15's and it
+    #    is present on this branch's parent — asserting byte-identity of generated views here
+    #    would be asserting someone else's fixture is fresh, not that the taskhub is inert.
+    #
+    #    So the pre-existing drift is SETTLED first (one refresh), and then the property this
+    #    PRD actually owes is proven from there: the taskhub adds nothing to, and takes
+    #    nothing from, a vault that has no tasks.
+    fx = tempfile.mkdtemp(prefix="crux_task_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
+    E.check_and_stamp_version(dst); E.refresh(dst)          # settle spec 15's view drift
+    b0 = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.status_text(dst); E.cmd_review(dst)
+    rep0 = E.validation_report(dst)
+    verdicts1 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
+    b1 = _dir_bytes(dst)
+    check("taskmig: a settled pre-08 vault is byte-identical under every 2.0 read path",
+          b0 == b1 and E.refresh(dst) is False)
+    check("taskmig: a pre-08 vault's recorded verdicts survive the 2.0 upgrade untouched",
+          verdicts1 == verdicts0 and verdicts0["h2"] == "partial")
+    check("taskmig: a pre-08 vault validates clean at 2.0", not rep0["problems"])
+    check("taskmig: a pre-08 vault reports no task problems and no task info",
+          not any(i.startswith("task") for i, _ in E.cmd_validate(dst))
+          and not any(x["id"].startswith("task:") for x in rep0["info"])
+          and not E.task_active(dst))
+    check("taskmig: nothing creates tasks/ on a vault that has none",
+          not os.path.exists(os.path.join(dst, E.TASK_DIR)))
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("task: ENGINE_VERSION bumped to 2.0", at_least_version("2.0"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_task_graph():
+    import json
+    print("\n# taskhub — the dependency graph and the frontier (spec 08, PRD 08.1)")
+    root, q, h = _task_vault("crux_taskdep_")
+
+    #   t1 ─┬─> t2 ─> t3        t4 (free)      t5 blocked by a task that gets DROPPED
+    #       └─> t6
+    t1, _ = E.cmd_task_add(root, "Dedupe the accessions", category="data-acquisition",
+                           refs=[q], blocked_by=None)
+    t2, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=[t1])
+    t3, _ = E.cmd_task_add(root, "Run the full sweep", category="implementation", blocked_by=[t2])
+    t4, _ = E.cmd_task_add(root, "Draft figure 3", category="manuscript", blocked_by=None)
+    t5, _ = E.cmd_task_add(root, "Port the old loader", category="implementation", blocked_by=[t4])
+    t6, _ = E.cmd_task_add(root, "Register the dataset", category="data-acquisition", blocked_by=[t1])
+
+    st = {t["id"]: E.task_state(t, E.task_by_id(root)) for t in E.scan_tasks(root)}
+    check("dep: blocked is computed and agrees with the graph",
+          st == {t1: "open", t2: "blocked", t3: "blocked", t4: "open",
+                 t5: "blocked", t6: "blocked"})
+    check("dep: the frontier is exactly the unblocked open tasks",
+          [t["id"] for t in E.task_frontier(root)] == [t1, t4])
+
+    # completing a blocker promotes its dependents — and only its dependents
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    check("dep: completing a blocker promotes its dependent",
+          [t["id"] for t in E.task_frontier(root)] == [t2, t4, t6])
+
+    # -- the hole in the spec's own acceptance criterion. Read literally ("blockers are all
+    #    `done`"), a task whose blocker was DROPPED is blocked forever, invisibly, inside the
+    #    one query the agent is told to work from. Ruling D9: a drop clears the edge, and the
+    #    promotion is reported as info so it is never silent.
+    E.cmd_task_drop(root, t4)
+    check("dep: a dropped blocker clears the edge",
+          t5 in [t["id"] for t in E.task_frontier(root)])
+    info = {x["id"]: x for x in E.validation_report(root)["info"]}
+    check("dep: a drop-cleared task is reported as info",
+          "task:drop-cleared" in info and info["task:drop-cleared"]["count"] == 1
+          and E.validation_report(root)["ok"] is True)
+
+    # -- cycles, over BOTH edges: blocked_by cycles deadlock the frontier, parent cycles make
+    #    "the gate fires once, on the parent" undefined
+    by = E.task_by_id(root)
+    edit(by[t3]["path"], f"blocked_by: {t2}", f"blocked_by: {t2}, {t6}")
+    edit(by[t6]["path"], f"blocked_by: {t1}", f"blocked_by: {t3}")
+    probs = [m for i, m in E.cmd_validate(root) if i in (t3, t6)]
+    check("dep: a blocked_by cycle is caught with its path",
+          any("cycle" in m and "→" in m for m in probs))
+    edit(by[t6]["path"], f"blocked_by: {t3}", f"blocked_by: {t1}")
+    edit(by[t3]["path"], f"blocked_by: {t2}, {t6}", f"blocked_by: {t2}")
+
+    edit(by[t5]["path"], "parent:", f"parent: {t5}")
+    check("dep: a self-edge is a cycle",
+          any("cycle" in m for i, m in E.cmd_validate(root) if i == t5))
+    edit(by[t5]["path"], f"parent: {t5}", "parent:")
+    check("dep: the graph is clean once the cycles are removed",
+          not any("cycle" in m for _, m in E.cmd_validate(root)))
+
+    # a frontier query must never spin on a cycle — it reports and keeps working
+    edit(by[t3]["path"], f"blocked_by: {t2}", f"blocked_by: {t3}")
+    check("dep: a cyclic task is excluded from the frontier rather than hanging it",
+          t3 not in [t["id"] for t in E.task_frontier(root)])
+    edit(by[t3]["path"], f"blocked_by: {t3}", f"blocked_by: {t2}")
+
+    # -- the query surface: one list verb with filters, not four verbs
+    check("dep: list filters by ref and by blocker",
+          [t["id"] for t in E.cmd_task_list(root, ref=q)] == [t1]
+          and [t["id"] for t in E.cmd_task_list(root, blocks=t3)] == [t2]
+          and [t["id"] for t in E.cmd_task_list(root, status="blocked")] == [t3])
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "list",
+                        "--frontier", "--json"], capture_output=True, text=True,
+                       encoding="utf-8", cwd=root)
+    check("dep: the CLI frontier matches the engine frontier",
+          r.returncode == 0 and [x["id"] for x in json.loads(r.stdout)]
+          == [t["id"] for t in E.task_frontier(root)])
+
+    # -- TASKHUB.md: shaped by the query it serves. The wiki layer taught this the hard way —
+    #    its index resolved pages while queries were pitched at sub-page granularity, so
+    #    retrieval fell back to grep.
+    hub = os.path.join(root, E.TASK_INDEX)
+    text = read(hub)
+    fro, blocked = text.find("## Frontier"), text.find("## Blocked")
+    check("hub: TASKHUB.md leads with the frontier",
+          0 < fro < blocked and all(t["id"] in text for t in E.task_frontier(root)))
+    check("hub: the frontier section lists exactly the frontier",
+          [l for l in text[fro:blocked].splitlines() if l.startswith("- `")].__len__()
+          == len(E.task_frontier(root)))
+    # -- a ref is STORED as an id (stable) but RENDERED with the basename (followable). A
+    #    bare `[[q1]]` resolves to nothing in Obsidian, because the file is `q1_<slug>.md`,
+    #    and "full traversability is the point" is one of this layer's stated goals.
+    qbase = E.Vault(root).get(q).basename
+    check("hub: a node ref renders as a wikilink Obsidian can follow",
+          f"[[{qbase}\\|{q}]]" in text
+          and f"[[{qbase}\\|{q}]]" in E.task_by_id(root)[t1]["body"])
+    check("hub: the stored ref stays the id, not the basename",
+          E.task_by_id(root)[t1]["refs"] == [q])
+
+    before = _dir_bytes(os.path.join(root, E.TASK_DIR))
+    b0 = read(hub)
+    E.refresh(root)
+    check("hub: refresh never rewrites a task file",
+          _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
+    check("hub: TASKHUB.md regeneration is byte-stable", read(hub) == b0 and E.refresh(root) is False)
+    check("hub: TASKHUB.md is generated, not a node",
+          E.TASK_INDEX in E.GENERATED and E.TASK_INDEX[:-3] not in E.Vault(root).nodes
+          and not any(t["fn"] == E.TASK_INDEX for t in E.scan_tasks(root)))
+
+    # a vault with no tasks/ never grows the index — the `wiki_active` guard, copied verbatim
+    plain = tempfile.mkdtemp(prefix="crux_nohub_")
+    E.cmd_init("No Tasks", plain, goal="g")
+    E.refresh(plain)
+    check("taskmig: a vault with no tasks writes no TASKHUB.md",
+          not os.path.exists(os.path.join(plain, E.TASK_INDEX)))
+    shutil.rmtree(plain, ignore_errors=True)
+
+    fx = tempfile.mkdtemp(prefix="crux_dep_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: refresh at 2.1 leaves a pre-08 vault byte-identical",
+          _dir_bytes(dst) == b and not os.path.exists(os.path.join(dst, E.TASK_INDEX)))
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("dep: ENGINE_VERSION bumped to 2.1", at_least_version("2.1"))
 def run_cockpit_evidence():
     """Spec 15 PRD 15.6 — the cockpit narrates evidence semantics.
 
@@ -3891,9 +4210,529 @@ def run_cockpit_evidence():
           idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
           and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
           and snap["nodes"][h2]["verdict"] == "invalid-run")
-    check("webui: no engine change — ENGINE_VERSION is untouched by 15.6",
-          E.ENGINE_VERSION == "1.9")
+    # 15.6 itself bumped nothing: it was webui-only, and at its own tip this read
+    # `== "1.9"`. That is the literal-equality form this file documents as expiring on the
+    # next PRD — spec 08 stacks on top and takes the engine to 2.x, so the claim is kept as
+    # the floor it was always making. What 15.6 guarantees is that the cockpit needs no
+    # engine support beyond 1.9, which the field checks above prove directly.
+    check("webui: the cockpit narration needs no engine support past 1.9",
+          at_least_version("1.9"))
     shutil.rmtree(root, ignore_errors=True)
+
+
+def run_experiments():
+    print("\n# taskhub — experiments are tasks (spec 08, PRD 08.2)")
+    root, q, h1 = _task_vault("crux_exp_")
+    h2, _, _ = E.cmd_hypothesize(root, "the pilot separates the arms", parent=q,
+                                 verifiables=["separation at n=3"])
+
+    # -- the whole difference between a task and an experiment is ONE field: what the output
+    #    is. A task that says what it concluded about a hypothesis IS an experiment, and
+    #    nothing is stored to say so.
+    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                           blocked_by=None)
+    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported"), (h2, "refuted")])
+    by = E.task_by_id(root)
+    check("exp: hypothesis_refs computes the experiment category",
+          E.task_category(by[e1]) == E.TASK_RESERVED_CATEGORY
+          and E.task_category(by[t1]) == "data-acquisition")
+    check("exp: is_experiment is computed, never stored",
+          E.task_is_experiment(by[e1]) and not E.task_is_experiment(by[t1])
+          and "is_experiment" not in read(by[e1]["path"])
+          and f"category: {E.TASK_RESERVED_CATEGORY}" not in read(by[e1]["path"]))
+    check("exp: category experiment stays hand-refused after the role exists",
+          _refused(lambda: E.cmd_task_add(root, "x", category="experiment", blocked_by=None,
+                                          hypothesis_refs=[(h1, "supported")])))
+
+    # -- the conclusion vocabulary IS spec 15's, minus the retired `partial`. Derived from
+    #    VERDICTS so it can never drift from the engine's own list.
+    check("exp: the conclusion vocabulary is 15's VERDICTS minus partial",
+          tuple(E.CONCLUSIONS) == tuple(x for x in E.VERDICTS if x != "partial")
+          and "invalid-run" in E.CONCLUSIONS and "partial" not in E.CONCLUSIONS)
+    expect_error("exp: partial is refused as a conclusion",
+                 lambda: E.cmd_task_add(root, "y", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(h1, "partial")]))
+    expect_error("exp: an unknown conclusion is refused",
+                 lambda: E.cmd_task_add(root, "y", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(h1, "disputes")]))
+    e2, _ = E.cmd_task_add(root, "Read the control", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "invalid-run")])
+    check("exp: invalid-run is accepted and every token is a valid CSS class suffix",
+          E.task_hypothesis_refs(E.task_by_id(root)[e2]) == [(h1, "invalid-run")]
+          and all(not re.search(r"\s", c) for c in E.CONCLUSIONS))
+
+    # -- one experiment, two hypotheses, OPPOSITE conclusions. This is the fact the tree
+    #    structurally cannot hold, and the only structured place it exists.
+    check("exp: one experiment carries opposite conclusions for two hypotheses",
+          E.task_hypothesis_refs(E.task_by_id(root)[e1]) == [(h1, "supported"), (h2, "refuted")])
+
+    # -- THE LEASH. Work never creates direction. Three negatives, proven not asserted-to.
+    v0 = E.Vault(root)
+    ledger0 = E.ledger_counts(v0, q)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
+    nodes0 = {n: read(node_path(root, n)) for n in (q, h1, h2)}
+    E.cmd_task_add(root, "Run the full sweep", category="implementation", blocked_by=None,
+                   hypothesis_refs=[(h1, "refuted")])
+    E.refresh(root)
+    v1 = E.Vault(root)
+    check("exp: adding an experiment modifies no node file",
+          all(read(node_path(root, n)) == b for n, b in nodes0.items()))
+    check("exp: a conclusion never enters the ledger roll-up",
+          E.ledger_counts(v1, q) == ledger0)
+    check("exp: a conclusion never writes a node verdict",
+          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
+
+    # -- refs must resolve to an IDEA. A task bearing on a question is refing the wrong thing;
+    #    that is what plain `refs` is for.
+    expect_error("exp: hypothesis_refs must resolve to an idea node",
+                 lambda: E.cmd_task_add(root, "z", category="implementation", blocked_by=None,
+                                        hypothesis_refs=[(q, "supported")]))
+    # (the value is edited rather than the whole line: `fill()` writes it bare and
+    #  `yaml_dump` would quote it, so both spellings are legal on disk)
+    ep = E.task_by_id(root)[e2]["path"]
+    edit(ep, f"{h1}:invalid-run", "h99:invalid-run")
+    check("exp: a dangling hypothesis ref is a validate problem",
+          any("h99" in m for _, m in E.cmd_validate(root)))
+    edit(ep, "h99:invalid-run", f"{h1}:invalid-run")
+
+    # -- the computed backlink: node -> experiments, never written into the node
+    rec = E.node_json(root, h1)
+    expected = [t["id"] for t in E.scan_tasks(root)
+                if h1 in [x for x, _ in t["hypothesis_refs"]]]
+    check("exp: a hypothesis lists its experiments as a computed backlink",
+          [x["task"] for x in rec["experiments"]] == expected and len(expected) >= 3
+          and rec["experiments"][0]["conclusion"] == "supported"
+          and "experiments" not in read(node_path(root, h1)))
+    check("exp: a node lists the ordinary tasks that serve it",
+          E.node_json(root, q)["tasks"] == [t["id"] for t in E.cmd_task_list(root, ref=q)])
+
+    # -- X3 as ruled: an experiment may bear on a PRE-15 hypothesis, and the schema each
+    #    refed node carries is recorded in every view. Nothing is retro-stamped: the record
+    #    lives on the task's side, and 15.0's guarantee is untouched.
+    hp = node_path(root, h2)
+    write(hp, read(hp).replace(f"schema: {E.SCHEMA_GENERATION}\n", ""))
+    check("exp: the refed hypothesis is pre-15 for this check",
+          E.node_schema(E.Vault(root).get(h2)) == 0)
+    e3, _ = E.cmd_task_add(root, "Re-run the old arm", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "invalid-run")])
+    check("exp: a pre-15 hypothesis is refable with the full vocabulary",
+          not any(e3 in i for i, _ in E.cmd_validate(root)))
+    check("exp: every view records which schema a refed hypothesis carries",
+          E.task_json(root, e3)["hypothesis_refs"][0]["schema"] == 0
+          and E.task_json(root, e1)["hypothesis_refs"][0]["schema"] == E.SCHEMA_GENERATION)
+    check("exp: refing a pre-15 hypothesis does not stamp it",
+          E.node_schema(E.Vault(root).get(h2)) == 0 and "schema:" not in read(hp))
+
+    # -- one dependency graph, one frontier: the two reasons the layers were merged
+    check("exp: the frontier spans chores and experiments in one query",
+          {t1, e1} <= {t["id"] for t in E.task_frontier(root)})
+    p1, _ = E.cmd_task_add(root, "Pilot first", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "inconclusive")])
+    f1, _ = E.cmd_task_add(root, "Full run second", category="implementation",
+                           blocked_by=[p1], hypothesis_refs=[(h1, "supported")])
+    check("exp: a pilot blocks a full run in the one dependency graph",
+          E.task_state(E.task_by_id(root)[f1], E.task_by_id(root)) == "blocked")
+
+    # -- the timeline is a VIEW: the same records, filtered, in TASKHUB.md. `EXPERIMENTS.md`
+    #    is a per-HYPOTHESIS registry and is a different artifact — it must not move.
+    exp_before = read(os.path.join(root, "EXPERIMENTS.md"))
+    E.refresh(root)
+    hub = read(os.path.join(root, E.TASK_INDEX))
+    tl = hub.find("## Experiment timeline")
+    check("hub: the timeline filters to hypothesis_refs and is byte-stable",
+          tl > 0 and all(x in hub[tl:] for x in (e1, e2, e3))
+          and t1 not in hub[tl:] and E.refresh(root) is False)
+    check("exp: EXPERIMENTS.md is untouched by the taskhub",
+          read(os.path.join(root, "EXPERIMENTS.md")) == exp_before
+          and "One row per hypothesis" in exp_before)
+    check("exp: a task carries no schema stamp",
+          not any("schema" in read(t["path"]) for t in E.scan_tasks(root)))
+
+    # -- the CLI surface, following 15's `--rule` idiom: one repeatable flag, engine-validated
+    import json as _json
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "add",
+                        "Run the replicate", "-c", "implementation", "--blocked-by", "None",
+                        "--concluded", f"{h1}:supported", "--json"],
+                       capture_output=True, text=True, encoding="utf-8", cwd=root)
+    out = _json.loads(r.stdout)
+    check("exp: the CLI --concluded flag makes a task an experiment",
+          r.returncode == 0 and out["is_experiment"]
+          and out["category"] == E.TASK_RESERVED_CATEGORY
+          and out["hypothesis_refs"][0] == {"id": h1, "conclusion": "supported",
+                                            "schema": E.SCHEMA_GENERATION})
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "add",
+                        "bad", "-c", "implementation", "--blocked-by", "None",
+                        "--concluded", f"{h1}:partial"],
+                       capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("exp: the CLI refuses a retired conclusion with a message naming spec 15",
+          r.returncode == 1 and "retired" in r.stderr and "spec 15" in r.stderr)
+
+    fx = tempfile.mkdtemp(prefix="crux_exp_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: a pre-08 vault is unchanged at 2.2", _dir_bytes(dst) == b)
+    shutil.rmtree(fx, ignore_errors=True)
+
+    check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_experiment_gate():
+    print("\n# taskhub — the gating split: work never creates direction (spec 08, PRD 08.3)")
+    root, q, h1 = _task_vault("crux_gate_")
+    # h2/h3 are moved to `running` below, so they carry the outcome-neutral control spec 15
+    # requires of a stamped hypothesis — the taskhub consumes that gate, it does not bypass it
+    h2, _, _ = E.cmd_hypothesize(root, "the arm separates", parent=q, verifiables=["sep at n=3"],
+                                 neutral=["the known-good encoder reproduces 0.46"])
+    q2, _ = E.cmd_ask(root, "Does the loader matter?")
+    h3, _, _ = E.cmd_hypothesize(root, "the loader is the bottleneck", parent=q2,
+                                 verifiables=["throughput +20%"],
+                                 neutral=["the profiler reports a known baseline"])
+
+    # -- 1. an ordinary task is ACT-AND-REPORT. Ticking "fetched the antibody lot" sets no
+    #       direction, spends no compute and records no scientific result, so the PI needn't
+    #       be concerned with it — which is legal rather than a leash violation.
+    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
+                           blocked_by=None)
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    check("gate: completing a chore is not PI-gated",
+          E.cmd_task_review(root) == [] and E.task_by_id(root)[t1]["status"] == "done")
+
+    # -- 2/3. an experiment decomposes through the EXISTING parent link, and the gate fires
+    #         ONCE, on the parent — not once per sub-task. That is what keeps the layer's
+    #         founding promise (view it, never manage it) intact after the merge.
+    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported"), (h3, "refuted")])
+    for i, sub in enumerate(("Acquire the data", "Implement the arm", "Make the figures")):
+        s, _ = E.cmd_task_add(root, sub, category="implementation", blocked_by=None, parent=e1)
+        E.cmd_task_done(root, s, outputs=[f"[[{q}]]"])
+    check("gate: sub-tasks do not inherit the role",
+          not any(E.task_is_experiment(t) for t in E.scan_tasks(root) if t["parent"] == e1)
+          and E.cmd_task_review(root) == [])
+    E.cmd_task_done(root, e1, outputs=[f"[[{q}]]"])
+    queue = E.cmd_task_review(root)
+    check("gate: completing an experiment enters the acceptance queue",
+          [x[0] for x in queue] == [e1])
+    check("gate: one experiment with three sub-tasks fires one gate", len(queue) == 1)
+
+    # -- 4/5/6. THE LEASH, proven as three negatives and one positive.
+    v0 = E.Vault(root)
+    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
+    ledger0 = {x: E.ledger_counts(v0, x) for x in (q, q2)}
+    nodes0 = {n: read(node_path(root, n)) for n in (q, q2, h1, h2, h3)}
+    E.cmd_task_accept(root, e1)
+    v1 = E.Vault(root)
+    check("gate: accepting writes no verdict",
+          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
+    check("gate: acceptance never enters the ledger roll-up",
+          {x: E.ledger_counts(v1, x) for x in (q, q2)} == ledger0)
+    changed = [n for n, b in nodes0.items() if read(node_path(root, n)) != b]
+    check("gate: accepting edits only the stale flag, and only on the refed questions",
+          set(changed) == {q, q2}
+          and all(read(node_path(root, n)).replace("stale: true", "stale: false") == nodes0[n]
+                  for n in changed))
+    check("gate: acceptance stales every refed hypothesis's question",
+          v1.get(q)["fm"]["stale"] is True and v1.get(q2)["fm"]["stale"] is True)
+    check("gate: an accepted experiment leaves the queue", E.cmd_task_review(root) == [])
+    check("gate: accepting twice keeps the first signature",
+          E.cmd_task_accept(root, e1) == E.task_by_id(root)[e1]["fm"]["accepted"])
+    expect_error("gate: accept is refused on an ordinary task",
+                 lambda: E.cmd_task_accept(root, t1))
+
+    # -- 8. DRIFT: spec 15's ruling D7 is that drift warns loudly and blocks NOTHING. 08 adds
+    #       a SECOND PI touchpoint 15 could not have known about; blocking here would
+    #       reintroduce the block D7 declined, going around 15.3's own guard assert. This is
+    #       08's copy of that guard.
+    E.cmd_test(root, h2, to="running")
+    hp = node_path(root, h2)
+    edit(hp, "- [ ] sep at n=3", "- [ ] a totally different check")
+    check("gate: the refed hypothesis really is drifted", E.lock_drift(E.Vault(root).get(h2)))
+    e2, _ = E.cmd_task_add(root, "Run the drifted arm", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
+    E.cmd_task_done(root, e2, outputs=[f"[[{q}]]"])
+    row = [x for x in E.cmd_task_review(root) if x[0] == e2][0]
+    check("gate: the queue carries the drift flag of every refed hypothesis", row[3] == [h2])
+    stamp = E.cmd_task_accept(root, e2)
+    check("gate: drift is printed at accept and never blocks",
+          bool(stamp) and E.task_by_id(root)[e2]["fm"].get("accepted")
+          and E.lock_drift(E.Vault(root).get(h2)))
+
+    # -- 9. tasks are outside the roll-up, so an open experiment does not hold its question
+    #       out of review. Pinned because the opposite is a plausible later "fix".
+    E.cmd_test(root, h3, to="running")
+    edit(node_path(root, h3), "- [ ]", "- [x]")          # claim + control both met
+    E.cmd_close(root, h3)
+    E.cmd_task_add(root, "Still running the sweep", category="implementation",
+                   blocked_by=None, hypothesis_refs=[(h3, "inconclusive")])
+    E.refresh(root)
+    check("gate: an open experiment does not hold a question open",
+          E.Vault(root).get(q2).status == "review")
+
+    # -- 10. dropping an unaccepted experiment: leaves the queue, keeps its conclusions,
+    #        propagates nothing, and is reported as info so it never reads as accepted.
+    e3, _ = E.cmd_task_add(root, "Abandoned half-run", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h1, "inconclusive")])
+    E.cmd_task_done(root, e3, outputs=[f"[[{q}]]"])
+    v2 = E.Vault(root)
+    verdicts2 = {k: n["fm"].get("verdict") for k, n in v2.nodes.items()}
+    E.cmd_task_drop(root, e3)
+    info = {x["id"]: x for x in E.validation_report(root)["info"]}
+    check("gate: dropping an unaccepted experiment propagates nothing",
+          e3 not in [x[0] for x in E.cmd_task_review(root)]
+          and E.task_hypothesis_refs(E.task_by_id(root)[e3]) == [(h1, "inconclusive")]
+          and {k: n["fm"].get("verdict") for k, n in E.Vault(root).nodes.items()} == verdicts2)
+    # (`ok` is False here for an unrelated reason — h2's commitment is deliberately drifted
+    #  above, and 15.3 makes drift a problem. What this asserts is that the unaccepted
+    #  experiment is INFORMATION and never a problem or a warning of its own.)
+    rep = E.validation_report(root)
+    check("gate: an unaccepted dropped experiment is reported as info",
+          "task:unaccepted" in info and info["task:unaccepted"]["count"] == 1
+          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
+
+    # -- 13. a sub-task that declares its OWN conclusion is its own experiment and fires its
+    #        own gate. Refusing would make the spec's pilot-blocks-full-run example illegal
+    #        whenever both conclude.
+    n1, _ = E.cmd_task_add(root, "Nested pilot", category="implementation", blocked_by=None,
+                           parent=e1, hypothesis_refs=[(h1, "inconclusive")])
+    E.cmd_task_done(root, n1, outputs=[f"[[{q}]]"])
+    check("gate: a nested experiment fires its own gate",
+          n1 in [x[0] for x in E.cmd_task_review(root)])
+    check("gate: nesting is reported as info",
+          any(x["id"] == "task:nested-experiment"
+              for x in E.validation_report(root)["info"]))
+
+    # -- 11. cmd_review is 15's THREE-tuple and stays exactly that. Extended, not reshaped.
+    qrows = E.cmd_review(root)
+    check("gate: the question review queue is untouched",
+          all(len(r) == 3 and isinstance(r[2], bool) for r in qrows)
+          and set(r[0] for r in qrows) <= set(E.Vault(root).nodes))
+    snap = E.snapshot(root)
+    check("gate: the question queue in snapshot is unchanged in shape",
+          all(set(x) == {"id", "title", "summary"} for x in snap["queue"]))
+
+    fx = tempfile.mkdtemp(prefix="crux_gate_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    rev0 = E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
+    check("taskmig: a pre-08 vault's gate behaviour is unchanged at 2.3",
+          _dir_bytes(dst) == b and E.cmd_review(dst) == rev0 and E.cmd_task_review(dst) == [])
+    shutil.rmtree(fx, ignore_errors=True)
+
+    # -- the CLI: the gate is visible where the PI stands, and drift is loud but never fatal
+    import json as _json
+    e4, _ = E.cmd_task_add(root, "Another drifted run", category="implementation",
+                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "done", e4,
+                        "-o", f"[[{q}]]"], capture_output=True, text=True,
+                       encoding="utf-8", cwd=root)
+    check("gate: `task done` on an experiment prints the gate, not a verdict",
+          r.returncode == 0 and "crux task accept" in r.stdout
+          and "verdict" not in r.stdout.lower())
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "accept", e4,
+                        "--json"], capture_output=True, text=True, encoding="utf-8", cwd=root)
+    check("gate: the CLI accept prints drift to stderr and still succeeds",
+          r.returncode == 0 and h2 in r.stderr
+          and "edited after the run" in r.stderr
+          and _json.loads(r.stdout)["drifted"] == [h2]
+          and _json.loads(r.stdout)["accepted"])
+    check("gate: ENGINE_VERSION bumped to 2.3", at_least_version("2.3"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_task_gui():
+    print("\n# taskhub — the snapshot block and the cockpit tab (spec 08, PRD 08.4)")
+    root, q, h1 = _task_vault("crux_taskui_")
+    t1, _ = E.cmd_task_add(root, "Dedupe the accessions", category="data-acquisition",
+                           refs=[q], blocked_by=None)
+    t2, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=[t1],
+                           hypothesis_refs=[(h1, "supported")])
+    snap = E.snapshot(root)
+    tb = snap["tasks"]
+    check("ui: snapshot exposes the tasks block",
+          set(tb) == {"active", "categories", "reserved_category", "conclusions",
+                      "items", "frontier", "queue"} and tb["active"] is True)
+    by = E.task_by_id(root)
+    check("ui: snapshot's frontier and state match the engine",
+          tb["frontier"] == [t["id"] for t in E.task_frontier(root)]
+          and {i["id"]: i["state"] for i in tb["items"]}
+          == {t["id"]: E.task_state(t, by) for t in E.scan_tasks(root)})
+    item = {i["id"]: i for i in tb["items"]}
+    check("ui: snapshot's is_experiment and computed category match the role",
+          item[t2]["is_experiment"] and item[t2]["category"] == E.TASK_RESERVED_CATEGORY
+          and item[t2]["declared_category"] == "implementation"
+          and not item[t1]["is_experiment"])
+    check("ui: snapshot publishes the vocabularies the cockpit must render",
+          tb["conclusions"] == list(E.CONCLUSIONS)
+          and tb["reserved_category"] == E.TASK_RESERVED_CATEGORY
+          and tb["categories"] == list(E.task_categories(root)))
+
+    # -- the backlinks reach the node pane, and reach NO node file
+    check("ui: snapshot carries computed task backlinks",
+          snap["nodes"][q]["tasks"] == [t1]
+          and [x["task"] for x in snap["nodes"][h1]["experiments"]] == [t2])
+    check("ui: no node file carries a task backlink",
+          not any(t1 in read(node_path(root, n)) or t2 in read(node_path(root, n))
+                  for n in (q, h1)))
+
+    # -- every category and conclusion must survive `"t-" + cat` / `"v-" + concl` as a CSS
+    #    class. Spec 15 learned this when `invalid run` produced the broken class
+    #    `h-invalid run`; learning it once is the point of asserting it here too.
+    check("ui: every category and conclusion is a valid CSS class suffix",
+          all(c and not re.search(r"\s", c)
+              for c in tb["categories"] + [tb["reserved_category"]] + tb["conclusions"]))
+
+    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
+    E.cmd_task_done(root, t2, outputs=[f"[[{q}]]"])
+    tb = E.snapshot(root)["tasks"]
+    check("ui: the acceptance queue reaches the snapshot",
+          [x["id"] for x in tb["queue"]] == [t2]
+          and tb["queue"][0]["hypothesis_refs"][0]["conclusion"] == "supported")
+
+    # -- the webui must know every tab, category colour and conclusion the engine can emit.
+    #    Derived from the constants rather than hand-listed, which is the one thing that made
+    #    the verdict legend impossible to silently drift (selftest's own legend check).
+    ui = read(os.path.join(HERE, "webui", "app.js"))
+    html = read(os.path.join(HERE, "webui", "index.html"))
+    css = read(os.path.join(HERE, "webui", "style.css"))
+    tabs = re.findall(r'data-tab="([a-z]+)"', html)
+    check("ui: the tab list covers tree, wiki, rd and tasks",
+          set(tabs) >= {"tree", "wiki", "rd", "tasks"})
+    check("ui: the cockpit knows the taskhub is inert when absent",
+          "tasksActive" in ui and "tasks-pane" in html)
+    missing = [c for c in tb["categories"] + [tb["reserved_category"]]
+               if f"--t-{c}" not in css]
+    check("ui: every declared category has a colour", not missing)
+    check("ui: both themes carry the category palette",
+          css.count("--t-" + tb["reserved_category"]) >= 2)
+
+    # ---- INTERSECTION WITH 15.6's GUARD. 15.6 added a parity check that derives its
+    # expectation from snapshot()'s live surface, so the taskhub's node-facing fields must
+    # REGISTER with it rather than be excused from it. Two distinct hazards:
+    #   - `experiments` shipped dark and the guard caught it (it did, on the first run after
+    #     the rebase — that is the guard working exactly as designed);
+    #   - `tasks` would have FALSELY PASSED, because the guard's `referenced()` is a
+    #     substring test and app.js already contained the unrelated `state.snap.tasks`.
+    # So this asserts the specific render path, not the substring.
+    check("ui: the node-facing task fields are rendered, not merely mentioned",
+          "function tasksSection" in ui and "function experimentsSection" in ui
+          and "n.tasks" in ui and "n.experiments" in ui
+          and "tasksSection(n)" in ui and "experimentsSection(n)" in ui)
+    check("ui: the taskhub did not grow 15.6's deliberately-unrendered allowlist",
+          "NOT_RENDERED" in read(os.path.join(HERE, "selftest.py"))
+          and "tasks" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
+                                       read(os.path.join(HERE, "selftest.py")), re.S).group(1)
+          and "experiments" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
+                                             read(os.path.join(HERE, "selftest.py")), re.S).group(1))
+    check("ui: a conclusion is narrated as concluded, never as a verdict",
+          "concluded" in ui and "derived by the engine from the ticks" in ui)
+
+    # ---- INTERSECTION: 15.6 narrates drift/rule/kind on the node; 08.4 adds backlinks to
+    # the same pane. ONE node carrying both is the exact overlap, so it gets its own fixture.
+    both = tempfile.mkdtemp(prefix="crux_taskui_both_")
+    E.cmd_init("Both", both, goal="g")
+    bq, _ = E.cmd_ask(both, "does narration coexist with backlinks?")
+    bh, _, _ = E.cmd_hypothesize(both, "it does", parent=bq, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"])
+    E.cmd_test(both, bh, to="running")
+    edit(node_path(both, bh), "- [ ] alpha", "- [x] a check nobody registered")   # -> DRIFT
+    be, _ = E.cmd_task_add(both, "The run", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(bh, "invalid-run")])
+    E.cmd_task_done(both, be, outputs=[f"[[{bq}]]"])
+    bn = E.snapshot(both)["nodes"][bh]
+    check("ui: 15.6's narration and 08.4's backlinks coexist on one node",
+          bn["drift"] is True and bn["rule"] == "all"
+          and [x["task"] for x in bn["experiments"]] == [be]
+          and any(v["kind"] == "outcome-neutral" for v in bn["verifiables"]))
+    # ---- INTERSECTION: drift is now narrated in TWO places, answering two questions —
+    # "this claim's commitment moved" (15.6, the node) and "do you accept this run" (08.3,
+    # the queue). Both must survive; neither replaces the other.
+    tq = E.snapshot(both)["tasks"]["queue"]
+    check("ui: queue drift survives 15.6's node-pane narration",
+          [x["id"] for x in tq] == [be] and tq[0]["drifted"] == [bh]
+          and E.lock_drift(E.Vault(both).get(bh)))
+    shutil.rmtree(both, ignore_errors=True)
+
+    # -- a vault with no tasks/ : present, inert, and the tab hides itself
+    plain = tempfile.mkdtemp(prefix="crux_taskui_none_")
+    E.cmd_init("No Tasks", plain, goal="g")
+    ptb = E.snapshot(plain)["tasks"]
+    check("taskmig: snapshot on a pre-08 vault has an inactive tasks block",
+          ptb["active"] is False and ptb["items"] == [] and ptb["frontier"] == []
+          and ptb["queue"] == [] and set(ptb) == set(tb))
+    shutil.rmtree(plain, ignore_errors=True)
+
+    fx = tempfile.mkdtemp(prefix="crux_taskui_fx_")
+    dst = os.path.join(fx, "demo")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    b = _dir_bytes(dst)
+    s2 = E.snapshot(dst)
+    check("taskmig: snapshotting a pre-08 vault writes nothing and adds no problems",
+          _dir_bytes(dst) == b and s2["tasks"]["active"] is False
+          and not any(n.get("tasks") for n in s2["nodes"].values()))
+    shutil.rmtree(fx, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_taskhub_skill():
+    print("\n# taskhub — the skill rules and the spec amendments (spec 08, PRD 08.5)")
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    spec8 = read(os.path.join(HERE, "..", "..", "..", ".spec", "08-taskhub.md"))
+    spec15 = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
+    spec7 = os.path.join(HERE, "..", "..", "..", ".spec", "07-rd-layer.md")
+
+    check("skill: SKILL.md carries the work-never-creates-direction line",
+          "Work never creates direction" in skill
+          and "an output that is evidence\n> about a hypothesis enters the gated tier" in skill)
+    check("skill: SKILL.md states what gets in and what stays scratch",
+          "would you be annoyed if this vanished next week" in skill.lower()
+          and "session scratch" in skill and "one context window" in skill)
+    check("skill: SKILL.md marks accept as the PI's signature",
+          "crux task accept" in skill and "never run it on your own judgment" in skill.lower())
+    check("skill: SKILL.md distinguishes a derived verdict from a written conclusion",
+          "Two provenances" in skill
+          and "does **not** close h44" in skill)
+    check("skill: SKILL.md carries the escape hatch",
+          "stops being a task" in skill and "goes through the normal gate" in skill.lower()
+          or "go through the normal gate" in skill)
+
+    # every task sub-verb the CLI exposes is documented, derived from argparse rather than
+    # hand-listed, so a verb added later cannot go undocumented silently
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    verbs = {"add", "done", "drop", "list", "show", "categories", "review", "accept"}
+    check("skill: every task verb is documented in CLI help",
+          r.returncode == 0 and all(v in r.stdout for v in verbs))
+    check("skill: the verb table matches the CLI's task verbs",
+          all(f"`task {v}`" in skill or f"`{v}`" in skill for v in ("add", "done", "accept")))
+
+    # -- the three .spec amendments (rulings D6 / D9 / D19)
+    check("skill: .spec/08's conclusion vocabulary matches VERDICTS",
+          all(c in spec8 for c in E.CONCLUSIONS)
+          and "`supports` / `disputes`" not in spec8
+          and "dispute h45" not in spec8)
+    check("skill: .spec/08's frontier criterion matches the shipped rule",
+          "blockers are all **cleared**" in spec8 and "blockers are all `done`" not in spec8)
+    check("skill: .spec/08 records the written-vs-derived link split",
+          "Node-tree lineage is written in node files; the task graph is derived" in spec8
+          and "07-rd-layer.md" in spec8 and "cardinality and churn" in spec8)
+    check("skill: .spec/15 scopes derived-never-chosen to the node verdict",
+          "derived, never chosen — **as a hypothesis's `verdict`**" in spec15)
+    check("skill: .spec/08's work items are ticked for what shipped",
+          spec8.count("- ☑ ") >= 10 and "**Status:** ◐" in spec8)
+
+    # -- 07 is NOT amended: the ruling changed 08's record, not 07's design
+    r = subprocess.run(["git", "diff", "--stat", "HEAD", "--", spec7],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=os.path.join(HERE, "..", "..", ".."))
+    check("skill: .spec/07 is byte-identical", r.returncode == 0 and r.stdout.strip() == "")
 
 
 def run_cli_help():
@@ -3953,6 +4792,12 @@ def main():
     run_combination_rule()
     run_hash_lock()
     run_rulebook()
+    run_taskhub()
+    run_task_graph()
+    run_experiments()
+    run_experiment_gate()
+    run_task_gui()
+    run_taskhub_skill()
     run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

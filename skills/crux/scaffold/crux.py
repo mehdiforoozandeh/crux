@@ -154,7 +154,63 @@ def main(argv=None):
     s.add_argument("--supersedes", default=None, metavar="SLUG",
                    help="replace this node's active RD — an active RD is never amended in place")
 
-    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd)"))
+    # `task` carries sub-verbs rather than five top-level ones: the taskhub is queried far
+    # more than it is written, and one namespace keeps the top-level verb list about the
+    # science. Every sub-verb takes --json, per spec 06's rule that the agent toolbelt lives
+    # in the CLI so selftest can assert it and the cockpit can reuse it.
+    tp = sub.add_parser("task", aliases=["todo", "work"], help="the taskhub: the work this project has to do")
+    tsub = tp.add_subparsers(dest="tcmd", metavar="<sub-verb>")
+
+    s = _jsonable(tsub.add_parser("add", help="append a task (never rewrites, never renumbers)"))
+    s.add_argument("title")
+    s.add_argument("-c", "--category", required=True,
+                   help="from this vault's declared list (`crux task categories`)")
+    s.add_argument("--ref", dest="refs", action="append", default=[], metavar="ID",
+                   help="a tree node / wiki/<slug> / rd/<slug> this serves (repeatable)")
+    s.add_argument("--blocked-by", dest="blocked_by", default=None, metavar="IDS",
+                   help="comma-separated task ids, or None — REQUIRED, so a missing edge is "
+                        "a visible omission rather than silence")
+    s.add_argument("--parent", default=None, help="decomposition only: the task this is part of")
+    s.add_argument("--why", default=None, help="one line: what this unblocks")
+    # An experiment is a task whose output is evidence. Declaring what it concluded is what
+    # MAKES it one — the category is computed from this, never typed.
+    s.add_argument("--concluded", dest="concluded", action="append", default=[],
+                   metavar="HID:CONCLUSION",
+                   help="what this run concluded about a hypothesis, e.g. h44:supported "
+                        "(repeatable; one of " + ", ".join(E.CONCLUSIONS) + "). "
+                        "Declaring any makes this task an experiment.")
+
+    s = _jsonable(tsub.add_parser("done", help="close a task — requires an output that resolves"))
+    s.add_argument("id")
+    s.add_argument("-o", "--output", dest="outputs", action="append", default=[], metavar="REF",
+                   help="a vault path or [[wikilink]] this produced (repeatable)")
+
+    s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
+    s.add_argument("id")
+
+    _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
+
+    s = _jsonable(tsub.add_parser("accept", aliases=["sign-off", "signoff"],
+                                  help="the PI accepts what an experiment concluded — never "
+                                       "run this on your own judgment"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
+    s.add_argument("--frontier", action="store_true",
+                   help="only tasks whose blockers are all discharged — the default question")
+    s.add_argument("--status", default=None, choices=list(E.TASK_STATUS) + [E.TASK_BLOCKED],
+                   help="`blocked` is a legal filter though it is never a stored value")
+    s.add_argument("--category", default=None)
+    s.add_argument("--ref", default=None, metavar="ID", help="tasks serving this node/page")
+    s.add_argument("--blocks", default=None, metavar="ID", help="tasks blocking this task")
+
+    s = _jsonable(tsub.add_parser("show", help="one task's record"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
+    s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
     s.add_argument("--check", default=None, metavar="LIST",
@@ -197,6 +253,118 @@ def main(argv=None):
     except E.CruxError as e:
         print(f"crux: {e}", file=sys.stderr)
         return 1
+
+
+def _csv_arg(val):
+    """`--blocked-by t3,t4` -> ['t3','t4']; `None` (the literal the field requires) -> []."""
+    return [x.strip() for x in (val or "").split(",") if x.strip() and x.strip() != E.NO_BLOCKERS]
+
+
+def _dispatch_task(a):
+    t = getattr(a, "tcmd", None)
+    if not t:
+        print("crux: task needs a sub-verb — add / done / drop / show / categories",
+              file=sys.stderr)
+        return 1
+    if t == "categories":
+        cats = E.cmd_task_categories(_vault(), a.add)
+        if a.json:
+            return _emit({"categories": list(cats), "reserved": E.TASK_RESERVED_CATEGORY})
+        print("declared task categories: " + ", ".join(cats))
+        print(f"  ({E.TASK_RESERVED_CATEGORY} is reserved — it is computed, never typed)")
+        return 0
+    root = _vault()
+    if t == "add":
+        if a.blocked_by is None:
+            print("crux: --blocked-by is required (use `--blocked-by None` when nothing "
+                  "blocks it) — a missing edge must be a visible omission, not silence",
+                  file=sys.stderr)
+            return 1
+        hyp = []
+        for spec in a.concluded:
+            hid, sep, concl = spec.partition(":")
+            if not sep:
+                print(f"crux: --concluded takes <hypothesis>:<conclusion> (got {spec!r}) — "
+                      f"one of {', '.join(E.CONCLUSIONS)}", file=sys.stderr)
+                return 1
+            hyp.append((hid.strip(), concl.strip()))
+        tid, fn = E.cmd_task_add(root, a.title, a.category, refs=a.refs,
+                                 blocked_by=_csv_arg(a.blocked_by), parent=a.parent, why=a.why,
+                                 hypothesis_refs=hyp)
+        rec = E.task_json(root, tid)
+        if a.json:
+            return _emit({"id": tid, "file": f"{E.TASK_DIR}/{fn}", "category": rec["category"],
+                          "is_experiment": rec["is_experiment"], "refs": a.refs,
+                          "hypothesis_refs": rec["hypothesis_refs"],
+                          "blocked_by": _csv_arg(a.blocked_by)})
+        print(f"✓ {tid}  ({E.TASK_DIR}/{fn})")
+        if rec["is_experiment"]:
+            print(f"  this task is an experiment (category `{E.TASK_RESERVED_CATEGORY}`, "
+                  f"computed from --concluded)")
+    elif t == "done":
+        st = E.cmd_task_done(root, a.id, a.outputs)
+        rec = E.task_json(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "status": st, "pending_gate": rec["pending_gate"]})
+        print(f"✓ {a.id} → {st}")
+        if rec["pending_gate"]:
+            print(f"  ◐ this is an experiment: its output is evidence, so it waits for the "
+                  f"PI.\n    crux task accept {a.id}")
+    elif t == "review":
+        rows = E.cmd_task_review(root)
+        if a.json:
+            return _emit([{"id": i, "title": ti,
+                           "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                           "drifted": d} for i, ti, hr, d in rows])
+        if not rows:
+            print("no experiments awaiting your acceptance.")
+            return 0
+        print("Awaiting your acceptance (what these runs concluded):")
+        for i, ti, hr, d in rows:
+            print(f"  ◐ {i}  {ti}")
+            for hid, concl in hr:
+                print(f"      {hid} → {concl}" + ("   ⚠ commitment drifted" if hid in d else ""))
+    elif t in ("accept", "sign-off", "signoff"):
+        # Drift is printed loudly and blocks NOTHING. Spec 15's ruling D7: the engine derives
+        # and flags, the PI decides. Blocking here would reintroduce, at a touchpoint 15 could
+        # not have known about, the block that ruling declined.
+        drifted = [d for i, _, _, d in E.cmd_task_review(root) if i == a.id]
+        stamp = E.cmd_task_accept(root, a.id)
+        warn = drifted[0] if drifted else []
+        for hid in warn:
+            print(f"  ⚠ {hid}'s commitment was edited after the run — what would have "
+                  f"settled it is not what was pre-registered. Accepting anyway; the flag "
+                  f"is permanent.", file=sys.stderr)
+        if a.json:
+            return _emit({"id": a.id, "accepted": stamp, "drifted": warn})
+        print(f"✓ {a.id} accepted at {stamp}")
+    elif t == "drop":
+        st = E.cmd_task_drop(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "status": st})
+        print(f"✓ {a.id} → {st}")
+    elif t in ("list", "ls"):
+        rows = E.cmd_task_list(root, frontier=a.frontier, status=a.status,
+                               category=a.category, ref=a.ref, blocks=a.blocks)
+        by = E.task_by_id(root)
+        recs = [dict(E.task_json(root, x["id"]), state=E.task_state(x, by)) for x in rows]
+        if a.json:
+            return _emit(recs)
+        if not recs:
+            print("no tasks match.")
+        for x in recs:
+            blk = (" ← " + ", ".join(x["blocked_by"])) if x["blocked_by"] else ""
+            print(f"  {x['state']:>7}  {x['id']:>4} [{x['category']}] {x['title']}{blk}")
+    elif t == "show":
+        rec = E.task_json(root, a.id)
+        if a.json:
+            return _emit(rec)
+        print(f"{rec['id']} [{rec['category']}] {rec['title']}  —  status: {rec['status']}")
+        print(f"  refs: {', '.join(rec['refs']) or '—'}   "
+              f"blocked_by: {', '.join(rec['blocked_by']) or E.NO_BLOCKERS}")
+        for o in rec["outputs"]:
+            print(f"  output: {o['path']}")
+    return 0
 
 
 def dispatch(a):
@@ -292,6 +460,8 @@ def dispatch(a):
         if a.json:
             return _emit({"state": state, "path": rel})
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
+    elif c in ("task", "todo", "work"):
+        return _dispatch_task(a)
     elif c in ("rd", "design", "requirements"):
         root = _vault()
         slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)
