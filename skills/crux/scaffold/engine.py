@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "2.7"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "2.8"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -125,6 +125,14 @@ RETIRED_CONCLUSION = "partial"
 
 GENERATED    = ("META.md", "EXPERIMENTS.md", WIKI_INDEX, RD_INDEX, TASK_INDEX) # root .md views the node scan must never treat as nodes
 
+# project glossary (spec 14): the PI's vocabulary model, one file per vault.
+GLOSSARY_FILE = "glossary.md"
+# Root .md files the node scan must skip BY NAME. `glossary.md` is PI-owned, not generated,
+# so it does not belong in GENERATED — but it must be excluded just as firmly. Without the
+# name check it is invisible only because it happens to carry no `id:` frontmatter, and the
+# day someone adds one the glossary silently becomes a node with an unknown type.
+NON_NODE_FILES = GENERATED + (GLOSSARY_FILE,)
+
 # evidence artifacts (v0.5): a hypothesis points at what its run actually produced.
 # Convention home is results/<hid>/ inside the vault, listed under the node's `## Artifacts`.
 # The engine only does bookkeeping here too — it classifies by extension and checks the
@@ -213,7 +221,7 @@ SCHEMA_GENERATION = 2
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
 # known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
 # never string-match a message, because messages get reworded and ids do not.
-INFO_NAMESPACES = ("boundary", "task", "agents")  # <namespace>:<slug>; spec 14 claims its own next
+INFO_NAMESPACES = ("boundary", "task", "agents", "glossary")  # <namespace>:<slug>
 
 # Verifiables come in two classes and crux used to flatten them, which is what let a broken
 # apparatus and a false claim produce the same-looking partial pass.
@@ -359,7 +367,7 @@ PROSE_SECTIONS = {
 # OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
-CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks")
+CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary")
 OPT_CHECKS = ("decks", "gate")
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
@@ -731,7 +739,7 @@ class Vault:
         self.cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
         self.nodes = {}
         for fn in sorted(os.listdir(root)):
-            if not fn.endswith(".md") or fn in GENERATED:
+            if not fn.endswith(".md") or fn in NON_NODE_FILES:
                 continue
             fm, body = parse_doc(read(os.path.join(root, fn)))
             if "id" not in fm:
@@ -1488,6 +1496,408 @@ def validate(v):
                 problems.append((nid, "parent cycle detected")); break
             seen.add(cur)
     return problems
+
+# ----------------------------------------------------------------------------- glossary (spec 14)
+# `glossary.md` is NOT a definition store — it is a model of the PI's vocabulary. Presence
+# means the agent may use the word bare; absence means gloss it, or ask. The one-line
+# definition each entry carries is for the PI to read back later; the MEMBERSHIP is what the
+# agent consumes.
+#
+# It is separate from the wiki because the wiki's flow rule (literature → wiki, never the
+# reverse) structurally forbids project-COINED terms — "detection floor", "capacity
+# certificate" — and those are exactly the terms most likely to be used bare at a PI who has
+# never had them defined, because the agent invented them and therefore finds them obvious.
+#
+# The file is the PI's. The engine reads it, and writes it only where the PI said so
+# (`crux glossary accept|decline`). Everything here is total: a missing file, a missing
+# section, a hand-edited line and free prose between entries all read as data, never as an
+# error.
+_GLOSS_TERM = re.compile(r"^\s*[-*]\s+\*\*(?P<term>[^*]+?)\*\*\s*(?:[—:-]\s*(?P<def>.*))?$")
+_GLOSS_PLAIN = re.compile(r"^\s*[-*]\s+(?P<term>.+?)\s*$")
+_GLOSS_HINT = re.compile(r"^\s*_\(.*\)_\s*$")
+
+def _deplural(tok):
+    """Strip ONE trailing plural from a token. Deliberately not a stemmer: `-es` only after
+    a sibilant, `-s` never after `ss`, and never on a token short enough that the `s` is
+    probably part of the word."""
+    if len(tok) > 3 and tok.endswith("es") and tok[-3] in "sxzho":
+        return tok[:-2]
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+        return tok[:-1]
+    return tok
+
+def glossary_key(term):
+    """The canonical key for a term: casefold, collapse every run of spaces/tabs/hyphens/
+    underscores to one space, depluralize the FINAL token only.
+
+    One normalizer serves both matching (spec 14's counting rule) and identity (is this the
+    term the PI already declined?). That is deliberate: if the two could differ, a declined
+    term would come back under a different hyphenation and the PI would answer the same
+    question forever — which is the exact failure the decline list exists to prevent."""
+    toks = [t for t in re.split(r"[-_\s]+", str(term or "").strip().lower()) if t]
+    if not toks:
+        return ""
+    return " ".join(toks[:-1] + [_deplural(toks[-1])])
+
+def parse_glossary(text):
+    """`glossary.md` → {"terms": [{term, definition, key}], "declined": [term, …]}.
+
+    Pure: takes a string, not a path, so it is unit-testable with no vault — the shape
+    `prose_words` and `count_verifiables` already use."""
+    terms, declined, section = [], [], None
+    for line in str(text or "").splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            h = s[3:].strip().lower()
+            section = "terms" if h == "terms" else ("declined" if h == "not jargon" else None)
+            continue
+        if not s or section is None or _GLOSS_HINT.match(line):
+            continue
+        if section == "terms":
+            m = _GLOSS_TERM.match(line)
+            if m:
+                t = " ".join(m.group("term").split())
+                terms.append({"term": t, "definition": (m.group("def") or "").strip(),
+                              "key": glossary_key(t)})
+            continue
+        m = _GLOSS_PLAIN.match(line)
+        if m:
+            declined.append(" ".join(m.group("term").split()))
+    return {"terms": terms, "declined": declined}
+
+def glossary_path(root):
+    return os.path.join(root, GLOSSARY_FILE)
+
+def load_glossary(root):
+    """The vault's vocabulary model. An absent file is an EMPTY model, never an error:
+    a pre-14 vault is correct, not broken, and nothing here may create the file."""
+    p = glossary_path(root)
+    return parse_glossary(read(p) if os.path.isfile(p) else "")
+
+# --- counting a proposed term (spec 14, PRD 14.1) ------------------------------------
+# THE RULE, and it is one sentence on purpose:
+#
+#   A term matches when its words appear consecutively INSIDE ONE MARKDOWN BLOCK,
+#   case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with
+#   the last word optionally carrying a trailing `s` or `es`.
+#
+# Settled empirically rather than by argument. Spec 14 guessed that "normalizing case and
+# trailing plurals is probably enough"; measured against the three shipped example vaults,
+# it is not. That rule fixes every plural case and ZERO hyphenation cases, and hyphenation is
+# where the variance actually lives — "dense contrastive pretraining" is written 9 times
+# unhyphenated and 7 times hyphenated by the same author in the same vault. Under the guess,
+# "mask transformer head" scores 0 documents despite 12 occurrences across 3 documents, two
+# of them node titles, and the centrality filter would silently drop the most obviously
+# coined term in the vault.
+#
+# Block scoping is equally forced: allowing a newline inside the separator run produced 27
+# measured false positives where a heading's last word glued to the body's first
+# ("## Run Links" + "- job 40012" matching 'links job' in 8 documents). Every crux node is
+# built from headings and bullets, so that fires constantly.
+#
+# Depluralizing EVERY token was tested and rejected: identical on all 17 probe terms, with a
+# 114-candidate over-match tail of verbs and function words ("transfers to", "orders of").
+#
+# Derivational morphology is deliberately out: "label efficiency" does not match
+# "label-efficient". Those are different words, and a PI who agreed to one has not agreed to
+# the other.
+_BLOCK_START = re.compile(r"^\s*(?:[-*+>]|\d+[.)]|\|)")
+_TERM_SEP = r"[-_‐‑ \t]+"
+MAX_TERM_WORDS = 5
+
+def glossary_blocks(body, title=""):
+    """Markdown → a list of flattened, lowercased blocks.
+
+    Blocks break on blank lines and at the start of a heading, list item, blockquote or table
+    row, so a term can never be assembled across markdown structure. Within a block, lines
+    are joined — an intra-paragraph line wrap still counts as one phrase.
+
+    Dropped first, for the same reasons `_prose_tokens` drops them: the generated ledger
+    (it repeats child titles, which would let a term reach a second document without a second
+    real use), HTML comments, and `_(placeholder)_` lines (template prompts, not content)."""
+    text = str(body or "")
+    pre = text.split(LEDGER_START)[0]
+    if LEDGER_END in text:
+        pre += "\n\n" + text.split(LEDGER_END)[-1]
+    pre = re.sub(r"<!--.*?-->", " ", pre, flags=re.S)
+    out, cur = ([str(title).strip().lower()] if str(title or "").strip() else []), []
+    for line in pre.splitlines():
+        s = line.strip()
+        if not s or _PLACEHOLDER.match(line):
+            if cur: out.append(" ".join(cur)); cur = []
+            continue
+        if s.startswith("#") or _BLOCK_START.match(line):
+            if cur: out.append(" ".join(cur)); cur = []
+            out.append(s.lstrip("#").strip().lower())
+            continue
+        cur.append(s)
+    if cur:
+        out.append(" ".join(cur))
+    return [b for b in out if b]
+
+def term_pattern(term):
+    """A compiled regex implementing the rule above. Every token is escaped, so a term
+    containing regex metacharacters (`c++ kernel`) is matched literally rather than
+    exploding."""
+    toks = [t for t in re.split(r"[-_\s]+", str(term or "").strip().lower()) if t]
+    if not toks:
+        return re.compile(r"(?!x)x")        # matches nothing
+    parts = [re.escape(t) for t in toks[:-1]] + [re.escape(_deplural(toks[-1])) + r"(?:e?s)?"]
+    return re.compile(r"(?<![\w-])" + _TERM_SEP.join(parts) + r"(?![\w-])", re.I)
+
+def glossary_corpus(v):
+    """The documents a term is counted over: (id, title, body) per node and per compiled wiki
+    page. Excluded by construction — generated views (META/EXPERIMENTS/WIKI/RD/TASKS: counting
+    them would double-count every node), `raw/` sources (the wiki layer's standing invariant
+    is that the engine never reads a source's CONTENT, only its bytes), `results/` artifacts,
+    `wiki/log.md` and `wiki/SCHEMA.md` (not `type: wiki`), and `glossary.md` itself (a term is
+    trivially central in the file that defines it)."""
+    docs = [(nid, n.title or "", n["body"]) for nid, n in v.nodes.items()]
+    for p in scan_wiki_pages(v.root):
+        docs.append(("wiki:" + p["slug"], p["title"] or "",
+                     (p["summary"] or "") + "\n\n" + p["body"]))
+    return docs
+
+def count_term(v, term):
+    """Where a term appears and how often: {"documents": [id…], "occurrences": N,
+    "titles": [id…], "per_document": {id: n}}.
+
+    Pure read — builds nothing, writes nothing, and is deterministic on an unchanged vault,
+    which is what makes a term that fails centrality today pass next month with no memory
+    beyond the vault itself."""
+    rx = term_pattern(term)
+    docs, per, titles, total = [], {}, [], 0
+    for nid, title, body in sorted(glossary_corpus(v)):
+        k = sum(len(rx.findall(b)) for b in glossary_blocks(body, title))
+        if k:
+            docs.append(nid); per[nid] = k; total += k
+        if rx.search(str(title or "").lower()):
+            titles.append(nid)
+    return {"documents": docs, "occurrences": total, "titles": titles, "per_document": per}
+
+# --- the centrality filter (spec 14, PRD 14.2) ----------------------------------------
+# THE INVERSION, and it is the load-bearing design choice in spec 14:
+#
+#   The agent proposes candidate terms freely. The engine FILTERS them by centrality.
+#   The engine does not generate the list.
+#
+# Deterministic extraction from prose does not work for the terms that matter. "detection
+# floor", "capacity certificate" and "the separability condition" are bigrams and trigrams,
+# and n-gram frequency over research prose is noisy in both directions — it misses real
+# multi-word jargon and floods the list with ordinary phrases that recur. Measured on the
+# shipped example vaults, the top bigrams are "of the", "rather than", "it is".
+#
+# An agent reading vault prose recognizes a coined multi-word term effortlessly; counting
+# where it occurs is exactly what an agent is bad at and code is good at. Each side does the
+# half it is suited to, and the deterministic part stays the GOALPOST rather than the
+# generator — which is what spec 09's rule 1 actually asks for.
+#
+# The filter is still the whole guarantee: a term the agent finds interesting but which
+# appears once is silently dropped and never reaches the PI. Agent enthusiasm cannot become
+# PI interruptions.
+#
+# Hand-written, ~250 entries, deliberately not sourced from NLTK or scikit-learn: crux takes
+# no third-party dependency, and a pasted word list is a third-party artifact with a licence
+# even when it is only data. Function words only — it exists to stop a proposal of "the data",
+# not to do extraction, which is the agent's job.
+GLOSSARY_STOPLIST = frozenset("""
+a about above after again against all almost along already also although always am among an
+and another any anybody anyone anything are around as at away back be became because become
+becomes been before began begin behind being below beside besides best better between beyond
+both but by came can cannot come could did different do does doing done down due during each
+early either else enough especially even ever every everybody everyone everything except far
+few fewer first five for found four from full further gave get give given go goes going gone
+got great had half has have having he hence her here hers herself him himself his how however
+i if in indeed inside instead into is it its itself just keep kept know known large last late
+later least left less let like likely little long look made main make makes making many may
+maybe me mean means might mine more moreover most mostly much must my myself near nearly need
+neither never new next no nobody none nor not nothing now number of off often on once one only
+onto or other others otherwise ought our ours ourselves out outside over own part particular
+per perhaps possible put quite rather really result results right said same saw say says second
+see seem seems seen several shall she should show shown side similar since six small so some
+somebody someone something sometimes soon still such sure take taken than that the their theirs
+them themselves then thence there therefore these they thing things think third this those
+though three through throughout thus time to together too took toward towards two under unless
+until up upon us use used uses using usually very via want was way we well went were what when
+whence where whereas whether which while who whom whose why will with within without would yes
+yet you your yours yourself
+""".split())
+
+def _proposal_key(term):
+    """Validate and canonicalize one proposed term. Raises rather than silently dropping —
+    a malformed proposal is a bug in the caller, and swallowing it would look identical to
+    the term failing centrality, which is the one thing the filter must be unambiguous about."""
+    t = " ".join(str(term or "").split())
+    if not t:
+        raise CruxError("glossary: an empty term was proposed")
+    n = len([x for x in re.split(r"[-_\s]+", t) if x])
+    if n > MAX_TERM_WORDS:
+        raise CruxError(f"glossary: {t!r} is {n} words; a term is 1–{MAX_TERM_WORDS} "
+                        f"(a longer phrase is a sentence, and its count means nothing)")
+    return glossary_key(t)
+
+def glossary_candidates(root, propose, v=None):
+    """Filter agent-proposed terms by centrality; return the survivors.
+
+    CENTRALITY, exactly as spec 14 settles it: a term survives when it appears in >= 2
+    distinct nodes or wiki pages, OR appears in any node title or wiki page title.
+
+    Documents gate; occurrences ride along in the payload. The spec states the rule in
+    documents and one work item in occurrences — they differ on precisely the case the filter
+    exists to suppress (a term said twice in ONE node), so the document reading wins.
+
+    Then four subtractions, all through `glossary_key`, so a difference of case, hyphen or
+    plural can never resurrect a settled term: already accepted, already declined, already a
+    wiki page (title or slug), or a stoplisted single word.
+
+    Dropped terms are NOT returned. The filter's guarantee is that a dropped term never
+    reaches the PI; emitting it as "dropped" would put it back on the PI's screen through the
+    side door."""
+    if not propose:
+        return []
+    v = v or Vault(root)
+    g = load_glossary(root)
+    settled = {t["key"] for t in g["terms"]} | {glossary_key(d) for d in g["declined"]}
+    for p in scan_wiki_pages(root):
+        settled.add(glossary_key(p["slug"]))
+        if p["title"]:
+            settled.add(glossary_key(p["title"]))
+    out, seen = [], set()
+    for term in propose:
+        key = _proposal_key(term)
+        if key in seen or key in settled:
+            continue
+        seen.add(key)
+        if " " not in key and key in GLOSSARY_STOPLIST:
+            continue
+        c = count_term(v, term)
+        if len(c["documents"]) < 2 and not c["titles"]:
+            continue
+        n, t = len(c["documents"]), len(c["titles"])
+        out.append({"term": " ".join(str(term).split()), "key": key,
+                    "documents": c["documents"], "occurrences": c["occurrences"],
+                    "titles": c["titles"], "per_document": c["per_document"],
+                    "reason": f"{n} document{'' if n == 1 else 's'}"
+                              + (f", {t} title{'' if t == 1 else 's'}" if t else "")})
+    return out
+
+def glossary_info(cands):
+    """The `glossary:` info line. One line for the batch, not one per term — the PI answers
+    them inline, one at a time, and the lint's job is only to say they are waiting."""
+    if not cands:
+        return []
+    n = len(cands)
+    return [("glossary:candidates",
+             f"{n} vocabulary candidate{'' if n == 1 else 's'} passed centrality: "
+             f"{', '.join(repr(c['term']) for c in cands)}. Ask the PI yes/no, one at a "
+             f"time, then record it with `crux glossary accept|decline`.", n)]
+
+def ensure_glossary(root):
+    """Create `glossary.md` from the template if it is absent. Called at `init`, and by the
+    PI's own accept/decline — never by a read path, so an existing vault gains the file only
+    when the PI has actually said something."""
+    p = glossary_path(root)
+    if not os.path.isfile(p):
+        write_if_changed(p, load_template("glossary"))
+    return p
+
+# --- the write path (spec 14, PRD 14.3) -----------------------------------------------
+# THE ONLY PLACE THE ENGINE WRITES glossary.md. Membership is a claim about the PI — "these
+# are words I know" — so only the PI can make it. The agent proposes and never writes; this
+# is what makes that mechanical rather than aspirational, because there is exactly one verb
+# that touches the file and it is in no agent's toolbelt.
+#
+# Entries are rewritten as whole SECTIONS, sorted by key, and everything else in the file
+# (the header prose, a note the PI added by hand, a blank line they liked) is passed through
+# untouched. The file is theirs; the engine only maintains the two lists inside it.
+def _render_glossary(text, terms, declined):
+    """Put `terms` and `declined` back into `text`, replacing ONLY the two section bodies.
+
+    Entry lines are regenerated; every other line — the header prose, the italic hint, a note
+    the PI added by hand, their blank lines — passes through untouched. The file is theirs;
+    the engine maintains the two lists inside it and nothing else.
+
+    Each section is rebuilt as: heading, then any prose the PI kept there (the italic hint),
+    then the entries — with exactly one blank line between groups. Rebuilding rather than
+    patching is what makes it a FIXED POINT: rendering an already-rendered file returns the
+    same bytes, so a no-op accept really is a no-op on disk."""
+    groups, order = {}, []          # section name -> [prose lines]; None = outside both
+    cur = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            h = line[3:].strip().lower()
+            cur = "terms" if h == "terms" else ("declined" if h == "not jargon" else None)
+            if cur is None:
+                groups.setdefault("_tail", []).append(line); order.append("_tail")
+            continue
+        if cur is None:
+            groups.setdefault("_head" if not order else "_tail", []).append(line)
+            continue
+        if _GLOSS_TERM.match(line) or (cur == "declined" and _GLOSS_PLAIN.match(line)
+                                       and not _GLOSS_HINT.match(line)):
+            continue                # an entry: regenerated, never preserved
+        groups.setdefault(cur, []).append(line)
+
+    def block(name, heading, rows):
+        prose = [l for l in groups.get(name, []) if l.strip()]
+        out = [heading]
+        if prose:
+            out += [""] + prose
+        if rows:
+            out += [""] + rows
+        return out
+
+    head = [l for l in groups.get("_head", []) if l.strip() or True]
+    while head and not head[-1].strip():
+        head.pop()
+    lines = head + [""] if head else []
+    lines += block("terms", "## Terms",
+                   [f"- **{t['term']}** — {t['definition']}" for t in terms])
+    lines += [""] + block("declined", "## Not jargon", [f"- {d}" for d in declined])
+    tail = [l for l in groups.get("_tail", []) if l.strip()]
+    if tail:
+        lines += [""] + tail
+    return "\n".join(lines).rstrip() + "\n"
+
+def _glossary_write(root, term, definition, declining):
+    """Shared body of accept/decline: idempotent, and EXCLUSIVE — a term is in exactly one of
+    the two lists, so accepting a declined term moves it and vice versa. The move is reported
+    rather than done silently: a PI who loses track of their own decline list has lost the
+    thing that stops the same question being asked forever."""
+    t = " ".join(str(term or "").split())
+    if not t:
+        raise CruxError("glossary: a term is required")
+    key = _proposal_key(t)
+    if not declining and not str(definition or "").strip():
+        raise CruxError(f"glossary: accepting {t!r} needs a one-line definition (-d) — "
+                        "membership without a read-back line defeats half the file's purpose")
+    p = ensure_glossary(root)
+    g = parse_glossary(read(p))
+    terms = [x for x in g["terms"] if x["key"] != key]
+    declined = [d for d in g["declined"] if glossary_key(d) != key]
+    moved = (len(terms) != len(g["terms"])) if declining else (len(declined) != len(g["declined"]))
+    if declining:
+        declined.append(t)
+    else:
+        terms.append({"term": t, "definition": " ".join(str(definition).split()), "key": key})
+    terms.sort(key=lambda x: x["key"])
+    declined.sort(key=glossary_key)
+    write_if_changed(p, _render_glossary(read(p), terms, declined))
+    return {"term": t, "key": key, "state": "declined" if declining else "accepted",
+            "moved": moved}
+
+def cmd_glossary_accept(root, term, definition):
+    """Record that the PI knows this word. It may now be used bare."""
+    return _glossary_write(root, term, definition, declining=False)
+
+def cmd_glossary_decline(root, term):
+    """Record that the PI does not want this word in the glossary — asked once, ever."""
+    return _glossary_write(root, term, None, declining=True)
+
+def cmd_glossary_list(root):
+    """The vocabulary model, read-only. Creates nothing: a pre-14 vault stays pre-14 until
+    the PI actually says something."""
+    return load_glossary(root)
 
 # ----------------------------------------------------------------------------- wiki layer (Epic 3)
 # A PI-curated literature wiki: immutable sources under raw/, agent-compiled pages under
@@ -2635,6 +3045,7 @@ def cmd_init(title, dirpath=".", goal=""):
     write_if_changed(os.path.join(root, VAULT_MARKER), yaml_dump(cfg) + "\n")
     body = fill(load_template("project"), id="root", title=title, goal=goal or "_(state the program goal)_")
     write_if_changed(os.path.join(root, f"{slug}.md"), body)
+    ensure_glossary(root)       # empty: a new project has no shared vocabulary yet
     _write_obsidian_vault(root)
     refresh(root)
     return root, f"{slug}.md"
@@ -3220,7 +3631,7 @@ def gate_warnings(v):
                              f"{nid}` is the first step; the PI approves it, then `crux answer`."))
     return out
 
-def validation_report(root, checks=None):
+def validation_report(root, checks=None, propose=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
     CHECKS; None runs them all.
@@ -3245,12 +3656,18 @@ def validation_report(root, checks=None):
         info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
     if "gate"    in names: warnings += gate_warnings(v)
+    # The glossary check is a FILTER, not a scan: with nothing proposed it has nothing to
+    # filter and says nothing at all. That is what lets it sit in the default CHECKS without
+    # changing one byte of output for every vault that exists today.
+    cands = glossary_candidates(root, propose, v) if "glossary" in names else []
+    info += glossary_info(cands)
     return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],
             "warnings": [{"id": i, "message": m} for i, m in warnings],
             "info": [dict({"id": i, "message": m}, **({"count": c} if c is not None else {}))
-                     for i, m, c in info]}
+                     for i, m, c in info],
+            "candidates": cands}
 
 def cmd_validate(root, checks=None):
     """The hard problems only, as (id, message) pairs. Kept at this return type on purpose:

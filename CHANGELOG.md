@@ -8,6 +8,85 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux glossary accept | decline | list`** — the write path, and the skill's vocabulary
+  rule (spec [`14`](.spec/14-glossary.md), PRD 14.3). **Spec 14 is done.**
+
+  This is the only verb that touches `glossary.md`, and it is in no agent's toolbelt.
+  Membership is a claim about the PI — *these are words I know* — so only the PI can make it;
+  putting the single write path behind a verb is what makes "the agent proposes, never
+  writes" mechanical instead of aspirational. Every other verb is asserted not to touch the
+  file.
+
+  `accept` and `decline` are idempotent and **exclusive**: accepting a declined term moves it
+  and says so, because a PI who loses track of their own decline list has lost the thing that
+  stops the same question being asked forever. An accept needs a one-line definition —
+  membership with no read-back line defeats half the file's purpose. Entries are rewritten as
+  whole sections, sorted by key, and everything else in the file (header prose, a note added
+  by hand) passes through untouched. The renderer is a **fixed point**, so a no-op accept
+  really is a no-op on disk.
+
+  `SKILL.md` gains the standing rule: read the glossary on first touch, use its terms bare,
+  gloss or ask for everything else — in node prose *and* in what you say to the PI — and
+  answer candidates inline, one at a time.
+
+- **`crux validate --check=glossary --propose <term>`** — the centrality filter (spec
+  [`14`](.spec/14-glossary.md), PRD 14.2). A term survives when it appears in **≥2 distinct**
+  nodes or wiki pages, **or** in any node or wiki page title. Then four subtractions, all
+  through the one canonical key: already accepted, already declined, already a wiki page
+  (title or slug), or a stoplisted single word.
+
+  The engine does **not** generate the candidate list — it filters one. That inversion is the
+  design: an agent recognizes coined multi-word jargon effortlessly, and counting where it
+  occurs is what code is good at. The filter is the guarantee — a term the agent finds
+  fascinating but which appears once is dropped before the PI ever sees it.
+
+  Candidates ride the **`glossary:` info tier**: never a problem, never a warning, never
+  counted toward the exit code, and **not silenced or failed by `--strict`**. A vault whose
+  prose repeats a term is not broken. With nothing proposed the check says nothing at all,
+  so `crux validate` on every existing vault is unchanged.
+
+  `--propose` is repeatable; `--propose-file` reads one term per line. Dropped terms are
+  never emitted — reporting them would put the PI back in front of what the filter just spared
+  them. The shipped stoplist is a ~250-word hand-written frozenset in `engine.py`: no data
+  file, no dependency, no licence.
+
+- **Counting a multi-word glossary term** (spec [`14`](.spec/14-glossary.md), PRD 14.1).
+  A term matches when its words appear consecutively **inside one markdown block**,
+  case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with the
+  last word optionally carrying a trailing `s`/`es`. That sentence is the whole rule.
+
+  It was settled by measurement, not argument. The spec's own guess — *"normalizing case and
+  trailing plurals is probably enough"* — was run against the three shipped example vaults
+  and **refuted**: it fixes every plural case and **zero** hyphenation cases, and hyphenation
+  is where the variance lives (*"dense contrastive pretraining"* appears 9× unhyphenated and
+  7× hyphenated in one vault, one author). Under the guess, *"mask transformer head"* scores
+  **0 documents** despite 12 occurrences across 3 documents, two of them node titles.
+  Block scoping is equally forced: permitting a newline in the separator produced 27 measured
+  false positives where a heading's last word glued to the body's first.
+
+  `glossary_blocks` · `term_pattern` · `count_term`, all pure reads with no CLI surface yet.
+  A **frozen oracle** of 10 terms across the three example vaults ships as asserts, so a later
+  change to the rule must reproduce the numbers or admit in its own PRD that it moved them.
+
+- **`glossary.md` — the project's vocabulary model** (spec [`14`](.spec/14-glossary.md),
+  PRD 14.0). One file per vault, created **empty** at `init`, with `## Terms` and
+  `## Not jargon`. It is not a definition store: presence means an agent may use the word
+  bare, absence means gloss it or ask. The decline list is the other half — without it the
+  same term is re-proposed on every audit forever and the PI learns to ignore the prompt.
+
+  Separate from the wiki because the wiki's flow rule forbids project-**coined** terms, and
+  those are exactly the ones most likely to be used bare at a PI who has never had them
+  defined — the agent invented them, so they read as obvious.
+
+  `parse_glossary` is pure and total (a missing file, a missing section and hand-written
+  prose all read as data). `glossary_key` derives one canonical key per entry — casefold,
+  separators collapsed, final word depluralized — so a declined term cannot come back under
+  a different hyphenation. The file is skipped by the node scan **by name**, not by luck.
+
+  `ENGINE_VERSION` → **2.8**. A vault with no `glossary.md` is correct, not broken: absence
+  is permanently legal, no read path creates the file, and the shipped fixture is
+  byte-compared to prove nothing moves but the version stamp.
+
 - **The agent roster, and a convention for what an agent definition is** (spec
   [`09`](.spec/09-specialized-agents.md), PRD 09.4). Eight definitions ship in
   `agents/<name>/AGENT.md`, mirroring the `skills/` layout so there is one mental model:

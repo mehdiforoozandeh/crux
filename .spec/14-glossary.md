@@ -1,6 +1,6 @@
 # Spec 14 — Project glossary
 
-**Label:** `glossary` · **Status:** ☐ todo
+**Label:** `glossary` · **Status:** ☑ done
 **Relates to:** [03 LLM wiki](03-llm-wiki.md) (definitions from literature),
 [09 specialized agents](09-specialized-agents.md) (adds one agent to the roster)
 
@@ -150,6 +150,8 @@ others.
 | the agent proposes, never writes | membership is a claim about the PI, so only the PI can make it |
 | decline list lives in `glossary.md` | asked once, ever; and the file honestly records both halves of the vocabulary model |
 | runs as a `validate` check | no new trigger; rides a pass that already exists |
+| **a term matches when its words appear consecutively within one markdown block**, case-insensitively, with spaces/tabs/hyphens/underscores interchangeable and a trailing `s`/`es` allowed on the last word only | **measured**, against the three shipped example vaults. Case + trailing plurals — this spec's own first guess — fixes every plural case and **zero** hyphenation cases, and hyphenation is where the variance is: it scores *"mask-transformer head"* and *"pre-registered bar"* at **0 documents** despite 12 and 11 real occurrences. Block scoping is not tidiness either — allowing a newline in the separator produced 27 false positives where a heading's last word glued to the body's first |
+| morphological variants are **separate terms** | *"label efficiency"* and *"label-efficient"* are different words; a PI who agreed to one has not agreed to the other. Derivational stemming is the "more clever" this spec rightly warned against |
 | inline yes/no, one at a time | PI preference; centrality removes the reason to batch |
 
 ## Rejected alternatives
@@ -168,35 +170,53 @@ others.
 - **A batch review queue.** More machinery than the volume justifies once centrality filters.
 - **Re-asking about declined terms.** Cheapest engine, worst experience; the PI answers the
   same question for months.
+- **Counting by case + trailing-plural normalization only.** *This spec's own first guess,
+  measured and refuted.* It fixes plurals and no **hyphenation**, and hyphenation is where the
+  real variance sits — *"dense contrastive pretraining"* is written 9 times unhyphenated and 7
+  times hyphenated by the same author in the same vault. Under it the two most obviously
+  project-coined terms in the segssl vault score **zero documents** and are silently dropped by
+  the very filter that is supposed to be the design's whole guarantee.
+- **Depluralizing every token, not just the last.** Identical results on all 17 measured terms;
+  a 5,542-candidate sweep found 114 where it counts more, every one a verb or function word
+  (*"transfers to"*, *"orders of"*, *"does not"*). Generality with no measured benefit and a
+  real over-match tail.
 
 ## Open questions
 
-- The contents and provenance of the shipped common-English stoplist.
-- How the engine counts occurrences of an agent-proposed **multi-word** term — exact string
-  match is brittle across inflection and hyphenation (*"detection floor"* vs *"detection
-  floors"* vs *"detection-floor"*). Normalizing case and trailing plurals is probably enough;
-  anything more clever risks over-matching. This is the one remaining piece of the inverted
-  design that is not settled.
-- Whether an entry may be edited once accepted, and whether editing re-opens PI approval. A
-  definition that silently drifts is worse than none.
-- Whether the glossary should be loaded into context on every crux-skill trigger, or fetched
-  on demand. Always-loaded is simpler and costs tokens on every turn.
-- Whether `validate` should warn on undefined jargon in node prose, or only collect
-  candidates. Warning makes it enforcement; collecting makes it a suggestion.
+*All settled 2026-08-15. Kept with their answers, because the reasoning is the expensive part.*
+
+- ~~The contents and provenance of the shipped common-English stoplist.~~ **~250 hand-written
+  function words, a frozenset in `engine.py`, applied to single-word proposals only.** Not
+  sourced from NLTK or scikit-learn: a pasted word list is a third-party artifact with a
+  licence even when it is only data, and crux takes no dependency. It stays small because the
+  loudest recurring phrases in a vault turn out to be *crux's own template*, not English —
+  and those are removed by stripping comments, placeholders and heading joins instead.
+- ~~How the engine counts a multi-word term.~~ **Settled — see Decisions. The guess in this
+  spec was measured and refuted; both losing rules are recorded under Rejected alternatives.**
+- ~~Whether an entry may be edited once accepted.~~ **The file is the PI's; edit freely.** The
+  engine consumes only *membership*, so a changed definition has nothing to enforce. Changing
+  the **term** is a delete plus an add.
+- ~~Always-loaded or fetched on demand.~~ **Fetched on demand** — read at first vault touch and
+  after an accept. Always-loaded costs tokens on every turn forever for a file that changes
+  monthly.
+- ~~Whether `validate` should warn on undefined jargon.~~ **Collect only.** The engine cannot
+  tell jargon from prose — that judgment is the agent's whole job here. A warning would be the
+  engine asserting something it cannot compute.
 
 ## Work items
 
-- ☐ `glossary.md` template, `## Terms` + `## Not jargon`, created empty at `init`
-- ☐ Centrality **filter** — takes agent-proposed terms, counts occurrences and title hits,
-  subtracts glossary / decline list / wiki index / stoplist, emits survivors
-- ☐ Multi-word occurrence counting (case + plural normalization); settle the open question
-- ☐ Shipped common-English stoplist
-- ☐ `crux validate --check=glossary` with `--json` candidate output
-- ☐ `crux-glossary` agent definition — proposes terms from vault prose, judges jargon vs
-  public knowledge, never writes
-- ☐ Inline yes/no PI flow; accepted terms appended; declined terms recorded
-- ☐ Skill rule: use glossary terms bare, gloss everything else, propose on centrality
-- ☐ `ENGINE_VERSION` bump + proof an old vault without `glossary.md` still loads
+- ☑ `glossary.md` template, `## Terms` + `## Not jargon`, created empty at `init`
+- ☑ Centrality **filter** — takes agent-proposed terms, counts occurrences and title hits,
+  subtracts glossary / decline list / wiki pages / stoplist, emits survivors
+- ☑ Multi-word occurrence counting — block-scoped, separator-agnostic, trailing plural on
+  the last word only (the case+plural guess was measured and **refuted**)
+- ☑ Shipped common-English stoplist
+- ☑ `crux validate --check=glossary --propose` with `--json` candidate output
+- ☑ `crux-glossary` agent definition — proposes terms from vault prose, judges jargon vs
+  public knowledge, never writes *(shipped with [09](09-specialized-agents.md)'s roster)*
+- ☑ Inline yes/no PI flow; accepted terms appended; declined terms recorded
+- ☑ Skill rule: use glossary terms bare, gloss everything else, propose on centrality
+- ☑ `ENGINE_VERSION` bump (2.8) + proof an old vault without `glossary.md` still loads
 
 ## Acceptance criteria
 

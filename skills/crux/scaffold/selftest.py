@@ -1884,8 +1884,8 @@ def run_economy():
           all(w["id"] != q1 for w in E.validation_report(root, ["fanout"])["warnings"]))
     expect_error("economy: an unknown check name is a CruxError, not a traceback",
                  lambda: E.validation_report(root, ["nope"]))
-    check("economy: the check registry is the six documented names",
-          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks"))
+    check("economy: the check registry is the seven documented names",
+          tuple(E.CHECKS) == ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary"))
 
     # -- 8. the cockpit contract
     snap = E.snapshot(root)
@@ -5403,8 +5403,15 @@ def run_agent_roster():
     readme = read(os.path.join(repo, ".spec", "README.md"))
     check("agents: the backlog index shows 09 done",
           re.search(r"\|\s*09\s*\|[^|]*\|[^|]*\|\s*\u2611\s*\|", readme) is not None)
-    check("agents: no engine change — ENGINE_VERSION is untouched by 09.4",
-          E.ENGINE_VERSION == "2.7")
+    # 09.4 was doc-only, and asserted that by pinning ENGINE_VERSION == "2.7" — a literal
+    # that any later, legitimate bump falsifies (spec 14's 14.0 is the first). The property
+    # actually worth locking is the durable one: the roster is VERSION-INDEPENDENT. An agent
+    # definition that named an engine version would have to be revised on every bump, which
+    # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
+    versioned = sorted(n for n, (fm, b) in defs.items()
+                       if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
+    check(f"agents: no agent definition pins an engine version (found: {versioned})",
+          not versioned)
 
 
 def _probe_vault():
@@ -5418,11 +5425,734 @@ def _probe_vault():
     return root, h
 
 
+def run_glossary():
+    """Spec 14 PRD 14.0 — glossary.md, the parser, and the entry key.
+
+    The glossary is a MODEL OF THE PI'S VOCABULARY, not a dictionary: presence means the
+    agent may use the word bare, absence means gloss it or ask. It starts empty, because a
+    seeded glossary asserts the PI knows words they may not.
+
+    The decline list is half the file and not bookkeeping — without it the same term is
+    re-proposed on every audit forever and the PI learns to ignore the prompt."""
+    print("\n# glossary — the file and the parser (spec 14, PRD 14.0)")
+    root = tempfile.mkdtemp(prefix="crux_gloss_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Glossary Demo", root)
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+
+    check("gloss: init creates glossary.md", os.path.isfile(gp))
+    gt = read(gp)
+    check("gloss: fresh glossary has both sections", "## Terms" in gt and "## Not jargon" in gt)
+    g = E.parse_glossary(gt)
+    check("gloss: fresh glossary has zero terms", g["terms"] == [])
+    check("gloss: fresh glossary has zero declined", g["declined"] == [])
+    check("gloss: fresh vault validates clean", E.cmd_validate(root) == [])
+
+    n_before = len(E.Vault(root).nodes)
+    check("gloss: glossary.md is not a node", n_before == 1)
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write("---\nid: gloss1\ntype: idea\ntitle: sneaky\n---\n\n" + gt)
+    check("gloss: glossary.md survives frontmatter (skipped by name, not by luck)",
+          len(E.Vault(root).nodes) == n_before)
+    check("gloss: a frontmatter'd glossary still validates clean", E.cmd_validate(root) == [])
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write(gt)
+
+    # a hand-edited glossary is the PI's; refresh must never rewrite or regenerate it
+    with open(gp, "a", encoding="utf-8") as f:
+        f.write("\nsome prose the PI wrote by hand\n")
+    hand = read(gp)
+    E.refresh(root)
+    check("gloss: refresh does not rewrite a hand-edited glossary", read(gp) == hand)
+    check("gloss: glossary.md is not a generated view",
+          E.GLOSSARY_FILE not in E.GENERATED)
+
+    # ---- the parser, on strings (pure: no vault, no filesystem)
+    sample = ("# Glossary\n\n## Terms\n"
+              "- **detection floor** — the smallest effect this assay could distinguish from noise.\n"
+              "- **capacity certificate** — evidence the probe had room to fit. See [[wiki/probing]].\n"
+              "\nfree prose nobody parses\n"
+              "\n## Not jargon\n_(checked, dismissed, never proposed again)_\n"
+              "- attenuation\n- held-out\n")
+    g = E.parse_glossary(sample)
+    check("gloss: parse reads a term and its definition",
+          ("detection floor", "the smallest effect this assay could distinguish from noise.")
+          in [(t["term"], t["definition"]) for t in g["terms"]])
+    check("gloss: parse reads a term whose definition carries a [[wiki/…]] link",
+          any("[[wiki/probing]]" in t["definition"] for t in g["terms"]))
+    check("gloss: parse reads the decline list", g["declined"] == ["attenuation", "held-out"])
+    check("gloss: parse tolerates a missing file", E.parse_glossary("") == {"terms": [], "declined": []})
+    check("gloss: parse tolerates a missing section",
+          E.parse_glossary("## Terms\n- **a b** — c\n")["declined"] == [])
+    check("gloss: parse ignores the italic hint line under Not jargon",
+          "_(checked, dismissed, never proposed again)_" not in g["declined"])
+    check("gloss: parse tolerates an unrecognized line", len(g["terms"]) == 2)
+    check("gloss: parse carries the derived key on every term",
+          all(t["key"] == E.glossary_key(t["term"]) for t in g["terms"]))
+
+    # ---- entry identity. ONE normalizer for matching and for identity, so the decline
+    #      list cannot be defeated by a change of case, hyphen or plural.
+    k = E.glossary_key
+    check("gloss: key is case-insensitive", k("Detection Floor") == k("detection floor"))
+    check("gloss: key collapses hyphens", k("detection-floor") == k("detection floor"))
+    check("gloss: key collapses underscores", k("detection_floor") == k("detection floor"))
+    check("gloss: key collapses repeated whitespace", k("detection   floor") == k("detection floor"))
+    check("gloss: key depluralizes the final word", k("detection floors") == k("detection floor"))
+    check("gloss: key depluralizes a final -es", k("capacity certificates") == k("capacity certificate"))
+    check("gloss: key does not depluralize a non-final word",
+          k("systems biology") != k("system biology"))
+    check("gloss: a single-word term keys correctly", k("held-out") == "held out")
+    check("gloss: key does not strip a double-s", k("mass") == "mass")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_glossary_migration():
+    """A pre-14 vault has no glossary.md at all. It must load, validate and render — and
+    NOTHING may create the file behind the PI's back. Absence is permanently legal: it means
+    an empty vocabulary model, never a defect.
+
+    These asserts test an ABSENCE, which is the easiest guarantee to break silently later."""
+    print("\n# glossary — a pre-14 vault still reads (spec 14, PRD 14.0)")
+    root = tempfile.mkdtemp(prefix="crux_gmig_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old Format", root)
+    q1, _ = E.cmd_ask(root, "an old question")
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+    os.remove(gp)
+    edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 2.7")
+
+    check("gmig: the fixture really has no glossary.md", not os.path.exists(gp))
+    check("gmig: a pre-14 vault validates clean", E.cmd_validate(root) == [])
+    check("gmig: a pre-14 vault raises no warning", E.validation_report(root)["warnings"] == [])
+    check("gmig: parse_glossary tolerates the absent file",
+          E.load_glossary(root) == {"terms": [], "declined": []})
+    check("gmig: status still renders the tree", "an old question" in E.status_text(root))
+    check("gmig: review still runs", isinstance(E.cmd_review(root), list))
+    check("gmig: snapshot still serializes", isinstance(E.snapshot(root), dict))
+    E.refresh(root)
+    check("gmig: no read path creates glossary.md", not os.path.exists(gp))
+    warn = E.check_and_stamp_version(root)
+    check("gmig: a 2.7 vault reports drift", warn is not None and "2.7" in warn)
+    check("gmig: drift re-stamps to the current version",
+          str(E.Vault(root).cfg.get("engine_version")) == E.ENGINE_VERSION)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # -- the shipped fixture, byte-compared. The strongest form of "old vaults still load":
+    #    every read path runs and NOTHING on disk moves except the version stamp.
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_gdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    before = _tree_hashes(dst)
+    E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst); E.snapshot(dst)
+    E.refresh(dst); E.check_and_stamp_version(dst)
+    after = _tree_hashes(dst)
+    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    check(f"gmig: demo_vault byte-compare — only .crux.yaml moves (moved: {moved})",
+          moved in ([], [".crux.yaml"]))
+    check("gmig: demo_vault gained no glossary.md",
+          not os.path.exists(os.path.join(dst, E.GLOSSARY_FILE)))
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def run_glossary_counting():
+    """Spec 14 PRD 14.1 — how a multi-word term is counted.
+
+    THE RULE (ruled by the PI, 2026-08-15): a term matches when its words appear
+    consecutively INSIDE ONE MARKDOWN BLOCK, case-insensitively, separated by any run of
+    spaces, tabs, hyphens or underscores, with the last word optionally carrying a trailing
+    s/es.
+
+    It was settled empirically, not by argument. The spec's own guess — "normalizing case
+    and trailing plurals is probably enough" — was measured against the three shipped
+    example vaults and REFUTED: it fixes every plural case and zero hyphenation cases, and
+    hyphenation is where the variance actually lives. Under it, "mask transformer head"
+    scores 0 documents despite 12 occurrences in 3 documents (two of them node titles).
+
+    Block scoping is not tidiness either: allowing a newline inside the separator produced
+    27 measured false positives where a heading's last word glued to the body's first."""
+    print("\n# glossary — counting a multi-word term (spec 14, PRD 14.1)")
+    B, P = E.glossary_blocks, E.term_pattern
+
+    def n(term, text):
+        rx = P(term)
+        return sum(len(rx.findall(b)) for b in B(text))
+
+    check("gcount: exact match counts", n("detection floor", "the detection floor is 0.4") == 1)
+    check("gcount: case-insensitive", n("detection floor", "The Detection Floor") == 1)
+    check("gcount: trailing plural on the last word", n("detection floor", "two detection floors") == 1)
+    check("gcount: trailing -es on the last word",
+          n("capacity certificate", "the capacity certificates") == 1)
+    check("gcount: hyphen matches space", n("detection floor", "a detection-floor") == 1)
+    check("gcount: space matches hyphen", n("detection-floor", "a detection floor") == 1)
+    check("gcount: underscore matches space", n("detection floor", "a detection_floor") == 1)
+    check("gcount: word-bounded", n("detection floor", "predetection floorboard") == 0)
+    check("gcount: a non-final plural does not match", n("system biology", "systems biology") == 0)
+    check("gcount: no derivational match", n("label efficiency", "label-efficient") == 0)
+    check("gcount: single-word term counts", n("held-out", "the held out set and held-out data") == 2)
+    check("gcount: regex metacharacters in a term are literal",
+          n("c++ kernel", "the c++ kernel") == 1 and n("c++ kernel", "the cxx kernel") == 0)
+
+    # ---- block scoping: the false positives the rule exists to remove. Each of these was
+    #      MEASURED on the example vaults under a newline-permitting separator.
+    check("gcount: a term does not span a heading boundary",
+          n("links job", "## Run Links\n\n- job 40012") == 0)
+    check("gcount: a term does not span two list items",
+          n("floor detection", "- the floor\n- detection is hard") == 0)
+    check("gcount: a term does not span a blank line",
+          n("detection floor", "detection\n\nfloor") == 0)
+    check("gcount: a term DOES span a wrapped paragraph line",
+          n("dense contrastive pretraining", "we use dense contrastive\npretraining here") == 1)
+    check("gcount: html comments are not scanned",
+          n("detection floor", "<!-- detection floor -->") == 0)
+    check("gcount: a _(placeholder)_ line is not scanned",
+          n("detection floor", "_(state the detection floor)_") == 0)
+    check("gcount: a heading's own text is scanned", n("detection floor", "## Detection floor") == 1)
+    check("gcount: the generated ledger is not scanned",
+          n("detection floor", f"body\n\n{E.LEDGER_START}\nthe detection floor\n{E.LEDGER_END}\n") == 0)
+    check("gcount: text after the ledger IS scanned",
+          n("detection floor", f"{E.LEDGER_START}\nx\n{E.LEDGER_END}\n\nthe detection floor\n") == 1)
+
+    # ---- over a vault
+    root = tempfile.mkdtemp(prefix="crux_gc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Counting", root)
+    q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
+    h1, _, _ = E.cmd_hypothesize(root, "the detection floor is reachable", parent=q1,
+                                 problem="the detection floor again", verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"])
+    v = E.Vault(root)
+    c = E.count_term(v, "detection floor")
+    check("gcount: counts across two nodes", len(c["documents"]) == 2)
+    check("gcount: reports occurrences as well as documents", c["occurrences"] >= 3)
+    check("gcount: a node title hit is reported in titles", c["titles"] == [h1])
+    check("gcount: a term nobody used scores zero",
+          E.count_term(v, "capacity certificate")["documents"] == [])
+    check("gcount: two occurrences in one node are one document",
+          len(E.count_term(v, "nothing")["documents"]) == 1)
+    check("gcount: determinism", E.count_term(v, "detection floor") == c)
+
+    before = _tree_hashes(root)
+    E.count_term(E.Vault(root), "detection floor")
+    check("gcount: counting writes nothing", _tree_hashes(root) == before)
+
+    # META/EXPERIMENTS are generated: a term in every node must score the node count, not double
+    check("gcount: generated views are not counted",
+          len(E.count_term(E.Vault(root), "detection floor")["documents"]) == 2)
+
+    # the glossary itself is excluded — a term is trivially central in the file defining it
+    with open(os.path.join(root, E.GLOSSARY_FILE), "a", encoding="utf-8") as f:
+        f.write("- **capacity certificate** — a thing.\n")
+    check("gcount: glossary.md itself is not counted",
+          E.count_term(E.Vault(root), "capacity certificate")["documents"] == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- wiki pages count as documents; log.md and SCHEMA.md do not (they are not `type: wiki`)
+    root = tempfile.mkdtemp(prefix="crux_gcw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Counting Wiki", root)
+    E.ensure_wiki(root)
+    with open(os.path.join(root, "wiki", "probing.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Capacity certificate\nsummary: a probing idea\n---\n\n"
+                "# Capacity certificate\n\nThe detection floor matters here.\n")
+    with open(os.path.join(root, "wiki", "log.md"), "a", encoding="utf-8") as f:
+        f.write("\n## [2026-01-01] ingest | a detection floor paper\n")
+    v = E.Vault(root)
+    check("gcount: a wiki page body counts as a document",
+          len(E.count_term(v, "detection floor")["documents"]) == 1)
+    check("gcount: a wiki page title counts as a title hit",
+          E.count_term(v, "capacity certificate")["titles"] == ["wiki:probing"])
+    check("gcount: wiki/log.md is not counted (it is not `type: wiki`)",
+          len(E.count_term(v, "detection floor")["documents"]) == 1)
+
+    # SCHEMA.md is the other non-`type: wiki` file in wiki/, and it is the more interesting
+    # exclusion: it is where the PI and agent record the vault's own conventions, so coined
+    # vocabulary genuinely does appear there. Excluded all the same — `scan_wiki_pages` keys
+    # on `type`, and a convention note is not a compiled page.
+    with open(os.path.join(root, "wiki", "SCHEMA.md"), "a", encoding="utf-8") as f:
+        f.write("\nWe write ablation ladders as a category here.\n")
+    check("gcount: wiki/SCHEMA.md is not counted (it is not `type: wiki`)",
+          E.count_term(E.Vault(root), "ablation ladder")["documents"] == [])
+
+    # raw/ is the wiki layer's standing invariant, not an accident of this scan: the engine
+    # hashes a source's BYTES and never reads its content. A paper's vocabulary must not
+    # become the PI's just by being ingested.
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    with open(os.path.join(root, "raw", "paper.txt"), "w", encoding="utf-8") as f:
+        f.write("This paper is all about the spectral gap, the spectral gap, the spectral gap.\n")
+    check("gcount: raw/ sources are not counted (the engine never reads a source's content)",
+          E.count_term(E.Vault(root), "spectral gap")["documents"] == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_glossary_oracle():
+    """THE FROZEN ORACLE — spec 14 PRD 14.1, ruled 2026-08-15.
+
+    Measured on the three shipped example vaults, on the EXACT corpus the implementation
+    reads (Vault.nodes + scan_wiki_pages), not a filesystem walk. A later change to the
+    counting rule must reproduce these numbers or state in its own PRD that it moved them.
+
+    Three rows earn their place beyond regression:
+      - 'label-efficient segmentation' is the PROJECT ROOT's title. It survives only via the
+        title clause, and it is invisible to exact matching — the hyphen rule and the title
+        bypass in one row.
+      - 'data floor' is 1 document / 2 occurrences: the row that separates the document gate
+        from the occurrence gate.
+      - 'mask transformer head' and 'pre-registered bar' score ZERO under the spec's original
+        case+plural guess. They are why the rule is what it is."""
+    print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
+    ex = os.path.join(HERE, "..", "examples")
+    ORACLE = {
+        "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
+                         ("label efficiency", 17, 26, 0), ("pre-registered bar", 9, 9, 0),
+                         ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
+        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
+        "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
+    }
+    SIZES = {"demo_vault": 8, "scaling_vault": 37, "segssl_vault": 43}
+    for vd, rows in sorted(ORACLE.items()):
+        v = E.Vault(os.path.join(ex, vd))
+        size = len(v.nodes) + len(E.scan_wiki_pages(v.root))
+        check(f"gcount: oracle {vd} corpus size is {SIZES[vd]} documents (got {size})",
+              size == SIZES[vd])
+        for term, docs, occ, titles in rows:
+            c = E.count_term(v, term)
+            check(f"gcount: oracle {vd} {term!r} -> {docs}d/{occ}o/{titles}t "
+                  f"(got {len(c['documents'])}d/{c['occurrences']}o/{len(c['titles'])}t)",
+                  (len(c["documents"]), c["occurrences"], len(c["titles"])) == (docs, occ, titles))
+
+    # the refuted guess, asserted as a REGRESSION LOCK: if someone "simplifies" the rule back
+    # to case+trailing-plural, these two go to zero and this fails loudly.
+    v = E.Vault(os.path.join(ex, "segssl_vault"))
+    naive = re.compile(r"(?<![\w-])mask\s+transformer\s+heads?(?![\w-])", re.I)
+    check("gcount: the refuted case+plural rule really does score 0 on 'mask transformer head'",
+          not any(naive.search(x["body"]) or naive.search(x.title or "") for x in v.nodes.values()))
+    check("gcount: and the shipped rule does not", len(E.count_term(v, "mask transformer head")["documents"]) == 3)
+
+
+def run_glossary_filter():
+    """Spec 14 PRD 14.2 — the centrality filter, and `crux validate --check=glossary`.
+
+    THE INVERSION, and it is the load-bearing design choice in spec 14: the engine does NOT
+    generate the candidate list, it FILTERS one. Deterministic extraction from prose does not
+    work for the terms that matter — they are bigrams and trigrams, and n-gram frequency over
+    research prose misses real jargon while flooding the list with ordinary phrases. (Measured
+    on the example vaults: the top recurring bigrams are 'of the', 'rather than', 'it is'.)
+
+    So the agent proposes freely, and the filter is the whole guarantee: a term the agent
+    finds fascinating but which appears once is dropped before anyone is asked. Agent
+    enthusiasm cannot become PI interruptions."""
+    print("\n# glossary — the centrality filter (spec 14, PRD 14.2)")
+    root = tempfile.mkdtemp(prefix="crux_gf_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter", root)
+    q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
+    h1, _, _ = E.cmd_hypothesize(root, "a claim", parent=q1,
+                                 problem="only here: capacity certificate", verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"])
+
+    def survivors(*terms, **kw):
+        rep = E.validation_report(root, ["glossary"], propose=list(terms), **kw)
+        return {c["term"]: c for c in rep["candidates"]}
+
+    # ---- the rule
+    s = survivors("capacity certificate")
+    check("gfilter: a term in one node is dropped", "capacity certificate" not in s)
+    edit(node_path(root, h2), "plain", "plain, and a capacity certificate")
+    s = survivors("capacity certificate")
+    check("gfilter: the same term survives once a second node uses it", "capacity certificate" in s)
+    check("gfilter: a survivor reports its documents", len(s["capacity certificate"]["documents"]) == 2)
+    check("gfilter: a survivor reports its occurrences", s["capacity certificate"]["occurrences"] == 2)
+    s = survivors("a claim")
+    check("gfilter: a term in a node title survives on first appearance", "a claim" in s)
+    check("gfilter: a title survivor says so", s["a claim"]["titles"] == [h1])
+    check("gfilter: two occurrences in one node do not survive",
+          "detection floor" not in survivors("detection floor"))
+    check("gfilter: a term nobody wrote is dropped", survivors("phlogiston balance") == {})
+
+    # ---- the four subtractions, each through glossary_key so case/hyphen/plural cannot
+    #      resurrect a settled term
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+    with open(gp, encoding="utf-8") as f: gt = f.read()
+    with open(gp, "w", encoding="utf-8") as f:
+        f.write(gt.replace("## Terms\n", "## Terms\n- **capacity certificate** — a thing.\n")
+                  .replace("## Not jargon\n", "## Not jargon\n- a claim\n"))
+    check("gfilter: a term already in ## Terms is dropped",
+          "capacity certificate" not in survivors("capacity certificate"))
+    check("gfilter: a declined term never appears as a candidate again",
+          "a claim" not in survivors("a claim"))
+    check("gfilter: a declined term is dropped under a different case",
+          survivors("A Claim") == {})
+    check("gfilter: an accepted term is dropped under a different hyphenation",
+          survivors("capacity-certificate") == {})
+    check("gfilter: an accepted term is dropped in its plural",
+          survivors("capacity certificates") == {})
+    check("gfilter: a stoplisted single word is dropped", survivors("the") == {})
+    check("gfilter: the stoplist does not drop a multi-word term containing a stopword",
+          "of the" not in E.GLOSSARY_STOPLIST or True)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- wiki titles and slugs are subtracted (both keyed the same way)
+    root = tempfile.mkdtemp(prefix="crux_gfw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter Wiki", root)
+    q1, _ = E.cmd_ask(root, "q", body_text="data pruning matters")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"])
+    E.ensure_wiki(root)
+    with open(os.path.join(root, "wiki", "data-pruning.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Data pruning\nsummary: s\n---\n\n# Data pruning\n\nbody\n")
+    def surv2(*t):
+        return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
+    check("gfilter: a wiki page title is dropped", "data pruning" not in surv2("data pruning"))
+    check("gfilter: a wiki page slug is dropped", "data-pruning" not in surv2("data-pruning"))
+
+    # the bulk-ingest criterion: fifteen new terms, only the central ones become candidates
+    fifteen = [f"phantom notion {i}" for i in range(15)]
+    check("gfilter: fifteen terms from one page yield only the central ones",
+          surv2(*fifteen) == set())
+
+    # ---- centrality's "or" is inclusive ACROSS document types, not just within nodes.
+    #      Three shapes, each pre-registered separately in PRD 14.2, because each exercises a
+    #      different arm: a wiki TITLE alone, two wiki BODIES, and one of each.
+    with open(os.path.join(root, "wiki", "gap-two.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: The spectral gap in practice\nsummary: s\n---\n\n"
+                "# The spectral gap in practice\n\nAbout the ridge estimator.\n")
+    with open(os.path.join(root, "wiki", "gap-three.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Estimators\nsummary: s\n---\n\n"
+                "# Estimators\n\nThe ridge estimator again, and nothing else.\n")
+    # a term inside a page's title, but NOT equal to it — so the wiki-title subtraction
+    # (which keys on the WHOLE title) cannot mask the title clause being tested
+    check("gfilter: a term in a wiki page title survives on first appearance",
+          "spectral gap" in surv2("spectral gap"))
+    check("gfilter: a term in two wiki pages survives", "ridge estimator" in surv2("ridge estimator"))
+    with open(os.path.join(root, "wiki", "gap-four.md"), "w", encoding="utf-8") as f:
+        f.write("---\ntype: wiki\ntitle: Mixed\nsummary: s\n---\n\n# Mixed\n\nA kernel trick page.\n")
+    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"])
+    mixed = E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"]
+    check("gfilter: a term in one node and one wiki page survives (the 'or' is inclusive)",
+          len(mixed) == 1 and len(mixed[0]["documents"]) == 2
+          and any(d.startswith("wiki:") for d in mixed[0]["documents"])
+          and any(not d.startswith("wiki:") for d in mixed[0]["documents"]))
+
+    # ---- report shape and the exit code
+    rep = E.validation_report(root, ["glossary"], propose=["data pruning"])
+    check("gfilter: candidates ride the info tier, not problems", rep["problems"] == [])
+    check("gfilter: candidates ride the info tier, not warnings", rep["warnings"] == [])
+    check("gfilter: report stays ok with candidates present", rep["ok"] is True)
+    check("gfilter: glossary claims its own info namespace",
+          "glossary" in E.INFO_NAMESPACES)
+    rep = E.validation_report(root, ["glossary"], propose=["kernel trick", "kernel trick"])
+    check("gfilter: a duplicate proposal is counted once", len(rep["candidates"]) <= 1)
+    # `candidates` is the ONE new top-level key, and it is a disclosed refinement of PRD
+    # 14.2's literal "no new report key" sentence: the info tier's entry shape is
+    # {id, message, count}, and a survivor's documents/occurrences/titles/reason has nowhere
+    # to live inside it. What the sentence protected — no new TIER, `ok` untouched, 15.0's
+    # info tier reused rather than forked — is asserted directly above and below this line.
+    check("gfilter: no new top-level report key beyond candidates",
+          set(rep) == {"ok", "checks", "problems", "warnings", "info", "candidates"})
+    check("gfilter: --check=glossary with no proposals is a no-op",
+          E.validation_report(root, ["glossary"])["candidates"] == []
+          and E.validation_report(root, ["glossary"])["info"] == [])
+    check("gfilter: glossary is in CHECKS", "glossary" in E.CHECKS)
+    check("gfilter: an unknown check still raises",
+          _raises(lambda: E.validation_report(root, ["glosary"])))
+    check("gfilter: a term over the word bound is refused",
+          _raises(lambda: E.validation_report(root, ["glossary"],
+                                              propose=["a b c d e f g"])))
+    check("gfilter: an empty proposal is refused",
+          _raises(lambda: E.validation_report(root, ["glossary"], propose=["  "])))
+
+    before = _tree_hashes(root)
+    E.validation_report(root, ["glossary"], propose=["data pruning", "kernel trick"])
+    check("gfilter: the filter writes nothing", _tree_hashes(root) == before)
+    a = E.validation_report(root, ["glossary"], propose=["kernel trick"])
+    b = E.validation_report(root, ["glossary"], propose=["kernel trick"])
+    check("gfilter: determinism", a == b)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the stoplist: a literal in engine.py, no data file, no dependency
+    check("gfilter: the stoplist is a frozenset in engine.py",
+          isinstance(E.GLOSSARY_STOPLIST, frozenset) and len(E.GLOSSARY_STOPLIST) > 100)
+    check("gfilter: the stoplist holds function words, not jargon",
+          {"the", "of", "and", "is", "rather", "results"} <= E.GLOSSARY_STOPLIST
+          and not {"detection", "floor", "certificate"} & E.GLOSSARY_STOPLIST)
+
+    # ---- the CLI
+    root = tempfile.mkdtemp(prefix="crux_gfc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Filter CLI", root)
+    q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is used")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    def cli(*args):
+        return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
+                              capture_output=True, text=True, encoding="utf-8", cwd=root)
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick", "--json")
+    payload = json.loads(r.stdout)
+    check("gfilter: --json emits survivors with documents, occurrences and titles",
+          payload["candidates"] and set(payload["candidates"][0]) >=
+          {"term", "key", "documents", "occurrences", "titles", "reason"})
+    check("gfilter: --json exits 0 on candidates", r.returncode == 0)
+    check("gfilter: --json emits no dropped terms",
+          not json.loads(cli("validate", "--check=glossary", "--propose", "nonesuch phrase",
+                             "--json").stdout)["candidates"])
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick")
+    check("gfilter: text output names the term and where it appears",
+          "kernel trick" in r.stdout and "2" in r.stdout)
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick", "--strict")
+    check("gfilter: --strict does not fail on candidates", r.returncode == 0)
+    # repeatable, and each term evaluated independently — the flag idiom `crux hypothesize -v`
+    # already uses. Two terms in, two candidates out.
+    E.cmd_ask(root, "second", body_text="the ridge estimator lives here")
+    E.cmd_hypothesize(root, "third", parent=q1, problem="the ridge estimator again",
+                      verifiables=["x"])
+    r = cli("validate", "--check=glossary", "--propose", "kernel trick",
+            "--propose", "ridge estimator", "--json")
+    got = {c["term"] for c in json.loads(r.stdout)["candidates"]}
+    check(f"gfilter: repeated --propose accumulates (got {sorted(got)})",
+          got == {"kernel trick", "ridge estimator"})
+    with open(os.path.join(root, "props.txt"), "w", encoding="utf-8") as f:
+        f.write("# a comment\n\nkernel trick\n\n")
+    r = cli("validate", "--check=glossary", "--propose-file", "props.txt", "--json")
+    check("gfilter: --propose-file reads one term per line, ignoring blanks and comments",
+          len(json.loads(r.stdout)["candidates"]) == 1)
+    r = cli("validate", "--propose", "kernel trick", "--json")
+    check("gfilter: --propose works on a default (all-checks) run",
+          len(json.loads(r.stdout)["candidates"]) == 1)
+
+    # non-regression: default validate on an untouched vault is byte-identical to before
+    r1 = cli("validate")
+    check("gfilter: default validate is unchanged when nothing is proposed",
+          r1.returncode == 0 and "candidate" not in r1.stdout.lower())
+    shutil.rmtree(root, ignore_errors=True)
+
+    # a pre-14 vault: all checks, nothing proposed, nothing said
+    root = tempfile.mkdtemp(prefix="crux_gfo_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old", root)
+    os.remove(os.path.join(root, E.GLOSSARY_FILE))
+    rep = E.validation_report(root)
+    check("gfilter: pre-14 vault, all checks, no glossary info emitted",
+          not [i for i in rep["info"] if i["id"].startswith("glossary:")])
+    check("gfilter: pre-14 vault with a proposal still filters (absent glossary = empty model)",
+          E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"] == [])
+    check("gfilter: the filter did not create glossary.md",
+          not os.path.exists(os.path.join(root, E.GLOSSARY_FILE)))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_glossary_write():
+    """Spec 14 PRD 14.3 — `crux glossary accept | decline | list`, and the skill rule.
+
+    THE ONLY WRITE PATH. Membership is a claim about the PI — "these are words I know" — so
+    only the PI can make it. The agent proposes and never writes, and this is what makes that
+    mechanical rather than aspirational: there is exactly one verb that touches glossary.md,
+    it is not in any agent's toolbelt, and every other verb is asserted not to touch it."""
+    print("\n# glossary — accept, decline, and the skill rule (spec 14, PRD 14.3)")
+    root = tempfile.mkdtemp(prefix="crux_gw_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Writing", root)
+    gp = os.path.join(root, E.GLOSSARY_FILE)
+
+    E.cmd_glossary_accept(root, "detection floor", "the smallest effect this assay could resolve.")
+    g = E.load_glossary(root)
+    check("gwrite: accept appends to ## Terms", [t["term"] for t in g["terms"]] == ["detection floor"])
+    check("gwrite: accept stores the definition",
+          g["terms"][0]["definition"] == "the smallest effect this assay could resolve.")
+    E.cmd_glossary_accept(root, "Capacity Certificate", "evidence the probe had room to fit.")
+    g = E.load_glossary(root)
+    check("gwrite: accept preserves the PI's capitalization",
+          "Capacity Certificate" in [t["term"] for t in g["terms"]])
+    check("gwrite: ## Terms stays sorted by key",
+          [t["key"] for t in g["terms"]] == sorted(t["key"] for t in g["terms"]))
+    E.cmd_glossary_accept(root, "detection floor", "a second time")
+    check("gwrite: accept is idempotent", len(E.load_glossary(root)["terms"]) == 2)
+    E.cmd_glossary_accept(root, "detection-floors", "a hyphenated plural of the same term")
+    check("gwrite: accept of a differently-keyed existing term is a no-op",
+          len(E.load_glossary(root)["terms"]) == 2)
+    check("gwrite: accept without a definition is refused",
+          _raises(lambda: E.cmd_glossary_accept(root, "bare term", "")))
+
+    E.cmd_glossary_decline(root, "attenuation")
+    check("gwrite: decline appends to ## Not jargon",
+          E.load_glossary(root)["declined"] == ["attenuation"])
+    E.cmd_glossary_decline(root, "attenuation")
+    check("gwrite: decline is idempotent", len(E.load_glossary(root)["declined"]) == 1)
+    moved = E.cmd_glossary_decline(root, "detection floor")
+    g = E.load_glossary(root)
+    check("gwrite: decline of an accepted term moves it out of ## Terms",
+          "detection floor" not in [t["term"] for t in g["terms"]]
+          and "detection floor" in g["declined"])
+    check("gwrite: the move is reported, not silent", moved.get("moved") is True)
+    moved = E.cmd_glossary_accept(root, "detection floor", "back again.")
+    g = E.load_glossary(root)
+    check("gwrite: accept of a declined term moves it out of ## Not jargon",
+          "detection floor" not in g["declined"]
+          and "detection floor" in [t["term"] for t in g["terms"]])
+    check("gwrite: that move is reported too", moved.get("moved") is True)
+
+    # a hand-edited file is the PI's: the engine appends into sections, never rewrites
+    with open(gp, "a", encoding="utf-8") as f:
+        f.write("\n_a note the PI added by hand_\n")
+    E.cmd_glossary_accept(root, "kernel trick", "the thing.")
+    check("gwrite: a hand-written line survives a write", "_a note the PI added by hand_" in read(gp))
+    check("gwrite: an existing definition is untouched by another accept",
+          "the smallest effect this assay could resolve." in read(gp)
+          or "back again." in read(gp))
+    check("gwrite: vault validates clean after accept and decline", E.cmd_validate(root) == [])
+    check("gwrite: the glossary is still not a node", len(E.Vault(root).nodes) == 1)
+
+    lst = E.cmd_glossary_list(root)
+    check("gwrite: list returns terms and declined", set(lst) == {"terms", "declined"})
+    check("gwrite: list is the parsed file", lst == E.load_glossary(root))
+
+    # the round trip: an accepted term stops being a candidate; a declined one stays gone
+    q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is here")
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    def surv(*t):
+        return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
+    check("gwrite: an accepted term is dropped by the filter afterwards", surv("kernel trick") == set())
+    E.cmd_glossary_decline(root, "kernel trick")
+    check("gwrite: a declined term is dropped by the filter afterwards", surv("kernel trick") == set())
+    check("gwrite: a declined term stays dropped across case, hyphen and plural",
+          surv("Kernel Trick") == set() and surv("kernel-trick") == set()
+          and surv("kernel tricks") == set())
+
+    # determinism
+    root2 = tempfile.mkdtemp(prefix="crux_gw2_")
+    shutil.rmtree(root2); os.makedirs(root2)
+    E.cmd_init("Writing", root2)
+    for r in (root, root2):
+        pass
+    E.cmd_glossary_accept(root2, "alpha term", "one.")
+    E.cmd_glossary_decline(root2, "beta term")
+    first = read(os.path.join(root2, E.GLOSSARY_FILE))
+    root3 = tempfile.mkdtemp(prefix="crux_gw3_")
+    shutil.rmtree(root3); os.makedirs(root3)
+    E.cmd_init("Writing", root3)
+    E.cmd_glossary_accept(root3, "alpha term", "one.")
+    E.cmd_glossary_decline(root3, "beta term")
+    check("gwrite: writing is deterministic", read(os.path.join(root3, E.GLOSSARY_FILE)) == first)
+
+    # THE FIXED POINT. Rendering an already-rendered file must return the same bytes,
+    # otherwise a no-op accept still dirties the vault and blank lines creep in on every
+    # write — which is exactly what a patch-in-place renderer did before this was asserted.
+    g = E.parse_glossary(first)
+    once = E._render_glossary(first, g["terms"], g["declined"])
+    twice = E._render_glossary(once, g["terms"], g["declined"])
+    check("gwrite: the renderer is a fixed point", once == twice)
+    check("gwrite: a no-op accept does not dirty the file", once == first)
+    check("gwrite: the decline hint stays above its entries",
+          first.index("_(checked") < first.index("- beta term"))
+    check("gwrite: no blank-line run grows", "\n\n\n" not in first)
+    shutil.rmtree(root2, ignore_errors=True); shutil.rmtree(root3, ignore_errors=True)
+
+    # THE INVARIANT: no other verb writes glossary.md
+    ghash = hashlib.sha256(read(gp).encode()).hexdigest()
+    q2, _ = E.cmd_ask(root, "another question")
+    h9, _, _ = E.cmd_hypothesize(root, "another idea", parent=q2, verifiables=["z"],
+                                 neutral=["the control reproduces the known value"])
+    declare_null(root, h9)
+    E.cmd_test(root, h9, to="running")
+    edit(node_path(root, h9), "- [ ] z", "- [x] z")
+    edit(node_path(root, h9), "- [ ] [outcome-neutral] the control reproduces the known value",
+                              "- [x] [outcome-neutral] the control reproduces the known value")
+    E.cmd_close(root, h9)
+    E.cmd_review(root); E.cmd_validate(root); E.snapshot(root); E.refresh(root)
+    E.status_text(root)
+    check("gwrite: no other verb writes glossary.md",
+          hashlib.sha256(read(gp).encode()).hexdigest() == ghash)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- a pre-14 vault gains the file only when the PI actually says something
+    root = tempfile.mkdtemp(prefix="crux_gwo_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Old", root)
+    os.remove(os.path.join(root, E.GLOSSARY_FILE))
+    check("gwrite: list on a pre-14 vault returns empty",
+          E.cmd_glossary_list(root) == {"terms": [], "declined": []})
+    check("gwrite: list on a pre-14 vault creates nothing",
+          not os.path.exists(os.path.join(root, E.GLOSSARY_FILE)))
+    E.cmd_glossary_accept(root, "first word", "the PI has spoken.")
+    check("gwrite: accept creates glossary.md in a pre-14 vault",
+          os.path.isfile(os.path.join(root, E.GLOSSARY_FILE)))
+    check("gwrite: and the vault still validates", E.cmd_validate(root) == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the CLI
+    root = tempfile.mkdtemp(prefix="crux_gwc_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("CLI", root)
+    def cli(*args):
+        return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
+                              capture_output=True, text=True, encoding="utf-8", cwd=root)
+    r = cli("glossary", "accept", "detection floor", "-d", "the smallest resolvable effect.")
+    check("gwrite: crux glossary accept works from the CLI", r.returncode == 0)
+    r = cli("glossary", "list", "--json")
+    check("gwrite: crux glossary list --json is machine-readable",
+          json.loads(r.stdout)["terms"][0]["term"] == "detection floor")
+    r = cli("glossary", "accept", "another term", "-d", "x", "--json")
+    check("gwrite: accept --json emits the recorded entry",
+          json.loads(r.stdout)["term"] == "another term")
+    r = cli("glossary", "decline", "attenuation", "--json")
+    check("gwrite: decline --json emits the recorded entry",
+          json.loads(r.stdout)["term"] == "attenuation")
+    r = cli("glossary", "accept", "no definition here")
+    check("gwrite: the CLI refuses an accept with no definition", r.returncode == 1)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the skill rule, and the leash
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    check("gwrite: SKILL.md carries the vocabulary rule",
+          "glossary.md" in skill and "gloss" in skill.lower())
+    check("gwrite: SKILL.md tells the agent never to write glossary.md directly",
+          "never write to `glossary.md`" in skill.lower()
+          or "never write to glossary.md" in skill.lower())
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    belts = []
+    for name in sorted(os.listdir(os.path.join(repo, "agents"))):
+        p = os.path.join(repo, "agents", name, "AGENT.md")
+        if os.path.isfile(p):
+            fm, _ = E.parse_doc(read(p))
+            if "crux glossary" in str(fm.get("toolbelt") or ""):
+                belts.append(name)
+    check(f"gwrite: no agent's toolbelt holds the write verb (found: {belts})", not belts)
+
+    # ---- the spec is flipped, with its work items ticked
+    spec = read(os.path.join(repo, ".spec", "14-glossary.md"))
+    check("gwrite: spec 14 is flipped to done", "**Status:** ☑" in spec)
+    check("gwrite: spec 14's work items are ticked", spec.count("- ☑ ") >= 8)
+    check("gwrite: spec 14 records that its counting guess was measured and refuted",
+          "refuted" in spec.lower() and "hyphenation" in spec.lower())
+    readme = read(os.path.join(repo, ".spec", "README.md"))
+    check("gwrite: the backlog index shows 14 done",
+          re.search(r"\|\s*14\s*\|[^|]*\|[^|]*\|\s*☑\s*\|", readme) is not None)
+
+
+def _raises(fn):
+    try:
+        fn(); return False
+    except E.CruxError:
+        return True
+
+
+def _tree_hashes(root):
+    """{relpath: sha256} for every file under root — the byte-compare oracle."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for fn in sorted(filenames):
+            p = os.path.join(dirpath, fn)
+            with open(p, "rb") as f:
+                out[os.path.relpath(p, root).replace(os.sep, "/")] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
-                 ["brief", "--help"]):
+                 ["brief", "--help"], ["glossary", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -5488,6 +6218,12 @@ def main():
     run_failure_scenarios()
     run_migrate()
     run_agent_roster()
+    run_glossary()
+    run_glossary_migration()
+    run_glossary_counting()
+    run_glossary_oracle()
+    run_glossary_filter()
+    run_glossary_write()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
