@@ -21,4 +21,4 @@ Root: [[more_data_or_a_better_model]]
 
 - **Questions** (3): open 1 · review 0 · resolved 2
 - **Hypotheses** (7): idea 1 · staged 0 · running 1 · done 5
-- **Verdicts**: supported 2 · partial 1 · refuted 2 · inconclusive 0
+- **Verdicts**: supported 2 · partial 1 · refuted 2 · inconclusive 0 · invalid-run 0

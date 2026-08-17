@@ -22,7 +22,7 @@ being built — do not implement)
 | 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☐ |
 | 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☐ |
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☐ |
-| 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ☐ |
+| 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ◐ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is

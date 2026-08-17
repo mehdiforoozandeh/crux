@@ -8,6 +8,189 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The cockpit narrates evidence semantics** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.6). The engine had been publishing `drift`,
+  `rule`/`rule_m`, `locked`/`lock_at` and per-verifiable `kind` in `snapshot()` since 1.9, and
+  the cockpit rendered **none** of them — found by walking the manual check, and measured
+  rather than eyeballed (the string "drift" appeared nowhere in the DOM, in either theme).
+
+  That is spec 15 §5's own failure reproduced: PLATO's rule *"failed at narration time, not
+  computation time"*. A drifted hypothesis read as a clean `supported` over three green
+  ticks, one of them literally titled *"a completely different check nobody registered"*; and
+  on an `invalid-run` node, the control whose failure **caused** the verdict was
+  indistinguishable from the claim checks.
+
+  Now: a drifted node carries a dashed amber edge and a ⚠ in the **tree** (a flag only
+  visible after opening the node is a flag that does nothing for a reader skimming), and the
+  detail pane carries `rule`, a `⚠ drift` badge, a `not pre-registered` badge when the
+  commitment was hashed only at close, and a `CONTROL` chip on outcome-neutral rows. Drift
+  takes the **stroke**, never the fill, so "what was concluded" and "was the commitment
+  edited" stay separately readable. Webui only — no engine change, no `ENGINE_VERSION` bump.
+
+### Changed
+
+- **`demo_vault`'s generated views regenerated through the engine.** The committed fixture
+  was last regenerated at engine 1.3, so its `META.md`, `EXPERIMENTS.md` and in-node ledger
+  blocks predated spec 15's view changes (the `rule` column, `invalid-run` in the verdict
+  counts). Regenerated with `refresh()` — never by hand, per the `evolve-crux` guardrail —
+  so the fixture is honest at 15's tip. **Every recorded verdict, every status and every
+  authored line is byte-unchanged**, and the vault deliberately keeps `engine_version: 1.2`
+  with no `schema` stamp on any node: its whole job is to be the *pre-15* oracle the
+  non-retroactivity proof compares against, and re-stamping it would destroy that.
+
+- **Guard parity for the cockpit.** The legend guard derived from `E.VERDICTS` is what forced
+  `invalid-run` into the UI during the 15 build; there was no equivalent for per-node fields,
+  which is exactly why three shipped unrendered. A new guard derives the expectation from
+  `snapshot()`'s **actual** published surface — every idea and verifiable field must be
+  consumed by `app.js`, minus a deliberately small, justified allowlist — so a field added to
+  the engine tomorrow joins the expectation without anyone remembering to update a list.
+- **The hash-lock is pinned newline-invariant.** The wiki source registry hashes raw bytes
+  (`_sha256_file`), which is what broke `demo_vault` on Windows CI under an autocrlf
+  checkout. The lock never inherited that: it hashes `lock_material()`, a string built from a
+  body `read()` already normalized in text mode. Three asserts pin it — including a real CRLF
+  file round-tripped from disk — so a future move to byte-hashing fails here rather than on
+  someone else's runner.
+
+- **The separability rulebook, and the skill's account of a verdict** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.5). The `crux` skill gains the PI's rule for
+  when one experiment may settle several hypotheses, verbatim — *"each hypothesis turned by
+  its own independently varied knob … and no single shared ingredient could flip all the
+  answers together without a pre-declared outcome-neutral check catching it and voiding the
+  whole run; anything less means you ran one experiment with many labels, not many answers"* —
+  plus the three checks it decomposes into (different lever / different failure / different
+  verdict). A selftest assert compares the skill's copy against the spec's word for word, so
+  the two cannot drift.
+
+  The skill's verdict section is rewritten: it was still teaching *"any unmet →
+  refuted/partial"*, which is the retired rule. It now describes the two verifiable kinds,
+  the combination rule, all five verdicts, `inconclusive` as derived-never-chosen, and — the
+  part an agent most needs — that **the boundary is permanent and an old node must not be
+  "fixed"** to the new schema. Doc-only; no `ENGINE_VERSION` change, no migration.
+
+  Spec 09 records the `crux-verifiables` amendment where it will be built (assign kinds,
+  choose and justify the rule, state the 64%-joint-power cost of `all`), since that agent
+  does not exist yet. Spec 15's shipped work items are ticked and its status is `◐`.
+
+- **The hash-lock: enforced pre-registration, and a permanent drift flag** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.3). When a hypothesis goes `running`, the
+  engine content-hashes its **commitment** — the combination rule plus every verifiable, in
+  document order, as (kind, text) — into `lock:` with a `locked:` timestamp. Any later edit
+  to a check, a kind, the rule, or the *order* is detected and raised as a `validate`
+  problem. Two things deliberately do **not** count: ticking a box (that is what closing
+  *is*) and appending a `(found: …)` note (that is the evidence, recorded after). Whitespace
+  is collapsed, so reflowing a long check is not drift.
+
+  The negative result this answers is blunt: bare preregistration shows no measurable drop in
+  positive results and 46% of preregistered hypotheses simply vanish from the paper, while
+  Registered Reports run 44% positive against 96%. The active ingredient is *enforced
+  commitment*, not the document — and a vault is a git repo, so crux can enforce what a
+  journal cannot.
+
+  **Edits are flagged, never refused.** Research legitimately discovers a check was wrong,
+  and refusing the edit only launders it into a duplicate hypothesis. The flag is permanent
+  and no verb clears it. It **blocks nothing**: `crux review` shows it beside the question at
+  the moment the PI is deciding, `crux answer` prints it and proceeds. The engine flags; the
+  PI decides. `ENGINE_VERSION` 1.8 → 1.9.
+
+  `close` also locks, marking `lock_at: close` and raising a *warning* — `cmd_close` has no
+  status precondition and is reachable straight from `idea`, so a lock taken only at
+  `running` is bypassable by the shortest path the CLI offers. The warning says what is true:
+  the checks and the results became visible at the same moment.
+
+### Changed
+
+- **`crux review` reports drift, and its return shape grew a third field**
+  `(id, title, drift)`; `--json` gains `"drift"`.
+- **A seed-reconstructed hypothesis is marked `reconstructed: true`** and reported in its own
+  words — *"reconstructed from a seed and never pre-registered"* — instead of being counted
+  as predating evidence semantics. A vault created today can hold these, so calling them old
+  would be baffling.
+
+- **The combination rule, and a verdict with no `partial` in it** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.2). A hypothesis now declares **how its
+  claim-directed checks add up**, before the run: `rule: all | any | m-of-n` (with
+  `rule_m:`), settable at creation via `crux hypothesize --rule/--rule-m`. That turns "two of
+  four passed" from an argument into arithmetic. ICH E9 §2.2.5 states the design space as
+  exactly this quantifier — any / some minimum number / all — and those three ship.
+  `ordered` (fixed-sequence gatekeeping) is a **reserved** token: recognized and refused with
+  a pointer to spec 15, so no vault can contain one and adding it later is not a format
+  change. It is the structure PLATO's authors narrated past, and shipping it needs a render
+  contract that is not built.
+
+  The verdict becomes a total function of **(kinds, rule, pass/fail vector)** with a
+  four-value image: `supported` · `refuted` · `inconclusive` · **`invalid-run`** (new). Run
+  validity is read *first and separately* — a failed or unread outcome-neutral control yields
+  `invalid-run`, never `refuted`, because a broken apparatus is not a refutation. Under
+  `m-of-n`, exactly *m−1* passes is `inconclusive` (the "consider" tier) and two or more short
+  is `refuted`, so `inconclusive` stays narrow rather than becoming the drawer. It is
+  **derived, never chosen**: no verb, flag or field sets it. `ENGINE_VERSION` 1.7 → 1.8.
+
+  `partial` is **retired, not removed**. It can never again be derived for a node that binds
+  evidence semantics, but it stays in the vocabulary permanently: `snapshot` clamps any
+  verdict outside `VERDICTS` to `None` and the cockpit renders a `done` node with a `None`
+  verdict as *inconclusive*, so deleting the token would silently re-label every pre-15
+  partial result. A pre-15 node is still closed by the **unchanged** pre-15 function —
+  asserted against its full truth table, captured before the change and pasted into the suite
+  as a literal.
+
+### Changed
+
+- **The verdict roll-up is generated from `VERDICTS` instead of four hard-coded names.**
+  `ledger_counts` hand-picked the four as literal dict keys and `render_meta`'s dashboard
+  listed them in a format string, so adding a fifth verdict raised `KeyError` in
+  `_ledger_summary` and rendered *nowhere* in `META.md`. Both are now derived from the
+  constant, matching what the cockpit legend already did. `EXPERIMENTS.md` gains a `rule`
+  column beside `verdict` — spec 15's render-time requirement that the verdict and the rule
+  that produced it travel together wherever a hypothesis is read.
+
+- **Verifiables carry a `kind`** (spec [`15`](.spec/15-evidence-semantics.md), PRD 15.1).
+  Two classes, written as a leading bracket tag on the checkbox line:
+  `[hypothesis]` (a consequence of the claim — the default, so every existing verifiable
+  reads exactly as it always did) and `[outcome-neutral]` (a positive control or sanity
+  check that must pass *whatever* the claim turns out to be). Regulators call the property
+  this protects **assay sensitivity**: without a passing control, "the claim is false" and
+  "the apparatus is broken" are indistinguishable, which is what let one flat list
+  manufacture partial answers. A hypothesis created at 1.7 or later **cannot go `running`**
+  without at least one outcome-neutral check or a written `neutral_optout:` reason — the
+  reason itself is the audit trail, because "there is no control here" should be *said*.
+  New `crux hypothesize -n/--neutral`, and a `vn:` line in the seed grammar. The tag is
+  *leading* rather than trailing, and that is forced: the seed parser strips a trailing
+  `(...)` as its evidence note, so `(outcome-neutral)` would be silently recorded as a
+  finding. `ENGINE_VERSION` 1.6 → 1.7.
+
+  This PRD deliberately changes **no verdict**: the kind is parsed, required and displayed,
+  but the tally the verdict runs off is byte-unchanged. Consuming the split is PRD 15.2.
+
+- **The evidence-semantics version boundary** (spec [`15`](.spec/15-evidence-semantics.md),
+  PRD 15.0). Questions and hypotheses created from `ENGINE_VERSION` 1.6 on carry a
+  `schema: 1` frontmatter stamp; **absence of the stamp means the node predates evidence
+  semantics**, permanently. Spec 15's rules — verifiable kinds, the combination rule, the
+  hash-lock — will bind stamped nodes only, so the engine can never re-verdict work that was
+  settled under the old ones. The mechanism has to be per-node: the vault-level
+  `engine_version` cannot carry it, because `check_and_stamp_version` overwrites that stamp
+  on drift *before* returning the warning, so one command after an upgrade erases the
+  evidence that the vault is old. `crux validate` gains a third tier, **`info`** — reported
+  with a neutral glyph, never counted toward the exit code, and never escalated by
+  `--strict`, because a vault that predates a rule is correct rather than broken. This PRD
+  adds **no rule at all**: a stamped and an unstamped node behave identically in every
+  command. `ENGINE_VERSION` 1.5 → 1.6; a pre-1.6 vault loads byte-unchanged, keeps every
+  recorded verdict, and validates clean.
+
+### Changed
+
+- **A seeded `[tested]` hypothesis is no longer stamped with the evidence-semantics schema.**
+  `[tested]` means "this ran before crux was watching" — reconstructed history, not new
+  work. Requiring it to declare a control would be the engine asking the PI to invent, after
+  the fact, what would have settled an already-settled claim. Untested seeded hypotheses are
+  genuinely new work and keep their stamp.
+
+- **Version asserts in `selftest.py` no longer pin a literal.** Five checks asserted
+  `E.ENGINE_VERSION == "1.5"`, which made every future engine bump drag earlier specs' tests
+  red. The ones asserting a *historical* bump now use `at_least_version()` ("that bump
+  happened and was never reverted", which stays true), and the ones asserting *current*
+  behaviour compare against `E.ENGINE_VERSION` itself — the idiom `rdmig` was already using
+  one line above one of them.
+
 - **The RD layer: `crux rd <node> "<title>"`** (spec [`07`](.spec/07-rd-layer.md), PRD 07.1).
   Requirements Documents — a home for the design detail the 400-word node cap displaces.
   One active RD per node, living in `rd/<slug>.md` as `type: rd`, linked from the node by an

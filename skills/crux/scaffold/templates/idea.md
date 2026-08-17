@@ -1,9 +1,11 @@
 ---
 id: <<id>>
 type: idea
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: idea
+rule:
 verdict:
 metric:
 created: <<now>>

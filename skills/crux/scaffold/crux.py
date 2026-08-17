@@ -103,7 +103,20 @@ def main(argv=None):
 
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
-    s.add_argument("--problem", default=""); s.add_argument("-v", "--verifiable", action="append", default=[],
+    s.add_argument("--problem", default="")
+    s.add_argument("-n", "--neutral", action="append", default=[],
+                   help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
+                        "pass whatever the hypothesis turns out to be. Its failure invalidates the "
+                        "run, not the claim. At least one is required before `test --to running`.")
+    s.add_argument("--rule", default=None, choices=None,
+                   help="how the claim-directed verifiables ADD UP, declared before the run: "
+                        "all | any | m-of-n. Required once there is more than one of them — "
+                        "without it, 'two of four passed' is an argument rather than "
+                        "arithmetic. Cost of `all`: two checks at 80%% power each give 64%% "
+                        "joint power, and thresholds may not be loosened to compensate.")
+    s.add_argument("--rule-m", dest="rule_m", type=int, default=None,
+                   help="the m in m-of-n (how many of the claim-directed checks must pass)")
+    s.add_argument("-v", "--verifiable", action="append", default=[],
                                                             help="a falsifiable check (repeatable)")
 
     s = _jsonable(sub.add_parser("test", aliases=["experiment", "run", "stage", "launch"], help="advance an idea: idea→staged→running"))
@@ -206,7 +219,8 @@ def dispatch(a):
             return _emit({"id": nid, "file": fn})
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
-        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem, a.verifiable)
+        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
+                                          a.verifiable, a.neutral, a.rule, a.rule_m)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
@@ -231,13 +245,18 @@ def dispatch(a):
     elif c in ("review", "gate", "decide"):
         pend = E.cmd_review(_vault())
         if a.json:
-            return _emit([{"id": nid, "title": title} for nid, title in pend])
+            return _emit([{"id": nid, "title": title, "drift": drift}
+                          for nid, title, drift in pend])
         if not pend:
             print("no questions awaiting a decision.")
         else:
             print("Awaiting your decision (close with `answer`, or `pursue` to keep digging):")
-            for nid, title in pend:
-                print(f"  ◐ {nid}  {title}")
+            for nid, title, drift in pend:
+                # the drift flag belongs HERE, at the moment the PI is deciding. It never
+                # blocks: the engine flags, the PI decides.
+                print(f"  ◐ {nid}  {title}" + ("   ⚠ a child hypothesis has DRIFT — its "
+                                               "verifiables changed after the run started"
+                                               if drift else ""))
     elif c in ("answer", "resolve", "settle"):
         root = _vault()
         E.cmd_answer(root, a.id, a.text)
@@ -293,6 +312,11 @@ def dispatch(a):
             print(f"✗ {p['id']}: {p['message']}")
         for w in rep["warnings"]:
             print(f"⚠ {w['id']}: {w['message']}")
+        # information, not a finding: printed with a neutral glyph, never counted toward
+        # the exit code, and never silenced by --strict. A vault that predates a rule is
+        # correct, not broken.
+        for i in rep["info"]:
+            print(f"· {i['message']}")
         if rep["problems"]:
             return 1
         if rep["warnings"]:

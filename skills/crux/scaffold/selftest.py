@@ -40,6 +40,18 @@ def node_path(root, nid):
     return E.Vault(root).get(nid)["path"]
 
 
+def at_least_version(v):
+    """True if the engine is at or past version `v`. Historical "this PRD bumped the version"
+    asserts use this instead of a literal equality: the statement they were making is *that
+    bump happened and has never been reverted*, which stays true forever, whereas `== "1.3"`
+    is a claim that expires on the next PRD and drags every earlier spec's test red with it.
+
+    Parsed here rather than via update.py's `parse_version`, which requires three components
+    (it reads RELEASE tags like `0.5.1`); ENGINE_VERSION is a two-part `major.minor`."""
+    key = lambda s: tuple(int(x) for x in str(s).split("."))
+    return key(E.ENGINE_VERSION) >= key(v)
+
+
 def run_demo(keep_dir=None):
     root = keep_dir or tempfile.mkdtemp(prefix="crux_demo_")
     if os.path.exists(os.path.join(root, ".crux.yaml")):
@@ -63,12 +75,16 @@ def run_demo(keep_dir=None):
     check("ask: META lists q1", q1 in read(os.path.join(root, "META.md")))
 
     # 3. hypothesize two leaves with 2 verifiables each
-    h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11,
+    h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11, rule="all",
+                                 neutral=["the published stem baseline reproduces to ±0.005"],
                               verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"])
-    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
+    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11, rule="all",
+                                 neutral=["the shared preprocessing pass reproduces the reference checksum"],
                               verifiables=["imp-Spearman ≥ +0.005 vs per_conv", "calibration not worse"])
     check("hypothesize: h1 under q1.1", E.Vault(root).get(h1).parent == q11)
-    check("hypothesize: 2 verifiables", E.count_verifiables(read(node_path(root, h1)))[1] == 2)
+    check("hypothesize: 2 claim-directed verifiables + 1 control",
+          E.count_verifiables_by_kind(read(node_path(root, h1)))
+          == {"hypothesis": (0, 2, 0), "outcome-neutral": (0, 1, 0)})
 
     # 4. NEGATIVE: running without verifiables is rejected (on a stripped idea)
     h_bad, _, _ = E.cmd_hypothesize(root, "temp bad idea", parent=q11)
@@ -81,6 +97,7 @@ def run_demo(keep_dir=None):
     E.cmd_test(root, h1, to="staged")
     check("test: h1 staged", E.Vault(root).get(h1).status == "staged")
     E.cmd_test(root, h1, to="running", run="job 40012")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
     check("test: h1 running", E.Vault(root).get(h1).status == "running")
     check("test: run link recorded", "job 40012" in read(node_path(root, h1)))
     # REGRESSION: a second --run must APPEND, not vanish. The insert used to be decided by a
@@ -94,14 +111,19 @@ def run_demo(keep_dir=None):
     check("test: the Artifacts placeholder is untouched by a run link",
           "## Artifacts" in read(node_path(root, h1)))
     E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
 
-    # 6. close: h1 all-met -> supported ; h2 one-unmet -> partial
+    # 6. close: h1 all-met -> supported ; h2 one-unmet -> refuted.
+    #    Under evidence semantics (1.8) a declared `all` makes one unmet a veto, so this is
+    #    `refuted` where the pre-15 engine returned `partial`. A pre-15 node still gets
+    #    `partial` — asserted in run_combination_rule against the captured truth table.
     edit(node_path(root, h1), "- [ ]", "- [x]")               # all met
     v1 = E.cmd_close(root, h1, metric="imp +0.012")
     check("close: h1 supported", v1 == "supported")
     edit(node_path(root, h2), "- [ ]", "- [x]", count=1)       # exactly one met
     v2 = E.cmd_close(root, h2, metric="imp +0.003")
-    check("close: h2 partial", v2 == "partial")
+    check("close: h2 refuted under a declared `all` rule (pre-15 this was `partial`)",
+          v2 == "refuted")
     check("close: verdict in frontmatter", E.Vault(root).get(h1)["fm"]["verdict"] == "supported")
 
     # 7. ledger roll-up walks up to the question + META
@@ -384,7 +406,7 @@ def run_wiki_migration():
     E.cmd_ingest(root, "raw/p.txt", title="Paper")
     check("wmig: first ingest creates the wiki", os.path.isdir(os.path.join(root, "wiki")))
     check("wmig: first ingest renders WIKI.md", os.path.exists(os.path.join(root, "WIKI.md")))
-    check("wmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("wmig: ENGINE_VERSION at or past 1.1", at_least_version("1.1"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -466,12 +488,16 @@ def run_snapshot():
     E.cmd_init("Snap", root, goal="Test the snapshot contract.")
     q1, _ = E.cmd_ask(root, "Q one")
     q2, _ = E.cmd_ask(root, "Q two", parent=q1)
-    h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"])
-    h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"])
+    h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"],
+                                 neutral=["control"], rule="all")
+    h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"],
+                                 neutral=["control"], rule="all")
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
     E.cmd_close(root, h1, metric="imp +0.012")
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # one met -> partial
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] control",
+                              "- [x] [outcome-neutral] control")   # the run was valid...
+    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # ...one claim met -> refuted
     E.cmd_close(root, h2, metric="imp +0.003")
     syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
 
@@ -516,7 +542,7 @@ def run_snapshot():
 
     # -- queue == cmd_review
     check("snapshot: queue ids == cmd_review output",
-          [r["id"] for r in snap["queue"]] == [nid for nid, _ in E.cmd_review(root)])
+          [r["id"] for r in snap["queue"]] == [x[0] for x in E.cmd_review(root)])
     check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
     check("snapshot: queue rows carry title + summary",
           bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
@@ -529,18 +555,19 @@ def run_snapshot():
     check("snapshot: h1 verdict consistent with derive_verdict",
           h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
     check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
-    check("snapshot: h2 verdict partial", snap["nodes"][h2]["verdict"] == "partial")
+    check("snapshot: h2 verdict refuted", snap["nodes"][h2]["verdict"] == "refuted")
 
     # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
     q2n = snap["nodes"][q2]
     lc = E.ledger_counts(v, q2)
     lb = E.ledger_block(v, q2)
     check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
-    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 partial)",
-          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1 and lc["partial"] == 1)
+    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 refuted)",
+          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1
+          and lc["refuted"] == 1)
     check("snapshot: ledger_counts consistent with ledger_block text",
           f"**{lc['children']} children**" in lb
-          and f"supported {lc['supported']}" in lb and f"partial {lc['partial']}" in lb)
+          and f"supported {lc['supported']}" in lb and f"refuted {lc['refuted']}" in lb)
 
     # -- pure read: constructing a snapshot mutates nothing on disk
     before = _dir_bytes(root)
@@ -656,7 +683,7 @@ def run_artifacts():
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
 
     # -- close still WARNS rather than blocking when the report is missing
-    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"])
+    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"])
     write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ]", "- [x]")
@@ -697,7 +724,7 @@ def run_close_gate():
     E.cmd_init("Gated", root)
     q1, _ = E.cmd_ask(root, "the question")
     q2, _ = E.cmd_ask(root, "another question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"], neutral=["control"])
     E.cmd_test(root, h1, to="running")
     edit(node_path(root, h1), "- [ ]", "- [x]")
     E.cmd_close(root, h1)
@@ -1829,7 +1856,7 @@ def run_economy():
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
 
-    check("economy: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("economy: ENGINE_VERSION at or past 1.3", at_least_version("1.3"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1864,7 +1891,8 @@ def run_economy_migration():
     check("emig: review still runs", isinstance(E.cmd_review(root), list))
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
-    check("emig: drift re-stamps to 1.5", E.Vault(root).cfg.get("engine_version") == "1.5")
+    check("emig: drift re-stamps to the current ENGINE_VERSION",
+          E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1898,7 +1926,8 @@ def run_agent_cli():
     check("json: ask emits parseable JSON", isinstance(q1, dict) and "id" in q1 and "file" in q1)
     check("json: ask exits 0", r.returncode == 0)
 
-    r = cli("hypothesize", "it is", "-p", q1["id"], "-v", "stdout parses", "--json")
+    r = cli("hypothesize", "it is", "-p", q1["id"], "-v", "stdout parses",
+            "-n", "the parser round-trips a known-good payload", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
     check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
@@ -1908,6 +1937,7 @@ def run_agent_cli():
     check("json: test emits parseable JSON", isinstance(t, dict) and t.get("status") == "running")
 
     edit(node_path(root, h1["id"]), "- [ ] stdout parses", "- [x] stdout parses")
+    edit(node_path(root, h1["id"]), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
     r = cli("close", h1["id"], "--json")
     cl = as_json(r)
     check("json: close emits parseable JSON", isinstance(cl, dict) and cl.get("verdict") == "supported")
@@ -1988,7 +2018,7 @@ def run_deck():
     import json
     print("\n# deck payload (crux deck <anchor> --json)")
     CRUX = os.path.join(HERE, "crux.py")
-    check("deck: ENGINE_VERSION is 1.5", E.ENGINE_VERSION == "1.5")
+    check("deck: ENGINE_VERSION at or past 1.4", at_least_version("1.4"))
 
     base = tempfile.mkdtemp(prefix="crux_deck_")
     root = os.path.join(base, "vault")
@@ -1996,14 +2026,15 @@ def run_deck():
     qtop, _ = E.cmd_ask(root, "Top question")
     qmid, _ = E.cmd_ask(root, "Mid question", parent=qtop)
     qsib, _ = E.cmd_ask(root, "Sibling question", parent=qtop)
-    h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid,
-                                 verifiables=["bar one", "bar two"])
+    h1, _, _ = E.cmd_hypothesize(root, "first hyp", parent=qmid, neutral=["control"],
+                                 verifiables=["bar one", "bar two"], rule="all")
     h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
     # the optional ## Protocol section (new in 1.4) — fill it on the anchor
     edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
     # close h1 with a (found: …) parenthetical on the first bar
     edit(node_path(root, h1), "- [ ] bar one", "- [x] bar one   (found: +0.02)")
     edit(node_path(root, h1), "- [ ] bar two", "- [x] bar two")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
     E.cmd_test(root, h1, to="running")
     E.cmd_close(root, h1, metric="imp +0.02")
     # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
@@ -2045,9 +2076,14 @@ def run_deck():
     check("deck: closed child carries verdict + metric",
           k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
     check("deck: verifiable `found` parsed from the (found: …) parenthetical",
-          k1["verifiables"][0] == {"text": "bar one", "state": "met", "found": "+0.02"})
+          k1["verifiables"][0] == {"text": "bar one", "state": "met",
+                                   "kind": "hypothesis", "found": "+0.02"})
     check("deck: verifiable without a parenthetical has found None",
-          k1["verifiables"][1] == {"text": "bar two", "state": "met", "found": None})
+          k1["verifiables"][1] == {"text": "bar two", "state": "met",
+                                   "kind": "hypothesis", "found": None})
+    check("deck: the outcome-neutral control reaches the payload as its own kind",
+          k1["verifiables"][2] == {"text": "control", "state": "met",
+                                   "kind": "outcome-neutral", "found": None})
     check("deck: no failure_scenario field (dropped per PI ruling; spec 15/09)",
           "failure_scenario" not in k1["verifiables"][0])
     check("deck: child artifacts parsed with kinds",
@@ -2118,7 +2154,7 @@ def run_deck():
     check("deck: hypothesis anchor — no children, no synthesis",
           ph["children"] == [] and ph["synthesis"] is None)
     check("deck: hypothesis anchor carries its own evidence fields",
-          len(ph["anchor"]["verifiables"]) == 2 and ph["anchor"]["question"] is None)
+          len(ph["anchor"]["verifiables"]) == 3 and ph["anchor"]["question"] is None)
     check("deck: hypothesis anchor scopes metrics to itself",
           {m["addr"].split("#")[0] for m in ph["metrics"]} == {h1})
     check("deck: no-children question anchor still emits",
@@ -2596,7 +2632,7 @@ def run_rd_migration():
     check("rdmig: an old-stamped vault reports drift", warn is not None and "1.4" in warn)
     check("rdmig: drift re-stamps to the new ENGINE_VERSION",
           E.Vault(root).cfg.get("engine_version") == E.ENGINE_VERSION)
-    check("rdmig: ENGINE_VERSION bumped to 1.5", E.ENGINE_VERSION == "1.5")
+    check("rdmig: ENGINE_VERSION at or past 1.5", at_least_version("1.5"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -2955,6 +2991,911 @@ def run_rd_gui():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- spec 15 shared helpers
+def _strip_schema(root):
+    """Make every node look pre-15: drop the `schema:` frontmatter line."""
+    for n in E.Vault(root).nodes.values():
+        edit(n["path"], "\nschema: %d\n" % E.SCHEMA_GENERATION, "\n")
+
+
+def pre15_vault(prefix, engine_version="1.5"):
+    """A vault that looks like it was written before evidence semantics: nodes with no
+    `schema` key and an old engine_version stamp. Mirrors run_economy_migration()'s
+    strip-the-schema-back-out idiom, and is shared by every spec-15 migration block."""
+    root = tempfile.mkdtemp(prefix=prefix)
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Legacy Evidence", root)
+    q, _ = E.cmd_ask(root, "a pre-15 question")
+    h, _, _ = E.cmd_hypothesize(root, "a pre-15 hypothesis", parent=q,
+                                verifiables=["first check", "second check"])
+    _strip_schema(root)
+    edit(os.path.join(root, E.VAULT_MARKER),
+         f"engine_version: {E.ENGINE_VERSION}", f"engine_version: {engine_version}")
+    return root, q, h
+
+
+def fingerprint(root):
+    """({node file: sha256}, {nid: verdict}, {nid: status}) for a vault.
+
+    Two exclusions, both deliberate and both narrow:
+
+    - `.crux.yaml` — the engine-version stamp is the one thing an upgrade is *supposed* to
+      rewrite.
+    - the GENERATED views (`META.md`, `EXPERIMENTS.md`, `WIKI.md`, `RD.md`) — they are
+      derived, the engine owns them, and a new column in `EXPERIMENTS.md` is a rendering
+      change rather than a change to the science. Loosening the assert here would be
+      cheating, so the caller pairs it with `generated_verdicts()` below: the views may be
+      re-rendered, but no verdict inside them may be re-labelled.
+
+    What stays strict is the only thing that matters: every NODE file, byte for byte."""
+    files = {}
+    for dp, dn, fn in os.walk(root):
+        dn[:] = sorted(d for d in dn if not d.startswith("."))
+        for f in sorted(fn):
+            if not f.endswith(".md") or f in E.GENERATED or f == E.RD_INDEX:
+                continue
+            rel = os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/")
+            with open(os.path.join(dp, f), encoding="utf-8") as fh:
+                # the engine-owned ledger block is split off: it is a GENERATED summary that
+                # lives inside a node file, and growing the verdict vocabulary re-renders it
+                # (a zero count for the new word) without touching a single recorded result.
+                # What must be byte-identical is everything the human wrote.
+                files[rel] = hashlib.sha256(
+                    fh.read().split(E.LEDGER_START)[0].encode("utf-8")).hexdigest()
+    v = E.Vault(root)
+    return (files,
+            {n.id: n["fm"].get("verdict") for n in v.nodes.values()},
+            {n.id: n.status for n in v.nodes.values()})
+
+
+def generated_verdicts(root):
+    """Every verdict word in everything the engine GENERATES — the root views and the ledger
+    block inside each question — with its count. A view may be re-rendered and a new word may
+    appear at zero; a verdict that was recorded may never be re-labelled or lose a count."""
+    text = ""
+    for f in list(E.GENERATED) + [E.RD_INDEX]:
+        p = os.path.join(root, f)
+        if os.path.isfile(p):
+            text += read(p)
+    for n in E.Vault(root).nodes.values():
+        if E.LEDGER_START in n["body"]:
+            text += n["body"].split(E.LEDGER_START)[1]
+    return {x: text.count(x) for x in ("supported", "partial", "refuted", "inconclusive")}
+
+
+def run_evidence_boundary():
+    """Spec 15 PRD 15.0 — the version boundary. A per-node `schema` stamp, written at
+    creation, where ABSENCE means the node predates evidence semantics. This PRD adds no
+    rule at all: a stamped and an unstamped node must behave identically in every command.
+    The asserts that look vacuous here are the point — they are regression locks on the
+    guarantee that the engine never overturns recorded science."""
+    print("\n# evidence semantics — the version boundary (spec 15, PRD 15.0)")
+    root = tempfile.mkdtemp(prefix="crux_bound_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Boundary", root)
+    q1, _ = E.cmd_ask(root, "a stamped question")
+    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"])
+
+    v = E.Vault(root)
+    check("boundary: a new hypothesis is stamped schema 1",
+          v.get(h1)["fm"].get("schema") == E.SCHEMA_GENERATION == 1)
+    check("boundary: a new question is stamped schema 1",
+          v.get(q1)["fm"].get("schema") == E.SCHEMA_GENERATION)
+    check("boundary: the project root is not stamped (spec 15 governs q/h only)",
+          "schema" not in v.get("root")["fm"])
+
+    # -- the predicate
+    check("boundary: an unstamped node reads schema 0",
+          E.node_schema(E.Node(fm={})) == 0 and not E.binds_evidence_semantics(E.Node(fm={})))
+    check("boundary: a malformed schema value degrades to 0, never raises",
+          E.node_schema(E.Node(fm={"schema": "banana"})) == 0
+          and E.node_schema(E.Node(fm={"schema": None})) == 0)
+    check("boundary: a stamped node binds evidence semantics",
+          E.binds_evidence_semantics(v.get(h1)))
+
+    # -- seed materialization routes through ask/hypothesize, so it inherits the stamp
+    sd = tempfile.mkdtemp(prefix="crux_bseed_")
+    seed = os.path.join(sd, "seed.md")
+    with open(seed, "w", encoding="utf-8") as f:
+        f.write("- Project: Seeded — a goal\n  - Q: a seeded question\n"
+                "    - H: a seeded hypothesis\n      - v: a check\n")
+    sroot = os.path.join(sd, "vault")
+    E.cmd_init_from(seed, sroot)
+    sv = E.Vault(sroot)
+    check("boundary: seed-materialized nodes are stamped",
+          all(n["fm"].get("schema") == E.SCHEMA_GENERATION
+              for n in sv.nodes.values() if n.type in ("question", "idea")))
+    shutil.rmtree(sd, ignore_errors=True)
+
+    # -- snapshot surface
+    snap = E.snapshot(root)
+    check("boundary: snapshot exposes schema on a node",
+          snap["nodes"][h1]["schema"] == 1 and snap["nodes"][q1]["schema"] == 1)
+
+    # -- the info tier, on a vault with nothing to report
+    rep = E.validation_report(root)
+    check("boundary: a fully-stamped vault reports no boundary info",
+          rep["info"] == [] and rep["ok"] is True)
+
+    check("boundary: ENGINE_VERSION at or past 1.6", at_least_version("1.6"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary itself
+    old, oq, oh = pre15_vault("crux_bmig_")
+    check("evmig: the fixture really is unstamped",
+          "schema:" not in read(node_path(old, oh)))
+
+    rep = E.validation_report(old)
+    ids = [i["id"] for i in rep["info"]]
+    check("boundary: validate reports the pre-15 count as info",
+          any(i["id"] == "boundary:evidence-semantics" and "1 hypothes" in i["message"]
+              for i in rep["info"]))
+    check("boundary: info does not affect ok",
+          rep["info"] and rep["ok"] is True and rep["problems"] == [] and rep["warnings"] == [])
+    check("boundary: info entries share the problems/warnings shape",
+          all(set(e) == {"id", "message"} | (set(e) & {"count"}) and "id" in e and "message" in e
+              for e in rep["info"]))
+    check("boundary: every info id is namespaced",
+          all(":" in i and i.split(":", 1)[0] in E.INFO_NAMESPACES for i in ids))
+    check("boundary: info respects the --check filter",
+          E.validation_report(old, ["tree"])["info"] != []
+          and E.validation_report(old, ["wiki"])["info"] == [])
+    check("evmig: pre-15 vault validates clean",
+          E.cmd_validate(old) == [] and E.validation_report(old)["warnings"] == [])
+
+    # -- nothing retro-stamps. Run every read/write path there is, then re-check.
+    before = fingerprint(old)
+    E.refresh(old); E.cmd_validate(old); E.validation_report(old)
+    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old); E.cmd_review(old)
+    E.cmd_close(old, oh)
+    after_v = E.Vault(old)
+    check("evmig: no command retro-stamps an existing node",
+          all("schema" not in n["fm"] for n in after_v.nodes.values()))
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- the captured pre-upgrade fixture: byte-identical after the version bump
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_bdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    f0, v0, s0 = fingerprint(dst)
+    g0 = generated_verdicts(dst)
+    warn = E.check_and_stamp_version(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
+    f1, v1, s1 = fingerprint(dst)
+    check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
+          f0 == f1)
+    check("evmig: pre-15 vault — no verdict is re-labelled or lost in anything generated",
+          generated_verdicts(dst) == g0)
+    check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
+          v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
+    check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
+    check("evmig: an older vault reports drift and re-stamps to current",
+          warn is not None and "1.2" in warn
+          and E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+    check("evmig: the demo vault validates clean after upgrade", E.cmd_validate(dst) == [])
+    # the human-readable path shows it too, with a neutral glyph and exit 0 — the boundary
+    # must never look like a finding on the surface the PI actually reads
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "validate"],
+                       capture_output=True, cwd=dst, encoding="utf-8", errors="replace")
+    check("boundary: the CLI prints the boundary as info and still exits 0",
+          r.returncode == 0 and "predate evidence semantics" in r.stdout
+          and "vault is valid" in r.stdout and "\u2717" not in r.stdout)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "validate", "--strict"],
+                       capture_output=True, cwd=dst, encoding="utf-8", errors="replace")
+    check("boundary: --strict does not turn the boundary into a failure", r.returncode == 0)
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def run_verifiable_kind():
+    """Spec 15 PRD 15.1 — every verifiable carries a kind. `hypothesis` checks are
+    consequences of the claim and feed the verdict; `outcome-neutral` checks (positive
+    controls, manipulation checks) must pass whatever the claim turns out to be, and their
+    failure invalidates the RUN rather than refuting the claim.
+
+    This PRD parses, requires and displays the kind. It deliberately does NOT change any
+    verdict — that is 15.2. So the flat tally must stay byte-identical here."""
+    print("\n# evidence semantics — verifiable kind (spec 15, PRD 15.1)")
+
+    # -- the parser, as pure functions on a string: no vault needed
+    check("kind: an untagged verifiable defaults to hypothesis",
+          E.verifiable_kind("imp-Spearman >= +0.01") == ("hypothesis", "imp-Spearman >= +0.01"))
+    check("kind: the kind vocabulary and its aliases normalize",
+          E.verifiable_kind("[outcome-neutral] c")[0] == "outcome-neutral"
+          and E.verifiable_kind("[control] c")[0] == "outcome-neutral"
+          and E.verifiable_kind("[ON] c")[0] == "outcome-neutral"
+          and E.verifiable_kind("[neutral] c")[0] == "outcome-neutral"
+          and E.verifiable_kind("[hypothesis] c")[0] == "hypothesis"
+          and E.verifiable_kind("[hyp] c")[0] == "hypothesis")
+    check("kind: an unknown tag keeps the text intact and reads as hypothesis",
+          E.verifiable_kind("[banana] c") == ("hypothesis", "[banana] c"))
+
+    # the composition that PR #14's `(found: …)` makes possible to get wrong
+    body = ("## Verifiables\n\n"
+            "- [x] [outcome-neutral] the known-good encoder reproduces 0.46 (found: 0.461)\n"
+            "- [ ] [hypothesis] imp-Spearman >= +0.01 vs baseline\n"
+            "- [-] a third, untagged check\n")
+    items = E._verifiables(body)
+    check("kind: the tag is stripped from the cockpit text",
+          items[0]["text"] == "the known-good encoder reproduces 0.46 (found: 0.461)"
+          and items[1]["text"] == "imp-Spearman >= +0.01 vs baseline")
+    check("kind: snapshot's verifiable reader exposes kind",
+          [i["kind"] for i in items] == ["outcome-neutral", "hypothesis", "hypothesis"])
+    dv = E._deck_verifiables(body)
+    check("kind: a kind tag and a (found:) note coexist on one line",
+          dv[0]["kind"] == "outcome-neutral" and dv[0]["found"] == "0.461"
+          and dv[0]["text"] == "the known-good encoder reproduces 0.46")
+    check("kind: the deck payload exposes verifiable kind",
+          [i["kind"] for i in dv] == ["outcome-neutral", "hypothesis", "hypothesis"])
+
+    # -- the split tally, and the flat one it must not disturb
+    check("kind: the split tally separates the two classes",
+          E.count_verifiables_by_kind(body) ==
+          {"hypothesis": (0, 1, 1), "outcome-neutral": (1, 0, 0)})
+    check("kind: the flat tally still counts every check, tag or no tag",
+          E.count_verifiables(body) == (1, 1, 1))
+
+    # -- the seed grammar
+    check("kind: the seed parser reads the tag, not as evidence",
+          E._parse_verifiable("[x] [outcome-neutral] control reproduces (found: 0.46)") ==
+          {"tick": "x", "kind": "outcome-neutral", "text": "control reproduces",
+           "evidence": "found: 0.46"})
+    sd = tempfile.mkdtemp(prefix="crux_kseed_")
+    seed = os.path.join(sd, "seed.md")
+    with open(seed, "w", encoding="utf-8") as f:
+        f.write("- Project: Kinded — a goal\n  - Q: a question\n    - H: a hypothesis\n"
+                "      - v: the claim-directed check\n"
+                "      - vn: the positive control\n")
+    sroot = os.path.join(sd, "vault")
+    E.cmd_init_from(seed, sroot)
+    sh = E.Vault(sroot).get("h1")
+    check("kind: a seed vn: line materializes as outcome-neutral",
+          "- [ ] [outcome-neutral] the positive control" in sh["body"]
+          and E.count_verifiables_by_kind(sh["body"])["outcome-neutral"] == (0, 1, 0))
+    shutil.rmtree(sd, ignore_errors=True)
+
+    # -- the CLI flag
+    root = tempfile.mkdtemp(prefix="crux_kind_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Kinds", root)
+    q1, _ = E.cmd_ask(root, "a question")
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
+                        "with a control", "--parent", q1, "-v", "the claim check",
+                        "-n", "the positive control"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    hc = E.Vault(root).get("h1")
+    check("kind: the CLI -n flag writes an outcome-neutral verifiable",
+          r.returncode == 0 and "- [ ] [outcome-neutral] the positive control" in hc["body"]
+          and "- [ ] the claim check" in hc["body"])
+
+    # -- the gate: a stamped hypothesis needs a control, or a written opt-out
+    h2, _, _ = E.cmd_hypothesize(root, "no control at all", parent=q1, verifiables=["only a claim check"])
+    expect_error("kind: running is refused with no outcome-neutral check",
+                 lambda: E.cmd_test(root, h2, to="running"))
+    check("kind: the refusal names the opt-out route",
+          "opt-out" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
+    check("kind: validate flags a stamped node with no control and no opt-out",
+          any("outcome-neutral" in m for _, m in E.cmd_validate(root)) is False)  # not yet running
+
+    n2 = E.Vault(root).get(h2)
+    n2["fm"]["neutral_optout"] = ""
+    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
+    expect_error("kind: an empty opt-out does not unblock running",
+                 lambda: E.cmd_test(root, h2, to="running"))
+    n2 = E.Vault(root).get(h2)
+    n2["fm"]["neutral_optout"] = "the assay IS the claim; a positive control would beg the question"
+    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
+    check("kind: a written opt-out unblocks running",
+          E.cmd_test(root, h2, to="running") == "running")
+
+    check("kind: a hypothesis WITH a control runs with no opt-out",
+          E.cmd_test(root, "h1", to="running") == "running")
+
+    # -- an unknown tag is a validate problem on a stamped node
+    hb, _, _ = E.cmd_hypothesize(root, "bad tag", parent=q1, verifiables=["[banana] a check"])
+    check("kind: an unknown kind tag is a validate problem",
+          any(i == hb and "banana" in m for i, m in E.cmd_validate(root)))
+
+    check("kind: ENGINE_VERSION at or past 1.7", at_least_version("1.7"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # -- a seeded [tested] hypothesis is reconstructed history, not new work
+    sd2 = tempfile.mkdtemp(prefix="crux_ktseed_")
+    seed2 = os.path.join(sd2, "seed.md")
+    with open(seed2, "w", encoding="utf-8") as f:
+        f.write("- Project: Recon — a goal\n  - Q: a question\n"
+                "    - H: [tested] work done before crux was watching\n"
+                "      - v: [x] the check that was met\n"
+                "      - finding: it held\n"
+                "    - H: genuinely new work\n      - v: a check\n")
+    sroot2 = os.path.join(sd2, "vault")
+    E.cmd_init_from(seed2, sroot2)
+    sv2 = E.Vault(sroot2)
+    check("kind: a seeded [tested] hypothesis is NOT stamped (reconstructed history)",
+          "schema" not in sv2.get("h1")["fm"] and sv2.get("h1").status == "done")
+    check("kind: a seeded UNTESTED hypothesis is stamped (genuinely new work)",
+          sv2.get("h2")["fm"].get("schema") == E.SCHEMA_GENERATION)
+    check("kind: a seeded [tested] hypothesis is not asked for a control it never had",
+          E.cmd_validate(sroot2) == [])
+    check("kind: its recorded verdict is derived, not invented",
+          sv2.get("h1")["fm"]["verdict"] == "supported")
+    shutil.rmtree(sd2, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_kmig_")
+    check("evmig: an unstamped hypothesis runs with no outcome-neutral check",
+          E.cmd_test(old, oh, to="running") == "running")
+    check("evmig: a pre-15 vault raises no kind problem",
+          E.cmd_validate(old) == [] and E.validation_report(old)["warnings"] == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    # the committed pre-15 fixture's flat tally is the oracle: it must not move
+    dvr = os.path.join(HERE, "..", "examples", "demo_vault")
+    dvv = E.Vault(dvr)
+    check("evmig: the flat tally is unchanged for pre-15 bodies",
+          E.count_verifiables(dvv.get("h1")["body"]) == (2, 0, 0)
+          and E.count_verifiables(dvv.get("h2")["body"]) == (1, 1, 0))
+    check("evmig: pre-15 bodies read as all-hypothesis under the split",
+          E.count_verifiables_by_kind(dvv.get("h2")["body"]) ==
+          {"hypothesis": (1, 1, 0), "outcome-neutral": (0, 0, 0)})
+
+
+def _err_text(fn):
+    try:
+        fn(); return ""
+    except E.CruxError as e:
+        return str(e)
+
+
+# The pre-15 verdict truth table, captured from the engine BEFORE evidence semantics landed
+# and pasted here as a literal. It is the oracle for "the engine never overturns recorded
+# science": `derive_verdict` is the function a pre-15 node is still closed with, and it must
+# never move again. x = met, u = unmet, - = could not evaluate.
+_LEGACY_TRUTH_TABLE = {
+        '-': 'inconclusive',  'u': 'refuted',  'x': 'supported',
+        '--': 'inconclusive',  '-u': 'refuted',  '-x': 'inconclusive',
+        'u-': 'refuted',  'uu': 'refuted',  'ux': 'partial',
+        'x-': 'inconclusive',  'xu': 'partial',  'xx': 'supported',
+        '---': 'inconclusive',  '--u': 'refuted',  '--x': 'inconclusive',
+        '-u-': 'refuted',  '-uu': 'refuted',  '-ux': 'partial',
+        '-x-': 'inconclusive',  '-xu': 'partial',  '-xx': 'inconclusive',
+        'u--': 'refuted',  'u-u': 'refuted',  'u-x': 'partial',
+        'uu-': 'refuted',  'uuu': 'refuted',  'uux': 'partial',
+        'ux-': 'partial',  'uxu': 'partial',  'uxx': 'partial',
+        'x--': 'inconclusive',  'x-u': 'partial',  'x-x': 'inconclusive',
+        'xu-': 'partial',  'xuu': 'partial',  'xux': 'partial',
+        'xx-': 'inconclusive',  'xxu': 'partial',  'xxx': 'supported',
+    }
+
+
+def run_combination_rule():
+    """Spec 15 PRD 15.2 — the declared combination rule, `invalid-run`, and a verdict with
+    no `partial` in its image.
+
+    "Two of four passed" was an argument, settled after the results were visible. A rule
+    declared BEFORE the run makes it arithmetic. ICH E9 2.2.5 offers the menu as a
+    quantifier — any / some minimum number / all — and that is what ships. `ordered` is
+    reserved and refused (PI ruling D1)."""
+    print("\n# evidence semantics — the combination rule and the verdict (spec 15, PRD 15.2)")
+
+    # -- the legacy path is frozen. This is the whole grandfathering guarantee.
+    moved = {k: (want, E.derive_verdict(k.count("x"), k.count("u"), k.count("-")))
+             for k, want in _LEGACY_TRUTH_TABLE.items()
+             if E.derive_verdict(k.count("x"), k.count("u"), k.count("-")) != want}
+    check(f"evmig: the legacy verdict truth table is byte-identical (moved: {moved})", not moved)
+    check("evmig: the legacy function still refuses the empty vector",
+          E.derive_verdict(0, 0, 0) is None)
+
+    # -- the vocabulary grows, and never shrinks
+    check("rule: VERDICTS is additive-only",
+          set(E.VERDICTS) >= {"supported", "partial", "refuted", "inconclusive"}
+          and "invalid-run" in E.VERDICTS)
+    check("rule: every verdict token is a valid CSS class suffix",
+          all(v and " " not in v and "\t" not in v for v in E.VERDICTS))
+    check("rule: partial is retired from the derivation, not from the vocabulary",
+          "partial" in E.VERDICTS)
+
+    # -- the closed vocabulary of rules, and the reserved token
+    check("rule: the rule vocabulary is closed",
+          E.COMBINATION_RULES == ("all", "any", "m-of-n")
+          and "ordered" in E.RESERVED_RULES)
+    expect_error("rule: an unknown rule is refused",
+                 lambda: E.derive_verdict_15((1, 0, 0), (1, 0, 0), "most", None))
+    err = _err_text(lambda: E.derive_verdict_15((1, 0, 0), (1, 0, 0), "ordered", None))
+    check("rule: ordered is reserved and refused, naming spec 15",
+          "ordered" in err and "15" in err and "reserved" in err.lower())
+    expect_error("rule: m-of-n requires a valid m",
+                 lambda: E.derive_verdict_15((2, 1, 0), (1, 0, 0), "m-of-n", None))
+    expect_error("rule: m-of-n refuses an m outside 1..n",
+                 lambda: E.derive_verdict_15((2, 1, 0), (1, 0, 0), "m-of-n", 4))
+
+    # -- run validity is read FIRST, and it is not a refutation
+    check("rule: a failed control yields invalid-run, not refuted",
+          E.derive_verdict_15((0, 3, 0), (0, 1, 0), "all", None) == "invalid-run"
+          and E.derive_verdict_15((3, 0, 0), (0, 1, 0), "all", None) == "invalid-run")
+    check("rule: an unread control yields invalid-run (assay sensitivity unproven)",
+          E.derive_verdict_15((3, 0, 0), (0, 0, 1), "all", None) == "invalid-run")
+    check("rule: a hypothesis with only controls yields invalid-run",
+          E.derive_verdict_15((0, 0, 0), (1, 0, 0), "all", None) == "invalid-run")
+
+    # -- the three rules
+    ok = (1, 0, 0)      # one passing control, so run validity never masks the claim branch
+    check("rule: all with one unmet is refuted, not partial",
+          E.derive_verdict_15((1, 1, 0), ok, "all", None) == "refuted"
+          and E.derive_verdict((1, 1, 0)[0], 1, 0) == "partial")
+    check("rule: all with every check met is supported",
+          E.derive_verdict_15((3, 0, 0), ok, "all", None) == "supported")
+    check("rule: all with an unread check is inconclusive",
+          E.derive_verdict_15((2, 0, 1), ok, "all", None) == "inconclusive")
+    check("rule: any with one met is supported",
+          E.derive_verdict_15((1, 3, 0), ok, "any", None) == "supported")
+    check("rule: any with none met and none unread is refuted",
+          E.derive_verdict_15((0, 3, 0), ok, "any", None) == "refuted")
+    check("rule: m-of-n at or over the threshold is supported",
+          E.derive_verdict_15((3, 2, 0), ok, "m-of-n", 3) == "supported")
+    check("rule: m-of-n with m-1 passes is inconclusive",
+          E.derive_verdict_15((2, 3, 0), ok, "m-of-n", 3) == "inconclusive")
+    check("rule: m-of-n two or more short is refuted, not inconclusive",
+          E.derive_verdict_15((1, 4, 0), ok, "m-of-n", 3) == "refuted"
+          and E.derive_verdict_15((0, 5, 0), ok, "m-of-n", 3) == "refuted")
+    check("rule: m-of-n still reachable through unread checks is inconclusive",
+          E.derive_verdict_15((1, 0, 2), ok, "m-of-n", 3) == "inconclusive")
+
+    # -- EXHAUSTIVE: every (kinds, rule, vector) maps to exactly one verdict, never partial
+    import itertools
+    bad_total, bad_partial = [], []
+    for k in range(1, 5):
+        for hv in itertools.product("xu-", repeat=k):
+            hyp = (hv.count("x"), hv.count("u"), hv.count("-"))
+            for nk in range(0, 3):
+                for nv in itertools.product("xu-", repeat=nk):
+                    neu = (nv.count("x"), nv.count("u"), nv.count("-"))
+                    for rule in E.COMBINATION_RULES:
+                        for m in (range(1, k + 1) if rule == "m-of-n" else (None,)):
+                            got = E.derive_verdict_15(hyp, neu, rule, m)
+                            if got not in E.VERDICTS:
+                                bad_total.append((hyp, neu, rule, m, got))
+                            if got == "partial":
+                                bad_partial.append((hyp, neu, rule, m))
+    check(f"rule: every (kinds, rule, vector) maps to exactly one verdict "
+          f"(unmapped: {bad_total[:2]})", not bad_total)
+    check(f"rule: partial is unreachable under evidence semantics "
+          f"(reachable: {bad_partial[:2]})", not bad_partial)
+
+    # -- the roll-up and the views survive a new verdict
+    root = tempfile.mkdtemp(prefix="crux_rule_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Rules", root)
+    q1, _ = E.cmd_ask(root, "does the rule bind?")
+    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1,
+                                 verifiables=["c one", "c two"], neutral=["control"])
+    n = E.Vault(root).get(h1); n["fm"]["rule"] = "all"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    edit(node_path(root, h1), "- [ ] c one", "- [x] c one")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
+    E.cmd_test(root, h1, to="running")
+    check("rule: all with one unmet closes refuted (was partial before 1.8)",
+          E.cmd_close(root, h1) == "refuted")
+
+    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1,
+                                 verifiables=["c one"], neutral=["control"])
+    n = E.Vault(root).get(h2); n["fm"]["rule"] = "all"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    edit(node_path(root, h2), "- [ ] c one", "- [x] c one")
+    E.cmd_test(root, h2, to="running")
+    check("rule: a failed control closes invalid-run end to end",
+          E.cmd_close(root, h2) == "invalid-run")
+
+    lc = E.ledger_counts(E.Vault(root), q1)
+    check("rule: ledger_counts is generated from VERDICTS",
+          all(x in lc for x in E.VERDICTS) and lc["invalid-run"] == 1 and lc["refuted"] == 1)
+    check("rule: _ledger_summary survives a new verdict",
+          "1 invalid-run" in E._ledger_summary(lc))
+    meta = R.render_meta(E.Vault(root))
+    check("rule: the META dashboard covers the whole verdict vocabulary",
+          all(f"{x} " in meta.split("**Verdicts**")[1].split("\n")[0] for x in E.VERDICTS))
+    exp = R.render_experiments(E.Vault(root))
+    check("rule: EXPERIMENTS carries a rule column",
+          "| rule |" in exp and "| all |" in exp)
+
+    snap = E.snapshot(root)
+    check("rule: snapshot exposes the combination rule",
+          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None
+          and snap["nodes"][h1]["verdict"] == "refuted")
+    check("rule: snapshot exposes the per-kind tallies",
+          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [1, 0, 0]})
+    dp = E.deck_payload(root, q1)
+    check("rule: the deck payload carries the combination rule",
+          [c["rule"] for c in dp["children"]] == ["all", "all"])
+
+    # -- the gate: a stamped multi-check hypothesis must declare how they add up
+    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1,
+                                 verifiables=["c one", "c two"], neutral=["control"])
+    expect_error("rule: running is refused with no combination rule",
+                 lambda: E.cmd_test(root, h3, to="running"))
+    h4, _, _ = E.cmd_hypothesize(root, "single check", parent=q1,
+                                 verifiables=["only one"], neutral=["control"])
+    check("rule: a single claim-directed check needs no declaration",
+          E.cmd_test(root, h4, to="running") == "running")
+    n = E.Vault(root).get(h3); n["fm"]["rule"] = "ordered"
+    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    check("rule: validate refuses a reserved rule on a stamped node",
+          any("ordered" in m for _, m in E.cmd_validate(root)))
+
+    check("rule: ENGINE_VERSION at or past 1.8", at_least_version("1.8"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_rmig_")
+    edit(node_path(old, oh), "- [ ] first check", "- [x] first check")
+    check("evmig: a pre-15 node closes through the LEGACY function",
+          E.cmd_close(old, oh) == "partial")
+    check("evmig: re-closing a pre-15 node still yields its legacy verdict",
+          E.cmd_close(old, oh) == "partial")
+    check("evmig: a pre-15 node needs no rule to run",
+          E.cmd_test(old, oh, to="running") == "running")
+    check("evmig: a pre-15 vault raises no rule problem", E.cmd_validate(old) == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    # the committed pre-15 fixture keeps its recorded partial through every view
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_rdemo_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+    E.check_and_stamp_version(dst); E.refresh(dst)
+    dv = E.Vault(dst)
+    check("evmig: partial survives in the vocabulary and every view",
+          dv.get("h2")["fm"]["verdict"] == "partial"
+          and E.snapshot(dst)["nodes"]["h2"]["verdict"] == "partial"
+          and "partial 1" in R.render_meta(dv)
+          and E.ledger_counts(dv, "q2")["partial"] == 1
+          and "| partial |" in R.render_experiments(dv))
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def run_hash_lock():
+    """Spec 15 PRD 15.3 — the hash-lock. Bare pre-registration largely does not work
+    (van den Akker 2023: no drop in positive results, 46% of pre-registered hypotheses simply
+    missing from the paper). Registered Reports DO work — 44% positive vs 96% — and the
+    active ingredient is enforced commitment, not the document. crux can enforce what a
+    journal cannot, because verifiables are content-addressable.
+
+    Edits are FLAGGED, never refused: research legitimately discovers a check was wrong, and
+    refusing only launders the edit into a duplicate hypothesis."""
+    print("\n# evidence semantics — the hash-lock and drift (spec 15, PRD 15.3)")
+    root = tempfile.mkdtemp(prefix="crux_lock_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Locks", root)
+    q1, _ = E.cmd_ask(root, "does the lock hold?")
+
+    def mk(title, **kw):
+        kw.setdefault("verifiables", ["alpha check", "beta check"])
+        kw.setdefault("neutral", ["the control"])
+        kw.setdefault("rule", "all")
+        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
+        return hid
+
+    h1 = mk("locked at running")
+    check("lock: an unrun hypothesis carries no lock",
+          E.Vault(root).get(h1)["fm"].get("lock") is None)
+    E.cmd_test(root, h1, to="running")
+    n = E.Vault(root).get(h1)
+    first_lock, first_at = n["fm"].get("lock"), n["fm"].get("locked")
+    check("lock: running takes the lock",
+          bool(first_lock) and bool(first_at) and n["fm"].get("lock_at") == "running")
+    E.cmd_test(root, h1, to="running")
+    n = E.Vault(root).get(h1)
+    check("lock: re-running never re-locks",
+          n["fm"].get("lock") == first_lock and n["fm"].get("locked") == first_at)
+    check("lock: a fresh lock does not drift", not E.lock_drift(n) and E.cmd_validate(root) == [])
+
+    # -- what must NOT trip it: the things a normal close does
+    edit(node_path(root, h1), "- [ ] alpha check", "- [x] alpha check")
+    check("lock: ticking a box is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    edit(node_path(root, h1), "- [x] alpha check", "- [x] alpha check   (found: +0.02)")
+    check("lock: a (found:) note is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    edit(node_path(root, h1), "- [ ] beta check", "- [ ]  beta   check ")
+    check("lock: whitespace reflow is not drift", not E.lock_drift(E.Vault(root).get(h1)))
+    check("lock: a clean close leaves the vault valid", E.cmd_validate(root) == [])
+
+    # -- what MUST trip it
+    def drifts(hid, mutate, name):
+        n = E.Vault(root).get(hid)
+        before = read(n["path"])
+        mutate(n["path"])
+        d = E.lock_drift(E.Vault(root).get(hid))
+        flagged = any(i == hid and "DRIFT" in m for i, m in E.cmd_validate(root))
+        with open(n["path"], "w", encoding="utf-8") as f:
+            f.write(before)
+        check(name, d and flagged)
+
+    drifts(h1, lambda p: edit(p, "beta   check", "an entirely different check"),
+           "lock: editing a verifiable after running is drift")
+    drifts(h1, lambda p: edit(p, "- [ ]  beta", "- [ ] [outcome-neutral] beta"),
+           "lock: editing a kind after running is drift")
+    drifts(h1, lambda p: edit(p, "rule: all", "rule: any"),
+           "lock: editing the rule after running is drift")
+    drifts(h1, lambda p: edit(p, "- [ ] [outcome-neutral] the control", "- [ ] [outcome-neutral] the control\n- [ ] a fourth check"),
+           "lock: adding a verifiable is drift")
+    drifts(h1, lambda p: edit(p, "- [ ] [outcome-neutral] the control\n", ""),
+           "lock: removing a verifiable is drift")
+
+    def _reorder(p):
+        t = read(p)
+        t = t.replace("- [x] alpha check   (found: +0.02)\n- [ ]  beta   check ",
+                      "- [ ]  beta   check \n- [x] alpha check   (found: +0.02)")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(t)
+    drifts(h1, _reorder, "lock: reordering the verifiables is drift")
+
+    check("lock: reverting the edit clears drift",
+          not E.lock_drift(E.Vault(root).get(h1)) and E.cmd_validate(root) == [])
+
+    # -- the hole `running` alone leaves: cmd_close has no status precondition
+    h2 = mk("closed straight from idea")
+    edit(node_path(root, h2), "- [ ] alpha check", "- [x] alpha check")
+    edit(node_path(root, h2), "- [ ] beta check", "- [x] beta check")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control", "- [x] [outcome-neutral] the control")
+    check("lock: closing straight from idea still yields a verdict",
+          E.cmd_close(root, h2) == "supported")
+    n2 = E.Vault(root).get(h2)
+    check("lock: closing without running locks and marks lock_at",
+          bool(n2["fm"].get("lock")) and n2["fm"].get("lock_at") == "close")
+    check("lock: a close-time lock is a warning, not a problem",
+          any("never pre-registered" in w["message"]
+              for w in E.validation_report(root)["warnings"])
+          and E.cmd_validate(root) == [])
+
+    # -- surfaces
+    snap = E.snapshot(root)
+    check("lock: snapshot exposes lock state and drift",
+          snap["nodes"][h1]["locked"] is True and snap["nodes"][h1]["drift"] is False)
+    edit(node_path(root, h1), "an entirely", "an entirely")  # no-op, keep the file settled
+    dp = E.deck_payload(root, q1)
+    check("lock: the deck payload exposes drift on every child",
+          all("drift" in c for c in dp["children"]))
+
+    # -- D7: drift warns loudly and blocks NOTHING
+    edit(node_path(root, h1), "beta   check", "a rewritten check")
+    check("lock: drift is a validate problem",
+          any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
+    E.cmd_close(root, h1)
+    check("lock: drift does not block close", E.Vault(root).get(h1).status == "done")
+    check("lock: review flags the question holding a drifted child",
+          any(qid == q1 and drift for qid, _, drift in E.cmd_review(root)))
+    s, _ = E.cmd_synthesize(root, "what q1 settled", [q1])
+    E.cmd_approve(root, s)
+    check("lock: drift does not block answer (the engine flags; the PI decides)",
+          E.cmd_answer(root, q1) == q1
+          and E.Vault(root).get(q1).status == "resolved")
+    check("lock: and the flag survives the answer — it is permanent",
+          any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
+    check("lock: no verb clears a drift flag",
+          not any(hasattr(E, x) for x in ("cmd_unflag", "cmd_relock", "cmd_acknowledge")))
+
+    # -- CRLF. The wiki source registry hashes raw BYTES (`_sha256_file`), which is why a
+    #    Windows checkout with autocrlf broke demo_vault's `.sources.tsv` on CI. The lock
+    #    must never inherit that class of bug: it hashes lock_material(), a string built from
+    #    a body that `read()` already normalized in text mode. Pinned here so a future change
+    #    to byte-hashing fails loudly instead of on someone else's runner.
+    lf = E.Vault(root).get(h2)
+    mat_lf = E.lock_material(lf)
+    crlf = dict(lf); crlf["body"] = lf["body"].replace("\n", "\r\n")
+    check("lock: lock_material is newline-invariant (CRLF == LF)",
+          E.lock_material(E.Node(crlf)) == mat_lf)
+    check("lock: the lock hash is newline-invariant",
+          E.lock_hash(E.Node(crlf)) == E.lock_hash(lf))
+    crlf_path = os.path.join(root, "crlf_probe.md")
+    with open(crlf_path, "wb") as f:
+        f.write(read(lf["path"]).replace("\n", "\r\n").encode("utf-8"))
+    fm_c, body_c = E.parse_doc(E.read(crlf_path))
+    check("lock: a CRLF file on disk round-trips to the same lock hash",
+          E.lock_hash(E.Node(fm=fm_c, body=body_c, path=crlf_path, fn="crlf_probe.md"))
+          == E.lock_hash(lf))
+    os.remove(crlf_path)
+
+    check("lock: ENGINE_VERSION at or past 1.9", at_least_version("1.9"))
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_lmig_")
+    E.cmd_test(old, oh, to="running")
+    check("evmig: a pre-15 node never locks",
+          E.Vault(old).get(oh)["fm"].get("lock") is None)
+    edit(node_path(old, oh), "- [ ] first check", "- [x] a completely rewritten check")
+    check("evmig: a pre-15 node never drifts, however its checks are rewritten",
+          not E.lock_drift(E.Vault(old).get(oh)) and E.cmd_validate(old) == []
+          and E.validation_report(old)["warnings"] == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    # -- D9: a seeded [tested] hypothesis is reconstructed history. No lock, and the boundary
+    #    notice says so in its own words rather than calling a vault made today "old".
+    sd = tempfile.mkdtemp(prefix="crux_lseed_")
+    seed = os.path.join(sd, "seed.md")
+    with open(seed, "w", encoding="utf-8") as f:
+        f.write("- Project: Recon — a goal\n  - Q: a question\n"
+                "    - H: [tested] work done before crux was watching\n"
+                "      - v: [x] the check that was met\n      - finding: it held\n")
+    sroot = os.path.join(sd, "vault")
+    E.cmd_init_from(seed, sroot)
+    sn = E.Vault(sroot).get("h1")
+    check("lock: a seeded tested hypothesis has no lock and no drift",
+          sn["fm"].get("lock") is None and not E.lock_drift(sn))
+    check("lock: a reconstructed hypothesis is marked as such",
+          sn["fm"].get("reconstructed") is True)
+    info = E.validation_report(sroot)["info"]
+    check("lock: validate says reconstructed, not merely 'predates'",
+          any(i["id"] == "boundary:reconstructed" and "never pre-registered" in i["message"]
+              for i in info))
+    check("lock: a reconstructed hypothesis is still not a problem or a warning",
+          E.cmd_validate(sroot) == [] and E.validation_report(sroot)["warnings"] == [])
+    shutil.rmtree(sd, ignore_errors=True)
+
+
+def run_rulebook():
+    """Spec 15 PRD 15.5 — the separability rulebook sentence into the crux skill, and the
+    skill's account of a verdict brought in line with what the engine now does.
+
+    All greps, in the style the suite already uses for the cockpit legend: the point is that
+    the docs cannot silently drift from the constants."""
+    print("\n# evidence semantics — the rulebook and the skill (spec 15, PRD 15.5)")
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    spec = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
+
+    def sentence(text):
+        """The rulebook blockquote, unwrapped and whitespace-collapsed, with markdown
+        emphasis stripped — so the two copies are compared on CONTENT, and a re-wrap or a
+        bolded clause cannot make them look different when they are not."""
+        head = "One experiment settles several hypotheses separately only when"
+        # the two copies are wrapped differently and the skill bolds two clauses, so the
+        # comparison is on CONTENT: unwrap, drop blockquote markers and emphasis, collapse
+        # whitespace. Anything short of identical wording still fails.
+        flat = " ".join(text.replace(">", " ").replace("*", "").split())
+        i = flat.find(head)
+        if i < 0:
+            return None
+        j = flat.find("answers.", i)
+        return flat[i:j + len("answers.")] if j > 0 else None
+
+    a, b = sentence(spec), sentence(skill)
+    check("rulebook: the separability sentence is in the skill", b is not None)
+    check("rulebook: the separability sentence matches the spec word for word", a and a == b)
+    check("rulebook: the three separability lines are in the skill",
+          all(x in skill for x in ("**Different lever.**", "**Different failure.**",
+                                   "**Different verdict.**")))
+    check("rulebook: the skill says a shared control is the fix, not the flaw",
+          "the fix, not the" in skill)
+
+    check("rulebook: the skill no longer teaches the retired verdict rule",
+          "→ `refuted`/`partial`" not in skill)
+    check("rulebook: the skill covers the whole verdict vocabulary",
+          all(f"`{x}`" in skill for x in E.VERDICTS))
+    check("rulebook: the skill says invalid-run is not a refutation",
+          "never a refutation" in skill)
+    check("rulebook: the skill states the boundary is permanent",
+          "boundary is permanent" in skill and "schema: 1" in skill
+          and 'Do not "fix" an old node' in skill)
+    check("rulebook: the skill names the combination rule and its CLI flag",
+          "rule: all | any | m-of-n" in skill and "--rule" in skill)
+    check("rulebook: the skill explains inconclusive is derived, never chosen",
+          "derived, never chosen" in skill)
+    check("rulebook: the skill carries the drift rule and says it blocks nothing",
+          "drift" in skill and "blocks nothing" in skill)
+
+    joint = "64% joint power"
+    check("rulebook: the joint-power cost is stated with its constraint",
+          joint in skill and "may\n  not be loosened" in skill.replace("\n  ", "\n  "))
+
+    spec09 = read(os.path.join(HERE, "..", "..", "..", ".spec", "09-specialized-agents.md"))
+    check("rulebook: spec 09 carries the crux-verifiables amendment",
+          "`crux-verifiables` gains a job" in spec09 and joint in spec09
+          and "Choose the combination rule" in spec09)
+    check("rulebook: spec 15's work items are ticked for what shipped",
+          spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
+
+
+def run_cockpit_evidence():
+    """Spec 15 PRD 15.6 — the cockpit narrates evidence semantics.
+
+    The manual check at the end of the 15 build found the engine publishing `drift`, `rule`
+    and per-verifiable `kind` and the cockpit rendering none of them: a drifted hypothesis
+    read as a clean `supported`, and on an `invalid-run` node the check whose failure CAUSED
+    the verdict looked identical to the claim checks.
+
+    That is spec 15 section 5's own failure — PLATO's rule "failed at narration time, not
+    computation time". Computation was right; narration was missing.
+
+    Webui only. No engine change, no version bump."""
+    print("\n# evidence semantics — the cockpit narrates it (spec 15, PRD 15.6)")
+    app_js = read(os.path.join(HERE, "webui", "app.js"))
+    style = read(os.path.join(HERE, "webui", "style.css"))
+
+    # ---- GUARD PARITY. The legend guard (derived from E.VERDICTS) is what forced
+    # `invalid-run` into the cockpit during the 15 build. There was no equivalent guard for
+    # the per-node fields, which is exactly why three of them shipped unrendered. This one is
+    # derived from `snapshot()`'s ACTUAL published surface, so a field added to the engine
+    # tomorrow joins the expectation without anyone remembering to update a list.
+    root = tempfile.mkdtemp(prefix="crux_c15_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Cockpit Evidence", root)
+    q1, _ = E.cmd_ask(root, "does the cockpit narrate it?")
+    h1, _, _ = E.cmd_hypothesize(root, "drifted", parent=q1, rule="m-of-n", rule_m=2,
+                                 verifiables=["alpha", "beta"], neutral=["the control"])
+    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"])
+    E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    edit(node_path(root, h1), "- [ ] beta", "- [x] a check nobody registered")   # -> DRIFT
+    edit(node_path(root, h2), "- [x] alpha", "- [x] alpha")
+    edit(node_path(root, h2), "- [ ] alpha", "- [x] alpha")
+    E.cmd_close(root, h1); E.cmd_close(root, h2)
+    snap = E.snapshot(root)
+    idea = snap["nodes"][h1]
+
+    # Fields a reader legitimately never needs on screen. Small and justified on purpose —
+    # this allowlist is the only place a field can hide, so it must stay embarrassing to add to.
+    NOT_RENDERED = {
+        "id", "type", "parent",        # structural: the tree already says all three
+        "tally",                       # redundant: `verifiables` carries kind+state per item
+        "schema",                      # the boundary is narrated by its ABSENCE of rule/kind
+        "words",                       # already surfaced by economyBadge()
+    }
+    def referenced(key):
+        return any(p in app_js for p in (f'"{key}"', f".{key}", f"['{key}']"))
+    unrendered = sorted(k for k in idea if k not in NOT_RENDERED and not referenced(k))
+    check(f"webui: every published idea field is consumed by the cockpit (missing: {unrendered})",
+          not unrendered)
+    vitem = idea["verifiables"][0]
+    vmissing = sorted(k for k in vitem if f'v.{k}' not in app_js and f'"{k}"' not in app_js)
+    check(f"webui: every published verifiable field is consumed (missing: {vmissing})",
+          not vmissing)
+
+    # ---- the three findings, each asserted directly
+    check("webui: the drift flag is rendered",
+          "drift" in app_js and "n.drift" in app_js)
+    check("webui: drift is called drift in the UI, not something softer",
+          "drift" in re.sub(r"//.*", "", app_js).lower().split("badges +=")[-1][:0] + "drift"
+          and 'class="badge drift"' in app_js)
+    check("webui: the combination rule is rendered beside the verdict",
+          "n.rule" in app_js and "rule_m" in app_js)
+    check("webui: whether the commitment was pre-registered is rendered",
+          "lock_at" in app_js and "n.locked" in app_js)
+    check("webui: an outcome-neutral verifiable is marked in the pane",
+          "v.kind" in app_js and "outcome-neutral" in app_js)
+
+    # ---- a drifted node must be distinguishable in the TREE, not only in the pane. The
+    # PLATO failure is a reader skimming past a node and never opening it, so a flag that
+    # only exists in the detail pane is a flag that did nothing.
+    svg = app_js.split("function nodeSVG")[-1][:4000]
+    check("webui: the tree renderer emits a drift mark on the node",
+          "n.drift" in svg and "drift-mark" in svg and "drifted" in svg)
+    check("webui: the drift mark is styled in the stylesheet",
+          ".box.drifted" in style and ".drift-mark" in style)
+    check("webui: drift is drawn WITHOUT overriding the verdict fill",
+          # the two facts are orthogonal — "what was concluded" and "was the commitment
+          # edited" must stay separately readable, so drift takes the stroke, not the fill
+          "fill" not in style.split(".box.drifted")[1].split("}")[0])
+    check("webui: a drift flip repaints the node in the in-place recolor path",
+          'n.drift ? "D"' in app_js)
+
+    # ---- any new colour must exist in BOTH themes (the rule the legend guard already applies)
+    _blk = lambda sel: (re.search(sel + r"\s*\{(.*?)\n\}", style, re.S | re.M) or [None, ""])[1]
+    dark, light = _blk(r"^:root"), _blk(r'^:root\[data-theme="light"\]')
+    newvars = sorted(set(re.findall(r"var\((--drift[a-z-]*)\)", app_js + style)))
+    unstyled = [v for v in newvars if f"{v}:" not in dark or f"{v}:" not in light]
+    check(f"webui: every new drift colour is defined in both themes (missing: {unstyled})",
+          not unstyled)
+
+    # ---- and the engine still publishes what the cockpit now claims to read
+    check("webui: the fixture really carries drift, a rule, and an outcome-neutral check",
+          idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
+          and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
+          and snap["nodes"][h2]["verdict"] == "invalid-run")
+    check("webui: no engine change — ENGINE_VERSION is untouched by 15.6",
+          E.ENGINE_VERSION == "1.9")
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -3007,6 +3948,12 @@ def main():
     run_deck()
     run_deck_verify()
     run_prezit()
+    run_evidence_boundary()
+    run_verifiable_kind()
+    run_combination_rule()
+    run_hash_lock()
+    run_rulebook()
+    run_cockpit_evidence()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:

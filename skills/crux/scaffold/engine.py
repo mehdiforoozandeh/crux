@@ -14,11 +14,24 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "1.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "1.9"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
                                 # Additive + read-only: a pre-1.4 vault loads unchanged.
+                                # 1.6: evidence semantics (spec 15) — nodes created from here
+                                # on carry `schema: 1`. The stamp is the version boundary:
+                                # spec-15 rules bind stamped nodes only, and ABSENCE of the
+                                # stamp means the node predates them, permanently.
+                                # 1.7: every verifiable carries a `kind` — `hypothesis` (a
+                                # consequence of the claim) or `outcome-neutral` (a control
+                                # that must pass whatever the claim turns out to be).
+                                # 1.8: a hypothesis declares a combination RULE before the
+                                # run, the verdict becomes a function of (kinds, rule,
+                                # vector), and `invalid-run` joins the vocabulary.
+                                # 1.9: the commitment (checks + kinds + rule) is content-
+                                # hashed when the run starts; any later edit is flagged as
+                                # drift, loudly and permanently — never refused.
                                 # 1.5: the RD layer (spec 07) — the engine now scans a new
                                 # directory (rd/), interprets a new `type: rd`, and writes a
                                 # new generated view (RD.md). Additive: a pre-1.5 vault has no
@@ -68,9 +81,112 @@ SERVABLE_EXT     = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".pdf",
 TYPES            = ["project", "question", "idea", "synthesis"]
 QUESTION_STATUS  = ["open", "review", "resolved"]
 IDEA_STATUS      = ["idea", "staged", "running", "done"]
-VERDICTS         = ["supported", "partial", "refuted", "inconclusive"]
+# `partial` is RETIRED, not removed. It can never be derived for a node that binds evidence
+# semantics — it *is* the partial answer spec 15 abolishes — but it must stay in the
+# vocabulary forever: `snapshot` clamps any verdict outside this list to None, and the
+# cockpit renders a `done` node with a None verdict as inconclusive, so deleting the token
+# would silently re-label every pre-15 partial result. That is the render path overturning
+# recorded science, which is the one thing the leash forbids.
+#
+# `invalid-run` is hyphenated because the cockpit builds its CSS class as "h-" + verdict; a
+# space would produce the broken class `h-invalid run`. A render fact, not a preference.
+VERDICTS         = ["supported", "partial", "refuted", "inconclusive", "invalid-run"]
 TERMINAL_IDEA    = "done"
 TERMINAL_QUESTION= "resolved"
+
+# evidence semantics (v1.6 / spec 15): the version boundary.
+#
+# Spec 15 rewrites what a verifiable is and what a verdict means. Its rules bind hypotheses
+# created at or after this engine version and NEVER anything older — a retroactive rule would
+# re-verdict settled nodes, i.e. the engine overturning recorded science, which is precisely
+# what the leash exists to prevent.
+#
+# The mechanism has to be per-NODE. The vault-level `engine_version` in .crux.yaml cannot
+# carry it: `check_and_stamp_version` overwrites that stamp on drift *before* it returns the
+# warning, so one command after an upgrade erases the evidence that the vault is old.
+#
+# So: every question/idea created from 1.6 on carries `schema: 1`, and absence reads as 0.
+# The boundary is permanent and visible, not a transition to be completed — there is
+# deliberately no `crux migrate` for it. Bringing an old hypothesis up to the new schema
+# means re-declaring what would settle a claim, which is a scientific act, PI-gated, one
+# node at a time.
+SCHEMA_GENERATION = 1
+
+# `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
+# affects `ok`, so a legacy vault is never put into red by a boundary it could not have
+# known about. Ids are `<namespace>:<slug>` — consumers filter on the namespace and must
+# never string-match a message, because messages get reworded and ids do not.
+INFO_NAMESPACES = ("boundary",)   # <namespace>:<slug>; specs 08 and 14 claim their own
+
+# Verifiables come in two classes and crux used to flatten them, which is what let a broken
+# apparatus and a false claim produce the same-looking partial pass.
+#
+#   hypothesis       a consequence of the claim. Feeds the verdict.
+#   outcome-neutral  a positive control / manipulation check / floor-ceiling check. It must
+#                    pass REGARDLESS of what the claim turns out to be. Its failure
+#                    invalidates the RUN, and nothing about the claim is learned.
+#
+# Regulators call the property this protects assay sensitivity (ICH E10): without a passing
+# positive control, "the hypothesis is false" and "the apparatus is broken" are
+# indistinguishable. The separability research adds the other half — an outcome-neutral check
+# is the DUAL of a common-mode failure, a detector for the one shared ingredient (a batch, a
+# seed, a preprocessing path, a control arm) that would otherwise sink every bundled
+# hypothesis at once, silently.
+#
+# Syntax is a LEADING bracket tag on the checkbox line:
+#
+#   - [x] [outcome-neutral] the known-good encoder reproduces 0.46 (found: 0.461)
+#         ^^^^^^^^^^^^^^^^^                                       ^^^^^^^^^^^^^^^
+#         the kind (this)                                         the evidence (spec 11)
+#
+# Leading, not trailing, and that is forced rather than chosen: the seed parser strips a
+# trailing `(...)` as the evidence note, so `(outcome-neutral)` would be silently recorded as
+# a finding. Anchoring the kind to the FRONT means it can never compete for that slot.
+DEFAULT_KIND     = "hypothesis"
+NEUTRAL_KIND     = "outcome-neutral"
+VERIFIABLE_KINDS = (DEFAULT_KIND, NEUTRAL_KIND)
+_KIND_ALIASES    = {"hypothesis": DEFAULT_KIND, "hyp": DEFAULT_KIND, "h": DEFAULT_KIND,
+                    "claim": DEFAULT_KIND,
+                    "outcome-neutral": NEUTRAL_KIND, "outcome_neutral": NEUTRAL_KIND,
+                    "neutral": NEUTRAL_KIND, "control": NEUTRAL_KIND, "on": NEUTRAL_KIND,
+                    "positive-control": NEUTRAL_KIND}
+_KIND_TAG_RE     = re.compile(r"^\s*\[([A-Za-z][A-Za-z_-]*)\]\s+")
+# The written opt-out for "this claim genuinely has no meaningful positive control". A
+# non-empty string satisfies the requirement; the reason itself IS the audit trail, which is
+# the point — "there is no control here" has to be SAID, not silently assumed.
+NEUTRAL_OPTOUT   = "neutral_optout"
+
+# How a hypothesis' claim-directed checks add up, declared BEFORE the run. This is what turns
+# "two of four passed" from an argument into arithmetic. ICH E9 2.2.5 states the design space
+# as a quantifier — whether an impact on ANY of the variables, SOME MINIMUM NUMBER of them,
+# or ALL of them is required — and those three are what ship.
+#
+# `ordered` (the fixed-sequence / gatekeeping rule: test in order, stop at the first failure)
+# is RESERVED and refused, by PI ruling. It is the exact structure PLATO's authors narrated
+# past — a pre-specified 10-step hierarchy that stopped at endpoint 6 and whose endpoints
+# 7-10 were published anyway — and it is the hardest of the four to render unambiguously.
+# Reserving rather than ignoring the token is the point: no vault can contain one, so adding
+# it later is not a format change.
+COMBINATION_RULES = ("all", "any", "m-of-n")
+RESERVED_RULES    = ("ordered",)
+RULE_FIELD        = "rule"
+RULE_M_FIELD      = "rule_m"
+
+# The lock. Bare pre-registration largely does not work — preregistered studies show no drop
+# in positive results, and 46% of preregistered hypotheses are simply missing from the paper.
+# Registered Reports DO work (44% positive results against 96%), and the active ingredient is
+# ENFORCED COMMITMENT, not the document. crux can enforce what a journal cannot, because a
+# verifiable is content-addressable and a vault is a git repo.
+#
+# Edits are FLAGGED, not refused. Research legitimately discovers that a check was wrong, and
+# refusing the edit only produces a laundered duplicate hypothesis. A loud, permanent flag is
+# both more honest and harder to ignore. Nothing in the engine consults the flag to change a
+# verdict, a status or a roll-up: it warns at `review` and at `answer` and blocks neither —
+# the engine flags, the PI decides.
+LOCK_FIELD        = "lock"        # sha256[:16] of the canonical commitment
+LOCKED_AT_FIELD   = "locked"      # when — the timestamp crux can prove and a journal cannot
+LOCK_WHERE_FIELD  = "lock_at"     # "running" (pre-registered) | "close" (never was)
+RECONSTRUCTED     = "reconstructed"   # seeded [tested]: history, not a pre-registration
 
 # node economy (v1.3): the engine has always enforced falsifiability and never economy, so
 # nodes grew without bound until the vault stopped being readable by the PI it exists to
@@ -238,6 +354,7 @@ See [[META]] for the live question tree and dashboard, and [[EXPERIMENTS]] for t
 "question": """---
 id: <<id>>
 type: question
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: open
@@ -271,9 +388,11 @@ _(no children yet)_
 "idea": """---
 id: <<id>>
 type: idea
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: idea
+rule:
 verdict:
 metric:
 created: <<now>>
@@ -435,6 +554,7 @@ def load_template(kind):
 
 def fill(text, **kw):
     kw.setdefault("now", now())
+    kw.setdefault("schema", SCHEMA_GENERATION)   # every node is stamped at creation
     for k, v in kw.items():
         text = text.replace(f"<<{k}>>", str(v))
     return text
@@ -487,7 +607,75 @@ def is_terminal(node):
     if node.type == "question": return node.status == TERMINAL_QUESTION
     return True
 
+def node_schema(node):
+    """The node's schema generation; 0 means it predates evidence semantics. Total — a
+    missing, empty or malformed value degrades to 0 rather than raising, because this is
+    called on every node of every vault including ones written by hand."""
+    try:
+        return int(node["fm"].get("schema") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+def binds_evidence_semantics(node):
+    """True iff spec 15's rules apply to this node. The ONLY place the boundary is asked
+    about, so there is one answer and no drift between callers."""
+    return node_schema(node) >= 1
+
 # ----------------------------------------------------------------------------- verifiables / verdict
+def verifiable_kind(text):
+    """Split a leading `[kind]` tag off a verifiable's text -> (kind, text_without_tag).
+
+    Total and lossless: an UNKNOWN tag returns (`hypothesis`, text-with-the-tag-still-on-it)
+    rather than swallowing it. A tag crux does not understand must stay visible on the line
+    — `validate` raises it as a problem, and silently deleting it would hide the mistake in
+    the one place a reader would look for it. An untagged line is `hypothesis`, which is what
+    makes every pre-15 verifiable read exactly as it always did."""
+    m = _KIND_TAG_RE.match(text)
+    if not m:
+        return DEFAULT_KIND, text
+    kind = _KIND_ALIASES.get(m.group(1).lower())
+    if kind is None:
+        return DEFAULT_KIND, text
+    return kind, text[m.end():]
+
+def unknown_kind_tag(text):
+    """The raw tag if this line carries a bracket tag crux does not recognize, else None."""
+    m = _KIND_TAG_RE.match(text)
+    if m and m.group(1).lower() not in _KIND_ALIASES:
+        return m.group(1)
+    return None
+
+def _verifiable_lines(body):
+    """[(tick_char, text)] for every checkbox under `## Verifiables`, in document order.
+    One scanner, so the tally, the cockpit reader and the deck reader cannot drift."""
+    out, in_sec = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "verifiables"
+            continue
+        if not in_sec:
+            continue
+        m = re.match(r"\s*- \[(.)\]\s*(.*)$", line)
+        if m:
+            out.append((m.group(1).lower(), m.group(2).strip()))
+    return out
+
+def _tally(states):
+    met = sum(1 for c in states if c == "x")
+    na  = sum(1 for c in states if c == "-")
+    return met, len(states) - met - na, na
+
+def count_verifiables_by_kind(body):
+    """{kind: (met, unmet, na)} over `## Verifiables`. The input to spec 15's verdict.
+
+    Deliberately additive: `count_verifiables` below keeps its exact pre-15 meaning and
+    return type, so every existing caller, view and assert is byte-unchanged. 15.1 parses
+    and requires the split; consuming it is 15.2's job."""
+    by = {k: [] for k in VERIFIABLE_KINDS}
+    for tick, text in _verifiable_lines(body):
+        by[verifiable_kind(text)[0]].append(tick)
+    return {k: _tally(v) for k, v in by.items()}
+
 def count_verifiables(body):
     met = unmet = na = 0
     in_sec = False
@@ -505,6 +693,142 @@ def count_verifiables(body):
         elif c == "-": na += 1
         else:          unmet += 1
     return met, unmet, na
+
+def lock_material(n):
+    """The canonical string a hypothesis commits to: its combination rule, then every
+    verifiable in DOCUMENT ORDER as (kind, normalized text).
+
+    Two exclusions are load-bearing, and both are the difference between a useful flag and
+    one that fires on every hypothesis:
+
+    - the TICK is not part of the commitment. Ticking a box is exactly what closing does.
+    - the `(found: …)` note is not part of it either. That is the evidence, recorded after
+      the run, and spec 11 already treats it as separable from the check text.
+
+    Whitespace is collapsed, so reflowing a long check is not drift. ORDER is part of the
+    commitment: reordering is a real change, and under a future `ordered` rule it would be
+    the entire content of one."""
+    rule, m = node_rule(n)
+    parts = [f"rule={rule or ''}", f"m={'' if m is None else m}"]
+    for _tick, text in _verifiable_lines(n["body"]):
+        kind, text = verifiable_kind(text)
+        text = " ".join(_FOUND_RE.sub("", text).split())
+        parts.append(f"{kind}\x1f{text}")
+    return "\x1e".join(parts)
+
+def lock_hash(n):
+    return hashlib.sha256(lock_material(n).encode("utf-8")).hexdigest()[:16]
+
+def lock_drift(n):
+    """True iff the commitment changed after it was locked. A node with no lock — every
+    pre-15 node, and every reconstructed one — can never drift."""
+    stored = n["fm"].get(LOCK_FIELD)
+    return bool(stored) and str(stored) != lock_hash(n)
+
+def take_lock(n, where):
+    """Stamp the commitment, once. Idempotent: the first lock is the record, so a second
+    `--to running` never rewrites it."""
+    if n["fm"].get(LOCK_FIELD) or not binds_evidence_semantics(n):
+        return False
+    n["fm"][LOCK_FIELD] = lock_hash(n)
+    n["fm"][LOCKED_AT_FIELD] = now()
+    n["fm"][LOCK_WHERE_FIELD] = where
+    return True
+
+def derive_verdict_15(hyp, neutral, rule, m=None):
+    """The verdict for a node that binds evidence semantics: a total function of
+    (kinds, rule, pass/fail vector). `hyp` and `neutral` are (met, unmet, na) triples from
+    `count_verifiables_by_kind`.
+
+    Run validity is read FIRST and separately from the claim. That order is the whole point
+    of the two kinds: a failed positive control means the experiment tells us nothing, not
+    that the world said no. Reversing these two branches recreates the defect.
+
+    `partial` is not in the image. Every outcome is supported / refuted / inconclusive /
+    invalid-run, and `inconclusive` is DERIVED, never chosen — there is no verb, flag or
+    field that sets it, which is what stops it becoming the drawer."""
+    if rule in RESERVED_RULES:
+        raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see spec 15 "
+                        f"(open question: whether `ordered` should ship at all). Use one of "
+                        f"{', '.join(COMBINATION_RULES)}.")
+    if rule not in COMBINATION_RULES:
+        raise CruxError(f"unknown combination rule '{rule}' — use one of "
+                        f"{', '.join(COMBINATION_RULES)}")
+    hmet, hunmet, hna = hyp
+    nmet, nunmet, nna = neutral
+    n = hmet + hunmet + hna
+    if rule == "m-of-n":
+        if not isinstance(m, int) or not (1 <= m <= max(n, 1)):
+            raise CruxError(f"rule 'm-of-n' needs `{RULE_M_FIELD}` set to an integer in "
+                            f"1..{n} (got {m!r})")
+
+    # 1-2. run validity. A control that failed, or that could not be read at all, leaves
+    # "the claim is false" and "the apparatus is broken" indistinguishable — which is
+    # exactly what `invalid-run` names. Fails safe.
+    if nunmet:
+        return "invalid-run"
+    if nna:
+        return "invalid-run"
+    # 3. nothing was claimed: controls only.
+    if n == 0:
+        return "invalid-run"
+
+    # 4-6. now, and only now, read the claim under its declared rule.
+    if rule == "all":
+        if hunmet:
+            return "refuted"            # one veto decides the conjunction
+        return "inconclusive" if hna else "supported"
+    if rule == "any":
+        if hmet:
+            return "supported"
+        return "inconclusive" if hna else "refuted"
+    # m-of-n. The boundary is exact: m-1 is the "consider" tier (a near miss with a defined
+    # next action), and two or more short is a failure of the declared rule. Making every
+    # sub-threshold outcome inconclusive would mean m-of-n could never refute anything,
+    # which is the drawer the spec warns about.
+    if hmet >= m:
+        return "supported"
+    if hmet + hna >= m:
+        return "inconclusive"           # the threshold is still reachable
+    if hmet == m - 1:
+        return "inconclusive"
+    return "refuted"
+
+def node_rule(n):
+    """(rule, m) as declared in frontmatter, or (None, None) when several checks have no
+    declaration. A hypothesis with exactly one claim-directed check defaults to `all`: for
+    k=1 that is the same as `any` and the same as 1-of-1, so there is nothing to declare and
+    demanding a declaration would be ceremony."""
+    rule = str(n["fm"].get(RULE_FIELD) or "").strip() or None
+    m = n["fm"].get(RULE_M_FIELD)
+    if rule is None:
+        return ("all", None) if sum(count_verifiables_by_kind(n["body"])[DEFAULT_KIND]) <= 1 \
+               else (None, None)
+    return rule, (m if isinstance(m, int) else None)
+
+def rule_gap(n):
+    """The message for a stamped hypothesis whose checks do not add up to anything — several
+    claim-directed checks and no declared rule, or a rule crux will not honor — else None.
+    Gated on the stamp, exactly like `neutral_gap`: a pre-15 hypothesis never declared one
+    and is not asked to."""
+    if n.type != "idea" or not binds_evidence_semantics(n):
+        return None
+    rule, m = node_rule(n)
+    if rule is None:
+        k = sum(count_verifiables_by_kind(n["body"])[DEFAULT_KIND])
+        return (f"hypothesis '{n.id}': {k} claim-directed verifiables and no combination "
+                f"rule. Declare how they add up BEFORE the run — `{RULE_FIELD}: "
+                f"{' | '.join(COMBINATION_RULES)}` in frontmatter (with `{RULE_M_FIELD}: <m>` "
+                f"for m-of-n) — or 'two of four passed' stays an argument instead of "
+                f"arithmetic. Note the cost when choosing `all`: two checks at 80% power "
+                f"each give 64% joint power, and thresholds may not be loosened to "
+                f"compensate.")
+    try:
+        derive_verdict_15(count_verifiables_by_kind(n["body"])[DEFAULT_KIND],
+                          count_verifiables_by_kind(n["body"])[NEUTRAL_KIND], rule, m)
+    except CruxError as e:
+        return f"hypothesis '{n.id}': {e}"
+    return None
 
 def derive_verdict(met, unmet, na):
     total = met + unmet + na
@@ -618,14 +942,14 @@ def ledger_counts(v, qid):
     kids = v.children[qid]
     ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
     subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
+    # Generated from VERDICTS, never a hand-picked list of names: hard-coding the four
+    # meant adding a fifth raised KeyError here and rendered nowhere in META.md.
     vc = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
-    return {"children": len(kids),
-            "ideas_total": len(ideas),
-            "ideas_done": sum(1 for n in ideas if n.status == "done"),
-            "supported": vc["supported"], "partial": vc["partial"],
-            "refuted": vc["refuted"], "inconclusive": vc["inconclusive"],
-            "subq_total": len(subqs),
-            "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}
+    return dict({"children": len(kids),
+                 "ideas_total": len(ideas),
+                 "ideas_done": sum(1 for n in ideas if n.status == "done"),
+                 "subq_total": len(subqs),
+                 "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}, **vc)
 
 def ledger_block(v, qid):
     kids = v.children[qid]
@@ -635,8 +959,7 @@ def ledger_block(v, qid):
     subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
     c = ledger_counts(v, qid)
     summary = (f"**{c['children']} children** · ideas {c['ideas_done']}/{c['ideas_total']} done "
-               f"(supported {c['supported']}, partial {c['partial']}, "
-               f"refuted {c['refuted']}, inconclusive {c['inconclusive']})")
+               f"({', '.join(f'{x} {c[x]}' for x in VERDICTS)})")
     if subqs:
         summary += f" · sub-questions {c['subq_resolved']}/{c['subq_total']} resolved"
     rows = []
@@ -726,6 +1049,18 @@ def economy_warnings(v):
                              f"or move the detail somewhere it belongs."))
     return out
 
+def lock_warnings(v):
+    """A hypothesis whose commitment was only hashed at `close` was never pre-registered —
+    the checks and the results were visible at the same moment. A warning, not a problem:
+    the work is recorded honestly, it just carries no commitment."""
+    out = []
+    for nid, n in v.nodes.items():
+        if n.type == "idea" and n["fm"].get(LOCK_WHERE_FIELD) == "close":
+            out.append((nid, f"hypothesis '{nid}': closed without ever going `running`, so its "
+                             f"verifiables were never pre-registered — they were locked at "
+                             f"close, with the results already visible."))
+    return out
+
 def fanout_warnings(v):
     """Questions holding more unrun hypotheses than FANOUT_MAX."""
     out = []
@@ -747,6 +1082,25 @@ def fanout_pressure(v, qid):
         return (f"question '{qid}' already holds {k} unrun hypotheses (cap {FANOUT_MAX}) — "
                 f"this one puts it over. Run or close some before proposing more.")
     return None
+
+def neutral_gap(n):
+    """The message for a stamped hypothesis that has no outcome-neutral verifiable and no
+    written opt-out, or None when it is satisfied. Spec 15 §1.
+
+    Gated on the node's stamp, never on its status: a pre-15 hypothesis is *correct* without
+    a control — the bar did not exist when the work was done — and retro-flagging it would
+    put a working vault into permanent red against a rule it could not have known."""
+    if n.type != "idea" or not binds_evidence_semantics(n):
+        return None
+    if count_verifiables_by_kind(n["body"])[NEUTRAL_KIND] != (0, 0, 0):
+        return None
+    if str(n["fm"].get(NEUTRAL_OPTOUT) or "").strip():
+        return None
+    return (f"hypothesis '{n.id}': no outcome-neutral verifiable. Without a passing control, "
+            f"'the claim is false' and 'the apparatus is broken' are indistinguishable "
+            f"(assay sensitivity). Add one with `-n \"<check>\"`, or record an explicit "
+            f"opt-out in frontmatter: `{NEUTRAL_OPTOUT}: <why this claim has no meaningful "
+            f"positive control>`.")
 
 def validate(v):
     problems = []
@@ -782,6 +1136,36 @@ def validate(v):
         if t == "idea" and n.status in ("running", "done"):
             if sum(count_verifiables(n["body"])) == 0:
                 problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
+        # a declared rule crux will not honor is wrong the moment it is written, not the
+        # moment the run starts — `ordered` in particular is reserved, and a vault must never
+        # be able to carry one
+        if t == "idea" and binds_evidence_semantics(n):
+            declared = str(n["fm"].get(RULE_FIELD) or "").strip()
+            if declared and declared not in COMBINATION_RULES:
+                why = ("is reserved, not implemented — see spec 15"
+                       if declared in RESERVED_RULES else "is not a combination rule")
+                problems.append((nid, f"hypothesis '{nid}': rule '{declared}' {why}. Use one "
+                                      f"of {', '.join(COMBINATION_RULES)}."))
+        # evidence semantics: a kind tag crux does not recognize is a typo, not a kind. It
+        # is left on the line rather than swallowed, and raised here.
+        if t == "idea" and binds_evidence_semantics(n):
+            for _, text in _verifiable_lines(n["body"]):
+                bad = unknown_kind_tag(text)
+                if bad:
+                    problems.append((nid, f"hypothesis '{nid}': unknown verifiable kind "
+                                          f"'[{bad}]' — use "
+                                          f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
+        # ...and once a run has actually started, the control requirement bites
+        if t == "idea" and n.status in ("running", "done"):
+            for gap in (neutral_gap(n), rule_gap(n)):
+                if gap:
+                    problems.append((nid, gap))
+        if t == "idea" and lock_drift(n):
+            problems.append((nid, f"hypothesis '{nid}': DRIFT — the verifiables, their kinds "
+                                  f"or the combination rule changed after the commitment was "
+                                  f"locked at {n['fm'].get(LOCKED_AT_FIELD)}. The edit stands "
+                                  f"(research does discover a check was wrong); the flag is "
+                                  f"permanent. `git log -p {n['fn']}` is the diff."))
         # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
         # produced files links a report among them
         if t == "idea":
@@ -1313,12 +1697,14 @@ def cmd_init(title, dirpath=".", goal=""):
 #       - Q: a nested question
 #         - H: a hypothesis                         (open; not yet run)
 #           - v: metric ≥ threshold vs baseline     (a verifiable)
+#           - vn: known-good baseline reproduces    (an outcome-neutral control)
 #       - H: [tested] an already-run hypothesis     (migration: reconstruct done work)
 #         - v: [x] first check (found: 0.46 → 0.48) (tick = met; parenthetical = evidence)
 #         - v: [ ] second check
 #         - finding: one-line narrative of the result
 #
-# Rules mirror the model: Project→Q ; Q→Q|H ; H→v|finding|problem. Verdicts on
+# Rules mirror the model: Project→Q ; Q→Q|H ; H→v|vn|finding|problem. `vn:` is a `v:`
+# that is outcome-neutral (a control). Verdicts on
 # [tested] hypotheses are still derived mechanically from the ticks — the engine
 # never invents them.
 def _seed_val(line):
@@ -1329,14 +1715,20 @@ def _seed_val(line):
     return len(m.group(1)), m.group(2).lower(), m.group(3).strip()
 
 def _parse_verifiable(val):
+    """A seed `- v:` / `- vn:` value -> {tick, kind, text, evidence}.
+
+    Extraction order is fixed and load-bearing: tick, then the LEADING kind tag, then the
+    TRAILING evidence parenthetical. Reversing the last two is how `(outcome-neutral)` ends
+    up recorded as a finding — the reason the kind tag is anchored to the front."""
     m = re.match(r"\[([ xX-])\]\s*(.*)$", val)
     tick, text = (m.group(1).lower(), m.group(2).strip()) if m else (" ", val)
+    kind, text = verifiable_kind(text)
     evidence = None
     if m:  # only tested verifiables carry a trailing (evidence) note
         em = re.search(r"\s*\((.*)\)\s*$", text)
         if em:
             evidence, text = em.group(1).strip(), text[:em.start()].strip()
-    return {"tick": tick, "text": text, "evidence": evidence}
+    return {"tick": tick, "kind": kind, "text": text.strip(), "evidence": evidence}
 
 def parse_seed(text):
     """Parse the seed outline into a project dict with nested children. Raises CruxError
@@ -1377,10 +1769,13 @@ def parse_seed(text):
             node = {"type": "hypothesis", "title": val, "tested": tested,
                     "problem": "", "finding": "", "verifiables": []}
             parent["children"].append(node)
-        elif key == "v":
+        elif key in ("v", "vn"):
             if parent is None or parent["type"] != "hypothesis":
-                raise CruxError(f"seed: a verifiable (v) must sit under an H (got {val!r})")
-            parent["verifiables"].append(_parse_verifiable(val))
+                raise CruxError(f"seed: a verifiable ({key}) must sit under an H (got {val!r})")
+            vf = _parse_verifiable(val)
+            if key == "vn":                     # `vn:` is sugar for an outcome-neutral `v:`
+                vf["kind"] = NEUTRAL_KIND
+            parent["verifiables"].append(vf)
             node = None
         elif key in ("finding", "problem"):
             if parent is None or parent["type"] != "hypothesis":
@@ -1388,7 +1783,7 @@ def parse_seed(text):
             parent[key] = val
             node = None
         else:
-            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/finding/problem)")
+            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/vn/finding/problem)")
         if node is not None:
             stack.append((indent, node))
     if project is None:
@@ -1400,7 +1795,8 @@ def _render_verifiables(body, verifiables):
     lines = []
     for vf in verifiables:
         ev = f"   ({vf['evidence']})" if vf["evidence"] else ""
-        lines.append(f"- [{vf['tick']}] {vf['text']}{ev}")
+        tag = f"[{vf['kind']}] " if vf.get("kind") == NEUTRAL_KIND else ""
+        lines.append(f"- [{vf['tick']}] {tag}{vf['text']}{ev}")
     block = "\n".join(lines)
     return re.sub(r"(## Verifiables\n\n)(?:<!--.*?-->\n)?(?:- \[.\].*\n?)+",
                   lambda m: m.group(1) + block + "\n", body, count=1)
@@ -1417,11 +1813,21 @@ def _materialize(root, project):
     def _add_hypothesis(root, h, qid):
         if h["tested"] and not h["verifiables"]:
             raise CruxError(f"seed: [tested] hypothesis {h['title']!r} needs at least one verifiable")
-        hid, _, _ = cmd_hypothesize(root, h["title"], parent=qid, problem=h["problem"],
-                                 verifiables=[vf["text"] for vf in h["verifiables"]])
+        hid, _, _ = cmd_hypothesize(
+            root, h["title"], parent=qid, problem=h["problem"],
+            verifiables=[vf["text"] for vf in h["verifiables"] if vf["kind"] != NEUTRAL_KIND],
+            neutral=[vf["text"] for vf in h["verifiables"] if vf["kind"] == NEUTRAL_KIND])
         if not h["tested"]:
             return
         n = Vault(root).get(hid)
+        # Reconstructed past work: drop the schema stamp so evidence semantics do not bind
+        # it. `[tested]` means "this ran before crux was watching" — it cannot retroactively
+        # acquire an outcome-neutral control or a pre-registered combination rule, and
+        # demanding one would be the engine asking the PI to re-declare, after the fact,
+        # what would have settled an already-settled claim. Untested seeded hypotheses are
+        # genuinely new work and keep their stamp.
+        n["fm"].pop("schema", None)
+        n["fm"][RECONSTRUCTED] = True
         n["body"] = _render_verifiables(n["body"], h["verifiables"])
         write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
         cmd_close(root, hid, findings=h["finding"] or None)
@@ -1476,7 +1882,8 @@ def cmd_ask(root, title, parent=None, body_text=""):
     refresh(root)
     return nid, fn
 
-def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
+def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
+                    rule=None, rule_m=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -1491,9 +1898,25 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None):
     text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
                 parent_basename=p.basename, problem=problem or "_(why this is worth testing)_",
                 verifiable=(verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"))
-    if verifiables and len(verifiables) > 1:
-        extra = "\n".join(f"- [ ] {x}" for x in verifiables[1:])
-        text = text.replace(f"- [ ] {verifiables[0]}", f"- [ ] {verifiables[0]}\n{extra}")
+    # claim-directed checks first, then the outcome-neutral controls — the controls gate the
+    # run, and a reader should meet the claim before the apparatus check for it
+    rest = [f"- [ ] {x}" for x in (verifiables or [])[1:]]
+    rest += [f"- [ ] [{NEUTRAL_KIND}] {x}" for x in (neutral or [])]
+    if rest:
+        lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
+        text = text.replace(f"- [ ] {lead}", f"- [ ] {lead}\n" + "\n".join(rest))
+    if rule is not None:
+        if rule in RESERVED_RULES:
+            raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see "
+                            f"spec 15. Use one of {', '.join(COMBINATION_RULES)}.")
+        if rule not in COMBINATION_RULES:
+            raise CruxError(f"unknown combination rule '{rule}' — use one of "
+                            f"{', '.join(COMBINATION_RULES)}")
+        fm, body = parse_doc(text)
+        fm[RULE_FIELD] = rule
+        if rule_m is not None:
+            fm[RULE_M_FIELD] = int(rule_m)
+        text = render_doc(fm, body)
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
     return nid, fn, warning
@@ -1535,7 +1958,13 @@ def cmd_test(root, nid, to=None, run=None):
         raise CruxError("test moves an idea to 'staged' or 'running'")
     if target == "running" and sum(count_verifiables(n["body"])) == 0:
         raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
+    if target == "running":
+        for gap in (neutral_gap(n), rule_gap(n)):
+            if gap:
+                raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
     n["fm"]["status"] = target
+    if target == "running":
+        take_lock(n, "running")
     if run:
         n["body"] = append_bullet(n["body"], "Run Links", run)
     _bump(n)
@@ -1551,7 +1980,24 @@ def cmd_close(root, nid, metric=None, findings=None):
     met, unmet, na = count_verifiables(n["body"])
     if met + unmet + na == 0:
         raise CruxError("cannot close: no verifiables to evaluate")
-    verdict = derive_verdict(met, unmet, na)
+    # THE BOUNDARY. Dispatch on the node's stamp, never on "is it already done" —
+    # `cmd_close` has no status precondition and is re-runnable on a done node, so an old
+    # node re-closed after an upgrade must still get the old function. This is the line
+    # that stops the engine overturning recorded science.
+    if binds_evidence_semantics(n):
+        gap = rule_gap(n)
+        if gap:
+            raise CruxError(f"cannot close {nid}: " + gap.split(": ", 1)[1])
+        by = count_verifiables_by_kind(n["body"])
+        rule, m = node_rule(n)
+        verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
+    else:
+        verdict = derive_verdict(met, unmet, na)
+    # `cmd_close` has no status precondition and is reachable straight from `idea`, so a
+    # lock taken only at `running` is bypassable by the shortest path the CLI offers. Lock
+    # here too, and record that it was never a pre-registration — refusing the close instead
+    # would just push the user through `test --to running` first, laundering the same thing.
+    take_lock(n, "close")
     n["fm"]["status"] = "done"
     n["fm"]["verdict"] = verdict
     if metric is not None:
@@ -1570,8 +2016,14 @@ def cmd_close(root, nid, metric=None, findings=None):
     return verdict
 
 def cmd_review(root):
+    """(id, title, drift) for every question awaiting a decision. `drift` is True when any
+    hypothesis under it has an edited commitment — surfaced HERE because this is the exact
+    moment the PI is deciding, and a flag they never see is a flag that did nothing."""
     v = Vault(root)
-    return [(n.id, n.title) for n in v.nodes.values()
+    def drifted(qid):
+        return any(lock_drift(v.nodes[c]) for c in v.children.get(qid, ())
+                   if v.nodes[c].type == "idea")
+    return [(n.id, n.title, drifted(n.id)) for n in v.nodes.values()
             if n.type == "question" and n.status == "review"]
 
 def approved_synthesis(v, qid):
@@ -1659,6 +2111,29 @@ def cmd_synthesize(root, title, questions):
     refresh(root)
     return nid, fn
 
+def boundary_info(v):
+    """The evidence-semantics boundary, reported as INFORMATION. Never a problem, never a
+    warning: a pre-15 vault is correct, not broken, and spec 15 is explicit that the boundary
+    is reported "as information, never as a problem". One line per condition, not one per
+    node, and silence when there is nothing to say."""
+    out = []
+    olds = [x for x in v.nodes.values()
+            if x.type == "idea" and not binds_evidence_semantics(x)]
+    recon = [x for x in olds if x["fm"].get(RECONSTRUCTED)]
+    n = len(olds) - len(recon)
+    if n:
+        out.append(("boundary:evidence-semantics",
+                    f"{n} hypothes{'is' if n == 1 else 'es'} predate evidence semantics "
+                    f"(no schema stamp); spec-15 rules do not apply to them.", n))
+    if recon:
+        # A vault created today can hold these, so calling them "old" would be baffling.
+        # They are reconstructed history: the science happened before crux was watching.
+        out.append(("boundary:reconstructed",
+                    f"{len(recon)} hypothes{'is was' if len(recon) == 1 else 'es were'} "
+                    f"reconstructed from a seed and never pre-registered — the results "
+                    f"existed before the checks were written down.", len(recon)))
+    return out
+
 def validation_report(root, checks=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
@@ -1672,17 +2147,20 @@ def validation_report(root, checks=None):
         raise CruxError(f"unknown check(s): {', '.join(unknown)} — known checks are "
                         f"{', '.join(CHECKS + OPT_CHECKS)} ({', '.join(OPT_CHECKS)} opt-in)")
     v = Vault(root)
-    problems, warnings = [], []
-    if "tree"    in names: problems += validate(v)
+    problems, warnings, info = [], [], []
+    if "tree"    in names: problems += validate(v); info += boundary_info(v)
     if "wiki"    in names: problems += validate_wiki(root)
     if "economy" in names: warnings += economy_warnings(v)
     if "fanout"  in names: warnings += fanout_warnings(v)
+    if "tree"    in names: warnings += lock_warnings(v)
     if "rd"      in names: problems += validate_rd(root)
     if "decks"   in names: warnings += deck_warnings(root)
-    return {"ok": not problems and not warnings,
+    return {"ok": not problems and not warnings,     # `info` is deliberately NOT in `ok`
             "checks": list(names),
             "problems": [{"id": i, "message": m} for i, m in problems],
-            "warnings": [{"id": i, "message": m} for i, m in warnings]}
+            "warnings": [{"id": i, "message": m} for i, m in warnings],
+            "info": [dict({"id": i, "message": m}, **({"count": c} if c is not None else {}))
+                     for i, m, c in info]}
 
 def cmd_validate(root, checks=None):
     """The hard problems only, as (id, message) pairs. Kept at this return type on purpose:
@@ -1739,20 +2217,15 @@ def _summary(body, heading):
     return "" if not _prose_tokens(text) else text
 
 def _verifiables(body):
-    """The `## Verifiables` list as read-only tri-state: [{text, state}] with state in met/unmet/na."""
-    items, in_sec = [], False
-    for line in body.splitlines():
-        if line.startswith("## "):
-            in_sec = line[3:].strip().lower() == "verifiables"
-            continue
-        if not in_sec:
-            continue
-        m = re.match(r"\s*- \[(.)\]\s*(.*)$", line)
-        if not m:
-            continue
-        c = m.group(1).lower()
+    """The `## Verifiables` list as read-only tri-state:
+    [{text, state, kind}] with state in met/unmet/na and kind in VERIFIABLE_KINDS.
+    The `[kind]` tag is lifted into its own field and stripped from `text` — a reader should
+    get a sentence, not markup."""
+    items = []
+    for c, text in _verifiable_lines(body):
+        kind, text = verifiable_kind(text)
         state = "met" if c == "x" else "na" if c == "-" else "unmet"
-        items.append({"text": m.group(2).strip(), "state": state})
+        items.append({"text": text.strip(), "state": state, "kind": kind})
     return items
 
 def _run_links(body):
@@ -1801,6 +2274,9 @@ def _node_json(v, n, rd_map=None):
         # the slug of this node's active RD, or None — so the pane can offer "open the
         # design" without walking the index
         d["rd"] = (_rd_by_node(v.root) if rd_map is None else rd_map).get(n.id)
+        # which side of the evidence-semantics boundary this node sits on (0 = predates it),
+        # published so the cockpit and an agent never re-read frontmatter to find out
+        d["schema"] = node_schema(n)
     if n.type == "question":
         pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent
@@ -1827,6 +2303,14 @@ def _node_json(v, n, rd_map=None):
         d["problem"] = _section(n["body"], "Problem Statement")
         d["hypothesis"] = _section(n["body"], "Idea / Hypothesis")
         d["verifiables"] = _verifiables(n["body"])
+        # how the checks add up, published beside them — spec 15's render-time rule: the
+        # verdict and the rule that produced it travel together wherever the node is read
+        rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
+        d["rule"], d["rule_m"] = rule, m
+        d["tally"] = {k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
+        d["locked"] = bool(n["fm"].get(LOCK_FIELD))
+        d["lock_at"] = n["fm"].get(LOCK_WHERE_FIELD) or None
+        d["drift"] = lock_drift(n)
         d["run_links"] = _run_links(n["body"])
         d["artifacts"] = [dict(a,
                                exists=(not artifact_escapes(a["path"])
@@ -1956,14 +2440,18 @@ def _metric_leaves(tree, prefix=""):
 _FOUND_RE = re.compile(r"\s*\(found:\s*(.*?)\)\s*$")
 
 def _deck_verifiables(body):
-    """`## Verifiables` for the payload: [{text, state, found}] where `found` is the
+    """`## Verifiables` for the payload: [{text, state, kind, found}] where `found` is the
     trailing `(found: …)` evidence parenthetical the seed materializer writes (None when
-    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it."""
+    absent). No failure_scenario field — dropped by PI ruling; spec 15/09 owns it.
+
+    `kind` (spec 15) matters to a deck: a failed OUTCOME-NEUTRAL check means the run was
+    invalid, not that the claim was refuted, and a slide must not narrate the second when
+    the vault recorded the first."""
     out = []
     for item in _verifiables(body):
         m = _FOUND_RE.search(item["text"])
         out.append({"text": _FOUND_RE.sub("", item["text"]).strip(), "state": item["state"],
-                    "found": m.group(1).strip() if m else None})
+                    "kind": item["kind"], "found": m.group(1).strip() if m else None})
     return out
 
 def _deck_text(body, heading):
@@ -1979,7 +2467,9 @@ def _deck_question_fields(n):
 
 def _deck_idea_fields(n):
     verdict = n["fm"].get("verdict")
+    rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
     return {"verdict": verdict if verdict in VERDICTS else None,
+            "rule": rule, "rule_m": m, "drift": lock_drift(n),
             "metric": n["fm"].get("metric") or None,
             "verifiables": _deck_verifiables(n["body"]),
             "findings": _deck_text(n["body"], "Findings"),
@@ -2039,7 +2529,8 @@ def deck_payload(root, anchor):
 
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
-                "verdict": None, "metric": None, "verifiables": [], "findings": None,
+                "verdict": None, "rule": None, "rule_m": None, "drift": False,
+                "metric": None, "verifiables": [], "findings": None,
                 "artifacts": []}
     anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
 

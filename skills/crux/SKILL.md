@@ -70,9 +70,27 @@ report is linked, when a linked path doesn't resolve, or when one escapes the va
 linked report — markdown, tables, and figures — in its right-hand pane.
 
 **Lifecycles**
-- Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** from the
-  verifiable checkboxes: all `- [x]` → `supported`; any unmet → `refuted`/`partial`;
-  only `- [-]` (couldn't-evaluate) remaining → `inconclusive`.
+- Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** — never
+  written by you — from three things: the **kind** of each verifiable, the declared
+  **combination rule**, and the pass/fail vector. Five verdicts exist:
+  `supported` · `refuted` · `inconclusive` · `invalid-run` · `partial` *(retired — see below)*.
+  - Every verifiable is either **`[hypothesis]`** (a consequence of the claim; feeds the
+    verdict) or **`[outcome-neutral]`** (a positive control / sanity check that must pass
+    *whatever* the claim turns out to be). A failed or unread control gives **`invalid-run`**:
+    the experiment tells us nothing and must be re-run. It is never a refutation — without a
+    passing control, "the claim is false" and "the apparatus is broken" are the same picture.
+  - The hypothesis declares **how its claim-directed checks add up**, before the run:
+    `rule: all | any | m-of-n` (`crux hypothesize --rule`). That is what turns "two of four
+    passed" from an argument into arithmetic. Under `m-of-n`, exactly one short is
+    `inconclusive`; two or more short is `refuted`.
+  - **`inconclusive` is derived, never chosen.** There is no flag that sets it — you can only
+    arrive there. That is what stops it becoming the drawer everything ambiguous gets swept
+    into.
+  - **The boundary is permanent.** These rules bind hypotheses created at or after engine
+    v1.6 (they carry `schema: 1`). Anything older keeps the verdict it was recorded with,
+    forever, and is never re-checked, re-verdicted or flagged — that is why `partial` still
+    exists in the vocabulary. **Do not "fix" an old node to the new schema.** Re-declaring
+    what would settle a claim is a scientific act, so it is the PI's call, one node at a time.
 - Question: `open → review → resolved`. The engine trips `open → review` automatically
   once every direct child is terminal. **Closing it is always the PI's call**, and it now
   takes a **synthesis the PI has approved**:
@@ -238,7 +256,38 @@ and `crux answer` will refuse until it's signed.
 ## Guardrails
 
 - **Pre-register verifiables.** A hypothesis isn't testable until its `## Verifiables` state a metric +
-  baseline + threshold. The engine refuses to mark an idea `running` with none.
+  baseline + threshold. The engine refuses to mark an idea `running` with none, with no
+  `[outcome-neutral]` control (or a written `neutral_optout:` reason), or — once there is
+  more than one claim-directed check — with no combination rule. When you choose `all`, say
+  the cost out loud: **two checks at 80% power each give 64% joint power, and thresholds may
+  not be loosened to compensate.**
+- **The commitment is locked when the run starts.** Going `running` content-hashes the
+  checks, their kinds and the rule. A later edit is *allowed* — research does discover a
+  check was wrong — but it raises a permanent **drift** flag on the node, in `validate`, and
+  beside the question in `crux review`. It blocks nothing. Say what changed and why in the
+  node; `git log -p <node>.md` is the diff.
+
+### One experiment, several hypotheses — when that is allowed
+
+> **One experiment settles several hypotheses separately only when** each hypothesis is
+> turned by its own independently varied knob — a comparison the design can attribute to it
+> alone, at a resolution high enough for the kind of effect it claims — and no single shared
+> ingredient (one batch, one seed, one preprocessing path, one control) could flip all the
+> answers together without a pre-declared outcome-neutral check catching it and voiding the
+> whole run; **anything less means you ran one experiment with many labels, not many
+> answers.**
+
+Three checks, in the order they fail:
+- **Different lever.** Each hypothesis is turned by its own independently varied knob — its
+  own comparison, not shared with another and not a by-product of two others.
+- **Different failure.** No single shared ingredient may flip every answer at once
+  undetected. Block it, replicate it, cover it with an `[outcome-neutral]` check, or log it
+  as a risk on every hypothesis in the bundle. This is what outcome-neutral checks are *for*:
+  they are the dual of a shared failure, so **sharing one across a bundle is the fix, not the
+  flaw**.
+- **Different verdict.** Each hypothesis carries its own checks, its own rule, and can be
+  stated without reference to the others. If flipping one answer would change another, they
+  were never separable — that is one compound claim wearing several labels.
 - **Never hand-edit generated content** — `META.md`, `EXPERIMENTS.md`, or the `<!-- crux:ledger -->`
   block inside a question. Run a verb and let the engine regenerate. You *do* write the question's
   `## Answer so far` prose (above the ledger) and the idea's `## Findings`.

@@ -15,7 +15,7 @@ Root: [[demo_candi]]
 
 - **Questions** (2): open 1 · review 1 · resolved 0
 - **Hypotheses** (2): idea 0 · staged 0 · running 0 · done 2
-- **Verdicts**: supported 1 · partial 1 · refuted 0 · inconclusive 0
+- **Verdicts**: supported 1 · partial 1 · refuted 0 · inconclusive 0 · invalid-run 0
 
 ## ⚠ Awaiting your decision (`review`)
 
