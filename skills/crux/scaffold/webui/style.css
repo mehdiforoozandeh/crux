@@ -396,6 +396,9 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .drift-mark     { fill: var(--drift); font-size: var(--fs-ui-sm); text-anchor: end; pointer-events: none; }
 .badge.drift    { color: var(--drift); border-color: var(--drift); }
 .badge.warn     { color: var(--v-invalid-run); border-color: var(--v-invalid-run); }
+.vfails         { margin-top: .18em; font-size: var(--fs-ui-xs); color: var(--ink-mute);
+                  font-style: italic; }
+.vfails.disc    { color: var(--v-inconclusive); font-style: normal; }
 .vkind          { margin-left: .45em; padding: 0 .38em; border-radius: 4px; font-size: .72em;
                   letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px;
                   color: var(--v-inconclusive); border: 1px solid var(--v-inconclusive); }

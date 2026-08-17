@@ -38,6 +38,7 @@ for _s in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine as E
+NEUTRAL_KIND_LABEL = E.NEUTRAL_KIND
 
 
 def _vault():
@@ -68,6 +69,18 @@ def _jsonable(s):
                    help="emit machine-readable JSON on stdout instead of text")
     return s
 
+
+def _pair_discriminates(argv):
+    """Which `--fails-if` values carried a `--discriminates` after them. argparse's append
+    actions record the two flags in separate lists and lose the interleaving, so the pairing
+    is recovered from argv — the one place the order survives."""
+    out, idx = [], -1
+    for tok in argv:
+        if tok == "--fails-if":
+            idx += 1; out.append(False)
+        elif tok == "--discriminates" and idx >= 0:
+            out[idx] = True
+    return out
 
 def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
@@ -108,6 +121,22 @@ def main(argv=None):
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
                         "run, not the claim. At least one is required before `test --to running`.")
+    # Additive, NOT a second argument to -v: `nargs=2` was measured to make `-v "a check"`
+    # exit with "expected 2 arguments", breaking the skill's documented usage, the agent CLI
+    # surface and every existing fixture. These attach to the most recent -v/-n instead, so a
+    # bare -v keeps working and a missing scenario is caught by `validate` before the run.
+    s.add_argument("--fails-if", dest="fails_if", action="append", default=[],
+                   help="the world in which the PRECEDING -v/-n check fails. Two checks are "
+                        "redundant if they fail for the same reason; this is what makes that "
+                        "visible. Required on every check before `test --to running`.")
+    s.add_argument("--discriminates", dest="discriminates", action="append_const", const=True,
+                   default=[], help="mark the preceding --fails-if as the one that "
+                                    "discriminates against the declared null (at least one must)")
+    s.add_argument("--null", default=None,
+                   help="the BORING explanation: the cheapest way this result could be trivially "
+                        "true. One line, <=25 words, naming a confound family (capacity, chance, "
+                        "leakage, selection, normalization, instrumentation). The PI approves it "
+                        "with `crux approve-null` BEFORE checks are written against it.")
     s.add_argument("--rule", default=None, choices=None,
                    help="how the claim-directed verifiables ADD UP, declared before the run: "
                         "all | any | m-of-n. Required once there is more than one of them — "
@@ -209,6 +238,23 @@ def main(argv=None):
 
     s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
     s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
+                                 help="the PI's sign-off on a hypothesis' null — the gate between "
+                                      "naming the boring explanation and writing checks against it"))
+    s.add_argument("id")
+
+    s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
+                                 "expects, empty. Never writes an evidence field, never fills a "
+                                 "null, never moves a verdict — bringing old science up to new "
+                                 "rules is the PI's call, one node at a time"))
+    s.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
+
+    s = _jsonable(sub.add_parser("brief", help="the deterministic cold input for an isolated agent: "
+                                          "one hypothesis' claim, question, pre-registered checks "
+                                          "and the shared factual record — assembled from vault "
+                                          "state, never authored by a calling agent"))
+    s.add_argument("id")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -388,7 +434,8 @@ def dispatch(a):
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
-                                          a.verifiable, a.neutral, a.rule, a.rule_m)
+                                          a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
+                                          a.fails_if, _pair_discriminates(sys.argv))
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
@@ -471,6 +518,41 @@ def dispatch(a):
         print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
+    elif c in ("approve-null", "approve_null"):
+        root = _vault()
+        stamp = E.cmd_approve_null(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "null_approved": stamp})
+        print(f"✓ {a.id} null approved at {stamp}\n  checks may now be written against it")
+    elif c == "migrate":
+        res = E.cmd_migrate(_vault(), apply=a.apply)
+        if a.json:
+            return _emit(res)
+        if not res["changes"]:
+            print("✓ nothing to migrate — every node has the sections this engine expects.")
+        else:
+            for ch in res["changes"]:
+                print(f"  {ch['id']}: + " + ", ".join(ch["adds"]))
+            print(("✓ applied to " if res["applied"] else "dry run — would touch ")
+                  + f"{len(res['changes'])} node(s)."
+                  + ("" if res["applied"] else "  Re-run with --apply."))
+            print("  (never written: the schema stamp, the combination rule, the lock, or the "
+                  "content of a null — those are the PI's call, one node at a time.)")
+    elif c == "brief":
+        b = E.brief(_vault_ro(None), a.id)
+        if a.json:
+            return _emit(b)
+        print(f"{b['id']}  {b['claim']}")
+        if b["question"]:
+            print(f"  question: {b['question']}")
+        if b["null"]:
+            print(f"  null:     {b['null']}")
+        print(f"  rule:     {b['rule'] or '—'}" + (f" (m={b['rule_m']})" if b["rule_m"] else ""))
+        for x in b["verifiables"]:
+            tag = " [control]" if x["kind"] == NEUTRAL_KIND_LABEL else ""
+            print(f"    - {x['text']}{tag}")
+        for pf in b["prior_findings"]:
+            print(f"  prior:    {pf['id']} ({pf['verdict']}) {pf['findings'][:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
         rep = E.validation_report(_vault(), checks)

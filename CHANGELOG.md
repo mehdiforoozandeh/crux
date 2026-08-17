@@ -8,6 +8,135 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The agent roster, and a convention for what an agent definition is** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.4). Eight definitions ship in
+  `agents/<name>/AGENT.md`, mirroring the `skills/` layout so there is one mental model:
+  `crux-null` · `crux-verifiables` · `crux-critic` · `crux-migrate` · `crux-close` ·
+  `crux-audit` · `crux-tests` · `crux-glossary`.
+
+  Three frontmatter fields carry 09's architecture and are **asserted**, not just written:
+  **`cold_input`** (the only thing the agent receives), **`toolbelt`** — every entry must be a
+  real `crux ` verb, because 09 is explicit that the belt is CLI verbs rather than
+  agent-private scripts, so `selftest` can assert them and the PI can run any of them by hand
+  — and **`excludes`**, which makes each isolation boundary reviewable. `crux-verifiables`
+  declares that it never sees `## Problem Statement`, and the suite **cross-checks that the
+  brief actually enforces it** rather than trusting the declaration.
+
+  The leash is checked against the **toolbelt**, not prose: no agent may run `crux close`,
+  `answer`, `approve`, `pursue` or `task accept`. `crux-critic` ships with an **empty**
+  toolbelt and no vault access at all — isolation by construction, since it cannot pour the
+  vault into a node it cannot see.
+
+  This **unparks specs 13 and 14**: `crux-glossary`'s row matches the contract spec 14 parked
+  in `PARKED-09.md` exactly (propose-only cold input, no write verb, conversation excluded),
+  and `crux brief` from PRD 09.0 is the dependency spec 13 was waiting on. Doc-only: no
+  engine change, no `ENGINE_VERSION` bump. Spec 09 flips to ☑ with its work items ticked.
+
+- **`crux migrate` — schema bridging, with evidence fields structurally unmigratable** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.3). Adds the structural sections a newer
+  engine expects (`## ELI5`, `## TL;DR`, `## Null`, `## Artifacts`, `## Protocol`), empty.
+  Dry run by default; idempotent; authored prose is never reflowed, only added to.
+
+  **This resolves the standing collision between specs 09 and 15, and 15 wins.** Spec 09
+  dissolved version bridging into a mechanical rewrite; spec 15 ruled *"no `crux migrate`
+  path for this"*, because bringing an old hypothesis up to evidence semantics means
+  re-declaring what would settle a claim — a scientific act, PI-gated, one node at a time.
+  Both are right about different fields, and the split was **measured**: a node built at 2.6
+  differs from the committed pre-15 fixture by four structural sections plus exactly two
+  frontmatter fields, `schema` and `rule`.
+
+  So `MIGRATE_FORBIDDEN` is enforced structurally, not by policy: the verb has no code path
+  that writes `schema`, `rule`, `rule_m`, the lock triple, `neutral_optout`, or the null
+  approval — and it creates `## Null` **empty**, never filled. `schema` is the sharp one:
+  writing it would not "add a field", it would **flip a node across the version boundary**,
+  binding work settled before those rules existed to every spec-15 rule at once. Scientific
+  staleness is surfaced as `info`, never repaired.
+
+  Also adds `validate --check=gate` (opt-in): a question parked in `review` with no synthesis
+  drafted. That is the one item on spec 09's audit list that was not already a check —
+  over-cap nodes, unresolvable artifacts and unrun-idea pileup all shipped with specs 06 and
+  v0.5. `ENGINE_VERSION` 2.6 → 2.7.
+
+- **A failure scenario on every verifiable, and the two-part discrimination filter** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.2). Spec 09 replaces a numeric cap on
+  verifiables with a logical one: **two verifiables are redundant if they fail for the same
+  reason.** Applied greedily, the agent stops when it runs out of worlds. The engine cannot
+  judge that — what it *can* do is force the residue to be written down, so redundancy is
+  visible at a glance to the PI and to `crux-critic`.
+
+  Each check now carries the world in which it fails, on an **indented continuation line**:
+
+  ```
+  - [ ] imp-Spearman ≥ +0.01
+        fails-if:: the gain is capacity alone — the width-matched arm also clears it
+        discriminates:: true
+  ```
+
+  `discriminates::` is **its own field**, marking the check aimed at the declared null. `validate` and
+  the `running` gate enforce both halves: every check has a non-empty scenario, no two are
+  byte-identical, and at least one claim-directed check discriminates. Byte-identity is all
+  the engine can honestly check — it catches copy-paste, and the rest is why the scenarios
+  are written down at all.
+
+  The continuation line was chosen because it is the only syntax that leaves **every** spec-15
+  reader byte-clean: tick, kind, text, `(found: …)` and both tallies are unchanged, asserted
+  against values captured before the change. New `--fails-if` / `--discriminates`, which
+  attach to the preceding `-v`/`-n` — **additive, never a second argument to `-v`**, which was
+  measured to break every existing caller. `ENGINE_VERSION` 2.5 → 2.6.
+
+### Changed
+
+- **`SCHEMA_GENERATION` → 2**, and `lock_material` is now **generation-keyed**. From
+  generation 2 the failure scenario is part of the pre-registered commitment — it is what
+  would have falsified the check, and writing it after results are visible is exactly the
+  move the lock exists to detect. A node stamped **generation 1 keeps the material it was
+  locked with, forever**: without that split, changing the commitment's shape would re-hash
+  every already-locked node and flag an edit nobody made, which is the engine falsifying its
+  own record. Proven on a fixture locked under generation 1 — it does not drift, and its
+  vault validates clean.
+
+- **`## Null` — the boring explanation, on a closed vocabulary, PI-gated** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.1). The brief removes the parent's authored
+  prompt, but one leak cannot be engineered away: the hypothesis **title** is directional.
+  *"masked-token beats masked-stem"* presumes a winner, and a fresh agent still knows which
+  way the room leans. The answer is not to neutralise the title but to push against it —
+  name the **cheapest way this result could be trivially true**, then make the checks
+  discriminate against *that*.
+
+  Three goalposts, all in code, because instructions will not hold this (the crux skill
+  already said *"keep the science explicit"* and produced 5,725-word nodes): **one null, one
+  line, ≤25 words**; it must **name a family from a closed list** — `capacity` · `chance` ·
+  `leakage` · `selection` · `normalization` · `instrumentation` — so the agent picks a family
+  and names the instance rather than composing something exotic; and **the PI approves it
+  before checks are written against it** (`crux approve-null <id>`), which is the gate
+  between naming the boring explanation and testing against it. The null *is* the bar
+  restated, and the leash already makes the bar the PI's call.
+
+  Editing an approved null **voids the approval** — a different null is a different claim
+  about what would be boring, and checks written against the old one discriminate against
+  nothing. New `crux hypothesize --null`; the null flows into `crux brief`, `snapshot` and
+  the cockpit pane. `ENGINE_VERSION` 2.4 → 2.5. Pre-15 hypotheses are never asked for one.
+
+- **`crux brief <hypothesis> --json`** (spec [`09`](.spec/09-specialized-agents.md), PRD 09.0).
+  The deterministic cold input every isolated agent receives: one hypothesis' claim, its
+  question, its ancestry, its pre-registered checks with kinds and combination rule, the
+  findings of **closed siblings**, linked wiki pages, and the *addresses* of available
+  metrics. Assembled from vault state; **the calling agent never authors a sentence of it.**
+
+  crux pre-registers verifiables, which defends against changing the bar *after* seeing
+  results — it says nothing about *who sets it*, and an agent that has spent an hour helping
+  argue for a hypothesis will pick a bar that clears. Zero context does not fix that alone,
+  because the parent writes the prompt: *"verify that JEPA improves imputation"* has already
+  said which way to lean. Same node, same brief, every time — which is what makes the
+  isolation testable rather than merely claimed.
+
+  Three exclusions, each for its own reason: **`## Problem Statement`** (spec 09 names it as
+  where the advocacy lives); **the hypothesis' own findings and its own `(found: …)` values**
+  (an agent writing checks must not see that hypothesis' results, or "pre-registration" is
+  being performed after the fact — sibling findings stay, those are the shared record); and
+  **metric values** (the brief says what *can* be measured, never what *was*).
+  `ENGINE_VERSION` 2.3 → 2.4. Read-only; works on pre-15 and pre-08 vaults unchanged.
+
 - **The taskhub's skill rules, and three spec amendments** (spec
   [`08`](.spec/08-taskhub.md), PRD 08.5). `SKILL.md` gains the rules the engine cannot check:
   what gets in ("would you be annoyed if this vanished next week?"), when status changes, the

@@ -1208,6 +1208,9 @@ function ideaDetail(n) {
   // verdict without the rule that produced it is exactly the reading PLATO's authors gave
   // themselves: "supported" with no account of what would have made it not.
   if (n.rule) badges += `<span class="badge" title="how the claim-directed checks add up, declared before the run">rule <span class="inline">${esc(n.rule + (n.rule_m ? " (m=" + n.rule_m + ")" : ""))}</span></span>`;
+  // the NULL is the bar restated: the boring explanation the checks had to discriminate
+  // against. Shown beside the verdict because a verdict is only as strong as what it ruled out.
+  if (n.null_approved === null && n.null) badges += `<span class="badge warn" title="This null has not been approved by the PI. Checks are written against an APPROVED null.">null unapproved</span>`;
   if (n.drift) badges += `<span class="badge drift" title="The verifiables, their kinds or the combination rule changed after the commitment was locked. The edit stands — research does discover a check was wrong — but the flag is permanent. git log -p the node for the diff.">\u26A0 drift</span>`;
   // A commitment hashed only at close was never a pre-registration: the checks and the
   // results became visible at the same moment. Say so rather than implying otherwise.
@@ -1222,7 +1225,14 @@ function ideaDetail(n) {
         const kn = v.kind === "outcome-neutral"
           ? `<span class="vkind" title="outcome-neutral: a control that must pass whatever the claim turns out to be. Its failure invalidates the run, not the claim.">control</span>`
           : "";
-        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}${kn}</span></li>`;
+        // the failure scenario is what earned this check its place: the world where IT
+        // fails and the others pass. `discriminates` marks the one aimed at the null.
+        const fi = v.fails_if
+          ? `<div class="vfails${v.discriminates ? " disc" : ""}" title="${v.discriminates
+              ? "This is the check that discriminates against the declared null."
+              : "The world in which this check fails."}">fails if: ${esc(v.fails_if)}</div>`
+          : "";
+        return `<li><span class="tick ${m[0]}">${m[1]}</span><span>${esc(v.text)}${kn}${fi}</span></li>`;
       }).join("") + `</ul>`
     : `<div class="body muted">none registered</div>`;
   const runs = n.run_links.length
@@ -1238,6 +1248,7 @@ function ideaDetail(n) {
     : "";
   return head("hypothesis", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` + openReportBtn +
     summaryLead(n) +
+    section("Null — the boring explanation the checks must rule out", bodyOr(n.null, "none declared")) +
     foldedSection("Problem", n.problem, "—") +
     rdSection(n) +
     section("Verifiables", vs) +
