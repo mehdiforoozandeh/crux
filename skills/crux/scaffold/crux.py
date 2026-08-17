@@ -117,6 +117,14 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
     s.add_argument("--problem", default="")
+    # the methodology slots (spec 13): declared BEFORE the run, and deliberately not `--metric`
+    # — that one is the result, written at close
+    s.add_argument("--measurement", default=None,
+                   help="what this hypothesis measures, and with what instrument — declared "
+                        "before the run. Not the result: that is `close -m`.")
+    s.add_argument("--replicates", default=None,
+                   help="the declared n / replication plan (\"5 seeds x 3 folds\", "
+                        "\"n = 12 per arm\")")
     s.add_argument("-n", "--neutral", action="append", default=[],
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
@@ -254,7 +262,18 @@ def main(argv=None):
                                           "one hypothesis' claim, question, pre-registered checks "
                                           "and the shared factual record — assembled from vault "
                                           "state, never authored by a calling agent"))
-    s.add_argument("id")
+    s.add_argument("id", nargs="?", default=None,
+                   help="a hypothesis (isolated) or any node (situate); omitted in situate "
+                        "mode means the whole programme")
+    s.add_argument("--mode", default=E.BRIEF_DEFAULT_MODE, metavar="MODE",
+                   help="isolated (default — the bias-proof cold input for an agent) | "
+                        "situate (subtree + ancestry + wiki + what is untested, for "
+                        "orienting the PI)")
+    s.add_argument("--lint-situate", action="store_true",
+                   help="read a composed situate answer on stdin and check it against the "
+                        "brevity bound (one ELI5 paragraph, three TL;DR paragraphs, "
+                        f"{E.SITUATE_BUDGET['total_words']} words, the anchor named). "
+                        "Exit 1 on any finding. Reads no vault and writes nothing.")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -451,7 +470,8 @@ def dispatch(a):
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
-                                          a.fails_if, _pair_discriminates(sys.argv))
+                                          a.fails_if, _pair_discriminates(sys.argv),
+                                          measurement=a.measurement, replicates=a.replicates)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
@@ -555,9 +575,37 @@ def dispatch(a):
             print("  (never written: the schema stamp, the combination rule, the lock, or the "
                   "content of a null — those are the PI's call, one node at a time.)")
     elif c == "brief":
-        b = E.brief(_vault_ro(None), a.id)
+        if a.lint_situate:
+            # deliberately vault-free: the lint is pure text, so an agent can run it from
+            # anywhere and "writes nothing" is true by construction rather than by promise
+            found = E.situate_lint(sys.stdin.read(), [a.id] if a.id else [])
+            if a.json:
+                _emit({"ok": not found,
+                       "findings": [{"id": i, "message": m} for i, m in found]})
+            else:
+                for i, m in found:
+                    print(f"  {i}: {m}")
+                print("situate: clean" if not found
+                      else f"situate: {len(found)} finding(s) — tighten and re-lint.")
+            return 1 if found else 0
+        b = E.brief(_vault_ro(None), a.id, mode=a.mode)
         if a.json:
             return _emit(b)
+        if b["mode"] == "situate":
+            an = b["anchor"]
+            print(f"{an['id']}  {an['title']}  —  status: {an['status']}")
+            for m in b["ancestry"]:
+                print(f"  under {m['id']}: {(m['answer_so_far'] or '—')[:70]}")
+            ut = b["untested"]
+            print(f"  subtree:  {len(b['subtree'])} direct child(ren)")
+            print(f"  untested: {len(ut['unrun_ideas'])} unrun · "
+                  f"{len(ut['open_checks'])} open check(s) · "
+                  f"{len(ut['open_questions'])} open question(s)")
+            if b["work"]["active"]:
+                print(f"  work:     {len(b['work']['open'])} open task(s) · "
+                      f"{len(b['work']['experiments'])} experiment(s)")
+            print("  (the paths forward are judgment — this verb never writes a sentence.)")
+            return 0
         print(f"{b['id']}  {b['claim']}")
         if b["question"]:
             print(f"  question: {b['question']}")

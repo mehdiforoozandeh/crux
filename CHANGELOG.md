@@ -8,6 +8,99 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux-design`, and the three-disease taxonomy in the skill** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.3). **Spec 13 is done.**
+
+  Spec 15 supplies the schema that makes a partial answer *detectable* after the run; nothing
+  applied it *before*. `crux-design` does, around one question — **is there any plausible
+  outcome of this run from which we would conclude nothing?** — answered by enumerating the
+  outcomes and writing the sentence each would support.
+
+  It checks all three causes of a partial answer, because a mixed result never announces which
+  one it has, and it **fixes only the third**: a compound claim goes to `crux-critic`, a check
+  that does not follow from the claim goes to `crux-verifiables`, and the run's ability to
+  discriminate is its own. Handoffs are **named, never invoked** — `crux-critic`'s cold input
+  is the drafted node and nothing else, so a caller passing it context would hand it the very
+  thing its isolation excludes. Its cold input is the **isolated** brief, and its belt reaches
+  `crux task list --ref <hid>` for what was already tried. Output is a proposal; there is no
+  write verb in its toolbelt.
+
+  `SKILL.md` gains the taxonomy — the three causes, their owners, and the question that makes
+  it operational — beside the separability rules spec 15 already froze, plus a regression lock
+  keeping that sentence byte-identical to the spec's copy. `.spec/09`'s roster gains the
+  `crux-design` row, so the rosters-agree assert stays green by being **amended, not relaxed**.
+  No engine change, no version bump.
+
+- **The methodology slots, and a visible `## Planned Intervention`** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.2). Spec 13 lists six design facts the engine
+  should own. Three shipped with spec 15 — a control is declared, at least one check is
+  outcome-neutral, a combination rule is named. Two did not exist in any form and now do:
+  **`measurement:`** (what is measured, and with what instrument) and **`replicates:`** (the
+  declared n). Both are optional frontmatter on a hypothesis, declared *before* the run.
+
+  `metric:` is deliberately not reused: that field is the headline **result** written at
+  `close`, so reusing it would let the result be written into the slot meant to constrain it.
+
+  Two properties carry the change, and both are negative. The slots are **not part of the
+  hash-locked commitment** — they describe how a run is carried out, not what would settle the
+  claim — so declaring or revising one cannot drift a locked node, and there is no
+  `SCHEMA_GENERATION` bump. And a missing slot is reported at the **`info` tier** (`design:`,
+  the fifth claimed namespace), never as a warning: `ok` turns on warnings, so warning here
+  would put every vault written before 3.1 into red over a field it never had. The nudge fires
+  only for `staged` and `running` hypotheses — the window where a design is both decided and
+  still changeable. A raw idea is not nagged; a closed one is not retro-flagged.
+
+  `snapshot` now publishes `planned`, `measurement` and `replicates`, and the cockpit renders
+  them. `## Planned Intervention` had been written by the template since v0.5 and read by
+  **nothing**, so spec 13's instruction to land the design there was putting it somewhere only
+  `cat` could see. `ENGINE_VERSION` 3.0 → 3.1; a pre-13 vault is byte-identical after the bump.
+
+- **The situate output bound, and the `crux-situate` agent** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.1). Spec 13 states situate's success
+  condition more firmly than anything else in the backlog — *brevity is the acceptance
+  criterion, not a preference* — and nothing could check it, because the output is chat prose
+  the engine never sees.
+
+  It can now: `crux brief <node> --lint-situate` reads a composed answer on **stdin** and
+  checks it against a bound in code — one ELI5 paragraph (≤ 60 words), exactly three TL;DR
+  paragraphs, 400 words total, and the anchor id named in the answer. Exit 1 on any finding,
+  `--json` for the list, `situate:<slug>` ids so a caller never matches on a message. The
+  word count reuses the node cap's own tokenizer, so situate's 400 words and a node's 400
+  words are the same 400 words and cannot drift apart. It reads no vault at all, which is why
+  "writes nothing" is true by construction.
+
+  The anchor rule is the one that is not about length: resolving to the *wrong* subtree is
+  situate's worst failure, and the damage is carried by **confident**, not by **wrong**. The
+  lint cannot check that the resolution was right — it can check that it was disclosed.
+
+  `agents/crux-situate/AGENT.md` ships alongside, following 09.4's convention, and `.spec/09`'s
+  roster gains its row: the roster and the shipped directory must always list the same names,
+  so the assert that enforces that was **amended, not relaxed**. `ENGINE_VERSION` 2.9 → 3.0 —
+  the major digit is a counter (2.x ended at 2.9, as 1.x ended at 1.9), not a compatibility
+  era; nothing about a vault changed.
+
+- **`crux brief --mode=situate`** — the orientation payload (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.0). *"I have been away. Where are we on
+  q20?"* is five questions, and four of them are computable: what this is, where we are, what
+  is known, and — the one the engine owns outright — **what is yet to be tested**. The fifth,
+  the paths forward, is judgment and stays with the agent.
+
+  So `crux brief` gains a second payload rather than crux gaining a second verb: subtree
+  (summary-shaped, full depth, findings only on closed hypotheses), the ancestry chain with
+  each ancestor's answer-so-far, linked wiki pages, the approved synthesis, unrun ideas and
+  unticked checks, **inbound citations** from outside the subtree as ids and titles, and the
+  taskhub scoped to the subtree — because post-spec-08 a queued run is the difference between
+  a claim nobody has tried and one that is executing right now.
+
+  **The mode is a safety boundary, not a convenience.** Spec 09's payload excludes
+  `## Problem Statement` precisely because that is where the advocacy lives, and situate needs
+  the opposite. So `isolated` stays the default — a forgotten flag degrades to over-isolation
+  rather than to leaked advocacy — and an unrecognised mode is **refused**, because any
+  "unknown means the default" rule is one edit away from "unknown means the wider payload".
+  Omitting the node in situate mode orients over the whole programme. Pure read: the verb
+  writes nothing in either mode, and the payload is byte-identical across runs and a function
+  of vault state alone. `ENGINE_VERSION` 2.8 → 2.9.
+
 - **`crux glossary accept | decline | list`** — the write path, and the skill's vocabulary
   rule (spec [`14`](.spec/14-glossary.md), PRD 14.3). **Spec 14 is done.**
 

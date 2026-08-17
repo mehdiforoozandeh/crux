@@ -20,7 +20,7 @@ being built — do not implement)
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
 | 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☑ |
 | 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☐ |
-| 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☐ |
+| 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☑ |
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☑ |
 | 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ◐ |
 
@@ -31,8 +31,11 @@ the same runner, budget cap and autonomy envelope. **Both are deferred** — see
 
 ## What to build, and what not to
 
-**Eight specs are `☐ todo`: 07, 08, 09, 10, 12, 13, 14, 15.** They are the work.
-(11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill.)
+**Three specs are `☐ todo`: 08, 10, 12** (15 is `◐ in progress`). They are the work.
+(11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
+2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
+slots, and the `crux-situate` / `crux-design` agents. Statuses above are the authority; this
+paragraph follows them.)
 
 **Do not implement 05.** ERA and the outer autoresearch loop are `⏸ deferred` — designed, kept,
 deliberately unbuilt. Unattended loops are the riskiest thing crux could add, and they must not
@@ -40,7 +43,7 @@ be built before the machinery that makes them safe exists: [15](15-evidence-sema
 what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
 what stops it grading its own homework.
 
-01, 02, 03, 06, 07, 11 and 12 are `☑ done` and are reference material, not work.
+01, 02, 03, 06, 07, 09, 11, 13 and 14 are `☑ done` and are reference material, not work.
 
 ## Dependency order
 

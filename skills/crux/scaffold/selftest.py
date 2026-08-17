@@ -5328,8 +5328,12 @@ def run_agent_roster():
     print("\n# specialized agents — the roster (spec 09, PRD 09.4)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     adir = os.path.join(repo, "agents")
+    # AMENDED by spec 13, not replaced: 09.4's assert exists to stop a roster that describes
+    # agents nobody shipped and a directory of agents nobody described. 13 is the first spec
+    # to add to the directory, so the list grows and `.spec/09`'s roster grows with it.
     expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
-                "crux-close", "crux-audit", "crux-tests", "crux-glossary"]
+                "crux-close", "crux-audit", "crux-tests", "crux-glossary",
+                "crux-situate", "crux-design"]
 
     defs = {}
     for name in expected:
@@ -5412,6 +5416,538 @@ def run_agent_roster():
                        if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
     check(f"agents: no agent definition pins an engine version (found: {versioned})",
           not versioned)
+
+
+def _situate_vault():
+    """A vault shaped like a programme someone has been away from: two question levels, a
+    closed hypothesis with findings, an unrun one, one in flight, a linked wiki page, an
+    inbound citation from outside the subtree, and a taskhub."""
+    root = tempfile.mkdtemp(prefix="crux_situate_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Situate", root, goal="Improve the thing.")
+    qtop, _ = E.cmd_ask(root, "the top question")
+    qmid, _ = E.cmd_ask(root, "the mid question", parent=qtop)
+    qout, _ = E.cmd_ask(root, "an unrelated question")
+    SENTINEL = "ADVOCACY-LIVES-HERE-AND-SITUATE-MAY-SEE-IT"
+    hdone, _, _ = E.cmd_hypothesize(root, "the settled claim", parent=qmid, rule="all",
+                                    problem=SENTINEL, verifiables=["alpha check"],
+                                    neutral=["the control"])
+    hidea, _, _ = E.cmd_hypothesize(root, "the untried claim", parent=qmid, rule="all",
+                                    verifiables=["gamma check"], neutral=["the control"])
+    hrun, _, _ = E.cmd_hypothesize(root, "the claim in flight", parent=qmid, rule="all",
+                                   verifiables=["delta check"], neutral=["the control"])
+    for h in (hdone, hrun):
+        declare_null(root, h)
+    edit(node_path(root, hdone), "- [ ] alpha check", "- [x] alpha check")
+    edit(node_path(root, hdone), "- [ ] [outcome-neutral] the control",
+                                 "- [x] [outcome-neutral] the control")
+    E.cmd_test(root, hdone, to="running")
+    E.cmd_close(root, hdone, findings="the settled claim held at the declared threshold")
+    E.cmd_test(root, hrun, to="running")
+    # the parent's answer-so-far: "where we are" usually needs it
+    edit(node_path(root, qtop), "_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_",
+         "So far the direction looks right, on one settled claim.")
+    # a wiki page linked from the ANCHOR'S ANCESTOR, so the ancestor walk is what finds it
+    E.ensure_wiki(root)
+    wiki_page(root, "sit-bg", "Situate background", "why orientation is hard")
+    edit(node_path(root, qtop), "the top question\n\n## Protocol",
+         "the top question — see [[sit-bg]].\n\n## Protocol")
+    # an INBOUND citation: a node outside the subtree that links into it
+    mid_base = E.Vault(root).get(qmid).basename
+    edit(node_path(root, qout), "an unrelated question\n\n## Protocol",
+         f"an unrelated question, which waits on [[{mid_base}]].\n\n## Protocol")
+    E.refresh(root)
+    return root, dict(qtop=qtop, qmid=qmid, qout=qout, hdone=hdone, hidea=hidea, hrun=hrun,
+                      sentinel=SENTINEL)
+
+
+def run_situate():
+    """Spec 13 PRD 13.0 — `crux brief --mode=situate`, the orientation payload.
+
+    Spec 09's brief is built around a DELIBERATE EXCLUSION: no problem statement, no subtree,
+    no findings, because its consumer is an agent that must not be told which way to lean.
+    Situate needs the opposite of every one of those — so the mode is a safety boundary, not
+    a convenience, and the default has to fail toward over-isolation.
+
+    The engine assembles; the agent composes. Everything asserted here is vault state or an
+    engine-computed count: crux authors no sentence of it."""
+    print("\n# situate — the orientation payload (spec 13, PRD 13.0)")
+    root, ids = _situate_vault()
+    qmid, hdone, hidea, hrun = ids["qmid"], ids["hdone"], ids["hidea"], ids["hrun"]
+
+    s = E.brief(root, qmid, mode="situate")
+    blob = json.dumps(s, sort_keys=True)
+
+    # ---- the mode is a boundary, and the default falls the safe way
+    check("situate: every payload names its own mode",
+          s["mode"] == "situate" and E.brief(root, hdone)["mode"] == "isolated")
+    check("situate: the default mode is isolated",
+          json.dumps(E.brief(root, hdone), sort_keys=True)
+          == json.dumps(E.brief(root, hdone, mode="isolated"), sort_keys=True))
+    check("situate: the default mode never carries the advocacy channel",
+          ids["sentinel"] not in json.dumps(E.brief(root, hdone), sort_keys=True)
+          and ids["sentinel"] not in json.dumps(E.brief(root, hdone, mode="isolated"),
+                                                sort_keys=True))
+    check("situate: situate mode does carry it — that is the whole point of the split",
+          ids["sentinel"] in E.brief(root, hdone, mode="situate")["anchor"]["problem"])
+    check("situate: a descendant's problem statement stays out — the payload summarises",
+          ids["sentinel"] not in blob)
+    expect_error("situate: an unknown mode is refused, never silently widened",
+                 lambda: E.brief(root, qmid, mode="situated"))
+    expect_error("situate: mode matching is exact, not case-folded",
+                 lambda: E.brief(root, qmid, mode="Situate"))
+
+    # ---- the four blocks the spec names
+    kids = [c["id"] for c in s["subtree"]]
+    check("situate: the subtree reaches the payload nested, in tree order",
+          kids == [hdone, hidea, hrun]
+          and all("children" in c for c in s["subtree"]))
+    check("situate: the ancestry chain carries each answer-so-far",
+          [a["id"] for a in s["ancestry"]] == ["root", ids["qtop"]]
+          and s["ancestry"][0]["answer_so_far"] == "Improve the thing."
+          and "direction looks right" in s["ancestry"][1]["answer_so_far"])
+    check("situate: linked wiki pages are indexed from the anchor and its ancestors",
+          [w["slug"] for w in s["wiki"]] == ["sit-bg"])
+    # D3, extended to the third caller: situate uses the SAME walks as `brief` and
+    # `deck_payload` rather than a third copy of the cycle guard. Asserted the way spec 09's
+    # audit fix asserts it, so a future edit that re-forks them fails here too.
+    vv = E.Vault(root)
+    check("situate: the ancestry and wiki walks are the shared ones, not a third copy",
+          [a["id"] for a in s["ancestry"]]
+          == [m.id for m in E.ancestor_chain(vv, vv.get(qmid))]
+          and s["wiki"] == E.wiki_refs(root, [vv.get(qmid)["body"]]
+                                       + [m["body"] for m in
+                                          E.ancestor_chain(vv, vv.get(qmid))]))
+    check("situate: findings travel only with a closed hypothesis",
+          s["subtree"][0]["findings"] and s["subtree"][1]["findings"] is None
+          and s["subtree"][2]["findings"] is None)
+
+    # ---- what is yet to be tested is COMPUTED. This is the row the spec marks "engine".
+    ut = s["untested"]
+    check("situate: what is yet to be tested is computed, not narrated",
+          [x["id"] for x in ut["unrun_ideas"]] == [hidea]
+          and {c["hid"] for c in ut["open_checks"]} == {hidea, hrun}
+          and ut["open_questions"] == [qmid])
+    check("situate: an open check carries its kind, so a control is not read as a claim",
+          {c["kind"] for c in ut["open_checks"]} == {"hypothesis", "outcome-neutral"})
+
+    # ---- inbound citations: high value, bounded shape
+    check("situate: inbound citations are ids and titles, never prose",
+          [x["id"] for x in s["inbound"]] == [ids["qout"]]
+          and set(s["inbound"][0]) == {"id", "type", "title"})
+
+    # ---- determinism, which is what keeps the payload assertable at all
+    check("situate: the payload is byte-identical across runs",
+          json.dumps(E.brief(root, qmid, mode="situate"), sort_keys=True) == blob)
+    other = tempfile.mkdtemp(prefix="crux_situate2_")
+    shutil.rmtree(other); shutil.copytree(root, other)
+    check("situate: the payload is a pure function of vault state",
+          json.dumps(E.brief(other, qmid, mode="situate"), sort_keys=True) == blob)
+    shutil.rmtree(other, ignore_errors=True)
+
+    # ---- anchors: a hypothesis is legal, no argument means the whole programme
+    ph = E.brief(root, hdone, mode="situate")
+    check("situate: a hypothesis anchor is legal",
+          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and ph["synthesis"] is None
+          and ph["anchor"]["findings"])
+    whole = E.brief(root, None, mode="situate")
+    check("situate: no argument means the whole programme",
+          whole["anchor"]["id"] == "root"
+          and [c["id"] for c in whole["subtree"]] == [ids["qtop"], ids["qout"]])
+    expect_error("situate: a synthesis anchor is refused",
+                 lambda: E.brief(root, E.cmd_synthesize(root, "x", [qmid])[0], mode="situate"))
+
+    # ---- only an APPROVED synthesis is an answer
+    syn, _ = E.cmd_synthesize(root, "what the mid question settled", [qmid])
+    check("situate: an unapproved synthesis stays out of the payload",
+          E.brief(root, qmid, mode="situate")["synthesis"] is None)
+    E.cmd_approve(root, syn)
+    check("situate: only an approved synthesis reaches the payload",
+          E.brief(root, qmid, mode="situate")["synthesis"]["id"] == syn)
+
+    # ---- the taskhub: post-08, a queued run is the difference between untried and in flight
+    check("situate: the work block is present-and-inert without a taskhub",
+          E.brief(root, qmid, mode="situate")["work"]
+          == {"active": False, "open": [], "experiments": []})
+    E.ensure_tasks(root)
+    t1 = E.cmd_task_add(root, "queue the untried claim", "implementation", refs=[hidea])[0]
+    t2 = E.cmd_task_add(root, "the run against the claim in flight", "implementation",
+                        refs=[hrun], hypothesis_refs=[(hrun, "inconclusive")])[0]
+    E.cmd_task_add(root, "unrelated chore", "admin")
+    w = E.brief(root, qmid, mode="situate")["work"]
+    check("situate: a queued run is reported, so untried is not confused with idle",
+          w["active"] and [x["id"] for x in w["open"]] == [t1, t2])
+    check("situate: an experiment is reported beside the hypothesis it serves",
+          [x["id"] for x in w["experiments"]] == [t2]
+          and w["experiments"][0]["hypothesis_refs"]
+              == [{"id": hrun, "conclusion": "inconclusive"}])
+    check("situate: the work block scopes to the subtree, not the whole vault",
+          all(x["title"] != "unrelated chore" for x in w["open"]))
+
+    # ---- the CLI
+    argv = [sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+            "--mode=situate", "--json"]
+    r1 = subprocess.run(argv, capture_output=True, cwd=root)
+    r2 = subprocess.run(argv, capture_output=True, cwd=root)
+    check("situate: the CLI emits the payload and nothing else, byte-identically",
+          r1.returncode == 0 and r1.stdout == r2.stdout
+          and json.loads(r1.stdout.decode("utf-8"))["mode"] == "situate")
+    rn = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief",
+                         "--mode=situate", "--json"], capture_output=True, cwd=root)
+    check("situate: the CLI takes no node and orients over the whole programme",
+          rn.returncode == 0 and json.loads(rn.stdout.decode("utf-8"))["anchor"]["id"] == "root")
+    rb = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+                         "--mode=nope", "--json"], capture_output=True, cwd=root)
+    check("situate: the CLI refuses an unknown mode — exit 1, silent stdout",
+          rb.returncode == 1 and rb.stdout.strip() == b"")
+    rh = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", qmid,
+                         "--mode=situate"], capture_output=True, cwd=root,
+                        encoding="utf-8", errors="replace")
+    check("situate: a bare situate prints a human summary and never mixes the two",
+          rh.returncode == 0 and "the mid question" in rh.stdout
+          and not rh.stdout.lstrip().startswith("{"))
+
+    check("situate: ENGINE_VERSION at or past 2.9", at_least_version("2.9"))
+
+    # ---- READ-ONLY. The whole verb writes nothing, in either mode.
+    before = _tree_hashes(root)
+    E.brief(root, qmid, mode="situate"); E.brief(root, hdone)
+    check("smig: brief writes nothing, in either mode", _tree_hashes(root) == before)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the boundary, and a vault with none of the side layers
+    old, oq, oh = pre15_vault("crux_smig13_")
+    os_ = E.brief(old, oq, mode="situate")
+    check("smig: situate mode works on a pre-15 node",
+          os_["subtree"][0]["verdict"] is None and os_["subtree"][0]["schema"] == 0
+          and os_["anchor"]["schema"] == 0)
+    check("smig: situate mode works on a vault with no side layers",
+          os_["wiki"] == [] and os_["work"] == {"active": False, "open": [], "experiments": []}
+          and os_["inbound"] == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def run_situate_agent():
+    """Spec 13 PRD 13.1 — the brevity bound, and the `crux-situate` agent.
+
+    Spec 13 states situate's success condition more firmly than anything else in the backlog:
+    "brevity is situate's acceptance criterion, not a preference", and "a verbose /situate has
+    failed at its only job". A criterion nothing can check is a preference with a stern tone —
+    and the spec's own evidence is that instructions will not hold it, since SKILL.md has said
+    "keep the science explicit" since v0.5 and the vault it governs held a 5,725-word node.
+
+    So the bound is a LINT the agent runs on its own draft before it speaks: 09's rule 1, the
+    deterministic check as the goalpost. Word counting reuses the node cap's own tokenizer, so
+    situate's 400 words and a node's 400 words can never become two different numbers."""
+    print("\n# situate — the brevity bound and the agent (spec 13, PRD 13.1)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+    def draft(eli5_words=20, paras=3, para_words=40, anchor="q20"):
+        head = f"{anchor} — " + " ".join(["word"] * eli5_words)
+        body = "\n\n".join(" ".join(["word"] * para_words) for _ in range(paras))
+        return head + "\n\n" + body
+
+    good = draft()
+    check("situate: a compliant draft passes the lint", E.situate_lint(good, ["q20"]) == [])
+    check("situate: the budget is the node prose cap — one number, not two",
+          E.SITUATE_BUDGET["total_words"] == E.PROSE_CAP
+          and E.SITUATE_BUDGET["tldr_paragraphs"] == 3)
+
+    def ids_of(text, anchors=()):
+        return [i for i, _m in E.situate_lint(text, anchors)]
+
+    check("situate: an over-long draft fails the lint",
+          ids_of(draft(para_words=200)) == ["situate:too-long"])
+    check("situate: too few TL;DR paragraphs fail the lint",
+          "situate:tldr-shape" in ids_of(draft(paras=2)))
+    check("situate: too many TL;DR paragraphs fail the lint",
+          "situate:tldr-shape" in ids_of(draft(paras=4)))
+    check("situate: an over-long ELI5 fails the lint",
+          "situate:eli5-shape" in ids_of(draft(eli5_words=90)))
+    check("situate: an empty draft fails rather than passing vacuously",
+          ids_of("   \n  ") == ["situate:empty"])
+    check("situate: an unanchored draft fails — a wrong subtree must be visible, not buried",
+          ids_of(draft(anchor="q99"), ["q20"]) == ["situate:unanchored"])
+    check("situate: with no anchor named, the anchor rule does not fire",
+          ids_of(draft(anchor="q99")) == [])
+    check("situate: lint findings are namespaced ids, never matched on their message",
+          all(i.startswith("situate:") for i in ids_of(draft(paras=9, para_words=90), ["q20"])))
+    # the tokenizer is the same one, proven by behaviour rather than by reading the source:
+    # a placeholder line is free in a node's budget, so it is free here too
+    padded = draft(para_words=95) + "\n\n_(a template placeholder, which is guidance)_"
+    check("situate: the lint counts words with the engine's own prose counter",
+          len(E._prose_tokens(padded)) == len(E._prose_tokens(draft(para_words=95)))
+          and "situate:too-long" not in ids_of(draft(para_words=95)))
+    check("situate: the lint is pure — no vault, no filesystem",
+          E.situate_lint(good, ["q20"]) == E.situate_lint(good, ["q20"]))
+
+    # ---- the CLI: the agent has to be able to actually run it
+    root = tempfile.mkdtemp(prefix="crux_sitlint_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Lint", root)
+    before = _tree_hashes(root)
+    argv = [sys.executable, os.path.join(HERE, "crux.py"), "brief", "q20", "--lint-situate"]
+    rg = subprocess.run(argv, input=good, capture_output=True, cwd=root,
+                        encoding="utf-8", errors="replace")
+    rb = subprocess.run(argv + ["--json"], input=draft(para_words=200, anchor="q99"),
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("situate: the CLI lint reads stdin and exits 0 on a clean draft", rg.returncode == 0)
+    check("situate: the CLI lint exits 1 and reports every finding, not just the first",
+          rb.returncode == 1
+          and {f["id"] for f in json.loads(rb.stdout)["findings"]}
+              == {"situate:too-long", "situate:unanchored"}
+          and json.loads(rb.stdout)["ok"] is False)
+    check("situate: linting writes nothing", _tree_hashes(root) == before)
+    shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the agent definition (09.4's convention; the roster loop lints the rest)
+    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-situate", "AGENT.md")))
+    check("agents: crux-situate reads the situate brief, not the isolated one",
+          "--mode=situate" in str(fm.get("cold_input")))
+    check("agents: crux-situate cannot write — no write verb anywhere in its belt",
+          not any(w in str(fm.get("toolbelt")) for w in
+                  ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
+                   "crux task add", "crux glossary accept", "crux rd", "crux ingest")))
+    check("agents: crux-situate declares the ephemeral rule, which is the PI's ruling",
+          "ephemeral" in (str(fm.get("excludes")) + body).lower())
+    check("agents: crux-situate's body carries the lint step, not just the instruction",
+          "--lint-situate" in body)
+    check("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
+          "ELI5" in body and "TL;DR" in body)
+    spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
+    check("agents: spec 09's roster records crux-situate as spec 13's addition",
+          "crux-situate" in spec and "13-situate-and-design.md" in spec)
+
+    check("situate: ENGINE_VERSION at or past 3.0", at_least_version("3.0"))
+
+
+def run_methodology():
+    """Spec 13 PRD 13.2 — the methodology slots, and a visible `## Planned Intervention`.
+
+    Spec 13 splits experiment design into what code can check and what needs judgment, and
+    lists six deterministic slots. Three shipped with spec 15 (a control is declared, >=1
+    outcome-neutral check, a combination rule). Two did not exist in any form: *the
+    measurement is named* and *n / replicates stated*. (The sixth, the separability model, is
+    PARKED — declaring it would settle spec 15's own open question D10 by side effect.)
+
+    The near-miss is `metric:`, and it is a trap: that field is the headline RESULT written at
+    `close`, i.e. the exact opposite of a declaration made before the run.
+
+    Two properties carry this PRD, and both are negative:
+      - the slots are NOT part of the hash-locked commitment, so adding them cannot drift a
+        single locked node (spec 09's D1 measured what happens when you get this wrong);
+      - a missing slot is INFO, never a warning — `ok` is `not problems and not warnings`, so
+        a warning would put every existing vault into red over a field it never had."""
+    print("\n# design — the methodology slots (spec 13, PRD 13.2)")
+    root = tempfile.mkdtemp(prefix="crux_design_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Design", root)
+    q1, _ = E.cmd_ask(root, "does the design hold up?")
+    h1, _, _ = E.cmd_hypothesize(root, "the declared claim", parent=q1, rule="all",
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 measurement="imputation Spearman on held-out chr21",
+                                 replicates="5 seeds x 3 folds; n = 15 per arm")
+    h2, _, _ = E.cmd_hypothesize(root, "the undeclared claim", parent=q1, rule="all",
+                                 verifiables=["beta"], neutral=["the control"])
+    hidea, _, _ = E.cmd_hypothesize(root, "a raw idea nobody has staged", parent=q1,
+                                    rule="all", verifiables=["gamma"], neutral=["the control"])
+    v = E.Vault(root)
+    check("design: the methodology slots parse, and absence is None",
+          E.node_measurement(v.get(h1)) == "imputation Spearman on held-out chr21"
+          and E.node_replicates(v.get(h1)).startswith("5 seeds")
+          and E.node_measurement(v.get(h2)) is None
+          and E.node_replicates(v.get(h2)) is None)
+    check("design: the declaration is frontmatter, beside rule and metric, not prose",
+          "measurement: imputation Spearman" in read(node_path(root, h1)))
+    check("design: the planned measurement is not the recorded metric",
+          E.Vault(root).get(h1)["fm"].get("metric") in (None, ""))
+
+    # ---- the info tier: a nudge in the window where the design is still changeable
+    for h in (h1, h2):
+        declare_null(root, h)
+    E.cmd_test(root, h2, to="staged")
+    rep = E.validation_report(root)
+    ids = {i["id"]: i for i in rep["info"]}
+    check("design: a staged hypothesis with no measurement is reported as info",
+          "design:measurement" in ids and ids["design:measurement"]["count"] == 1
+          and "design:replicates" in ids)
+    check("design: a thin design is never a problem and never a warning",
+          rep["problems"] == [] and rep["warnings"] == [])
+    check("design: info does not affect ok", rep["ok"] is True)
+    check("design: every design info id is namespaced",
+          "design" in E.INFO_NAMESPACES
+          and all(i["id"].split(":")[0] in E.INFO_NAMESPACES for i in rep["info"]))
+    check("design: design info respects the --check filter",
+          any(i["id"].startswith("design:")
+              for i in E.validation_report(root, ["tree"])["info"])
+          and not any(i["id"].startswith("design:")
+                      for i in E.validation_report(root, ["wiki"])["info"]))
+    check("design: a raw idea nobody has staged is not nagged",
+          ids["design:measurement"]["count"] == 1 and hidea not in ids["design:measurement"]["message"])
+    check("design: a fully declared hypothesis contributes nothing to the tier",
+          h1 not in ids["design:measurement"]["message"])
+
+    # ---- THE NEGATIVE PROPERTY: the slots are not part of the commitment
+    E.cmd_test(root, h1, to="running")
+    locked = E.Vault(root).get(h1)
+    lock_before, mat_before = locked["fm"].get(E.LOCK_FIELD), E.lock_material(locked)
+    edit(node_path(root, h1), "measurement: imputation Spearman on held-out chr21",
+         "measurement: a completely different instrument")
+    edit(node_path(root, h1), "replicates: 5 seeds x 3 folds; n = 15 per arm",
+         "replicates: 40 seeds")
+    after = E.Vault(root).get(h1)
+    check("design: the methodology slots are not part of the commitment",
+          E.lock_material(after) == mat_before and E.lock_hash(after) == lock_before
+          and E.lock_drift(after) is False)
+    check("design: and validate still sees no drift on that node",
+          not [m for i, m in E.cmd_validate(root) if "DRIFT" in m])
+
+    # ---- publication: the section that has been written by the template and read by nobody
+    snap = E.snapshot(root)
+    edit(node_path(root, h1), "_(how this hypothesis will be tested)_",
+         "Two arms, randomised by seed, evaluated on the held-out chromosome.")
+    snap = E.snapshot(root)
+    node = snap["nodes"][h1]
+    check("design: snapshot publishes the planned intervention",
+          "randomised by seed" in node["planned"])
+    check("design: snapshot publishes both slots beside it",
+          node["measurement"] == "a completely different instrument"
+          and node["replicates"] == "40 seeds")
+    check("design: a node that declares nothing publishes None, not an empty string",
+          snap["nodes"][h2]["measurement"] is None and snap["nodes"][h2]["replicates"] is None)
+
+    # ---- the slots are free: they are frontmatter, so the prose cap cannot punish declaring
+    words = E.prose_words(E.Vault(root).get(h2)["body"], "idea")
+    edit(node_path(root, h2), "measurement:", "measurement: " + " ".join(["word"] * 60))
+    check("design: declaring a design does not consume the prose budget",
+          E.prose_words(E.Vault(root).get(h2)["body"], "idea") == words)
+
+    # ---- and they never touch the verdict
+    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
+    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    E.cmd_close(root, h1)
+    E.cmd_test(root, h2, to="running")
+    edit(node_path(root, h2), "- [ ] beta", "- [x] beta")
+    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
+                              "- [x] [outcome-neutral] the control")
+    E.cmd_close(root, h2)
+    vv = E.Vault(root)
+    check("design: the slots never touch the verdict",
+          vv.get(h1)["fm"]["verdict"] == vv.get(h2)["fm"]["verdict"] == "supported")
+    check("design: a closed hypothesis is not retro-flagged — its design is history",
+          not [i for i in E.validation_report(root)["info"]
+               if i["id"].startswith("design:") and i["count"] > 1])
+
+    # ---- the CLI
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
+                        "from the CLI", "-p", q1, "-v", "delta", "-n", "the control",
+                        "--rule", "all", "--measurement", "a named instrument",
+                        "--replicates", "3 seeds", "--json"],
+                       capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    check("design: the CLI writes both slots",
+          r.returncode == 0
+          and E.node_measurement(E.Vault(root).get(json.loads(r.stdout)["id"]))
+              == "a named instrument")
+    check("design: ENGINE_VERSION at or past 3.1", at_least_version("3.1"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def run_methodology_migration():
+    """The pre-13 boundary. Two optional frontmatter keys, absent everywhere in an existing
+    vault, and their absence must stay legal forever: nothing retro-writes them, nothing
+    re-verdicts, nothing goes red."""
+    print("\n# design — the pre-13 boundary (spec 13, PRD 13.2)")
+    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    dst = tempfile.mkdtemp(prefix="crux_dmig_")
+    shutil.rmtree(dst); shutil.copytree(src, dst)
+
+    before, vbefore, sbefore = fingerprint(dst)
+    E.check_and_stamp_version(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst)
+    after, vafter, safter = fingerprint(dst)
+    check("dmig: a pre-13 vault is byte-identical after the bump", before == after)
+    check("dmig: no recorded verdict moved", vbefore == vafter and sbefore == safter)
+    rep = E.validation_report(dst)
+    check("dmig: a pre-13 vault reports no new problems and no new warnings",
+          rep["problems"] == [] and rep["warnings"] == [] and rep["ok"] is True)
+    check("dmig: no command retro-writes a methodology slot",
+          all(x["fm"].get("measurement") in (None, "") for x in E.Vault(dst).nodes.values()))
+    check("dmig: drift re-stamps to the current ENGINE_VERSION",
+          E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def run_design_agent():
+    """Spec 13 PRD 13.3 — `crux-design`, and the three-disease taxonomy into the skill.
+
+    Spec 15 supplies the schema that makes a partial answer DETECTABLE after the run. Nothing
+    applied it BEFORE. This agent does, around one question — *is there any plausible outcome
+    of this run from which we would conclude nothing?*
+
+    It checks all three causes, because a partial answer does not announce which one it has,
+    and it FIXES only the third: (a) a compound claim is `crux-critic`'s, (b) a non-entailed
+    check is `crux-verifiables`'. Absorbing either would violate 09's one-job rule and rebuild
+    the bias problem those agents exist to solve.
+
+    Doc-only: no engine change, no version bump."""
+    print("\n# design — the crux-design agent and the taxonomy (spec 13, PRD 13.3)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-design", "AGENT.md")))
+
+    check("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
+          "crux brief" in str(fm.get("cold_input"))
+          and "--mode=situate" not in str(fm.get("cold_input")))
+    check("agents: crux-design's excludes name the advocacy channel",
+          "Problem Statement" in str(fm.get("excludes")))
+    check("agents: crux-design cannot write — it proposes, the PI applies",
+          not any(w in str(fm.get("toolbelt")) for w in
+                  ("crux close", "crux answer", "crux approve", "crux pursue",
+                   "crux task accept", "crux hypothesize")))
+    check("agents: crux-design's belt reaches the taskhub for what was already tried",
+          "crux task list" in str(fm.get("toolbelt")))
+    check("agents: crux-design states the central question verbatim",
+          "Is there any plausible outcome of this run from which we would conclude nothing?"
+          in body)
+    check("agents: crux-design names all three causes and both handoff targets",
+          all(x in body for x in ("compound claim", "crux-critic", "crux-verifiables"))
+          and "does not follow from the claim" in body)
+    check("agents: crux-design hands off by NAMING, never by invoking",
+          "never invoke" in body.lower() or "does not invoke" in body.lower())
+    check("agents: crux-design's output is a proposal, never a vault write",
+          "proposal" in body.lower() and "## Output" in body)
+    check("agents: crux-design fills the slots spec 13 gave the engine",
+          E.MEASUREMENT_FIELD in body and E.REPLICATES_FIELD in body)
+
+    # ---- the taxonomy, into the skill (the rulebook sentence shipped with spec 15's 15.5)
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    check("skill: the three-disease taxonomy is in SKILL.md, with its owners",
+          all(x in skill for x in ("compound claim", "crux-critic", "crux-verifiables",
+                                   "crux-design"))
+          and "could not discriminate" in skill)
+    check("skill: the taxonomy states the question that makes it operational",
+          "conclude nothing" in skill)
+    check("skill: the separability rulebook sentence spec 15 froze is still there",
+          "anything less means you ran one experiment with many labels, not many"
+          in re.sub(r"\s+", " ", skill.replace("**", "")).lower())
+    check("skill: SKILL.md tells the PI where a declared design lives",
+          "measurement:" in skill and "replicates:" in skill)
+
+    # ---- the spec, flipped, with the roster amendment recorded where a reader will find it
+    spec13 = read(os.path.join(repo, ".spec", "13-situate-and-design.md"))
+    check("agents: spec 13 is flipped to done", "**Status:** ☑" in spec13)
+    check("agents: spec 13's work items are ticked", spec13.count("- ☑ ") >= 7)
+    check("agents: spec 13 records the roster amendment it owes spec 09",
+          "09-specialized-agents.md" in spec13 and "roster" in spec13.lower()
+          and "crux-design" in spec13)
+    check("agents: spec 13 records what it PARKED rather than quietly dropping it",
+          "PARKED" in spec13 and "separability" in spec13.lower())
+    spec09 = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
+    check("agents: spec 09's roster carries both of spec 13's agents",
+          "crux-situate" in spec09 and "crux-design" in spec09)
+    readme = read(os.path.join(repo, ".spec", "README.md"))
+    check("agents: the backlog index shows 13 done",
+          re.search(r"\|\s*13\s*\|[^|]*\|[^|]*\|\s*☑\s*\|", readme) is not None)
 
 
 def _probe_vault():
@@ -6218,6 +6754,11 @@ def main():
     run_failure_scenarios()
     run_migrate()
     run_agent_roster()
+    run_situate()
+    run_situate_agent()
+    run_methodology()
+    run_methodology_migration()
+    run_design_agent()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

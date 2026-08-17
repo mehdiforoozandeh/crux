@@ -1,6 +1,6 @@
 # Spec 13 — Situate and design: two agents for reading and planning
 
-**Label:** `agents` · **Status:** ☐ todo
+**Label:** `agents` · **Status:** ☑ done (engine 3.1 — PRDs 13.0–13.3)
 **Depends on:** [09 specialized agents](09-specialized-agents.md) (`crux brief`),
 [15 evidence semantics](15-evidence-semantics.md) (schema the design agent checks against)
 
@@ -211,14 +211,45 @@ yet.
 
 ## Work items
 
-- ☐ `crux brief <node…> --json --mode=isolated|situate`; ancestry + linked wiki in situate mode
-- ☐ `selftest.py` assert: `isolated` output never contains `## Problem Statement`
-- ☐ `crux-situate` agent definition — resolve ids, call brief, compose; ephemeral output
-- ☐ Brevity constraint on situate output, written as a checkable bound
-- ☐ `crux-design` agent definition — three detectors, handoffs, fills the
+- ☑ `crux brief <node…> --json --mode=isolated|situate`; ancestry + linked wiki in situate mode
+      *(one anchor, not a list — the union of two subtrees is not a subtree; no anchor means
+      the project root, i.e. the whole programme)*
+- ☑ `selftest.py` assert: `isolated` output never contains `## Problem Statement`
+      *(strengthened into a mode guard: the default path, `--mode=isolated`, and a refused
+      unknown mode all exclude the sentinel; `--mode=situate` carries it)*
+- ☑ `crux-situate` agent definition — resolve ids, call brief, compose; ephemeral output
+- ☑ Brevity constraint on situate output, written as a checkable bound
+      *(`situate_lint` + `crux brief --lint-situate`: one ELI5 paragraph ≤ 60 words, exactly
+      three TL;DR paragraphs, 400 words total, and the anchor named)*
+- ☑ `crux-design` agent definition — three detectors, handoffs, fills the
   [15](15-evidence-semantics.md) slots
-- ☐ The three-disease taxonomy and the separability rulebook sentence into the crux skill
-- ☐ `## Planned Intervention` discipline + structured methodology fields
+- ☑ The three-disease taxonomy and the separability rulebook sentence into the crux skill
+      *(only the taxonomy was owed: the rulebook sentence shipped with spec 15's PRD 15.5,
+      and a regression lock now keeps it byte-identical to 15's own copy)*
+- ☑ `## Planned Intervention` discipline + structured methodology fields
+      *(`measurement:` and `replicates:` in frontmatter, reported at the `design:` info tier;
+      the section stays prose under the 400-word cap and is now published in `snapshot` and
+      rendered in the cockpit, which it never was before)*
+
+## What shipped, and what did not
+
+Built as PRDs **13.0–13.3** on engine **2.8 → 3.1**. Two things a later reader should not have
+to re-derive:
+
+**The roster amendment owed to [09](09-specialized-agents.md).** PRD 09.4 asserts that the
+roster in `.spec/09` and the shipped `agents/` directory list the same names. Spec 13 is the
+first spec to add to that directory, so `.spec/09`'s roster gained a **`crux-situate`** row
+(13.1) and a **`crux-design`** row (13.3), each in the same commit that shipped the definition
+file. The assert was **amended, not relaxed** — it is doing exactly the job it was written for.
+
+**PARKED, not dropped:** a `separability:` declaration field. Spec 13's table lists *"the
+separability model is declared"* as a deterministic slot, but **how design resolution is
+declared in a markdown vault is an open question in [15](15-evidence-semantics.md) (its D10)**,
+and 15's PRD 15.5 deliberately kept aliasing and the Res III/IV/V ledger out of the skill for
+that reason. Inventing the field here would have settled another spec's open question by side
+effect. `crux-design` still *checks* separability as judgment; it has no structured slot to
+write it into until 15's D10 is ruled. Also parked, unchanged: the per-vault methodology
+dialect.
 
 ## Acceptance criteria
 

@@ -459,6 +459,13 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .rowlink:hover { border-color: var(--accent); }
 .rowlink .rid { color: var(--ink-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; margin-right: 7px; }
 .rowlink .rsum { display: block; color: var(--ink-dim); font-size: .92em; margin-top: 3px; }
+
+/* the declared design (spec 13): what is measured, and with how many replicates. Keyed rows
+   rather than badges — these are sentences, not tokens, and they wrap. */
+.plan { margin-bottom: 8px; }
+.plan .prow { display: flex; gap: 8px; align-items: baseline; margin: 2px 0; }
+.plan .pk { flex: 0 0 auto; color: var(--ink-dim); font-size: .86em; text-transform: uppercase;
+            letter-spacing: .04em; min-width: 5.5em; }
 .inline { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .89em; background: var(--panel2);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
 a.go { color: var(--accent); cursor: pointer; text-decoration: none; }
