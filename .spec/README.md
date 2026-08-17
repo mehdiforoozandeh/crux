@@ -17,7 +17,7 @@ being built — do not implement)
 | 07 | [RD layer](07-rd-layer.md) | `rd` | ☑ |
 | 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ☐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☑ |
-| 10 | [Agent evals](10-agent-evals.md) | `evals` | ☐ |
+| 10 | [Agent evals](10-agent-evals.md) | `evals` | ☑ |
 | 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☑ |
 | 12 | [Cockpit craft: interaction & performance](12-cockpit-craft.md) | `ui` | ☐ |
 | 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☑ |
@@ -31,10 +31,12 @@ the same runner, budget cap and autonomy envelope. **Both are deferred** — see
 
 ## What to build, and what not to
 
-**Three specs are `☐ todo`: 08, 10, 12** (15 is `◐ in progress`). They are the work.
+**Two specs are `☐ todo`: 08 and 12** (15 is `◐ in progress`). They are the work.
 (11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
 2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
-slots, and the `crux-situate` / `crux-design` agents. Statuses above are the authority; this
+slots, and the `crux-situate` / `crux-design` agents. 10 landed 2026-08-16 as a **zero-bump**
+epic — ten certified fixtures, a scorer that never invokes an agent, and a mutation harness —
+with its pass bands deliberately left `unset` for the PI. Statuses above are the authority; this
 paragraph follows them.)
 
 **Do not implement 05.** ERA and the outer autoresearch loop are `⏸ deferred` — designed, kept,
@@ -43,7 +45,7 @@ be built before the machinery that makes them safe exists: [15](15-evidence-sema
 what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
 what stops it grading its own homework.
 
-01, 02, 03, 06, 07, 09, 11, 13 and 14 are `☑ done` and are reference material, not work.
+01, 02, 03, 06, 07, 09, 10, 11, 13 and 14 are `☑ done` and are reference material, not work.
 
 ## Dependency order
 

@@ -8,6 +8,102 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **The proxy register, the gate ruling, and spec 10 done** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.4). Six proxy fixtures — `verifiables-01`,
+  `critic-01`, `migrate-01`, `tests-01`, `glossary-01`, `design-01` — so all **ten** agents in
+  the roster now have one. **Spec 10 is done.**
+
+  A **register** in `.spec/10` carries one row per fixture, and `selftest` cross-checks it
+  against every manifest both ways, so a fixture cannot be promoted by editing one side. Its
+  last column is the one that earns its place: `[proxy]` says the eval is weaker, not *in which
+  direction* to distrust it. `design-01` plants exactly one disease per node, because a fixture
+  with two cannot tell a correct diagnosis from a lucky one. `tests-01` declares what the broken
+  implementation actually returns and certification asserts no key row expects it — a key
+  satisfiable by describing the code *is* a description of the code.
+
+  **The gate ruling** (`evolve-crux/SKILL.md` §3): the deterministic half of the eval suite is
+  in gate 1 and runs offline from a fresh clone with no API key; scoring a live submission never
+  gates. **Overnight call — needs morning review.**
+
+  **The pass bands are deliberately not set.** Every manifest ships `band: unset` and the runner
+  reports `UNGRADED`, with no code path that reads an unset band as a pass. A bar invented with
+  no measurement behind it is a guess with a decimal point, so the mechanism ships and the
+  numbers stay the PI's — recorded as spec 10's one open acceptance criterion rather than papered
+  over. Two spec edits ship here and are **overnight calls needing morning review**: the agent
+  table grew from seven rows to ten, and `crux-tests` was demoted from "the strongest available"
+  ground truth to a proxy. Selftest 1406 → **1474**. **`ENGINE_VERSION` unchanged at 3.1 across
+  the whole epic** — asserted, since that is the gate-4 argument.
+
+- **The ground-truth fixtures: `close-01`, `null-01`, `situate-01`** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.3). Three fixtures whose answer the engine already
+  holds, so no new oracle was written.
+
+  `close-01` is a `running` hypothesis with canned results in which every check's outcome is
+  unambiguous — and a **failing outcome-neutral control**, so the correct reading is
+  `invalid-run` and not `refuted`. `derive_verdict_15` supplies the verdict from the manifest's
+  own tick vector, so the fixture cannot disagree with the engine. Ticks are scored as
+  `h1:v3=u` ids, which makes a wrong tick both a miss and an invention — because that is what
+  it is. `null-01` plants `capacity` (84M vs 121M parameters, stated as fact and never as a
+  concern) with `normalization` as a **decoy**: named in the vault, shared across both arms,
+  and therefore recall 0 for anyone who grabs it. `situate-01` runs backwards — the planted set
+  is the payload's own facts (`untested:h2`, `inflight:h3`) plus `gap:q3`, a question with no
+  hypotheses at all, which is the invention trap.
+
+  Two things sit **beside** the band rather than inside it, because they are one bit and no
+  distribution over K runs makes them acceptable: reading an invalid run as `refuted`, and a
+  situate answer that is accurate and four times too long.
+
+  Also recorded: `crux-tests` **loses** its ground truth (its oracle needs executing
+  model-written code, which is parked) and `crux-situate` **gains** one, since PRD 13.1 shipped
+  `situate_lint` for exactly this. **No engine change, no version bump.**
+
+- **The mutation harness — proof the agent suite can detect a regression** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.2). Spec 10's fourth acceptance criterion is the only
+  one a passing suite cannot fake, and it is the cheapest: a degraded *definition* can be
+  degraded in code, with zero model calls.
+
+  Sixteen hand-written mutations — a toolbelt gaining `crux close`, the critic gaining a
+  toolbelt, `crux-design` losing "never invoke", a definition pinning an engine version — each
+  naming the property it must break **before** it is run. The harness applies each in memory
+  (nothing is ever written to `agents/`) and asserts the named property goes red. Two distinct
+  failures are caught: a mutation that reddens nothing means the property is not actually
+  checked, and one that reddens the *wrong* property means the named check is dead weight.
+
+  To make this possible the roster's definition-derived properties were extracted into
+  `evals.roster_properties`, shared by `run_agent_roster`, `run_situate_agent` and
+  `run_design_agent`. **Every assert name and its order is unchanged** — the suite pins that,
+  because the `evolve-crux` gate counts asserts. All ten agents are covered.
+  **No engine change, no version bump.**
+
+- **The eval scorer: precision and recall, banded over K runs, with no model call** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.1). `evals.py --fixture X --submission runs.json`
+  scores a findings file against a certified fixture: recall and precision **together** (recall
+  alone teaches an agent to report everything), the tp/fp/fn listed by id so a failure is
+  readable, and the band taken as the **worst** run across K rather than the mean.
+
+  **The harness never invokes an agent.** A program that launches one K times, decides when to
+  stop and caps what it spends is spec 05's runner, budget cap and autonomy envelope pointed at
+  a fixture — and 05 is deferred. So whoever ran the agent, attended, writes the submission;
+  this reads it. There is no `--spawn`, and `selftest` proves the property by walking
+  `evals.py`'s own AST for a network import or a spawn call rather than trusting the docstring.
+
+  Four refusals rather than a misleading number: an empty report scores precision **0.0** (not
+  the vacuous 1.0), fewer runs than the declared K is `UNDER-K`, a stale `agent_sha` means the
+  submission measured a different definition, and an unset band reports `UNGRADED` — a bar
+  nobody has set never reads as a pass. Proxies carry `[proxy]` on every path.
+  **No engine change, no version bump.**
+
+- **Agent-eval fixtures, and the certifier that keeps them honest** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.0). A fixture is a hand-authored vault with defects
+  planted **one per emitted id**, plus a `PLANTED.md` manifest naming them. `evals.py`
+  (beside `selftest.py`, not a `crux` verb) runs the manifest's own declared checks — `gate`
+  is opt-in, and a certifier using the defaults would score a correct finding as invented —
+  and proves the engine emits exactly the planted set. A fixture that drifts from its manifest
+  goes red immediately, so no eval ever grades against a stale ground truth. First fixture:
+  `audit-01`, seven defects across all five families spec 10 names for `crux-audit`. Fixtures
+  live outside `examples/` on purpose: they are `validate`-red by construction, and gate 3
+  walks `examples/` to ask whether anything broke. **No engine change, no version bump.**
+
 - **`crux-design`, and the three-disease taxonomy in the skill** (spec
   [`13`](.spec/13-situate-and-design.md), PRD 13.3). **Spec 13 is done.**
 

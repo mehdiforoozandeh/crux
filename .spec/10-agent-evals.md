@@ -1,7 +1,14 @@
 # Spec 10 — Agent evals
 
-**Label:** `evals` · **Status:** ☐ todo
+**Label:** `evals` · **Status:** ☑ done — built as PRDs 10.0–10.4 on engine **3.1** (a zero-bump
+epic: an eval harness changes no vault format, no verdict/roll-up logic and no view). Ten
+fixtures certify; the runner is `skills/crux/scaffold/evals.py`.
 **Depends on:** [09 specialized agents](09-specialized-agents.md)
+
+> **One acceptance criterion is deliberately still open.** Every fixture ships `band: unset`
+> and the runner reports `UNGRADED`. A pass band is a pre-registered bar, bars are the PI's,
+> and one invented with no measurement behind it is a guess with a decimal point. The
+> mechanism is built and the numbers are the PI's to fill — see **Pass bands** below.
 
 ## Goal
 
@@ -59,6 +66,12 @@ need a separate command and a tolerance band.
 
 ## Per-agent fixtures
 
+> **Amended when 10.4 landed.** This table was written with seven agents; the roster in
+> [09](09-specialized-agents.md) now has **ten** — `crux-glossary` arrived with
+> [14](14-glossary.md), `crux-situate` and `crux-design` with [13](13-situate-and-design.md).
+> The acceptance criterion below already said *every* agent in 09, so the table was stale and
+> the criterion was not. Three rows added; `crux-tests` demoted, for the reason in its row.
+
 | agent | fixture | assertion | ground truth? |
 |---|---|---|---|
 | `crux-audit` | vault with **N planted defects** — over-cap node, orphan task, dangling artifact, gate backlog, dependency cycle | finds exactly N, invents 0 | **yes** — cleanest eval of the set |
@@ -67,12 +80,38 @@ need a separate command and a tolerance band.
 | `crux-verifiables` | h59's real 11-verifiable node, stripped to its claim + null | returns materially fewer; every one carries a distinct failure scenario; ≥1 discriminates against the null | partial — count is a proxy, the filter checks are hard |
 | `crux-critic` | drafts at 200 / 600 / 2000 words; one genuinely-single question vs one that is three | rejects the right ones, passes the good one | partial |
 | `crux-migrate` | fixture repo with known content | seed parses; node count within a band; every `[x]` tick carries an evidence pointer that resolves | partial — band, not exact |
-| `crux-tests` | a requirement plus a deliberately non-compliant implementation | the generated tests fail against it | **yes** — the strongest available |
+| `crux-tests` | a requirement plus a deliberately non-compliant implementation | every generated test names a stated requirement boundary, and **no expected value equals what the broken implementation returns** | proxy — **demoted**: the "tests fail against it" oracle needs executing model-written code, which is PARKED |
+| `crux-glossary` | vault prose carrying two terms of art and three pieces of public knowledge | accepts the two, declines the three | partial — where the line sits is a judgment |
+| `crux-situate` | a subtree with a closed hypothesis, an unrun one, one in flight, and a question with no children | names all three facts, and says the empty question is empty | **yes** — `situate_lint` plus the payload's own facts |
+| `crux-design` | three hypotheses, one disease each: compound claim · non-entailed check · cannot discriminate | names the right disease and hands (a) and (b) off rather than fixing them | partial — the diagnosis is scoreable, the completeness of the enumeration is not |
 
-**Label the proxies as proxies.** `crux-audit`, `crux-close`, `crux-null` and `crux-tests` have
-genuine ground truth. The rest are proxies and should be reported as such rather than dressed
-up — an eval that overstates its own rigour is the same failure mode this whole backlog exists
-to fix.
+**Label the proxies as proxies.** `crux-audit`, `crux-close`, `crux-null` and **`crux-situate`**
+have genuine ground truth — the engine holds the answer in `validation_report`,
+`derive_verdict_15`, the closed confound vocabulary and `situate_lint` respectively. The other
+six are proxies and are reported as such rather than dressed up — an eval that overstates its
+own rigour is the same failure mode this whole backlog exists to fix.
+
+`crux-tests` was listed here as *"the strongest available"* and is **not**: its oracle needs
+code execution. It is registered as a proxy until that is unparked.
+
+### The proxy register
+
+Shipped with 10.4, and `selftest` cross-checks it against every manifest — a fixture cannot be
+promoted by editing one side. The last column is the one that earns its place: `[proxy]` alone
+says the eval is weaker, not **in which direction** to distrust it.
+
+| fixture | agent | ground truth | oracle | what it does **not** measure |
+|---|---|---|---|---|
+| `audit-01` | `crux-audit` | **yes** | `validation_report` | — |
+| `close-01` | `crux-close` | **yes** | `derive_verdict_15` | — |
+| `null-01` | `crux-null` | **yes** | closed confound vocabulary | whether the line names the *instance*; reported beside the band as a heuristic |
+| `situate-01` | `crux-situate` | **yes** | `situate_lint` + payload facts | whether the prose is *good*; only shape, length and the three facts |
+| `verifiables-01` | `crux-verifiables` | proxy | stated key | whether the checks are any good — all five rows are structural |
+| `critic-01` | `crux-critic` | proxy | stated key (2 rows engine-checked) | whether the reasoning is right, only whether the conclusion matches |
+| `migrate-01` | `crux-migrate` | proxy | stated key | fidelity to what the original researcher meant |
+| `tests-01` | `crux-tests` | proxy | stated key | whether the tests are valid, run, or actually fail — all three need execution |
+| `glossary-01` | `crux-glossary` | proxy | stated key | where the jargon line sits; the key is one reviewer's answer |
+| `design-01` | `crux-design` | proxy | stated key | whether the outcome enumeration is complete |
 
 ## Design notes
 
@@ -95,26 +134,82 @@ to fix.
   rule names.
 - **Recall-only scoring.** An agent optimizing recall alone learns to report everything.
 
+## PARKED — needs the PI, not decided here
+
+Seven items. Each would weaken the leash, reverse a ruling, or build [05](05-autoresearch.md)'s
+deferred machinery. None is behind a flag; none is designed around.
+
+- **P1 — the model-invoking, K-run runner.** *This spec asks for one in plain words.* A program
+  that launches an agent K times, decides when to stop and caps what it spends is 05's three
+  unbuilt work items — Runner, Budget & stop, autonomy envelope — pointed at a fixture instead
+  of a hypothesis, and `README.md` says **do not implement 05**. The loop is the risk, not the
+  target. **What was built instead:** the harness scores a *submitted* findings file, written by
+  whoever ran the agent, attended. There is no `--spawn`: a default-off runner is still a
+  runner in the repo. *The PI is being asked whether an eval-only runner is a carve-out.*
+- **P2 — executing agent-generated code**, i.e. `crux-tests`' real oracle. Collides with
+  stdlib-only and with the suite's hermeticity; a subprocess timeout is not a sandbox. 05 parks
+  the same question and its leading answer is that the sandbox is the project's, not crux's.
+- **P3 — any eval that gives an agent a write path**, including a harness that applies a
+  proposal and scores the resulting vault. 09's D9 was a PI ruling; the leash does not care who
+  holds the pen.
+- **P4 — a stable `code:` on every `validate` problem/warning.** The right long-term shape, and
+  not this spec's call: it touches every emission site, changes the JSON contract ten toolbelts
+  read, and bumps. Sidestepped by planting one defect per emitted id.
+- **P5 — LLM-as-judge for the proxies.** This spec permits it in principle (*"reserve judging
+  for the proxy cases"*), but a judge is a model call, so it needs P1 first.
+- **P6 — auto-tuning a definition against its eval score.** Nobody proposed it; it is written
+  down because it is the obvious next thought and it is ERA by another name.
+- **P7 — any eval whose subject is recorded science.** 09's staleness warning is a PI ruling:
+  a stale answer is a research judgment, gated one node at a time. Every planted defect in
+  every fixture is structural, and `selftest` asserts it.
+
 ## Open questions
 
-- K, and the pass bands per agent.
-- Whether agent evals gate a PR (the `evolve-crux` gate is currently deterministic-only and
-  runs in CI; adding a model-invoking step changes that contract).
-- Whether fixture vaults live in the crux repo or a sibling, given they will accumulate.
+- ~~Whether fixture vaults live in the crux repo or a sibling.~~ **Settled: in the repo**, under
+  `skills/crux/evals/fixtures/`, deliberately outside `examples/` — a planted-defect vault is
+  `validate`-red by construction, and gate 3 walks `examples/` to ask whether anything broke.
+  Revisit past roughly 50 fixtures.
+- ~~Whether agent evals gate a PR.~~ **Settled by splitting it.** The deterministic half —
+  certification, the manifest schema, the scorer's arithmetic on canned submissions, and the
+  mutation harness — is in gate 1 and runs offline from a fresh clone with no API key. Scoring a
+  live submission never gates, because a submission only exists after someone ran an agent, and
+  a gate a third-party contributor cannot run is not a gate. Written into
+  [`evolve-crux/SKILL.md`](../skills/evolve-crux/SKILL.md) §3.
+- **Pass bands — still open, deliberately.** K is **5**: the smallest K where one unlucky run
+  cannot swing the reported rate by more than 20 points, and ten agents at fifty attended runs
+  rather than a hundred. The bars are not set. Every manifest ships `band: unset`, the runner
+  prints the distribution and reports `UNGRADED`, and it has no code path that reads an unset
+  band as a pass. The PI reads the first real distributions once and fills the numbers **here**,
+  which is also where the design note says fixtures may change.
 
 ## Work items
 
-- ☐ Fixture vault format + location; a small committed set
-- ☐ Eval runner beside `selftest.py`, separate command, K-run banding
-- ☐ Per-agent fixtures + assertions from the table above
-- ☐ Precision/recall reporting, with proxies explicitly labelled
-- ☐ Decide whether/how this joins the `evolve-crux` validation gate
+- ☑ Fixture vault format + location — `evals/fixtures/<name>/{PLANTED.md, vault/, submissions/}`,
+  outside `examples/`; the defect key is **the id the engine already emits**, one per id
+- ☑ Eval runner beside `selftest.py` — `evals.py`, a sibling script and not a `crux` verb, with
+  K-run banding taken as the **worst** run rather than the mean
+- ☑ **The certifier** — not in the original work items, and the load-bearing part: the engine
+  proves the hand-authored manifest true, so no eval grades against a stale ground truth
+- ☑ Per-agent fixtures + assertions — all **ten** agents, ten fixtures, every one certifying
+- ☑ Precision/recall reporting, with proxies explicitly labelled — and a register `selftest`
+  cross-checks against every manifest, so a fixture cannot be promoted by editing one side
+- ☑ **The mutation harness** — sixteen degradations, each naming the property it must break
+  before it runs; this is the acceptance criterion no passing suite can fake
+- ☑ Decide whether/how this joins the `evolve-crux` validation gate — split by determinism
+- ☐ **Pass bands.** Mechanism built, numbers open. The PI's.
 
 ## Acceptance criteria
 
-- Every agent in [09](09-specialized-agents.md) has at least one fixture and a stated pass band.
-- The runner reports precision and recall separately, and never reports a proxy as ground truth.
-- Planted-defect fixtures are hand-authored and committed; no fixture is generated by an agent
-  under test.
-- A deliberately degraded agent prompt fails its eval — i.e. the suite can actually detect
-  regression.
+- ☑ Every agent in [09](09-specialized-agents.md) has at least one fixture — all ten — and
+  ☐ **a stated pass band**, which is the one criterion still open, on purpose. See above.
+- ☑ The runner reports precision and recall separately, and never reports a proxy as ground
+  truth: `[proxy]` has no code path that drops it, and the register is cross-checked against
+  every manifest.
+- ☑ Planted-defect fixtures are hand-authored and committed; no fixture is generated by an agent
+  under test. `verifiables-01` in particular is **written**, not lifted — the `h59` this spec
+  named lives in the PI's own research vault, and no real research data enters this repo.
+- ☑ A deliberately degraded agent prompt fails its eval. Sixteen mutations, each naming its
+  target before it runs, and the suite fails both when a mutation breaks nothing and when it
+  breaks the wrong thing.
+- ☑ `selftest.py` passes with a grown assert count (1406 → 1474), and `ENGINE_VERSION` is
+  **unchanged at 3.1** across the whole epic — asserted, since that is the gate-4 argument.

@@ -1,0 +1,33 @@
+{
+ "fixture": "null-01",
+ "agent": "crux-null",
+ "agent_sha": "8ab5c3d5e2bdb7c02e9504dcf761f85aa76f2e1beceaf4b8ecd5a62994b63185",
+ "_note": "CANNED \u2014 takes the decoy. Input normalisation is named in the vault and is shared across both arms, so it cannot explain a difference between them. Recall 0, which is what should happen.",
+ "runs": [
+  {
+   "findings": [
+    "normalization"
+   ]
+  },
+  {
+   "findings": [
+    "normalization"
+   ]
+  },
+  {
+   "findings": [
+    "normalization"
+   ]
+  },
+  {
+   "findings": [
+    "normalization"
+   ]
+  },
+  {
+   "findings": [
+    "normalization"
+   ]
+  }
+ ]
+}

@@ -5335,69 +5335,25 @@ def run_agent_roster():
                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
                 "crux-situate", "crux-design"]
 
-    defs = {}
-    for name in expected:
-        p = os.path.join(adir, name, "AGENT.md")
-        if os.path.isfile(p):
-            defs[name] = E.parse_doc(read(p))
+    # The definition-derived properties live in `evals.roster_properties` (spec 10, PRD 10.2),
+    # so that ONE source of truth is both printed here and broken on purpose by the mutation
+    # harness. The assert names below are unchanged by that extraction — `run_mutation_harness`
+    # pins that, because the evolve-crux gate counts asserts.
+    import evals as V
+    defs = V.load_definitions(expected, repo)
     missing = [n for n in expected if n not in defs]
     check(f"agents: every roster entry has a definition file (missing: {missing})", not missing)
 
-    for name, (fm, body) in sorted(defs.items()):
-        check(f"agents: {name} declares the four architecture fields",
-              all(k in fm for k in ("name", "description", "cold_input", "excludes")))
-        check(f"agents: {name}'s name matches its directory", fm.get("name") == name)
-        check(f"agents: {name} reads as a workflow (when invoked -> steps -> output)",
-              "When invoked" in body and "## Output" in body)
-
-    # every toolbelt entry must be a REAL crux verb — 09 is explicit that the belt is CLI
-    # verbs, not agent-private scripts, so selftest can assert them and the PI can run any by hand
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
                        capture_output=True, text=True, encoding="utf-8")
-    bad = []
-    for name, (fm, _b) in sorted(defs.items()):
-        for line in str(fm.get("toolbelt") or "").split(";"):
-            line = line.strip()
-            if not line:
-                continue
-            if not line.startswith("crux "):
-                bad.append(f"{name}: {line!r} is not a crux verb")
-            elif line.split()[1] not in r.stdout:
-                bad.append(f"{name}: no such verb {line.split()[1]!r}")
-    check(f"agents: every toolbelt entry is a real crux verb (bad: {bad[:3]})", not bad)
-
-    # the two isolation guarantees, declared where a reviewer can diff them against behaviour
-    crit_fm, _ = defs.get("crux-critic", ({}, ""))
-    check("agents: the critic is isolated by construction — no vault, empty toolbelt",
-          not str(crit_fm.get("toolbelt") or "").strip()
-          and "vault" in str(crit_fm.get("excludes") or "").lower())
-    ver_fm, _ = defs.get("crux-verifiables", ({}, ""))
-    check("agents: crux-verifiables declares the exclusion the brief actually enforces",
-          "Problem Statement" in str(ver_fm.get("excludes") or ""))
+    P = V.roster_properties(defs, r.stdout)
+    for slug in ([f"{k}:{n}" for n in sorted(defs) for k in ("fields", "dirname", "workflow")]
+                 + ["belt-verbs", "critic-isolated", "verifiables-exclusion"]):
+        check(*P[slug])
     check("agents: and the brief really does enforce it (cross-checked, not just declared)",
           "problem" not in E.brief(*_probe_vault()))
-
-    # THE LEASH. The TOOLBELT is the authority — what an agent may run — so that is what is
-    # checked. Prose is not: crux-close's body says "you do not run `crux close`", which is a
-    # mention and exactly the right thing for it to say.
-    leash = []
-    for name, (fm, _b) in sorted(defs.items()):
-        belt = str(fm.get("toolbelt") or "")
-        for banned in ("crux close", "crux answer", "crux approve", "crux task accept",
-                       "crux pursue", "crux migrate --apply"):
-            if banned in belt:
-                leash.append(f"{name}: {banned}")
-    check(f"agents: no agent's toolbelt can set a verdict or a direction (found: {leash})",
-          not leash)
-    check("agents: and crux-close says so in words, since it is the one that could",
-          "you never run `crux close`" in read(os.path.join(adir, "crux-close", "AGENT.md")).lower())
-
-    # spec 14 parked a precise contract here; it must match what shipped
-    gl_fm, _ = defs.get("crux-glossary", ({}, ""))
-    check("agents: the glossary agent matches spec 14's parked contract",
-          "propose" in str(gl_fm.get("cold_input") or "")
-          and "no write verb" in str(gl_fm.get("toolbelt") or "").lower()
-          and "conversation" in str(gl_fm.get("excludes") or "").lower())
+    for slug in ("leash", "close-says-so", "glossary-contract"):
+        check(*P[slug])
 
     spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
     check("agents: the spec roster and the shipped roster agree",
@@ -5412,10 +5368,7 @@ def run_agent_roster():
     # actually worth locking is the durable one: the roster is VERSION-INDEPENDENT. An agent
     # definition that named an engine version would have to be revised on every bump, which
     # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
-    versioned = sorted(n for n, (fm, b) in defs.items()
-                       if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
-    check(f"agents: no agent definition pins an engine version (found: {versioned})",
-          not versioned)
+    check(*P["no-version-pin"])
 
 
 def _situate_vault():
@@ -5701,19 +5654,11 @@ def run_situate_agent():
     shutil.rmtree(root, ignore_errors=True)
 
     # ---- the agent definition (09.4's convention; the roster loop lints the rest)
-    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-situate", "AGENT.md")))
-    check("agents: crux-situate reads the situate brief, not the isolated one",
-          "--mode=situate" in str(fm.get("cold_input")))
-    check("agents: crux-situate cannot write — no write verb anywhere in its belt",
-          not any(w in str(fm.get("toolbelt")) for w in
-                  ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
-                   "crux task add", "crux glossary accept", "crux rd", "crux ingest")))
-    check("agents: crux-situate declares the ephemeral rule, which is the PI's ruling",
-          "ephemeral" in (str(fm.get("excludes")) + body).lower())
-    check("agents: crux-situate's body carries the lint step, not just the instruction",
-          "--lint-situate" in body)
-    check("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
-          "ELI5" in body and "TL;DR" in body)
+    import evals as V
+    P = V.roster_properties(V.load_definitions(["crux-situate"], repo))
+    for slug in ("situate-mode", "situate-readonly", "situate-ephemeral",
+                 "situate-lints", "situate-shape"):
+        check(*P[slug])
     spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
     check("agents: spec 09's roster records crux-situate as spec 13's addition",
           "crux-situate" in spec and "13-situate-and-design.md" in spec)
@@ -5894,28 +5839,11 @@ def run_design_agent():
     print("\n# design — the crux-design agent and the taxonomy (spec 13, PRD 13.3)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-design", "AGENT.md")))
-
-    check("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
-          "crux brief" in str(fm.get("cold_input"))
-          and "--mode=situate" not in str(fm.get("cold_input")))
-    check("agents: crux-design's excludes name the advocacy channel",
-          "Problem Statement" in str(fm.get("excludes")))
-    check("agents: crux-design cannot write — it proposes, the PI applies",
-          not any(w in str(fm.get("toolbelt")) for w in
-                  ("crux close", "crux answer", "crux approve", "crux pursue",
-                   "crux task accept", "crux hypothesize")))
-    check("agents: crux-design's belt reaches the taskhub for what was already tried",
-          "crux task list" in str(fm.get("toolbelt")))
-    check("agents: crux-design states the central question verbatim",
-          "Is there any plausible outcome of this run from which we would conclude nothing?"
-          in body)
-    check("agents: crux-design names all three causes and both handoff targets",
-          all(x in body for x in ("compound claim", "crux-critic", "crux-verifiables"))
-          and "does not follow from the claim" in body)
-    check("agents: crux-design hands off by NAMING, never by invoking",
-          "never invoke" in body.lower() or "does not invoke" in body.lower())
-    check("agents: crux-design's output is a proposal, never a vault write",
-          "proposal" in body.lower() and "## Output" in body)
+    import evals as V
+    P = V.roster_properties(V.load_definitions(["crux-design"], repo))
+    for slug in ("design-isolated", "design-excludes", "design-readonly", "design-taskhub",
+                 "design-question", "design-taxonomy", "design-handoff", "design-proposal"):
+        check(*P[slug])
     check("agents: crux-design fills the slots spec 13 gave the engine",
           E.MEASUREMENT_FIELD in body and E.REPLICATES_FIELD in body)
 
@@ -6684,6 +6612,532 @@ def _tree_hashes(root):
     return out
 
 
+def run_agent_evals():
+    """Spec 10 PRD 10.0 — the fixture contract, and the certifier that keeps it honest.
+
+    Ten agent definitions ship. `run_agent_roster` checks they are well-formed and leashed;
+    nothing checked that any of them DOES ITS JOB, which is spec 10's opening line — *"the
+    agent roster is unfalsifiable and drifts silently."*
+
+    Measuring one needs ground truth, and spec 10 is uncompromising about where it may come
+    from: *"the planted defects must be authored independently of the agent that finds them."*
+    Easy to write, easy to break by accident — a hand-authored fixture drifts the moment
+    someone edits the vault and forgets the manifest, and then the eval grades against a
+    ground truth that describes a vault which no longer exists.
+
+    So the ENGINE certifies the fixture: `validation_report` on the fixture vault must emit
+    exactly the planted id set. The manifest is written by a human; a program with no
+    knowledge of any agent says whether it is true.
+
+    No engine change, no version bump — a new sibling module and a tree of fixture data."""
+    print("\n# agent evals — the fixture contract (spec 10, PRD 10.0)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+    names = V.fixture_names()
+    check(f"evals: the audit-01 fixture exists and its vault loads (found: {names})",
+          "audit-01" in names and len(E.Vault(os.path.join(V.FIXTURES, "audit-01", "vault")).nodes) > 3)
+
+    # -- the contract: seven fields, every one of them load-bearing somewhere below
+    bad = []
+    for n in names:
+        try:
+            m = V.load_manifest(n)
+        except E.CruxError as e:
+            bad.append(f"{n}: {e}"); continue
+        if not all(m["fm"].get(k) not in (None, "") for k in V.MANIFEST_FIELDS):
+            bad.append(f"{n}: missing a contract field")
+    check(f"evals: a manifest declares the seven contract fields (bad: {bad[:2]})", not bad)
+
+    adir = os.path.join(repo, "agents")
+    ghosts = [n for n in names
+              if not os.path.isfile(os.path.join(adir, V.load_manifest(n)["agent"], "AGENT.md"))]
+    check(f"evals: every fixture names a real agent (ghosts: {ghosts})", not ghosts)
+
+    # -- the checks list is the MANIFEST's, never a default. `gate` is opt-in: a certifier
+    #    running the defaults decides audit-01 has no gate backlog, and then scores a CORRECT
+    #    finding on q2 as an invention — precision 0.0 for the right answer.
+    m = V.load_manifest("audit-01")
+    check("evals: certification runs the manifest's declared checks, not the defaults",
+          "gate" in m["checks"] and "gate" not in E.CHECKS and "gate" in E.OPT_CHECKS
+          and "q2" in V.emitted_ids(m)
+          and "q2" not in {e["id"] for t in ("problems", "warnings")
+                           for e in E.validation_report(V.vault_of(m))[t]})
+
+    r = V.certify("audit-01")
+    check(f"evals: audit-01 certifies — the engine finds exactly what was planted "
+          f"(missing {r['missing']}, extra {r['extra']})", r["ok"])
+
+    # -- the two ways a fixture rots, each proven on a COPY (the shipped tree is never touched)
+    tmp = tempfile.mkdtemp(prefix="crux_evalfix_")
+    try:
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        vault = os.path.join(tmp, "audit-01", "vault")
+        h2 = [p for p in os.listdir(vault) if p.startswith("h2_")][0]
+        edit(os.path.join(vault, h2), "- [Report](results/h2/report.md)", "")
+        c = V.certify("audit-01", root=tmp)
+        check(f"evals: a fixture that drifts from its manifest fails certification "
+              f"(missing {c['missing']})", not c["ok"] and c["missing"] == ["h2"])
+
+        shutil.rmtree(os.path.join(tmp, "audit-01"))
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        vault = os.path.join(tmp, "audit-01", "vault")
+        h1 = [p for p in os.listdir(vault) if p.startswith("h1_")][0]
+        edit(os.path.join(vault, h1), "## Idea / Hypothesis",
+             "## Idea / Hypothesis\n\n" + ("an unplanted flood of prose. " * 220))
+        c = V.certify("audit-01", root=tmp)
+        check(f"evals: an unplanted defect fails certification as extra (extra {c['extra']})",
+              not c["ok"] and c["extra"] == ["h1"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # -- one defect per id is what buys exact scoring with no engine change; load_manifest
+    #    refuses a duplicate, so this is a property of every fixture that parses at all
+    dupes = []
+    for n in names:
+        ids = [p["id"] for p in V.load_manifest(n)["planted"]]
+        dupes += [f"{n}:{i}" for i in set(ids) if ids.count(i) > 1]
+    check(f"evals: at most one planted defect per emitted id (dupes: {dupes})", not dupes)
+
+    before = _tree_hashes(V.FIXTURES)
+    V.certify_all()
+    check("evals: certification is read-only", _tree_hashes(V.FIXTURES) == before)
+
+    # -- spec 10 names five defect families for crux-audit; all five are here, and the
+    #    ambiguous one is resolved in the fixture rather than in the reader's head (M4)
+    classes = " ".join(p["class"] for p in m["planted"])
+    check(f"evals: audit-01 plants every defect family the spec names ({classes})",
+          all(c in classes for c in ("economy:over-cap", "task:dangling-ref",
+                                     "artifact:missing", "gate:backlog", "tree:parent-cycle"))
+          and "parent cycle" in V.load_manifest("audit-01")["body"].lower())
+
+    # -- THE GATE-4 ARGUMENT, asserted rather than asserted-in-prose. Spec 10 alters no vault
+    #    format, no verdict/roll-up logic and no view, so the stamp does not move. Precedents:
+    #    09.4 and 13.3, both doc-only, both explicitly no-bump.
+    check(f"evals: the fixture contract does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+    # -- gate 3 of the evolve-crux gate walks examples/ and asks "did anything break". These
+    #    vaults are validate-RED BY CONSTRUCTION, so putting them there would make the one
+    #    gate whose job is 'nothing broke' unreadable.
+    ex = os.path.join(HERE, "..", "examples")
+    check("evals: the fixture tree is outside the example-vault gate",
+          not os.path.isdir(os.path.join(ex, "audit-01"))
+          and os.path.abspath(V.FIXTURES) != os.path.abspath(ex)
+          and "evals/fixtures" in read(os.path.join(ex, "README.md")))
+
+
+def run_eval_scorer():
+    """Spec 10 PRD 10.1 — precision and recall, banded over K runs, with no model call.
+
+    Spec 10 is blunt about the pair: *"'Did it find things' is not a result"*, and in its
+    rejected alternatives, *"Recall-only scoring. An agent optimizing recall alone learns to
+    report everything."* So both are computed or neither is.
+
+    THE STRUCTURAL DECISION: the scorer reads a SUBMITTED findings file and never invokes an
+    agent. A program that launches an agent K times, decides when to stop and caps what it
+    spends is spec 05's three unbuilt work items pointed at a fixture — and `.spec/README.md`
+    says do not implement 05. The loop is the risk, not the target. That is not a promise
+    here; it is the assert below that reads evals.py's own source."""
+    print("\n# agent evals — the scorer (spec 10, PRD 10.1)")
+    import evals as V
+    SUB = os.path.join(V.FIXTURES, "audit-01", "submissions")
+    m = V.load_manifest("audit-01")
+
+    def sc(name, mf=m):
+        return V.score(mf, V.load_submission(os.path.join(SUB, name)))
+
+    s = sc("perfect.json")
+    check("evals: a perfect submission scores 1.0 / 1.0",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0)
+
+    s = sc("noisy.json")
+    check(f"evals: invented findings cost precision, not recall "
+          f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] < 1.0
+          and s["runs"][0]["fp"] == ["h1", "q1", "wiki:linear-probes"])
+
+    s = sc("partial.json")
+    check(f"evals: missed defects cost recall, not precision "
+          f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
+          s["recall"]["min"] < 1.0 and s["precision"]["min"] == 1.0
+          and s["runs"][0]["fn"] == ["q4", "wiki:detection-floor"])
+
+    # the vacuous-truth trap: |tp|/|reported| is 0/0 for an empty report. Reading that as 1.0
+    # hands a perfect precision to an agent that did nothing.
+    s = sc("silent.json")
+    check("evals: reporting nothing scores zero precision",
+          s["precision"]["min"] == 0.0 and s["recall"]["min"] == 0.0)
+
+    # -- the band is the WORST run. Proven on a COPY with a band written in, because every
+    #    shipped fixture ships `band: unset` and the numbers are the PI's.
+    tmp = tempfile.mkdtemp(prefix="crux_evalband_")
+    try:
+        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
+        edit(os.path.join(tmp, "audit-01", "PLANTED.md"),
+             "band: unset", "band: recall>=0.9, precision>=0.9")
+        banded = V.load_manifest("audit-01", root=tmp)
+        ids = sorted(banded["planted_ids"])
+        sha = V.agent_sha("crux-audit")
+        # four perfect runs and one that misses two. The MEAN clears 0.9; the WORST does not.
+        four_good_one_bad = {"fixture": "audit-01", "agent": "crux-audit", "agent_sha": sha,
+                             "runs": [{"findings": ids}] * 4 + [{"findings": ids[:5]}]}
+        s = V.score(banded, four_good_one_bad)
+        mean_r = sum(r["recall"] for r in s["runs"]) / 5
+        check(f"evals: the band is the worst run, not the average "
+              f"(min {s['recall']['min']:.2f} vs mean {mean_r:.2f})",
+              s["verdict"] == V.FAIL and mean_r >= 0.9 and s["recall"]["min"] < 0.9)
+        check("evals: a band states both recall and precision, never recall alone",
+              _raises(lambda: V.parse_band("recall>=0.8")))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    s = sc("short.json")
+    check(f"evals: a short submission is refused, not graded ({s['verdict']})",
+          s["verdict"] == V.REFUSED and "UNDER-K" in s["refusal"])
+
+    s = sc("perfect.json")
+    check("evals: an unset band is ungraded, never a pass",
+          m["band"] == V.BAND_UNSET and V.parse_band(m["band"]) is None
+          and s["verdict"] == V.UNGRADED and s["verdict"] != V.PASS)
+
+    s = sc("stale-sha.json")
+    check("evals: a submission is pinned to the definition that produced it",
+          s["verdict"] == V.REFUSED and "different definition" in s["refusal"])
+
+    # -- THE LEASH, read off this module's own source rather than believed. P1 (the
+    #    model-invoking runner) and P3 (an agent write path) are parked, and a parked item
+    #    that is only parked in prose is a preference.
+    #    Read as an AST, not as text: the module's own prose SAYS "there is no --spawn", and a
+    #    grep over prose would flag the sentence that promises the property it is checking.
+    import ast
+    tree = ast.parse(read(os.path.join(HERE, "evals.py")))
+    BANNED = {"urllib", "http", "socket", "requests", "ssl", "ftplib", "telnetlib",
+              "anthropic", "openai", "subprocess", "importlib", "ctypes"}
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    called = {n.func.id for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    leaks = sorted((imported & BANNED) | (called & {"eval", "exec", "compile", "__import__"}))
+    check(f"evals: the harness cannot invoke a model or reach the network (leaks: {leaks})",
+          not leaks)
+
+    # -- spec 10: "Label the proxies as proxies… an eval that overstates its own rigour is the
+    #    same failure mode this whole backlog exists to fix." A label with a code path that
+    #    drops it is not a label.
+    proxy_m = dict(m, ground_truth="proxy")
+    txt = V.format_score(V.score(proxy_m, V.load_submission(os.path.join(SUB, "perfect.json"))))
+    check("evals: a proxy can never print as ground truth",
+          "[proxy]" in txt and "[ground truth]" not in txt
+          and "[ground truth]" in V.format_score(sc("perfect.json")))
+
+    before = _tree_hashes(V.FIXTURES)
+    a, b = sc("perfect.json"), sc("perfect.json")
+    check("evals: scoring is deterministic and read-only",
+          json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+          and _tree_hashes(V.FIXTURES) == before)
+
+    r = subprocess.run([sys.executable, os.path.join(HERE, "evals.py"), "--certify-all"],
+                       capture_output=True, text=True, encoding="utf-8")
+    check(f"evals: every shipped fixture certifies (rc={r.returncode})", r.returncode == 0)
+
+    def rc(sub):
+        return subprocess.run([sys.executable, os.path.join(HERE, "evals.py"),
+                               "--fixture", "audit-01", "--submission", os.path.join(SUB, sub)],
+                              capture_output=True, text=True, encoding="utf-8").returncode
+    check("evals: the runner is exit-coded",
+          rc("perfect.json") == 0 and rc("short.json") == 1 and rc("stale-sha.json") == 1)
+
+    check(f"evals: the scorer does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
+def run_mutation_harness():
+    """Spec 10 PRD 10.2 — prove the suite can actually detect a regression.
+
+    Spec 10's fourth acceptance criterion is the only one a passing suite cannot fake:
+    *"A deliberately degraded agent prompt fails its eval — i.e. the suite can actually detect
+    regression."* Every other criterion is satisfiable by a suite that returns green on
+    anything. It is also the cheapest, because a degraded DEFINITION can be degraded in code:
+    zero model calls.
+
+    The need is concrete. `crux-design`'s handoff rule is guarded by
+    `"never invoke" in body.lower()`. Reword that sentence — *"you do not call `crux-critic`
+    yourself"* — and the property stops being checked while the suite stays green. A prose
+    assert with no demonstrated failure mode is a comment with a `check()` around it.
+
+    Not circular, for the same reason spec 10's own fixtures are not: the mutations are
+    hand-written, independent of the definitions, and each NAMES the property it must break
+    before it is run."""
+    print("\n# agent evals — the mutation harness (spec 10, PRD 10.2)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate", "crux-close",
+                "crux-audit", "crux-tests", "crux-glossary", "crux-situate", "crux-design"]
+    defs = V.load_definitions(expected, repo)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
+                       capture_output=True, text=True, encoding="utf-8")
+    verbs = r.stdout
+
+    res = V.mutation_results(defs, verbs)
+    by = {m["mutation"]: m for m in res}
+
+    misses = sorted(m["mutation"] for m in res if not m["hit"])
+    check(f"evals: every mutation breaks the property it targets (missed: {misses})", not misses)
+
+    absorbed = sorted(m["mutation"] for m in res if not m["broke"])
+    check(f"evals: no mutation is absorbed without a failure (absorbed: {absorbed})", not absorbed)
+
+    check("evals: a toolbelt gaining a verdict verb breaks the leash check",
+          by["belt-adds-close"]["broke"] == ["leash"])
+    check("evals: giving the critic a toolbelt breaks its isolation check",
+          "critic-isolated" in by["critic-gains-belt"]["broke"])
+
+    # the two PROSE asserts, each now carrying a demonstrated failure mode (D9). A structural
+    # equivalent is preferred where one exists — the leash reads the toolbelt, not the prose —
+    # but "hand off by naming, never by invoking" has no frontmatter field, and inventing one
+    # to make it structural would be schema design driven by test convenience.
+    check("evals: the crux-close prose assert has a demonstrated failure mode",
+          by["close-drops-never-run"]["broke"] == ["close-says-so"])
+    check("evals: the crux-design handoff assert has a demonstrated failure mode",
+          by["design-drops-never-invoke"]["broke"] == ["design-handoff"])
+    check("evals: pinning an engine version in a definition is still caught",
+          by["pin-engine-version"]["broke"] == ["no-version-pin"])
+
+    # the shipped roster is clean, and the extraction that made this harness possible changed
+    # no assert: every name `roster_properties` returns is one the roster suites print.
+    P = V.roster_properties(defs, verbs)
+    red = sorted(k for k, (_n, ok) in P.items() if not ok)
+    printed = set(_PASS) | set(_FAIL)
+    unprinted = sorted(n for _s, (n, _ok) in P.items() if n not in printed)
+    check(f"evals: the shipped roster is clean and the extraction preserved every assert "
+          f"(red: {red}, unprinted: {unprinted})", not red and not unprinted)
+
+    before = _tree_hashes(os.path.join(repo, "agents"))
+    V.mutation_results(defs, verbs)
+    check("evals: mutation is in-memory only", _tree_hashes(os.path.join(repo, "agents")) == before)
+
+    covered = {m["agent"] for m in res}
+    check(f"evals: every agent has at least one mutation covering it "
+          f"(uncovered: {sorted(set(expected) - covered)})", covered == set(expected))
+
+    check(f"evals: the mutation harness does not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
+def run_ground_truth_fixtures():
+    """Spec 10 PRD 10.3 — the three fixtures whose answer the engine already holds.
+
+    Spec 10 divides its fixtures into genuine ground truth and proxies, and is blunt about why:
+    *"an eval that overstates its own rigour is the same failure mode this whole backlog exists
+    to fix."* Two things moved since it was written. `crux-tests` LOSES its ground truth — its
+    oracle needs executing model-written code, which is parked — and `crux-situate` GAINS one,
+    because PRD 13.1 shipped `situate_lint` saying in as many words that *"spec 10 inherits an
+    oracle instead of inventing one."*
+
+    So: close-01 against `derive_verdict_15`, null-01 against the closed confound vocabulary,
+    situate-01 against the situate payload and its lint. No new oracle is written; three are
+    inherited."""
+    print("\n# agent evals — the ground-truth fixtures (spec 10, PRD 10.3)")
+    import evals as V
+
+    def sub(fix, name):
+        return V.load_submission(os.path.join(V.FIXTURES, fix, "submissions", name))
+
+    def sc(fix, name):
+        return V.score(V.load_manifest(fix), sub(fix, name))
+
+    certs = {c["fixture"]: c for c in V.certify_all()}
+    three = ("close-01", "null-01", "situate-01")
+    check(f"evals: the three ground-truth fixtures certify "
+          f"({[(n, certs[n]['ok']) for n in three if n in certs]})",
+          all(n in certs and certs[n]["ok"] for n in three))
+
+    # ---- close-01: the verdict is the ENGINE's, so the fixture cannot disagree with it.
+    #      `certify` derives it from the manifest's own tick vector and compares.
+    m = V.load_manifest("close-01")
+    hid = str(m["fm"]["node"])
+    node = E.Vault(V.vault_of(m)).get(hid)
+    lines = E._verifiable_lines(node["body"])
+    ticks = {p.partition("=")[0]: p.partition("=")[2] for p in m["planted_ids"]}
+    by = {k: [] for k in E.VERIFIABLE_KINDS}
+    for i, (_t, text) in enumerate(lines, 1):
+        by[E.verifiable_kind(text)[0]].append(V.TICKS[ticks[f"{hid}:v{i}"]])
+    tal = {k: E._tally(v) for k, v in by.items()}
+    derived = E.derive_verdict_15(tal[E.DEFAULT_KIND], tal[E.NEUTRAL_KIND],
+                                  str(node["fm"].get(E.RULE_FIELD)))
+    check(f"evals: close-01's known verdict is the engine's own ({derived})",
+          derived == str(m["fm"]["verdict_read"]) == "invalid-run")
+    check("evals: close-01 discriminates invalid-run from refuted",
+          tal[E.NEUTRAL_KIND][1] == 1 and tal[E.DEFAULT_KIND][:2] == (2, 0))
+
+    s = sc("close-01", "refuted-misread.json")
+    check("evals: reading an invalid run as refuted fails close-01",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0
+          and s["verdict"] == V.FAIL
+          and any(not ok for _n, ok, _w in s["hard"]))
+
+    # ---- null-01
+    m = V.load_manifest("null-01")
+    check(f"evals: null-01 plants a family from the closed vocabulary ({m['planted_ids']})",
+          m["planted_ids"] <= set(E.CONFOUND_FAMILIES) and len(m["planted_ids"]) == 1)
+    n = E.Vault(V.vault_of(m)).get(str(m["fm"]["node"]))
+    check("evals: null-01's reference null passes the engine's own null check",
+          E.null_problem(str(m["fm"]["reference_null"]), E.node_schema(n)) is None
+          and not (E._null_text(n) or "").strip())
+
+    s = sc("null-01", "decoy.json")
+    check(f"evals: null-01's decoy family scores zero recall (r={s['recall']['min']})",
+          str(m["fm"]["decoy"]) in E.CONFOUND_FAMILIES and s["recall"]["min"] == 0.0)
+    # and the shape spec 10 rejects by name: recall-only scoring would call this perfect
+    s = sc("null-01", "everything.json")
+    check(f"evals: naming every family is recall 1.0 and precision {s['precision']['min']:.2f}",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] < 0.2)
+
+    # ---- situate-01
+    m = V.load_manifest("situate-01")
+    anchor = str(m["fm"]["node"])
+    ref = V._section(m["body"], "Reference answer")
+    check("evals: situate-01's reference answer lints clean",
+          ref.strip() and E.situate_lint(ref, [anchor]) == [])
+
+    payload = E.brief(V.vault_of(m), anchor, mode="situate")
+    check(f"evals: situate-01 plants both a gap and an invention trap ({sorted(m['planted_ids'])})",
+          any(i.startswith("untested:") for i in m["planted_ids"])
+          and any(i.startswith("inflight:") for i in m["planted_ids"])
+          and any(i.startswith("gap:") for i in m["planted_ids"])
+          and payload["untested"]["unrun_ideas"])
+
+    s = sc("situate-01", "invented.json")
+    check(f"evals: inventing a finding costs situate-01 precision (p={s['precision']['min']:.2f})",
+          s["precision"]["min"] < 1.0 and s["recall"]["min"] < 1.0)
+    # brevity is situate's stated acceptance criterion, so it is one bit beside the band
+    s = sc("situate-01", "verbose.json")
+    check("evals: a verbose situate answer fails on the lint, whatever its recall",
+          s["recall"]["min"] == 1.0 and s["verdict"] == V.FAIL
+          and any(not ok for _n, ok, _w in s["hard"]))
+
+    # ---- the two properties that hold across every fixture in the epic
+    ms = [V.load_manifest(n) for n in V.fixture_names()]
+    check("evals: the ground-truth fixtures declare their status and leave the band to the PI",
+          all(V.load_manifest(n)["ground_truth"] == "yes"
+              and V.load_manifest(n)["band"] == V.BAND_UNSET for n in three))
+    # P7: no fixture may make a scientific judgment a deterministic predicate by fiat. Spec 09's
+    # staleness warning is a PI ruling — a claim that recorded answers no longer reflect what we
+    # know is on the footing of `answer` and `pursue`, gated one node at a time.
+    banned = ("stale", "outdated", "no longer reflect", "wrong answer", "should be reopened")
+    smell = [f"{m['name']}:{p['id']}" for m in ms for p in m["planted"]
+             if any(b in (p["class"] + " " + p["note"]).lower() for b in banned)]
+    check(f"evals: every planted defect is structural, never a research judgment ({smell})",
+          not smell)
+
+    check(f"evals: the ground-truth fixtures do not bump the engine (at {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
+def run_proxy_register():
+    """Spec 10 PRD 10.4 — the six proxies, the register, and the gate ruling.
+
+    Spec 10 is firm about what a proxy obliges: *"Label the proxies as proxies… an eval that
+    overstates its own rigour is the same failure mode this whole backlog exists to fix."* A
+    label in prose decays, so here it is a field, a register, and an assert.
+
+    The register's last column is the one that earns its place. `[proxy]` alone tells a reader
+    the eval is weaker; it does not tell them IN WHICH DIRECTION, which is what they need in
+    order to distrust the right number."""
+    print("\n# agent evals — the proxies, the register, and the gate (spec 10, PRD 10.4)")
+    import evals as V
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    spec = read(os.path.join(repo, ".spec", "10-agent-evals.md"))
+
+    proxies = ("verifiables-01", "critic-01", "migrate-01", "tests-01", "glossary-01", "design-01")
+    certs = {c["fixture"]: c for c in V.certify_all()}
+    bad = [n for n in proxies if not certs.get(n, {}).get("ok")]
+    check(f"evals: the six proxy fixtures certify (failed: {bad})", not bad)
+
+    roster = sorted(os.listdir(os.path.join(repo, "agents")))
+    covered = {V.load_manifest(n)["agent"] for n in V.fixture_names()}
+    check(f"evals: every agent in the roster has a fixture "
+          f"(uncovered: {sorted(set(roster) - covered)})",
+          covered == set(roster) and len(roster) == 10)
+
+    # -- the register, parsed out of the spec and diffed against the manifests both ways
+    rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")}
+    check(f"evals: the proxy register and the fixture tree agree "
+          f"({sorted(set(rows) ^ set(V.fixture_names()))})",
+          set(rows) == set(V.fixture_names()))
+
+    REG_TRUTH = {"**yes**": "yes", "proxy": "proxy"}
+    mismatch = [n for n, r in rows.items()
+                if REG_TRUTH.get(r[2]) != V.load_manifest(n)["ground_truth"]]
+    check(f"evals: no fixture can be promoted by editing one side ({mismatch})", not mismatch)
+
+    check("evals: crux-tests is a proxy until code execution is unparked",
+          V.load_manifest("tests-01")["ground_truth"] == "proxy"
+          and "P2" in spec and "demoted" in spec.lower())
+
+    silent = [n for n, r in rows.items()
+              if V.load_manifest(n)["ground_truth"] == "proxy" and not r[4].strip(" —")]
+    check(f"evals: every proxy says what it fails to measure ({silent})", not silent)
+
+    # -- M3: the h59 this spec named lives in the PI's own vault. No real research data enters
+    #    this repo, so the fixture is WRITTEN and bands against its own declared N.
+    m = V.load_manifest("verifiables-01")
+    leaked = sorted(f"{n}:{p['id']}" for n in V.fixture_names()
+                    for p in V.load_manifest(n)["planted"]
+                    if "h59" in p["id"] or "h59" in p["note"])
+    leaked += sorted(os.path.join(dp, f) for n in V.fixture_names()
+                     for dp, _d, fs in os.walk(os.path.join(V.FIXTURES, n, "vault"))
+                     for f in fs if "h59" in read(os.path.join(dp, f)))
+    check(f"evals: verifiables-01 is self-contained, not lifted from an absent vault "
+          f"(leaked: {leaked})",
+          str(m["fm"].get("reference_n") or "").strip() != "" and not leaked)
+
+    m = V.load_manifest("design-01")
+    pairs = [p["id"].split(":") for p in m["planted"]]
+    check(f"evals: design-01 plants one disease per node ({[':'.join(x) for x in pairs]})",
+          len({d for d, _n in pairs}) == len(pairs) == len({n for _d, n in pairs}) == 3)
+
+    m = V.load_manifest("tests-01")
+    wrong = [w for w in V._csv(m["fm"]["wrong_values"]) if w]
+    clash = sorted(w for p in m["planted"] for w in wrong if w in p["note"])
+    check(f"evals: tests-01's key cannot be satisfied by describing the broken code ({clash})",
+          wrong and not clash)
+
+    # -- the gate ruling (D6), where it binds and where it is written down
+    src = read(os.path.join(HERE, "selftest.py"))
+    check("evals: the deterministic eval suite runs in the gate",
+          all(f"    {fn}()" in src for fn in ("run_agent_evals", "run_eval_scorer",
+                                              "run_mutation_harness",
+                                              "run_ground_truth_fixtures", "run_proxy_register")))
+    skill = read(os.path.join(repo, "skills", "evolve-crux", "SKILL.md"))
+    check("evals: the gate contract is written down where contributors read it",
+          "agent evals" in skill and "never gates" in skill and "no API key" in skill)
+
+    # -- D7. The mechanism ships; the numbers are the PI's, and the gap is on the record.
+    unset = all(V.load_manifest(n)["band"] == V.BAND_UNSET for n in V.fixture_names())
+    check("evals: no band was invented, and the gap is recorded",
+          unset and "Pass bands" in spec and "still open" in spec
+          and "☐ **a stated pass band**" in spec)
+
+    check("evals: spec 10 is flipped, amended, and indexed",
+          "**Status:** ☑" in spec and spec.count("- ☑ ") >= 7
+          and all(a in spec for a in ("crux-glossary", "crux-situate", "crux-design"))
+          and re.search(r"\|\s*10\s*\|[^|]*\|[^|]*\|\s*☑\s*\|",
+                        read(os.path.join(repo, ".spec", "README.md"))) is not None)
+
+    check("evals: spec 10 records what it parked rather than dropping it",
+          "PARKED" in spec and "P1" in spec and "do not implement 05" in spec.lower()
+          and "--spawn" in spec)
+
+    check(f"evals: spec 10 is a zero-bump epic (ENGINE_VERSION {E.ENGINE_VERSION})",
+          E.ENGINE_VERSION == "3.1")
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -6765,6 +7219,11 @@ def main():
     run_glossary_oracle()
     run_glossary_filter()
     run_glossary_write()
+    run_agent_evals()
+    run_eval_scorer()
+    run_mutation_harness()
+    run_ground_truth_fixtures()
+    run_proxy_register()
     run_cli_help()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
