@@ -1,0 +1,5 @@
+Teacher's note: what makes a comparison fair
+
+Teacher's note: what makes a comparison fair
+
+When comparing two algorithms, fairness requires consistency: use the same input for both, run both on the same machine at the same time, use the same number of repetitions, and vary only one thing at a time. If you are comparing sorts, use identical lists for both and test on multiple list shapes—random, sorted, reversed, and duplicate-heavy. Run both on the same machine, with the same background load, and repeat the same number of times. If you are comparing languages, write the same algorithm in both languages, read the same input, and time the same code path. Do not compare a library sort in one language with a hand-written sort in another. Report not just the winner but also the margin: is it 10 percent faster or 100 times faster? Cite the exact conditions: the input size, the number of runs, whether the laptop was plugged in, whether other programs were running. Reproducibility is as important as the final answer.

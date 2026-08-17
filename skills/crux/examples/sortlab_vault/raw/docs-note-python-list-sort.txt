@@ -1,0 +1,5 @@
+Paraphrased note: how Python's list sort behaves
+
+Paraphrased note: how Python's list sort behaves
+
+Python provides a built-in sort method on every list. Calling my_list.sort() sorts the list in place and returns nothing. The sort is stable, meaning equal items keep their original order. The sort is adaptive, meaning it runs faster on data that is already partly sorted. Python's sort is Timsort, an algorithm that detects runs—stretches of data already in sorted order—and merges them. If your list is a single sorted run, Timsort finishes in linear time. If your list has a few long runs, Timsort is very fast. If your list is random, Timsort degrades gracefully to a merge sort, which is N log N. Timsort was designed to be fast on real data, not just worst-case data. It is also stable, which matters when sorting records. Python also provides sorted(), which returns a new sorted list rather than sorting in place.

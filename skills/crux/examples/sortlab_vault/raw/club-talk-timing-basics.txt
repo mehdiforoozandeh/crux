@@ -1,0 +1,5 @@
+Computer club talk: timing a program
+
+Computer club talk: timing a program
+
+How fast does your code really run? The simplest approach is to call a timer function before and after, and print the difference. But there are traps. First, the timer has a resolution—a granularity. Some timers can only see gaps of a millisecond or more. On modern systems, a faster timer exists that counts CPU cycles or uses a high-resolution clock. Second, the first run is often slower than later runs because the code must be compiled or the data must be loaded into cache. Always discard the first run. Third, one run is not enough because the system does other work in the background. Repeating the measurement and taking the median filters out anomalies. If one run is much slower, it might be a background task, a garbage collection pause, or the laptop getting hot and throttling the processor. The median ignores these outliers better than the average does.

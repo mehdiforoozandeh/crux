@@ -1,0 +1,5 @@
+Class handout: stability and space (chapter 10)
+
+Class handout: stability and space (chapter 10)
+
+Two properties of sorting algorithms are often overlooked. Stability means that if two items are equal, their original order is preserved. This matters when sorting records with multiple fields—if you sort by last name, you want people with the same last name to stay in whatever order they were in before. Some sorts like merge sort and insertion sort are stable, while others like quick sort and selection sort are not. Space usage is the amount of extra memory a sort needs. Some sorts rearrange items in place and use only a few extra variables. Others allocate new arrays to merge or partition. On a small laptop, memory matters. Bubble sort and selection sort use almost no extra space. Merge sort uses O(N) extra space for the arrays it merges. Quick sort uses space only for the recursion stack, which is usually shallow. The choice between sorts often depends on whether you care more about time or space.
