@@ -65,7 +65,7 @@ ENGINE_VERSION = "3.1"          # bumped when verdict/roll-up/view logic or vaul
                                 # Deliberately NOT part of the hash-locked commitment: they
                                 # describe how a run is carried out, not what would settle
                                 # the claim, so adding them cannot drift a locked node.
-CRUX_VERSION = "0.5.1"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+CRUX_VERSION = "0.6.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"

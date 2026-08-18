@@ -6,6 +6,8 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-18
+
 ### Added
 
 - **`sortlab_vault` — a fourth example vault, and the first one that needs no field
@@ -1200,6 +1202,7 @@ Two headline additions — a **browser GUI** (Epic 1) and a **literature wiki** 
   read-only snapshot API). Pre-wiki vaults load unchanged and stand up the wiki lazily on first
   ingest; no migration required. `crux validate` now also runs the wiki structural lint.
 
+[0.6.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.6.0
 [0.5.1]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mehdiforoozandeh/crux/releases/tag/v0.4.0
