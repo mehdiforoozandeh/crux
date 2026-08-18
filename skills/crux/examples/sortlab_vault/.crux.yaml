@@ -1,0 +1,9 @@
+title: SortLab
+slug: sortlab
+root_id: root
+engine_version: 3.1
+counter_q: 35
+counter_h: 108
+counter_s: 6
+counter_t: 200
+task_categories: data-acquisition, hpc-setup, implementation, visualization, manuscript, admin, benchmarking, reading

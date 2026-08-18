@@ -1,0 +1,1 @@
+Pretraining for dense prediction — a short placeholder source, committed so the fixture is self-contained.

@@ -1,0 +1,5 @@
+School magazine column: why laptops slow down
+
+School magazine column: why laptops slow down
+
+During a long computation, a laptop gets hot. Modern processors have a feature called thermal throttling: when the temperature rises above a safe level, the processor automatically slows down to cool off. This means that if you run two identical programs on the same laptop, the second one might be slower than the first if the laptop is still warm. The battery also matters. When running on battery power, the processor runs at a reduced speed to save power. Plugging in the laptop might make programs run 10 to 20 percent faster. CPU cache is another factor. When you access data that was recently used, the processor gets it from cache in one or two cycles. When you access data that has not been used recently, the processor must fetch it from main memory, which takes many more cycles. Algorithms that access memory in order—like merge sort—often beat algorithms with random access patterns—like quick sort—because they use the cache better.

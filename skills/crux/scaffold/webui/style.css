@@ -16,7 +16,18 @@
   --q-open: #5a6470; --q-review: #d9a13b; --q-resolved: #2f9e8f;
   --h-idea: #6a7280; --h-staged: #4f74c8; --h-running: #4f9fe0;
   --v-supported: #3fa06a; --v-partial: #8b5cf6; --v-refuted: #d75a5a; --v-inconclusive: #6b7794;
+  --v-invalid-run: #b8873a;   /* amber: the apparatus, not the claim — deliberately not red */
+  --drift: #d98c3f;           /* the commitment was edited after it was locked */
   --root: #8a8f98; --synth: #57c8c0;
+  /* taskhub (spec 08): ONE COLOUR PER CATEGORY is the layer's visual language. The tokens
+     are per-vault and open-ended, so these are the declared defaults plus the reserved
+     `experiment`, which deliberately borrows the tree's accent — an experiment is the one
+     task whose output is evidence, and it should read as belonging to the science. A
+     category with no variable falls back to --t-default rather than rendering invisibly. */
+  --t-default: #6a7280;
+  --t-data-acquisition: #4f9fe0; --t-hpc-setup: #57c8c0; --t-implementation: #7b93d6;
+  --t-visualization: #c08ad9;    --t-manuscript: #d9a13b; --t-admin: #8b949e;
+  --t-experiment: #a882ff;
   /* chrome type scale (spec 12): every UI-chrome font-size goes through these three
      steps — hierarchy beyond that is carried by ink tier and weight, not size. Canvas
      text (SVG node labels) is NOT chrome: its px sizes feed the measureText geometry
@@ -39,7 +50,13 @@
   --q-open: #6e7a86; --q-review: #c08a1e; --q-resolved: #1f8f80;
   --h-idea: #7a8290; --h-staged: #3f63c0; --h-running: #2f87cf;
   --v-supported: #2f8a57; --v-partial: #7c4fd0; --v-refuted: #d14b4b; --v-inconclusive: #77839a;
+  --v-invalid-run: #9a6b1f;
+  --drift: #b3641a;
   --root: #9aa0a8; --synth: #2fa39a;
+  --t-default: #7a8290;
+  --t-data-acquisition: #2f87cf; --t-hpc-setup: #1f8f80; --t-implementation: #5570c4;
+  --t-visualization: #9a5fbe;    --t-manuscript: #c08a1e; --t-admin: #6e7a86;
+  --t-experiment: #7b5bd6;
   color-scheme: light;
 }
 
@@ -372,6 +389,19 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .h-partial      { fill: color-mix(in srgb, var(--v-partial) 36%, var(--panel));      stroke: var(--v-partial); }
 .h-refuted      { fill: color-mix(in srgb, var(--v-refuted) 36%, var(--panel));      stroke: var(--v-refuted); }
 .h-inconclusive { fill: color-mix(in srgb, var(--v-inconclusive) 36%, var(--panel)); stroke: var(--v-inconclusive); }
+.h-invalid-run  { fill: color-mix(in srgb, var(--v-invalid-run) 36%, var(--panel));  stroke: var(--v-invalid-run); }
+/* DRIFT is orthogonal to the verdict — a drifted node keeps its verdict fill and gains a
+   dashed edge, so "what was concluded" and "was the commitment edited" stay separable. */
+.box.drifted    { stroke: var(--drift); stroke-width: 2; stroke-dasharray: 5 3; }
+.drift-mark     { fill: var(--drift); font-size: var(--fs-ui-sm); text-anchor: end; pointer-events: none; }
+.badge.drift    { color: var(--drift); border-color: var(--drift); }
+.badge.warn     { color: var(--v-invalid-run); border-color: var(--v-invalid-run); }
+.vfails         { margin-top: .18em; font-size: var(--fs-ui-xs); color: var(--ink-mute);
+                  font-style: italic; }
+.vfails.disc    { color: var(--v-inconclusive); font-style: normal; }
+.vkind          { margin-left: .45em; padding: 0 .38em; border-radius: 4px; font-size: .72em;
+                  letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px;
+                  color: var(--v-inconclusive); border: 1px solid var(--v-inconclusive); }
 .node.running .box { animation: pulse 1.8s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { filter: none; } 50% { filter: brightness(1.35); } }
 
@@ -429,6 +459,13 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .rowlink:hover { border-color: var(--accent); }
 .rowlink .rid { color: var(--ink-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; margin-right: 7px; }
 .rowlink .rsum { display: block; color: var(--ink-dim); font-size: .92em; margin-top: 3px; }
+
+/* the declared design (spec 13): what is measured, and with how many replicates. Keyed rows
+   rather than badges — these are sentences, not tokens, and they wrap. */
+.plan { margin-bottom: 8px; }
+.plan .prow { display: flex; gap: 8px; align-items: baseline; margin: 2px 0; }
+.plan .pk { flex: 0 0 auto; color: var(--ink-dim); font-size: .86em; text-transform: uppercase;
+            letter-spacing: .04em; min-width: 5.5em; }
 .inline { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .89em; background: var(--panel2);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
 a.go { color: var(--accent); cursor: pointer; text-decoration: none; }
@@ -633,3 +670,36 @@ a.ext { color: var(--accent); }
    the tree. */
 #rd-pane[hidden] { display: none; }
 .wr-item.wr-dim { opacity: .55; }
+
+/* ---------------------------------------------------------------- taskhub pane (spec 08) */
+#tasks-pane { display: flex; min-height: 0; height: 100%; }
+#tasks-rail { width: 190px; flex: 0 0 auto; border-right: 1px solid var(--line);
+              background: var(--panel); overflow-y: auto; }
+#tasks-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; }
+.tk-view { display: block; width: 100%; text-align: left; background: none; border: 0;
+           color: var(--ink-dim); font: inherit; font-size: var(--fs-ui);
+           padding: 6px 12px; cursor: pointer; }
+.tk-view:hover { background: var(--panel2); color: var(--ink); }
+.tk-view.on { background: var(--panel2); color: var(--ink); font-weight: 600;
+              box-shadow: inset 2px 0 0 var(--accent); }
+.tk-sec { margin: 0 0 6px; font-size: var(--fs-ui); color: var(--ink-dim);
+          text-transform: uppercase; letter-spacing: .04em; }
+.tk-note { margin: 0 0 14px; font-size: var(--fs-ui-sm); color: var(--ink-mute); max-width: 62ch; }
+.tk-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 0;
+          border-bottom: 1px solid var(--line); font-size: var(--fs-ui); }
+.tk-id { color: var(--ink-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         font-size: var(--fs-ui-sm); }
+.tk-cat { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: var(--fs-ui-xs);
+          color: var(--ink); background: color-mix(in srgb, var(--tk, var(--t-default)) 26%, var(--panel));
+          border: 1px solid var(--tk, var(--t-default)); }
+.tk-title { flex: 1 1 auto; color: var(--ink); }
+.tk-state { color: var(--ink-mute); font-size: var(--fs-ui-sm); }
+.tk-blocked .tk-title, .tk-dropped .tk-title { color: var(--ink-mute); }
+.tk-dropped .tk-title { text-decoration: line-through; }
+.tk-concl { font-size: var(--fs-ui-sm); }
+.tk-c-supported   { color: var(--v-supported); }
+.tk-c-refuted     { color: var(--v-refuted); }
+.tk-c-inconclusive{ color: var(--v-inconclusive); }
+.tk-c-invalid-run { color: var(--v-invalid-run); }
+.tk-pending { color: var(--q-review); font-size: var(--fs-ui-sm); }
+.tk-drift   { color: var(--v-refuted); font-size: var(--fs-ui-sm); }

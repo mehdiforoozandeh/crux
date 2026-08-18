@@ -1,0 +1,9 @@
+title: Design fixture
+slug: design_fixture
+root_id: root
+engine_version: 3.1
+counter_q: 1
+counter_h: 3
+counter_s: 0
+counter_t: 0
+task_categories: data-acquisition, hpc-setup, implementation, visualization, manuscript, admin

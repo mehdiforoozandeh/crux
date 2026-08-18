@@ -8,6 +8,689 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`sortlab_vault` — a fourth example vault, and the first one that needs no field
+  knowledge.** SortLab is a high-school computer-science notebook: five hand-written sorts
+  raced against the language's built-in one, over sixteen weeks, ending in defeat. 150 nodes
+  (35 questions / 108 hypotheses / 6 syntheses), 200 tasks, 60 wiki pages, 15 registered
+  sources, 4 RD pages. It is the largest example and deliberately the most legible: a reader
+  who has never written a program can follow every sentence.
+
+  Built by driving the real CLI for every verb that has one — no status, verdict or generated
+  view was hand-written. All 87 closes derive their verdict from ticked, pre-registered
+  verifiables, including four `invalid-run`s produced the only honest way: a failed
+  outcome-neutral control, read before the claim checks.
+
+  `crux validate` on it reports **exactly two problems, both DRIFT, on `h9` and `h65`, and
+  zero warnings** — two verifiables really were edited after their locks, the nodes say so in
+  plain words, and the flag is permanent. That is the fixture's teaching point, not a defect,
+  so it is pinned rather than papered over: new `selftest` asserts fix the counts, the two
+  named drift ids, the zero-warning baseline, and `refresh()` being a byte-level no-op, so the
+  fixture cannot rot silently the way spec 08's did.
+
+- **The proxy register, the gate ruling, and spec 10 done** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.4). Six proxy fixtures — `verifiables-01`,
+  `critic-01`, `migrate-01`, `tests-01`, `glossary-01`, `design-01` — so all **ten** agents in
+  the roster now have one. **Spec 10 is done.**
+
+  A **register** in `.spec/10` carries one row per fixture, and `selftest` cross-checks it
+  against every manifest both ways, so a fixture cannot be promoted by editing one side. Its
+  last column is the one that earns its place: `[proxy]` says the eval is weaker, not *in which
+  direction* to distrust it. `design-01` plants exactly one disease per node, because a fixture
+  with two cannot tell a correct diagnosis from a lucky one. `tests-01` declares what the broken
+  implementation actually returns and certification asserts no key row expects it — a key
+  satisfiable by describing the code *is* a description of the code.
+
+  **The gate ruling** (`evolve-crux/SKILL.md` §3): the deterministic half of the eval suite is
+  in gate 1 and runs offline from a fresh clone with no API key; scoring a live submission never
+  gates. **Overnight call — needs morning review.**
+
+  **The pass bands are deliberately not set.** Every manifest ships `band: unset` and the runner
+  reports `UNGRADED`, with no code path that reads an unset band as a pass. A bar invented with
+  no measurement behind it is a guess with a decimal point, so the mechanism ships and the
+  numbers stay the PI's — recorded as spec 10's one open acceptance criterion rather than papered
+  over. Two spec edits ship here and are **overnight calls needing morning review**: the agent
+  table grew from seven rows to ten, and `crux-tests` was demoted from "the strongest available"
+  ground truth to a proxy. Selftest 1406 → **1474**. **`ENGINE_VERSION` unchanged at 3.1 across
+  the whole epic** — asserted, since that is the gate-4 argument.
+
+- **The ground-truth fixtures: `close-01`, `null-01`, `situate-01`** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.3). Three fixtures whose answer the engine already
+  holds, so no new oracle was written.
+
+  `close-01` is a `running` hypothesis with canned results in which every check's outcome is
+  unambiguous — and a **failing outcome-neutral control**, so the correct reading is
+  `invalid-run` and not `refuted`. `derive_verdict_15` supplies the verdict from the manifest's
+  own tick vector, so the fixture cannot disagree with the engine. Ticks are scored as
+  `h1:v3=u` ids, which makes a wrong tick both a miss and an invention — because that is what
+  it is. `null-01` plants `capacity` (84M vs 121M parameters, stated as fact and never as a
+  concern) with `normalization` as a **decoy**: named in the vault, shared across both arms,
+  and therefore recall 0 for anyone who grabs it. `situate-01` runs backwards — the planted set
+  is the payload's own facts (`untested:h2`, `inflight:h3`) plus `gap:q3`, a question with no
+  hypotheses at all, which is the invention trap.
+
+  Two things sit **beside** the band rather than inside it, because they are one bit and no
+  distribution over K runs makes them acceptable: reading an invalid run as `refuted`, and a
+  situate answer that is accurate and four times too long.
+
+  Also recorded: `crux-tests` **loses** its ground truth (its oracle needs executing
+  model-written code, which is parked) and `crux-situate` **gains** one, since PRD 13.1 shipped
+  `situate_lint` for exactly this. **No engine change, no version bump.**
+
+- **The mutation harness — proof the agent suite can detect a regression** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.2). Spec 10's fourth acceptance criterion is the only
+  one a passing suite cannot fake, and it is the cheapest: a degraded *definition* can be
+  degraded in code, with zero model calls.
+
+  Sixteen hand-written mutations — a toolbelt gaining `crux close`, the critic gaining a
+  toolbelt, `crux-design` losing "never invoke", a definition pinning an engine version — each
+  naming the property it must break **before** it is run. The harness applies each in memory
+  (nothing is ever written to `agents/`) and asserts the named property goes red. Two distinct
+  failures are caught: a mutation that reddens nothing means the property is not actually
+  checked, and one that reddens the *wrong* property means the named check is dead weight.
+
+  To make this possible the roster's definition-derived properties were extracted into
+  `evals.roster_properties`, shared by `run_agent_roster`, `run_situate_agent` and
+  `run_design_agent`. **Every assert name and its order is unchanged** — the suite pins that,
+  because the `evolve-crux` gate counts asserts. All ten agents are covered.
+  **No engine change, no version bump.**
+
+- **The eval scorer: precision and recall, banded over K runs, with no model call** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.1). `evals.py --fixture X --submission runs.json`
+  scores a findings file against a certified fixture: recall and precision **together** (recall
+  alone teaches an agent to report everything), the tp/fp/fn listed by id so a failure is
+  readable, and the band taken as the **worst** run across K rather than the mean.
+
+  **The harness never invokes an agent.** A program that launches one K times, decides when to
+  stop and caps what it spends is spec 05's runner, budget cap and autonomy envelope pointed at
+  a fixture — and 05 is deferred. So whoever ran the agent, attended, writes the submission;
+  this reads it. There is no `--spawn`, and `selftest` proves the property by walking
+  `evals.py`'s own AST for a network import or a spawn call rather than trusting the docstring.
+
+  Four refusals rather than a misleading number: an empty report scores precision **0.0** (not
+  the vacuous 1.0), fewer runs than the declared K is `UNDER-K`, a stale `agent_sha` means the
+  submission measured a different definition, and an unset band reports `UNGRADED` — a bar
+  nobody has set never reads as a pass. Proxies carry `[proxy]` on every path.
+  **No engine change, no version bump.**
+
+- **Agent-eval fixtures, and the certifier that keeps them honest** (spec
+  [`10`](.spec/10-agent-evals.md), PRD 10.0). A fixture is a hand-authored vault with defects
+  planted **one per emitted id**, plus a `PLANTED.md` manifest naming them. `evals.py`
+  (beside `selftest.py`, not a `crux` verb) runs the manifest's own declared checks — `gate`
+  is opt-in, and a certifier using the defaults would score a correct finding as invented —
+  and proves the engine emits exactly the planted set. A fixture that drifts from its manifest
+  goes red immediately, so no eval ever grades against a stale ground truth. First fixture:
+  `audit-01`, seven defects across all five families spec 10 names for `crux-audit`. Fixtures
+  live outside `examples/` on purpose: they are `validate`-red by construction, and gate 3
+  walks `examples/` to ask whether anything broke. **No engine change, no version bump.**
+
+- **`crux-design`, and the three-disease taxonomy in the skill** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.3). **Spec 13 is done.**
+
+  Spec 15 supplies the schema that makes a partial answer *detectable* after the run; nothing
+  applied it *before*. `crux-design` does, around one question — **is there any plausible
+  outcome of this run from which we would conclude nothing?** — answered by enumerating the
+  outcomes and writing the sentence each would support.
+
+  It checks all three causes of a partial answer, because a mixed result never announces which
+  one it has, and it **fixes only the third**: a compound claim goes to `crux-critic`, a check
+  that does not follow from the claim goes to `crux-verifiables`, and the run's ability to
+  discriminate is its own. Handoffs are **named, never invoked** — `crux-critic`'s cold input
+  is the drafted node and nothing else, so a caller passing it context would hand it the very
+  thing its isolation excludes. Its cold input is the **isolated** brief, and its belt reaches
+  `crux task list --ref <hid>` for what was already tried. Output is a proposal; there is no
+  write verb in its toolbelt.
+
+  `SKILL.md` gains the taxonomy — the three causes, their owners, and the question that makes
+  it operational — beside the separability rules spec 15 already froze, plus a regression lock
+  keeping that sentence byte-identical to the spec's copy. `.spec/09`'s roster gains the
+  `crux-design` row, so the rosters-agree assert stays green by being **amended, not relaxed**.
+  No engine change, no version bump.
+
+- **The methodology slots, and a visible `## Planned Intervention`** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.2). Spec 13 lists six design facts the engine
+  should own. Three shipped with spec 15 — a control is declared, at least one check is
+  outcome-neutral, a combination rule is named. Two did not exist in any form and now do:
+  **`measurement:`** (what is measured, and with what instrument) and **`replicates:`** (the
+  declared n). Both are optional frontmatter on a hypothesis, declared *before* the run.
+
+  `metric:` is deliberately not reused: that field is the headline **result** written at
+  `close`, so reusing it would let the result be written into the slot meant to constrain it.
+
+  Two properties carry the change, and both are negative. The slots are **not part of the
+  hash-locked commitment** — they describe how a run is carried out, not what would settle the
+  claim — so declaring or revising one cannot drift a locked node, and there is no
+  `SCHEMA_GENERATION` bump. And a missing slot is reported at the **`info` tier** (`design:`,
+  the fifth claimed namespace), never as a warning: `ok` turns on warnings, so warning here
+  would put every vault written before 3.1 into red over a field it never had. The nudge fires
+  only for `staged` and `running` hypotheses — the window where a design is both decided and
+  still changeable. A raw idea is not nagged; a closed one is not retro-flagged.
+
+  `snapshot` now publishes `planned`, `measurement` and `replicates`, and the cockpit renders
+  them. `## Planned Intervention` had been written by the template since v0.5 and read by
+  **nothing**, so spec 13's instruction to land the design there was putting it somewhere only
+  `cat` could see. `ENGINE_VERSION` 3.0 → 3.1; a pre-13 vault is byte-identical after the bump.
+
+- **The situate output bound, and the `crux-situate` agent** (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.1). Spec 13 states situate's success
+  condition more firmly than anything else in the backlog — *brevity is the acceptance
+  criterion, not a preference* — and nothing could check it, because the output is chat prose
+  the engine never sees.
+
+  It can now: `crux brief <node> --lint-situate` reads a composed answer on **stdin** and
+  checks it against a bound in code — one ELI5 paragraph (≤ 60 words), exactly three TL;DR
+  paragraphs, 400 words total, and the anchor id named in the answer. Exit 1 on any finding,
+  `--json` for the list, `situate:<slug>` ids so a caller never matches on a message. The
+  word count reuses the node cap's own tokenizer, so situate's 400 words and a node's 400
+  words are the same 400 words and cannot drift apart. It reads no vault at all, which is why
+  "writes nothing" is true by construction.
+
+  The anchor rule is the one that is not about length: resolving to the *wrong* subtree is
+  situate's worst failure, and the damage is carried by **confident**, not by **wrong**. The
+  lint cannot check that the resolution was right — it can check that it was disclosed.
+
+  `agents/crux-situate/AGENT.md` ships alongside, following 09.4's convention, and `.spec/09`'s
+  roster gains its row: the roster and the shipped directory must always list the same names,
+  so the assert that enforces that was **amended, not relaxed**. `ENGINE_VERSION` 2.9 → 3.0 —
+  the major digit is a counter (2.x ended at 2.9, as 1.x ended at 1.9), not a compatibility
+  era; nothing about a vault changed.
+
+- **`crux brief --mode=situate`** — the orientation payload (spec
+  [`13`](.spec/13-situate-and-design.md), PRD 13.0). *"I have been away. Where are we on
+  q20?"* is five questions, and four of them are computable: what this is, where we are, what
+  is known, and — the one the engine owns outright — **what is yet to be tested**. The fifth,
+  the paths forward, is judgment and stays with the agent.
+
+  So `crux brief` gains a second payload rather than crux gaining a second verb: subtree
+  (summary-shaped, full depth, findings only on closed hypotheses), the ancestry chain with
+  each ancestor's answer-so-far, linked wiki pages, the approved synthesis, unrun ideas and
+  unticked checks, **inbound citations** from outside the subtree as ids and titles, and the
+  taskhub scoped to the subtree — because post-spec-08 a queued run is the difference between
+  a claim nobody has tried and one that is executing right now.
+
+  **The mode is a safety boundary, not a convenience.** Spec 09's payload excludes
+  `## Problem Statement` precisely because that is where the advocacy lives, and situate needs
+  the opposite. So `isolated` stays the default — a forgotten flag degrades to over-isolation
+  rather than to leaked advocacy — and an unrecognised mode is **refused**, because any
+  "unknown means the default" rule is one edit away from "unknown means the wider payload".
+  Omitting the node in situate mode orients over the whole programme. Pure read: the verb
+  writes nothing in either mode, and the payload is byte-identical across runs and a function
+  of vault state alone. `ENGINE_VERSION` 2.8 → 2.9.
+
+- **`crux glossary accept | decline | list`** — the write path, and the skill's vocabulary
+  rule (spec [`14`](.spec/14-glossary.md), PRD 14.3). **Spec 14 is done.**
+
+  This is the only verb that touches `glossary.md`, and it is in no agent's toolbelt.
+  Membership is a claim about the PI — *these are words I know* — so only the PI can make it;
+  putting the single write path behind a verb is what makes "the agent proposes, never
+  writes" mechanical instead of aspirational. Every other verb is asserted not to touch the
+  file.
+
+  `accept` and `decline` are idempotent and **exclusive**: accepting a declined term moves it
+  and says so, because a PI who loses track of their own decline list has lost the thing that
+  stops the same question being asked forever. An accept needs a one-line definition —
+  membership with no read-back line defeats half the file's purpose. Entries are rewritten as
+  whole sections, sorted by key, and everything else in the file (header prose, a note added
+  by hand) passes through untouched. The renderer is a **fixed point**, so a no-op accept
+  really is a no-op on disk.
+
+  `SKILL.md` gains the standing rule: read the glossary on first touch, use its terms bare,
+  gloss or ask for everything else — in node prose *and* in what you say to the PI — and
+  answer candidates inline, one at a time.
+
+- **`crux validate --check=glossary --propose <term>`** — the centrality filter (spec
+  [`14`](.spec/14-glossary.md), PRD 14.2). A term survives when it appears in **≥2 distinct**
+  nodes or wiki pages, **or** in any node or wiki page title. Then four subtractions, all
+  through the one canonical key: already accepted, already declined, already a wiki page
+  (title or slug), or a stoplisted single word.
+
+  The engine does **not** generate the candidate list — it filters one. That inversion is the
+  design: an agent recognizes coined multi-word jargon effortlessly, and counting where it
+  occurs is what code is good at. The filter is the guarantee — a term the agent finds
+  fascinating but which appears once is dropped before the PI ever sees it.
+
+  Candidates ride the **`glossary:` info tier**: never a problem, never a warning, never
+  counted toward the exit code, and **not silenced or failed by `--strict`**. A vault whose
+  prose repeats a term is not broken. With nothing proposed the check says nothing at all,
+  so `crux validate` on every existing vault is unchanged.
+
+  `--propose` is repeatable; `--propose-file` reads one term per line. Dropped terms are
+  never emitted — reporting them would put the PI back in front of what the filter just spared
+  them. The shipped stoplist is a ~250-word hand-written frozenset in `engine.py`: no data
+  file, no dependency, no licence.
+
+- **Counting a multi-word glossary term** (spec [`14`](.spec/14-glossary.md), PRD 14.1).
+  A term matches when its words appear consecutively **inside one markdown block**,
+  case-insensitively, separated by any run of spaces, tabs, hyphens or underscores, with the
+  last word optionally carrying a trailing `s`/`es`. That sentence is the whole rule.
+
+  It was settled by measurement, not argument. The spec's own guess — *"normalizing case and
+  trailing plurals is probably enough"* — was run against the three shipped example vaults
+  and **refuted**: it fixes every plural case and **zero** hyphenation cases, and hyphenation
+  is where the variance lives (*"dense contrastive pretraining"* appears 9× unhyphenated and
+  7× hyphenated in one vault, one author). Under the guess, *"mask transformer head"* scores
+  **0 documents** despite 12 occurrences across 3 documents, two of them node titles.
+  Block scoping is equally forced: permitting a newline in the separator produced 27 measured
+  false positives where a heading's last word glued to the body's first.
+
+  `glossary_blocks` · `term_pattern` · `count_term`, all pure reads with no CLI surface yet.
+  A **frozen oracle** of 10 terms across the three example vaults ships as asserts, so a later
+  change to the rule must reproduce the numbers or admit in its own PRD that it moved them.
+
+- **`glossary.md` — the project's vocabulary model** (spec [`14`](.spec/14-glossary.md),
+  PRD 14.0). One file per vault, created **empty** at `init`, with `## Terms` and
+  `## Not jargon`. It is not a definition store: presence means an agent may use the word
+  bare, absence means gloss it or ask. The decline list is the other half — without it the
+  same term is re-proposed on every audit forever and the PI learns to ignore the prompt.
+
+  Separate from the wiki because the wiki's flow rule forbids project-**coined** terms, and
+  those are exactly the ones most likely to be used bare at a PI who has never had them
+  defined — the agent invented them, so they read as obvious.
+
+  `parse_glossary` is pure and total (a missing file, a missing section and hand-written
+  prose all read as data). `glossary_key` derives one canonical key per entry — casefold,
+  separators collapsed, final word depluralized — so a declined term cannot come back under
+  a different hyphenation. The file is skipped by the node scan **by name**, not by luck.
+
+  `ENGINE_VERSION` → **2.8**. A vault with no `glossary.md` is correct, not broken: absence
+  is permanently legal, no read path creates the file, and the shipped fixture is
+  byte-compared to prove nothing moves but the version stamp.
+
+- **The agent roster, and a convention for what an agent definition is** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.4). Eight definitions ship in
+  `agents/<name>/AGENT.md`, mirroring the `skills/` layout so there is one mental model:
+  `crux-null` · `crux-verifiables` · `crux-critic` · `crux-migrate` · `crux-close` ·
+  `crux-audit` · `crux-tests` · `crux-glossary`.
+
+  Three frontmatter fields carry 09's architecture and are **asserted**, not just written:
+  **`cold_input`** (the only thing the agent receives), **`toolbelt`** — every entry must be a
+  real `crux ` verb, because 09 is explicit that the belt is CLI verbs rather than
+  agent-private scripts, so `selftest` can assert them and the PI can run any of them by hand
+  — and **`excludes`**, which makes each isolation boundary reviewable. `crux-verifiables`
+  declares that it never sees `## Problem Statement`, and the suite **cross-checks that the
+  brief actually enforces it** rather than trusting the declaration.
+
+  The leash is checked against the **toolbelt**, not prose: no agent may run `crux close`,
+  `answer`, `approve`, `pursue` or `task accept`. `crux-critic` ships with an **empty**
+  toolbelt and no vault access at all — isolation by construction, since it cannot pour the
+  vault into a node it cannot see.
+
+  This **unparks specs 13 and 14**: `crux-glossary`'s row matches the contract spec 14 parked
+  in `PARKED-09.md` exactly (propose-only cold input, no write verb, conversation excluded),
+  and `crux brief` from PRD 09.0 is the dependency spec 13 was waiting on. Doc-only: no
+  engine change, no `ENGINE_VERSION` bump. Spec 09 flips to ☑ with its work items ticked.
+
+- **`crux migrate` — schema bridging, with evidence fields structurally unmigratable** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.3). Adds the structural sections a newer
+  engine expects (`## ELI5`, `## TL;DR`, `## Null`, `## Artifacts`, `## Protocol`), empty.
+  Dry run by default; idempotent; authored prose is never reflowed, only added to.
+
+  **This resolves the standing collision between specs 09 and 15, and 15 wins.** Spec 09
+  dissolved version bridging into a mechanical rewrite; spec 15 ruled *"no `crux migrate`
+  path for this"*, because bringing an old hypothesis up to evidence semantics means
+  re-declaring what would settle a claim — a scientific act, PI-gated, one node at a time.
+  Both are right about different fields, and the split was **measured**: a node built at 2.6
+  differs from the committed pre-15 fixture by four structural sections plus exactly two
+  frontmatter fields, `schema` and `rule`.
+
+  So `MIGRATE_FORBIDDEN` is enforced structurally, not by policy: the verb has no code path
+  that writes `schema`, `rule`, `rule_m`, the lock triple, `neutral_optout`, or the null
+  approval — and it creates `## Null` **empty**, never filled. `schema` is the sharp one:
+  writing it would not "add a field", it would **flip a node across the version boundary**,
+  binding work settled before those rules existed to every spec-15 rule at once. Scientific
+  staleness is surfaced as `info`, never repaired.
+
+  Also adds `validate --check=gate` (opt-in): a question parked in `review` with no synthesis
+  drafted. That is the one item on spec 09's audit list that was not already a check —
+  over-cap nodes, unresolvable artifacts and unrun-idea pileup all shipped with specs 06 and
+  v0.5. `ENGINE_VERSION` 2.6 → 2.7.
+
+- **A failure scenario on every verifiable, and the two-part discrimination filter** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.2). Spec 09 replaces a numeric cap on
+  verifiables with a logical one: **two verifiables are redundant if they fail for the same
+  reason.** Applied greedily, the agent stops when it runs out of worlds. The engine cannot
+  judge that — what it *can* do is force the residue to be written down, so redundancy is
+  visible at a glance to the PI and to `crux-critic`.
+
+  Each check now carries the world in which it fails, on an **indented continuation line**:
+
+  ```
+  - [ ] imp-Spearman ≥ +0.01
+        fails-if:: the gain is capacity alone — the width-matched arm also clears it
+        discriminates:: true
+  ```
+
+  `discriminates::` is **its own field**, marking the check aimed at the declared null. `validate` and
+  the `running` gate enforce both halves: every check has a non-empty scenario, no two are
+  byte-identical, and at least one claim-directed check discriminates. Byte-identity is all
+  the engine can honestly check — it catches copy-paste, and the rest is why the scenarios
+  are written down at all.
+
+  The continuation line was chosen because it is the only syntax that leaves **every** spec-15
+  reader byte-clean: tick, kind, text, `(found: …)` and both tallies are unchanged, asserted
+  against values captured before the change. New `--fails-if` / `--discriminates`, which
+  attach to the preceding `-v`/`-n` — **additive, never a second argument to `-v`**, which was
+  measured to break every existing caller. `ENGINE_VERSION` 2.5 → 2.6.
+
+### Changed
+
+- **`SCHEMA_GENERATION` → 2**, and `lock_material` is now **generation-keyed**. From
+  generation 2 the failure scenario is part of the pre-registered commitment — it is what
+  would have falsified the check, and writing it after results are visible is exactly the
+  move the lock exists to detect. A node stamped **generation 1 keeps the material it was
+  locked with, forever**: without that split, changing the commitment's shape would re-hash
+  every already-locked node and flag an edit nobody made, which is the engine falsifying its
+  own record. Proven on a fixture locked under generation 1 — it does not drift, and its
+  vault validates clean.
+
+- **`## Null` — the boring explanation, on a closed vocabulary, PI-gated** (spec
+  [`09`](.spec/09-specialized-agents.md), PRD 09.1). The brief removes the parent's authored
+  prompt, but one leak cannot be engineered away: the hypothesis **title** is directional.
+  *"masked-token beats masked-stem"* presumes a winner, and a fresh agent still knows which
+  way the room leans. The answer is not to neutralise the title but to push against it —
+  name the **cheapest way this result could be trivially true**, then make the checks
+  discriminate against *that*.
+
+  Three goalposts, all in code, because instructions will not hold this (the crux skill
+  already said *"keep the science explicit"* and produced 5,725-word nodes): **one null, one
+  line, ≤25 words**; it must **name a family from a closed list** — `capacity` · `chance` ·
+  `leakage` · `selection` · `normalization` · `instrumentation` — so the agent picks a family
+  and names the instance rather than composing something exotic; and **the PI approves it
+  before checks are written against it** (`crux approve-null <id>`), which is the gate
+  between naming the boring explanation and testing against it. The null *is* the bar
+  restated, and the leash already makes the bar the PI's call.
+
+  Editing an approved null **voids the approval** — a different null is a different claim
+  about what would be boring, and checks written against the old one discriminate against
+  nothing. New `crux hypothesize --null`; the null flows into `crux brief`, `snapshot` and
+  the cockpit pane. `ENGINE_VERSION` 2.4 → 2.5. Pre-15 hypotheses are never asked for one.
+
+- **`crux brief <hypothesis> --json`** (spec [`09`](.spec/09-specialized-agents.md), PRD 09.0).
+  The deterministic cold input every isolated agent receives: one hypothesis' claim, its
+  question, its ancestry, its pre-registered checks with kinds and combination rule, the
+  findings of **closed siblings**, linked wiki pages, and the *addresses* of available
+  metrics. Assembled from vault state; **the calling agent never authors a sentence of it.**
+
+  crux pre-registers verifiables, which defends against changing the bar *after* seeing
+  results — it says nothing about *who sets it*, and an agent that has spent an hour helping
+  argue for a hypothesis will pick a bar that clears. Zero context does not fix that alone,
+  because the parent writes the prompt: *"verify that JEPA improves imputation"* has already
+  said which way to lean. Same node, same brief, every time — which is what makes the
+  isolation testable rather than merely claimed.
+
+  Three exclusions, each for its own reason: **`## Problem Statement`** (spec 09 names it as
+  where the advocacy lives); **the hypothesis' own findings and its own `(found: …)` values**
+  (an agent writing checks must not see that hypothesis' results, or "pre-registration" is
+  being performed after the fact — sibling findings stay, those are the shared record); and
+  **metric values** (the brief says what *can* be measured, never what *was*).
+  `ENGINE_VERSION` 2.3 → 2.4. Read-only; works on pre-15 and pre-08 vaults unchanged.
+
+- **The taskhub's skill rules, and three spec amendments** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.5). `SKILL.md` gains the rules the engine cannot check:
+  what gets in ("would you be annoyed if this vanished next week?"), when status changes, the
+  hard line — *work never creates direction; an output that is evidence enters the gated
+  tier* — and the escape hatch, that a task which would open a question converts to a tree
+  node. Plus the distinction that matters most now that both share four tokens: a
+  hypothesis's **verdict** is derived by the engine from its ticks; an experiment's
+  **conclusion** is written about a run and PI-accepted, and never closes anything.
+  `.spec/08` is amended for the conclusion vocabulary and the frontier criterion (both wrong
+  as written), and both specs now record the deliberate split between written node-tree
+  lineage and derived task links, so neither layer gets "fixed" toward the other. No
+  `ENGINE_VERSION` bump.
+
+### Added
+
+- **The taskhub in the cockpit** (spec [`08`](.spec/08-taskhub.md), PRD 08.4). `snapshot`
+  gains a `tasks` block — items with their **computed** `state` and role, the frontier, the
+  acceptance queue, and the declared vocabularies, so the cockpit never keeps its own copy of
+  the rules. Node → tasks and hypothesis → experiments reach the node pane as computed
+  backlinks that appear in no node file. A fourth tab renders four views over one list —
+  Frontier (default), All, By category, and the experiment timeline — with **one colour per
+  category** as the visual language, in both themes, and a `pre-15` marker on a conclusion
+  about a hypothesis that predates evidence semantics. The tab hides itself on a vault with no
+  `tasks/`, exactly as the Wiki and RD tabs do. Read-only throughout: accepting an experiment
+  stays a CLI act. No `ENGINE_VERSION` bump — pure read paths.
+
+### Added
+
+- **The gating split: work never creates direction** (spec [`08`](.spec/08-taskhub.md),
+  PRD 08.3). Completing an ordinary task is act-and-report; completing an **experiment** is
+  PI-gated, because its output is evidence. `crux task review` lists experiments awaiting
+  acceptance and `crux task accept` is the PI's signature — a **separate** queue from
+  `crux review`, which keeps spec 15's `(id, title, drift)` three-tuple untouched. Accepting
+  records the signature and sets the existing `stale` signal on the refed hypotheses' parent
+  questions; it writes no verdict, no tick and no roll-up entry, and five asserts prove those
+  negatives. Because only the parent of a decomposition carries `hypothesis_refs`, the gate
+  fires **once per experiment**, not once per sub-task. Drift on a refed hypothesis is printed
+  loudly at both `review` and `accept` and **blocks nothing** — spec 15's ruling D7, given its
+  own guard at this new touchpoint. `ENGINE_VERSION` 2.2 → 2.3.
+
+### Added
+
+- **Experiments are tasks** (spec [`08`](.spec/08-taskhub.md), PRD 08.2). A task that declares
+  what it concluded about a hypothesis (`hypothesis_refs: "h44:supported, h45:refuted"`) **is**
+  an experiment; the `experiment` category is computed from that and never stored, so there is
+  no way to have an experiment that forgot to be marked one. The conclusion vocabulary is spec
+  15's, derived from `VERDICTS` so the two cannot be edited apart: `supported` / `refuted` /
+  `inconclusive` / `invalid-run`, with the retired `partial` refused by name. One experiment
+  can conclude opposite things about two hypotheses — the fact the tree structurally cannot
+  hold. Node → tasks and hypothesis → experiments are **computed** backlinks, so adding an
+  experiment still edits no node file; the experiment timeline is a filtered section of
+  `TASKHUB.md`, leaving the per-hypothesis `EXPERIMENTS.md` registry untouched. An experiment
+  may bear on a **pre-15** hypothesis, and every view records which schema each refed
+  hypothesis carries — the record sits on the task's side, so nothing is retro-stamped.
+  `crux task add --concluded h44:supported`. `ENGINE_VERSION` 2.1 → 2.2.
+
+### Added
+
+- **The dependency graph, the frontier query, and `TASKHUB.md`** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.1). `blocked` is computed from the graph and never
+  stored — a state you can compute cannot drift — and external blockers become tasks rather
+  than a second kind of state. `crux task list` answers the three questions actually asked of
+  the layer (`--frontier`, `--ref <node>`, `--blocks <task>`), and the generated `TASKHUB.md`
+  leads with the frontier because that is the query it exists to serve. Dependency cycles are
+  caught deterministically over both `blocked_by` and `parent`, with the cycle path in the
+  message. A **dropped** blocker discharges its edge (the spec's literal "all `done`" would
+  strand the dependent forever, invisibly, inside the layer's own primary query), and the
+  promotion is reported as `info` so it is never silent. `ENGINE_VERSION` 2.0 → 2.1.
+
+### Added
+
+- **The task store — a record the engine allocates and never rewrites** (spec
+  [`08`](.spec/08-taskhub.md), PRD 08.0). A third side-layer beside the tree and the wiki:
+  `tasks/`, holding the work a research programme has to *do*. `crux task add / done / drop /
+  show / categories`, one file per task, engine-allocated ids that are never renumbered, a
+  per-vault declared category list, and a `--check=tasks` structural lint. `done` hard-requires
+  an output that resolves — a vault path or a `[[wikilink]]` — because a bare ticked box
+  discards the thing that makes the layer traversable. The load-bearing property is negative
+  and is the direct lesson from spec-kit, whose `tasks.md` is regenerated from its spec and
+  loses state: **nothing regenerates the taskhub**. `experiment` is a reserved category from
+  day one, refused by the engine, so assigning it later (2.2) is not a format change.
+  `ENGINE_VERSION` 1.9 → 2.0; a pre-2.0 vault has no `tasks/` and loads byte-unchanged.
+
+### Added
+- **The cockpit narrates evidence semantics** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.6). The engine had been publishing `drift`,
+  `rule`/`rule_m`, `locked`/`lock_at` and per-verifiable `kind` in `snapshot()` since 1.9, and
+  the cockpit rendered **none** of them — found by walking the manual check, and measured
+  rather than eyeballed (the string "drift" appeared nowhere in the DOM, in either theme).
+
+  That is spec 15 §5's own failure reproduced: PLATO's rule *"failed at narration time, not
+  computation time"*. A drifted hypothesis read as a clean `supported` over three green
+  ticks, one of them literally titled *"a completely different check nobody registered"*; and
+  on an `invalid-run` node, the control whose failure **caused** the verdict was
+  indistinguishable from the claim checks.
+
+  Now: a drifted node carries a dashed amber edge and a ⚠ in the **tree** (a flag only
+  visible after opening the node is a flag that does nothing for a reader skimming), and the
+  detail pane carries `rule`, a `⚠ drift` badge, a `not pre-registered` badge when the
+  commitment was hashed only at close, and a `CONTROL` chip on outcome-neutral rows. Drift
+  takes the **stroke**, never the fill, so "what was concluded" and "was the commitment
+  edited" stay separately readable. Webui only — no engine change, no `ENGINE_VERSION` bump.
+
+### Changed
+
+- **`demo_vault`'s generated views regenerated through the engine.** The committed fixture
+  was last regenerated at engine 1.3, so its `META.md`, `EXPERIMENTS.md` and in-node ledger
+  blocks predated spec 15's view changes (the `rule` column, `invalid-run` in the verdict
+  counts). Regenerated with `refresh()` — never by hand, per the `evolve-crux` guardrail —
+  so the fixture is honest at 15's tip. **Every recorded verdict, every status and every
+  authored line is byte-unchanged**, and the vault deliberately keeps `engine_version: 1.2`
+  with no `schema` stamp on any node: its whole job is to be the *pre-15* oracle the
+  non-retroactivity proof compares against, and re-stamping it would destroy that.
+
+- **Guard parity for the cockpit.** The legend guard derived from `E.VERDICTS` is what forced
+  `invalid-run` into the UI during the 15 build; there was no equivalent for per-node fields,
+  which is exactly why three shipped unrendered. A new guard derives the expectation from
+  `snapshot()`'s **actual** published surface — every idea and verifiable field must be
+  consumed by `app.js`, minus a deliberately small, justified allowlist — so a field added to
+  the engine tomorrow joins the expectation without anyone remembering to update a list.
+- **The hash-lock is pinned newline-invariant.** The wiki source registry hashes raw bytes
+  (`_sha256_file`), which is what broke `demo_vault` on Windows CI under an autocrlf
+  checkout. The lock never inherited that: it hashes `lock_material()`, a string built from a
+  body `read()` already normalized in text mode. Three asserts pin it — including a real CRLF
+  file round-tripped from disk — so a future move to byte-hashing fails here rather than on
+  someone else's runner.
+
+- **The separability rulebook, and the skill's account of a verdict** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.5). The `crux` skill gains the PI's rule for
+  when one experiment may settle several hypotheses, verbatim — *"each hypothesis turned by
+  its own independently varied knob … and no single shared ingredient could flip all the
+  answers together without a pre-declared outcome-neutral check catching it and voiding the
+  whole run; anything less means you ran one experiment with many labels, not many answers"* —
+  plus the three checks it decomposes into (different lever / different failure / different
+  verdict). A selftest assert compares the skill's copy against the spec's word for word, so
+  the two cannot drift.
+
+  The skill's verdict section is rewritten: it was still teaching *"any unmet →
+  refuted/partial"*, which is the retired rule. It now describes the two verifiable kinds,
+  the combination rule, all five verdicts, `inconclusive` as derived-never-chosen, and — the
+  part an agent most needs — that **the boundary is permanent and an old node must not be
+  "fixed"** to the new schema. Doc-only; no `ENGINE_VERSION` change, no migration.
+
+  Spec 09 records the `crux-verifiables` amendment where it will be built (assign kinds,
+  choose and justify the rule, state the 64%-joint-power cost of `all`), since that agent
+  does not exist yet. Spec 15's shipped work items are ticked and its status is `◐`.
+
+- **The hash-lock: enforced pre-registration, and a permanent drift flag** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.3). When a hypothesis goes `running`, the
+  engine content-hashes its **commitment** — the combination rule plus every verifiable, in
+  document order, as (kind, text) — into `lock:` with a `locked:` timestamp. Any later edit
+  to a check, a kind, the rule, or the *order* is detected and raised as a `validate`
+  problem. Two things deliberately do **not** count: ticking a box (that is what closing
+  *is*) and appending a `(found: …)` note (that is the evidence, recorded after). Whitespace
+  is collapsed, so reflowing a long check is not drift.
+
+  The negative result this answers is blunt: bare preregistration shows no measurable drop in
+  positive results and 46% of preregistered hypotheses simply vanish from the paper, while
+  Registered Reports run 44% positive against 96%. The active ingredient is *enforced
+  commitment*, not the document — and a vault is a git repo, so crux can enforce what a
+  journal cannot.
+
+  **Edits are flagged, never refused.** Research legitimately discovers a check was wrong,
+  and refusing the edit only launders it into a duplicate hypothesis. The flag is permanent
+  and no verb clears it. It **blocks nothing**: `crux review` shows it beside the question at
+  the moment the PI is deciding, `crux answer` prints it and proceeds. The engine flags; the
+  PI decides. `ENGINE_VERSION` 1.8 → 1.9.
+
+  `close` also locks, marking `lock_at: close` and raising a *warning* — `cmd_close` has no
+  status precondition and is reachable straight from `idea`, so a lock taken only at
+  `running` is bypassable by the shortest path the CLI offers. The warning says what is true:
+  the checks and the results became visible at the same moment.
+
+### Changed
+
+- **`crux review` reports drift, and its return shape grew a third field**
+  `(id, title, drift)`; `--json` gains `"drift"`.
+- **A seed-reconstructed hypothesis is marked `reconstructed: true`** and reported in its own
+  words — *"reconstructed from a seed and never pre-registered"* — instead of being counted
+  as predating evidence semantics. A vault created today can hold these, so calling them old
+  would be baffling.
+
+- **The combination rule, and a verdict with no `partial` in it** (spec
+  [`15`](.spec/15-evidence-semantics.md), PRD 15.2). A hypothesis now declares **how its
+  claim-directed checks add up**, before the run: `rule: all | any | m-of-n` (with
+  `rule_m:`), settable at creation via `crux hypothesize --rule/--rule-m`. That turns "two of
+  four passed" from an argument into arithmetic. ICH E9 §2.2.5 states the design space as
+  exactly this quantifier — any / some minimum number / all — and those three ship.
+  `ordered` (fixed-sequence gatekeeping) is a **reserved** token: recognized and refused with
+  a pointer to spec 15, so no vault can contain one and adding it later is not a format
+  change. It is the structure PLATO's authors narrated past, and shipping it needs a render
+  contract that is not built.
+
+  The verdict becomes a total function of **(kinds, rule, pass/fail vector)** with a
+  four-value image: `supported` · `refuted` · `inconclusive` · **`invalid-run`** (new). Run
+  validity is read *first and separately* — a failed or unread outcome-neutral control yields
+  `invalid-run`, never `refuted`, because a broken apparatus is not a refutation. Under
+  `m-of-n`, exactly *m−1* passes is `inconclusive` (the "consider" tier) and two or more short
+  is `refuted`, so `inconclusive` stays narrow rather than becoming the drawer. It is
+  **derived, never chosen**: no verb, flag or field sets it. `ENGINE_VERSION` 1.7 → 1.8.
+
+  `partial` is **retired, not removed**. It can never again be derived for a node that binds
+  evidence semantics, but it stays in the vocabulary permanently: `snapshot` clamps any
+  verdict outside `VERDICTS` to `None` and the cockpit renders a `done` node with a `None`
+  verdict as *inconclusive*, so deleting the token would silently re-label every pre-15
+  partial result. A pre-15 node is still closed by the **unchanged** pre-15 function —
+  asserted against its full truth table, captured before the change and pasted into the suite
+  as a literal.
+
+### Changed
+
+- **The verdict roll-up is generated from `VERDICTS` instead of four hard-coded names.**
+  `ledger_counts` hand-picked the four as literal dict keys and `render_meta`'s dashboard
+  listed them in a format string, so adding a fifth verdict raised `KeyError` in
+  `_ledger_summary` and rendered *nowhere* in `META.md`. Both are now derived from the
+  constant, matching what the cockpit legend already did. `EXPERIMENTS.md` gains a `rule`
+  column beside `verdict` — spec 15's render-time requirement that the verdict and the rule
+  that produced it travel together wherever a hypothesis is read.
+
+- **Verifiables carry a `kind`** (spec [`15`](.spec/15-evidence-semantics.md), PRD 15.1).
+  Two classes, written as a leading bracket tag on the checkbox line:
+  `[hypothesis]` (a consequence of the claim — the default, so every existing verifiable
+  reads exactly as it always did) and `[outcome-neutral]` (a positive control or sanity
+  check that must pass *whatever* the claim turns out to be). Regulators call the property
+  this protects **assay sensitivity**: without a passing control, "the claim is false" and
+  "the apparatus is broken" are indistinguishable, which is what let one flat list
+  manufacture partial answers. A hypothesis created at 1.7 or later **cannot go `running`**
+  without at least one outcome-neutral check or a written `neutral_optout:` reason — the
+  reason itself is the audit trail, because "there is no control here" should be *said*.
+  New `crux hypothesize -n/--neutral`, and a `vn:` line in the seed grammar. The tag is
+  *leading* rather than trailing, and that is forced: the seed parser strips a trailing
+  `(...)` as its evidence note, so `(outcome-neutral)` would be silently recorded as a
+  finding. `ENGINE_VERSION` 1.6 → 1.7.
+
+  This PRD deliberately changes **no verdict**: the kind is parsed, required and displayed,
+  but the tally the verdict runs off is byte-unchanged. Consuming the split is PRD 15.2.
+
+- **The evidence-semantics version boundary** (spec [`15`](.spec/15-evidence-semantics.md),
+  PRD 15.0). Questions and hypotheses created from `ENGINE_VERSION` 1.6 on carry a
+  `schema: 1` frontmatter stamp; **absence of the stamp means the node predates evidence
+  semantics**, permanently. Spec 15's rules — verifiable kinds, the combination rule, the
+  hash-lock — will bind stamped nodes only, so the engine can never re-verdict work that was
+  settled under the old ones. The mechanism has to be per-node: the vault-level
+  `engine_version` cannot carry it, because `check_and_stamp_version` overwrites that stamp
+  on drift *before* returning the warning, so one command after an upgrade erases the
+  evidence that the vault is old. `crux validate` gains a third tier, **`info`** — reported
+  with a neutral glyph, never counted toward the exit code, and never escalated by
+  `--strict`, because a vault that predates a rule is correct rather than broken. This PRD
+  adds **no rule at all**: a stamped and an unstamped node behave identically in every
+  command. `ENGINE_VERSION` 1.5 → 1.6; a pre-1.6 vault loads byte-unchanged, keeps every
+  recorded verdict, and validates clean.
+
+### Changed
+
+- **A seeded `[tested]` hypothesis is no longer stamped with the evidence-semantics schema.**
+  `[tested]` means "this ran before crux was watching" — reconstructed history, not new
+  work. Requiring it to declare a control would be the engine asking the PI to invent, after
+  the fact, what would have settled an already-settled claim. Untested seeded hypotheses are
+  genuinely new work and keep their stamp.
+
+- **Version asserts in `selftest.py` no longer pin a literal.** Five checks asserted
+  `E.ENGINE_VERSION == "1.5"`, which made every future engine bump drag earlier specs' tests
+  red. The ones asserting a *historical* bump now use `at_least_version()` ("that bump
+  happened and was never reverted", which stays true), and the ones asserting *current*
+  behaviour compare against `E.ENGINE_VERSION` itself — the idiom `rdmig` was already using
+  one line above one of them.
+
 - **The RD layer: `crux rd <node> "<title>"`** (spec [`07`](.spec/07-rd-layer.md), PRD 07.1).
   Requirements Documents — a home for the design detail the 400-word node cap displaces.
   One active RD per node, living in `rd/<slug>.md` as `type: rd`, linked from the node by an

@@ -1,0 +1,5 @@
+Class handout: divide and conquer (chapter 8)
+
+Class handout: divide and conquer (chapter 8)
+
+Many problems become easier if you split them in half, solve each half, and combine the results. Merge sort does this by splitting the list, sorting each half recursively, then merging the sorted halves. Merging is the key: two already-sorted lists can be merged in linear time by always taking the smaller of the two front items. Quick sort splits using a different strategy. It chooses a pivot item and partitions the list into items smaller than the pivot and items larger than the pivot. Then it recursively sorts each partition. On random data, quick sort is usually faster than merge sort because partitioning is simpler than merging. But on data with many equal items, quick sort can degrade to quadratic time unless you use a three-way partition that handles equals separately. Merge sort guarantees N log N time on any input, which is why it is used by many library sorts.

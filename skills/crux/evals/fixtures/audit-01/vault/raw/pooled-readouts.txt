@@ -1,0 +1,1 @@
+Pooled readouts — a short placeholder source, committed so the fixture is self-contained and every registered source resolves.

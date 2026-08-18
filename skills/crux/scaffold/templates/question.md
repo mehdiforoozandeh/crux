@@ -1,6 +1,7 @@
 ---
 id: <<id>>
 type: question
+schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
 status: open

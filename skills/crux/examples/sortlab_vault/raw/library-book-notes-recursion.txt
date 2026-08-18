@@ -1,0 +1,5 @@
+Library book notes: recursion and stack depth
+
+Library book notes: recursion and stack depth
+
+When a function calls itself, each call takes space on the call stack. A deep recursion—many nested calls—can exhaust the stack and crash the program. Most systems limit the stack to a few thousand calls. Quick sort and merge sort recurse down the size of the list, so on a list of 1 million items, the recursion depth might be 20 or more. This is usually fine. But quick sort can degrade to a recursion depth of N if the pivot is always the smallest or largest item, creating a chain of calls. This is both slow and dangerous—it will hit the stack limit. To avoid this, quick sort implementations often switch to a different method on small sublists or limit the recursion depth by falling back to heap sort. Merge sort has guaranteed logarithmic depth because it always splits the list in half, never creating a deep chain of calls.

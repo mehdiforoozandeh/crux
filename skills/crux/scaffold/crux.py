@@ -38,6 +38,7 @@ for _s in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine as E
+NEUTRAL_KIND_LABEL = E.NEUTRAL_KIND
 
 
 def _vault():
@@ -68,6 +69,18 @@ def _jsonable(s):
                    help="emit machine-readable JSON on stdout instead of text")
     return s
 
+
+def _pair_discriminates(argv):
+    """Which `--fails-if` values carried a `--discriminates` after them. argparse's append
+    actions record the two flags in separate lists and lose the interleaving, so the pairing
+    is recovered from argv — the one place the order survives."""
+    out, idx = [], -1
+    for tok in argv:
+        if tok == "--fails-if":
+            idx += 1; out.append(False)
+        elif tok == "--discriminates" and idx >= 0:
+            out[idx] = True
+    return out
 
 def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
@@ -103,7 +116,44 @@ def main(argv=None):
 
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
-    s.add_argument("--problem", default=""); s.add_argument("-v", "--verifiable", action="append", default=[],
+    s.add_argument("--problem", default="")
+    # the methodology slots (spec 13): declared BEFORE the run, and deliberately not `--metric`
+    # — that one is the result, written at close
+    s.add_argument("--measurement", default=None,
+                   help="what this hypothesis measures, and with what instrument — declared "
+                        "before the run. Not the result: that is `close -m`.")
+    s.add_argument("--replicates", default=None,
+                   help="the declared n / replication plan (\"5 seeds x 3 folds\", "
+                        "\"n = 12 per arm\")")
+    s.add_argument("-n", "--neutral", action="append", default=[],
+                   help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
+                        "pass whatever the hypothesis turns out to be. Its failure invalidates the "
+                        "run, not the claim. At least one is required before `test --to running`.")
+    # Additive, NOT a second argument to -v: `nargs=2` was measured to make `-v "a check"`
+    # exit with "expected 2 arguments", breaking the skill's documented usage, the agent CLI
+    # surface and every existing fixture. These attach to the most recent -v/-n instead, so a
+    # bare -v keeps working and a missing scenario is caught by `validate` before the run.
+    s.add_argument("--fails-if", dest="fails_if", action="append", default=[],
+                   help="the world in which the PRECEDING -v/-n check fails. Two checks are "
+                        "redundant if they fail for the same reason; this is what makes that "
+                        "visible. Required on every check before `test --to running`.")
+    s.add_argument("--discriminates", dest="discriminates", action="append_const", const=True,
+                   default=[], help="mark the preceding --fails-if as the one that "
+                                    "discriminates against the declared null (at least one must)")
+    s.add_argument("--null", default=None,
+                   help="the BORING explanation: the cheapest way this result could be trivially "
+                        "true. One line, <=25 words, naming a confound family (capacity, chance, "
+                        "leakage, selection, normalization, instrumentation). The PI approves it "
+                        "with `crux approve-null` BEFORE checks are written against it.")
+    s.add_argument("--rule", default=None, choices=None,
+                   help="how the claim-directed verifiables ADD UP, declared before the run: "
+                        "all | any | m-of-n. Required once there is more than one of them — "
+                        "without it, 'two of four passed' is an argument rather than "
+                        "arithmetic. Cost of `all`: two checks at 80%% power each give 64%% "
+                        "joint power, and thresholds may not be loosened to compensate.")
+    s.add_argument("--rule-m", dest="rule_m", type=int, default=None,
+                   help="the m in m-of-n (how many of the claim-directed checks must pass)")
+    s.add_argument("-v", "--verifiable", action="append", default=[],
                                                             help="a falsifiable check (repeatable)")
 
     s = _jsonable(sub.add_parser("test", aliases=["experiment", "run", "stage", "launch"], help="advance an idea: idea→staged→running"))
@@ -141,9 +191,99 @@ def main(argv=None):
     s.add_argument("--supersedes", default=None, metavar="SLUG",
                    help="replace this node's active RD — an active RD is never amended in place")
 
-    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd)"))
+    # `task` carries sub-verbs rather than five top-level ones: the taskhub is queried far
+    # more than it is written, and one namespace keeps the top-level verb list about the
+    # science. Every sub-verb takes --json, per spec 06's rule that the agent toolbelt lives
+    # in the CLI so selftest can assert it and the cockpit can reuse it.
+    tp = sub.add_parser("task", aliases=["todo", "work"], help="the taskhub: the work this project has to do")
+    tsub = tp.add_subparsers(dest="tcmd", metavar="<sub-verb>")
+
+    s = _jsonable(tsub.add_parser("add", help="append a task (never rewrites, never renumbers)"))
+    s.add_argument("title")
+    s.add_argument("-c", "--category", required=True,
+                   help="from this vault's declared list (`crux task categories`)")
+    s.add_argument("--ref", dest="refs", action="append", default=[], metavar="ID",
+                   help="a tree node / wiki/<slug> / rd/<slug> this serves (repeatable)")
+    s.add_argument("--blocked-by", dest="blocked_by", default=None, metavar="IDS",
+                   help="comma-separated task ids, or None — REQUIRED, so a missing edge is "
+                        "a visible omission rather than silence")
+    s.add_argument("--parent", default=None, help="decomposition only: the task this is part of")
+    s.add_argument("--why", default=None, help="one line: what this unblocks")
+    # An experiment is a task whose output is evidence. Declaring what it concluded is what
+    # MAKES it one — the category is computed from this, never typed.
+    s.add_argument("--concluded", dest="concluded", action="append", default=[],
+                   metavar="HID:CONCLUSION",
+                   help="what this run concluded about a hypothesis, e.g. h44:supported "
+                        "(repeatable; one of " + ", ".join(E.CONCLUSIONS) + "). "
+                        "Declaring any makes this task an experiment.")
+
+    s = _jsonable(tsub.add_parser("done", help="close a task — requires an output that resolves"))
+    s.add_argument("id")
+    s.add_argument("-o", "--output", dest="outputs", action="append", default=[], metavar="REF",
+                   help="a vault path or [[wikilink]] this produced (repeatable)")
+
+    s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
+    s.add_argument("id")
+
+    _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
+
+    s = _jsonable(tsub.add_parser("accept", aliases=["sign-off", "signoff"],
+                                  help="the PI accepts what an experiment concluded — never "
+                                       "run this on your own judgment"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
+    s.add_argument("--frontier", action="store_true",
+                   help="only tasks whose blockers are all discharged — the default question")
+    s.add_argument("--status", default=None, choices=list(E.TASK_STATUS) + [E.TASK_BLOCKED],
+                   help="`blocked` is a legal filter though it is never a stored value")
+    s.add_argument("--category", default=None)
+    s.add_argument("--ref", default=None, metavar="ID", help="tasks serving this node/page")
+    s.add_argument("--blocks", default=None, metavar="ID", help="tasks blocking this task")
+
+    s = _jsonable(tsub.add_parser("show", help="one task's record"))
+    s.add_argument("id")
+
+    s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
+    s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
+
+    s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
+                                 help="the PI's sign-off on a hypothesis' null — the gate between "
+                                      "naming the boring explanation and writing checks against it"))
+    s.add_argument("id")
+
+    s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
+                                 "expects, empty. Never writes an evidence field, never fills a "
+                                 "null, never moves a verdict — bringing old science up to new "
+                                 "rules is the PI's call, one node at a time"))
+    s.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
+
+    s = _jsonable(sub.add_parser("brief", help="the deterministic cold input for an isolated agent: "
+                                          "one hypothesis' claim, question, pre-registered checks "
+                                          "and the shared factual record — assembled from vault "
+                                          "state, never authored by a calling agent"))
+    s.add_argument("id", nargs="?", default=None,
+                   help="a hypothesis (isolated) or any node (situate); omitted in situate "
+                        "mode means the whole programme")
+    s.add_argument("--mode", default=E.BRIEF_DEFAULT_MODE, metavar="MODE",
+                   help="isolated (default — the bias-proof cold input for an agent) | "
+                        "situate (subtree + ancestry + wiki + what is untested, for "
+                        "orienting the PI)")
+    s.add_argument("--lint-situate", action="store_true",
+                   help="read a composed situate answer on stdin and check it against the "
+                        "brevity bound (one ELI5 paragraph, three TL;DR paragraphs, "
+                        f"{E.SITUATE_BUDGET['total_words']} words, the anchor named). "
+                        "Exit 1 on any finding. Reads no vault and writes nothing.")
+
+    s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
                    help="treat economy warnings as failures (exit 1) — off by default")
+    s.add_argument("--propose", action="append", default=[], metavar="TERM",
+                   help="a candidate glossary term to filter by centrality (repeatable). "
+                        "The agent proposes; the engine only filters — see --check=glossary")
+    s.add_argument("--propose-file", dest="propose_file", default=None, metavar="PATH",
+                   help="read proposed terms from a file, one per line (blank lines and "
+                        "'#' comments ignored)")
     s.add_argument("--check", default=None, metavar="LIST",
                    help="comma-separated subset of checks to run: " + ",".join(E.CHECKS)
                         + " (default: all) — plus opt-in: " + ",".join(E.OPT_CHECKS))
@@ -161,6 +301,16 @@ def main(argv=None):
                    help="check DECK's slide contract: header comments + the 7-content-unit budget")
     s.add_argument("--strict", action="store_true",
                    help="with --verify: also fail on numerals carrying no address")
+
+    s = sub.add_parser("glossary", aliases=["vocab", "terms"],
+                       help="the project's vocabulary: accept / decline a term, or list them")
+    gs = s.add_subparsers(dest="gcmd", metavar="<accept|decline|list>")
+    g1 = _jsonable(gs.add_parser("accept", help="record that the PI knows this term (it may now be used bare)"))
+    g1.add_argument("term"); g1.add_argument("-d", "--definition", default="",
+                                             help="the one-line definition, for the PI to read back later")
+    g2 = _jsonable(gs.add_parser("decline", help="record that this term is not jargon — asked once, ever"))
+    g2.add_argument("term")
+    _jsonable(gs.add_parser("list", help="print the vocabulary model (terms + the decline list)"))
 
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
     s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
@@ -186,6 +336,118 @@ def main(argv=None):
         return 1
 
 
+def _csv_arg(val):
+    """`--blocked-by t3,t4` -> ['t3','t4']; `None` (the literal the field requires) -> []."""
+    return [x.strip() for x in (val or "").split(",") if x.strip() and x.strip() != E.NO_BLOCKERS]
+
+
+def _dispatch_task(a):
+    t = getattr(a, "tcmd", None)
+    if not t:
+        print("crux: task needs a sub-verb — add / done / drop / show / categories",
+              file=sys.stderr)
+        return 1
+    if t == "categories":
+        cats = E.cmd_task_categories(_vault(), a.add)
+        if a.json:
+            return _emit({"categories": list(cats), "reserved": E.TASK_RESERVED_CATEGORY})
+        print("declared task categories: " + ", ".join(cats))
+        print(f"  ({E.TASK_RESERVED_CATEGORY} is reserved — it is computed, never typed)")
+        return 0
+    root = _vault()
+    if t == "add":
+        if a.blocked_by is None:
+            print("crux: --blocked-by is required (use `--blocked-by None` when nothing "
+                  "blocks it) — a missing edge must be a visible omission, not silence",
+                  file=sys.stderr)
+            return 1
+        hyp = []
+        for spec in a.concluded:
+            hid, sep, concl = spec.partition(":")
+            if not sep:
+                print(f"crux: --concluded takes <hypothesis>:<conclusion> (got {spec!r}) — "
+                      f"one of {', '.join(E.CONCLUSIONS)}", file=sys.stderr)
+                return 1
+            hyp.append((hid.strip(), concl.strip()))
+        tid, fn = E.cmd_task_add(root, a.title, a.category, refs=a.refs,
+                                 blocked_by=_csv_arg(a.blocked_by), parent=a.parent, why=a.why,
+                                 hypothesis_refs=hyp)
+        rec = E.task_json(root, tid)
+        if a.json:
+            return _emit({"id": tid, "file": f"{E.TASK_DIR}/{fn}", "category": rec["category"],
+                          "is_experiment": rec["is_experiment"], "refs": a.refs,
+                          "hypothesis_refs": rec["hypothesis_refs"],
+                          "blocked_by": _csv_arg(a.blocked_by)})
+        print(f"✓ {tid}  ({E.TASK_DIR}/{fn})")
+        if rec["is_experiment"]:
+            print(f"  this task is an experiment (category `{E.TASK_RESERVED_CATEGORY}`, "
+                  f"computed from --concluded)")
+    elif t == "done":
+        st = E.cmd_task_done(root, a.id, a.outputs)
+        rec = E.task_json(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "status": st, "pending_gate": rec["pending_gate"]})
+        print(f"✓ {a.id} → {st}")
+        if rec["pending_gate"]:
+            print(f"  ◐ this is an experiment: its output is evidence, so it waits for the "
+                  f"PI.\n    crux task accept {a.id}")
+    elif t == "review":
+        rows = E.cmd_task_review(root)
+        if a.json:
+            return _emit([{"id": i, "title": ti,
+                           "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                           "drifted": d} for i, ti, hr, d in rows])
+        if not rows:
+            print("no experiments awaiting your acceptance.")
+            return 0
+        print("Awaiting your acceptance (what these runs concluded):")
+        for i, ti, hr, d in rows:
+            print(f"  ◐ {i}  {ti}")
+            for hid, concl in hr:
+                print(f"      {hid} → {concl}" + ("   ⚠ commitment drifted" if hid in d else ""))
+    elif t in ("accept", "sign-off", "signoff"):
+        # Drift is printed loudly and blocks NOTHING. Spec 15's ruling D7: the engine derives
+        # and flags, the PI decides. Blocking here would reintroduce, at a touchpoint 15 could
+        # not have known about, the block that ruling declined.
+        drifted = [d for i, _, _, d in E.cmd_task_review(root) if i == a.id]
+        stamp = E.cmd_task_accept(root, a.id)
+        warn = drifted[0] if drifted else []
+        for hid in warn:
+            print(f"  ⚠ {hid}'s commitment was edited after the run — what would have "
+                  f"settled it is not what was pre-registered. Accepting anyway; the flag "
+                  f"is permanent.", file=sys.stderr)
+        if a.json:
+            return _emit({"id": a.id, "accepted": stamp, "drifted": warn})
+        print(f"✓ {a.id} accepted at {stamp}")
+    elif t == "drop":
+        st = E.cmd_task_drop(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "status": st})
+        print(f"✓ {a.id} → {st}")
+    elif t in ("list", "ls"):
+        rows = E.cmd_task_list(root, frontier=a.frontier, status=a.status,
+                               category=a.category, ref=a.ref, blocks=a.blocks)
+        by = E.task_by_id(root)
+        recs = [dict(E.task_json(root, x["id"]), state=E.task_state(x, by)) for x in rows]
+        if a.json:
+            return _emit(recs)
+        if not recs:
+            print("no tasks match.")
+        for x in recs:
+            blk = (" ← " + ", ".join(x["blocked_by"])) if x["blocked_by"] else ""
+            print(f"  {x['state']:>7}  {x['id']:>4} [{x['category']}] {x['title']}{blk}")
+    elif t == "show":
+        rec = E.task_json(root, a.id)
+        if a.json:
+            return _emit(rec)
+        print(f"{rec['id']} [{rec['category']}] {rec['title']}  —  status: {rec['status']}")
+        print(f"  refs: {', '.join(rec['refs']) or '—'}   "
+              f"blocked_by: {', '.join(rec['blocked_by']) or E.NO_BLOCKERS}")
+        for o in rec["outputs"]:
+            print(f"  output: {o['path']}")
+    return 0
+
+
 def dispatch(a):
     c = a.cmd
     if c in ("init", "start", "new"):
@@ -206,7 +468,10 @@ def dispatch(a):
             return _emit({"id": nid, "file": fn})
         print(f"✓ {nid}  ({fn})")
     elif c in ("hypothesize", "hypothesis", "idea"):
-        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem, a.verifiable)
+        nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
+                                          a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
+                                          a.fails_if, _pair_discriminates(sys.argv),
+                                          measurement=a.measurement, replicates=a.replicates)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
@@ -231,13 +496,18 @@ def dispatch(a):
     elif c in ("review", "gate", "decide"):
         pend = E.cmd_review(_vault())
         if a.json:
-            return _emit([{"id": nid, "title": title} for nid, title in pend])
+            return _emit([{"id": nid, "title": title, "drift": drift}
+                          for nid, title, drift in pend])
         if not pend:
             print("no questions awaiting a decision.")
         else:
             print("Awaiting your decision (close with `answer`, or `pursue` to keep digging):")
-            for nid, title in pend:
-                print(f"  ◐ {nid}  {title}")
+            for nid, title, drift in pend:
+                # the drift flag belongs HERE, at the moment the PI is deciding. It never
+                # blocks: the engine flags, the PI decides.
+                print(f"  ◐ {nid}  {title}" + ("   ⚠ a child hypothesis has DRIFT — its "
+                                               "verifiables changed after the run started"
+                                               if drift else ""))
     elif c in ("answer", "resolve", "settle"):
         root = _vault()
         E.cmd_answer(root, a.id, a.text)
@@ -273,6 +543,8 @@ def dispatch(a):
         if a.json:
             return _emit({"state": state, "path": rel})
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
+    elif c in ("task", "todo", "work"):
+        return _dispatch_task(a)
     elif c in ("rd", "design", "requirements"):
         root = _vault()
         slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)
@@ -282,9 +554,80 @@ def dispatch(a):
         print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
+    elif c in ("approve-null", "approve_null"):
+        root = _vault()
+        stamp = E.cmd_approve_null(root, a.id)
+        if a.json:
+            return _emit({"id": a.id, "null_approved": stamp})
+        print(f"✓ {a.id} null approved at {stamp}\n  checks may now be written against it")
+    elif c == "migrate":
+        res = E.cmd_migrate(_vault(), apply=a.apply)
+        if a.json:
+            return _emit(res)
+        if not res["changes"]:
+            print("✓ nothing to migrate — every node has the sections this engine expects.")
+        else:
+            for ch in res["changes"]:
+                print(f"  {ch['id']}: + " + ", ".join(ch["adds"]))
+            print(("✓ applied to " if res["applied"] else "dry run — would touch ")
+                  + f"{len(res['changes'])} node(s)."
+                  + ("" if res["applied"] else "  Re-run with --apply."))
+            print("  (never written: the schema stamp, the combination rule, the lock, or the "
+                  "content of a null — those are the PI's call, one node at a time.)")
+    elif c == "brief":
+        if a.lint_situate:
+            # deliberately vault-free: the lint is pure text, so an agent can run it from
+            # anywhere and "writes nothing" is true by construction rather than by promise
+            found = E.situate_lint(sys.stdin.read(), [a.id] if a.id else [])
+            if a.json:
+                _emit({"ok": not found,
+                       "findings": [{"id": i, "message": m} for i, m in found]})
+            else:
+                for i, m in found:
+                    print(f"  {i}: {m}")
+                print("situate: clean" if not found
+                      else f"situate: {len(found)} finding(s) — tighten and re-lint.")
+            return 1 if found else 0
+        b = E.brief(_vault_ro(None), a.id, mode=a.mode)
+        if a.json:
+            return _emit(b)
+        if b["mode"] == "situate":
+            an = b["anchor"]
+            print(f"{an['id']}  {an['title']}  —  status: {an['status']}")
+            for m in b["ancestry"]:
+                print(f"  under {m['id']}: {(m['answer_so_far'] or '—')[:70]}")
+            ut = b["untested"]
+            print(f"  subtree:  {len(b['subtree'])} direct child(ren)")
+            print(f"  untested: {len(ut['unrun_ideas'])} unrun · "
+                  f"{len(ut['open_checks'])} open check(s) · "
+                  f"{len(ut['open_questions'])} open question(s)")
+            if b["work"]["active"]:
+                print(f"  work:     {len(b['work']['open'])} open task(s) · "
+                      f"{len(b['work']['experiments'])} experiment(s)")
+            print("  (the paths forward are judgment — this verb never writes a sentence.)")
+            return 0
+        print(f"{b['id']}  {b['claim']}")
+        if b["question"]:
+            print(f"  question: {b['question']}")
+        if b["null"]:
+            print(f"  null:     {b['null']}")
+        print(f"  rule:     {b['rule'] or '—'}" + (f" (m={b['rule_m']})" if b["rule_m"] else ""))
+        for x in b["verifiables"]:
+            tag = " [control]" if x["kind"] == NEUTRAL_KIND_LABEL else ""
+            print(f"    - {x['text']}{tag}")
+        for pf in b["prior_findings"]:
+            print(f"  prior:    {pf['id']} ({pf['verdict']}) {pf['findings'][:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
-        rep = E.validation_report(_vault(), checks)
+        propose = list(a.propose)
+        if a.propose_file:
+            root_ = E.find_vault()
+            p = a.propose_file if os.path.isabs(a.propose_file) else os.path.join(root_, a.propose_file)
+            if not os.path.isfile(p):
+                print(f"crux: no such proposal file: {a.propose_file}", file=sys.stderr); return 1
+            propose += [ln.strip() for ln in E.read(p).splitlines()
+                        if ln.strip() and not ln.strip().startswith("#")]
+        rep = E.validation_report(_vault(), checks, propose=propose)
         failed = bool(rep["problems"]) or (a.strict and bool(rep["warnings"]))
         if a.json:
             _emit(rep)
@@ -293,6 +636,17 @@ def dispatch(a):
             print(f"✗ {p['id']}: {p['message']}")
         for w in rep["warnings"]:
             print(f"⚠ {w['id']}: {w['message']}")
+        # information, not a finding: printed with a neutral glyph, never counted toward
+        # the exit code, and never silenced by --strict. A vault that predates a rule is
+        # correct, not broken.
+        for i in rep["info"]:
+            print(f"· {i['message']}")
+        # vocabulary candidates: a question for the PI, never a finding about the vault.
+        # Printed under the info glyph, never counted toward the exit code, never silenced
+        # by --strict — a vault whose prose has repeated a term is not broken.
+        for cd in rep.get("candidates", []):
+            print(f"· candidate term: {cd['term']}  ({cd['reason']}; "
+                  f"{cd['occurrences']} occurrence(s) in {', '.join(cd['documents'])})")
         if rep["problems"]:
             return 1
         if rep["warnings"]:
@@ -375,6 +729,27 @@ def dispatch(a):
               f"{len(payload['figures'])} figure file(s) · "
               f"{len(payload['metrics'])} addressed metric(s)\n"
               f"  full payload: crux deck {a.anchor} --json")
+    elif c in ("glossary", "vocab", "terms"):
+        root = _vault()
+        if a.gcmd == "list" or not a.gcmd:
+            g = E.cmd_glossary_list(root)
+            if getattr(a, "json", False):
+                return _emit(g)
+            if not g["terms"] and not g["declined"]:
+                print("glossary is empty — no shared vocabulary agreed yet.")
+            for t in g["terms"]:
+                print(f"  {t['term']} — {t['definition']}")
+            for d in g["declined"]:
+                print(f"  (not jargon) {d}")
+            return 0
+        if a.gcmd == "accept":
+            r = E.cmd_glossary_accept(root, a.term, a.definition)
+        else:
+            r = E.cmd_glossary_decline(root, a.term)
+        if a.json:
+            return _emit(r)
+        print(f"✓ {r['term']} → {r['state']}"
+              + ("  (moved from the other list)" if r["moved"] else ""))
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)

@@ -1,0 +1,5 @@
+Paraphrased note: how JavaScript's array sort behaves
+
+Paraphrased note: how JavaScript's array sort behaves
+
+JavaScript provides an array.sort() method, but it has a quirk: without a comparison function, it sorts items as text strings, not as numbers. So [10, 2, 3].sort() gives [10, 2, 3] because "10" comes before "2" as text. You must pass a comparison function: array.sort((a, b) => a - b). The sort is now stable in modern JavaScript, though older versions were not. JavaScript does not guarantee any particular algorithm—it could be quick sort, merge sort, or something else. V8, the JavaScript engine in Chrome and Node, uses a sort that is optimized for real data and switches between quick sort and merge sort depending on the input. JavaScript also provides console.time() and console.timeEnd() for simple timing, but these have low resolution. For accurate measurements, you need to use a performance API or a benchmarking library.

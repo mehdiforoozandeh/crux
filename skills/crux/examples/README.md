@@ -1,12 +1,20 @@
 # Example vaults
 
-Three committed reference vaults. All open directly in the cockpit — run `crux serve`
+Four committed reference vaults. All open directly in the cockpit — run `crux serve`
 (or `../../../../crux serve` from inside a vault) and you get the full two-tab
 experience: the question/hypothesis **Tree** and, where a wiki exists, the living
 **Wiki** graph + reader.
 
-Start with `scaling_vault/` if you want to see what crux is for; `segssl_vault/` if you
-want to see how large one gets.
+Start with `scaling_vault/` if you want to see what crux is for; `sortlab_vault/` if you
+want a whole finished project you can read without knowing any field; `segssl_vault/` if
+you want to see how large one gets.
+
+> **Not here: the agent-eval fixtures.** Spec 10's planted-defect vaults live under
+> `skills/crux/evals/fixtures/`, deliberately outside this directory. They are
+> `crux validate`-**red by construction** — being wrong in a stated, hand-authored way is
+> their entire purpose. Gate 3 of the `evolve-crux` gate walks *this* directory to ask
+> "did anything break", and a tree of deliberately-broken vaults would make that answer
+> unreadable. These four stay the gate's targets; the fixtures are never one.
 
 ## `demo_vault/` — the minimal fixture
 
@@ -78,3 +86,41 @@ designers, paper curators, per-page wiki writers reading the real PDFs), then
 validated with `crux validate`. The research program is plausible but fictional: the
 experiment numbers (mIoU figures, run links) are invented for demonstration; the
 wiki's literature claims trace to the cited papers.
+
+## `sortlab_vault/` — a whole project, start to finish
+
+**SortLab** — a high-school student times five sorting programs they wrote by hand against
+the one already built into the language, and learns that measuring is harder than sorting.
+The largest example here, and the only one a reader with no field at all can follow end to
+end: every sentence is about a laptop, a stopwatch and a list of numbers.
+
+- **Tree:** 150 nodes — 35 questions (19 open, 6 awaiting a decision, 10 resolved through 6
+  approved syntheses) and 108 hypotheses (87 closed, 8 running, 6 staged, 7 still ideas).
+  Verdicts span supported / refuted / inconclusive / **invalid-run**; the four invalid runs
+  are all control failures, which is the distinction the verdict machinery exists to make.
+- **Taskhub:** 200 tasks — 156 done, 21 on the frontier, 13 computed `blocked`, 10 dropped;
+  45 of them experiments, 4 of which sit in `crux task review` awaiting the PI.
+- **Wiki:** 60 background pages compiled from 15 invented sources (class handouts, a computer
+  club talk, a school magazine column). Neutral, encyclopedic, and — by the flow rule — they
+  never mention this project or a single one of its results.
+- **RD:** 4 design documents, including a superseded `timing_harness_v1` whose successor is
+  the record of what the timer study changed.
+
+### `crux validate` reports exactly two problems, and that is the point
+
+`h9` and `h65` each had a verifiable edited **after** the run was locked: a threshold
+loosened from ten percent to five, and a check about the *mean* reworded to *median*. Both
+edits really happened, both nodes say so in plain words under `## Problem Statement`, and
+crux flags them permanently. Reverting the edits to get a green lint would un-flag drift
+that occurred — exactly the dishonesty the mechanism exists to prevent. Zero warnings.
+
+The `selftest` pins all of this (counts, the two named DRIFT ids, zero warnings, and
+`refresh()` as a no-op) so the fixture cannot rot silently.
+
+### Provenance
+
+Generated as a *fixture* by a multi-agent build driving the real CLI for every verb it has —
+`init`, `ask`, `hypothesize`, `approve-null`, `test`, `close`, `synthesize`, `approve`,
+`answer`, `rd`, `ingest`, the task verbs and `glossary`. Every status and every verdict is
+the engine's own derivation from ticked verifiables; none was written by hand. The project
+is fictional and the timings are invented, but nothing about the bookkeeping is painted on.

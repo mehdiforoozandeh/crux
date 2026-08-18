@@ -70,9 +70,27 @@ report is linked, when a linked path doesn't resolve, or when one escapes the va
 linked report — markdown, tables, and figures — in its right-hand pane.
 
 **Lifecycles**
-- Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** from the
-  verifiable checkboxes: all `- [x]` → `supported`; any unmet → `refuted`/`partial`;
-  only `- [-]` (couldn't-evaluate) remaining → `inconclusive`.
+- Hypothesis: `idea → staged → running → done`. Verdict is **derived on close** — never
+  written by you — from three things: the **kind** of each verifiable, the declared
+  **combination rule**, and the pass/fail vector. Five verdicts exist:
+  `supported` · `refuted` · `inconclusive` · `invalid-run` · `partial` *(retired — see below)*.
+  - Every verifiable is either **`[hypothesis]`** (a consequence of the claim; feeds the
+    verdict) or **`[outcome-neutral]`** (a positive control / sanity check that must pass
+    *whatever* the claim turns out to be). A failed or unread control gives **`invalid-run`**:
+    the experiment tells us nothing and must be re-run. It is never a refutation — without a
+    passing control, "the claim is false" and "the apparatus is broken" are the same picture.
+  - The hypothesis declares **how its claim-directed checks add up**, before the run:
+    `rule: all | any | m-of-n` (`crux hypothesize --rule`). That is what turns "two of four
+    passed" from an argument into arithmetic. Under `m-of-n`, exactly one short is
+    `inconclusive`; two or more short is `refuted`.
+  - **`inconclusive` is derived, never chosen.** There is no flag that sets it — you can only
+    arrive there. That is what stops it becoming the drawer everything ambiguous gets swept
+    into.
+  - **The boundary is permanent.** These rules bind hypotheses created at or after engine
+    v1.6 (they carry `schema: 1`). Anything older keeps the verdict it was recorded with,
+    forever, and is never re-checked, re-verdicted or flagged — that is why `partial` still
+    exists in the vocabulary. **Do not "fix" an old node to the new schema.** Re-declaring
+    what would settle a claim is a scientific act, so it is the PI's call, one node at a time.
 - Question: `open → review → resolved`. The engine trips `open → review` automatically
   once every direct child is terminal. **Closing it is always the PI's call**, and it now
   takes a **synthesis the PI has approved**:
@@ -104,6 +122,58 @@ will warn about **engine drift** and re-stamp it — surface that warning verbat
 needs to reproduce recorded results exactly, the answer is to pin the old engine, not to
 ignore the warning. `CRUX_NO_UPDATE_CHECK=1` switches the whole check off.
 
+## The taskhub — where doing goes
+
+**Science goes in the tree. Doing goes in the taskhub.** A task is an **action**. If it is a
+claim about the world that could be true or false, it is a hypothesis and belongs in the
+tree.
+
+**What gets in — one question:** *would you be annoyed if this vanished next week?* If yes it
+belongs in the taskhub, however small — "fetch the antibody lot from the ENCODE portal"
+passes. If no it is session scratch — "re-read h59's verifiables" — and stays in your own
+todo list, which may point *at* a taskhub item but never lands in the vault. Persisting your
+scratch so the PI can see what you did is the transcript's job. Tasks can be fine-grained;
+they cannot be ephemeral. Rule of thumb: **a task should fit in one context window.**
+
+**When status changes.** `done` means it produced something *and that something is linked* —
+the engine refuses a `done` with no resolving output. Write the real output, not the nearest
+thing that resolves. External blockers are not a state: "waiting on cluster quota" is a
+dependency on a task called **obtain cluster quota**. One rule instead of two.
+
+### The line, and where it moved
+
+> **Work never creates direction. Work produces outputs — and an output that is evidence
+> about a hypothesis enters the gated tier.**
+
+- Adding, completing and dropping an **ordinary task** is **act-and-report** (`○`). It sets
+  no direction, spends no compute and records no scientific result, so the PI needn't be
+  concerned with it.
+- Completing an **experiment** — a task that declares what it concluded about a hypothesis —
+  is **propose → PI accepts → then do** (`◆`). `crux task accept` is their signature, exactly
+  like `crux approve`. Never run it on your own judgment.
+- **The moment a task would open a question, it stops being a task.** Convert it to a tree
+  node and go through the normal gate. This is the one rule the engine cannot check — it
+  cannot tell that a task's title is really a question — so it is the one that most needs
+  saying.
+
+### Two provenances, one vocabulary
+
+An experiment's conclusion and a hypothesis's verdict use the **same four tokens**
+(`supported` · `refuted` · `inconclusive` · `invalid-run`) and are produced by **different
+mechanisms**:
+
+| | who produces it | from what |
+|---|---|---|
+| a hypothesis's `verdict` | the **engine** | its tick vector under the declared combination rule |
+| an experiment's conclusion | **you**, PI-accepted | what this run showed about that hypothesis |
+
+So recording `h44:refuted` on an experiment does **not** close h44 — it tells the PI to go
+look. Closing h44 is still `crux close h44` after they have ticked the boxes. You never tick
+a box the evidence does not support, and you never record a verdict the PI has not accepted.
+
+An experiment may bear on a hypothesis written before evidence semantics existed; the
+conclusion is a record on the **task's** side and never re-verdicts the old node.
+
 ## Three roles — and the leash
 
 - **Engine (○ deterministic).** Bookkeeping only — never judges, never reads run logs.
@@ -118,6 +188,8 @@ ignore the warning. `CRUX_NO_UPDATE_CHECK=1` switches the whole check off.
   approves → then do**: `ask`, `hypothesize`, **running an experiment (`test --to running`)**,
   `close`, `answer`, `pursue`. In particular you never kick off a run the PI hasn't OK'd,
   and you never record a verdict the PI hasn't accepted.
+- **Taskhub**: ordinary tasks are act-and-report; **completing an experiment is PI-gated**
+  (`crux task accept`) because its output is evidence. See *The taskhub* above.
 - **`review` gate + `synthesize` → `approve` → `answer`**: always the PI's. Surface the
   gate, draft the synthesis, then stop — `approve` is their signature, not yours.
 
@@ -200,7 +272,10 @@ Run them via the engine CLI (see `scaffold/README.md`). `◆` = you draft + PI c
 | `rd` | design, requirements | ◆ | write the Requirements Document for a node's design — the detail the 400-word cap displaces; one active RD per node, `--supersedes` to replace one (see the **crux-rd** skill) |
 | `ingest` | source, add-source | ○→◆ | register a PI-curated `raw/` source into the literature wiki (then compile pages — see the **crux-wiki** skill) |
 | `serve` | gui, ui, cockpit | ○ | open the read-only browser cockpit (localhost; view-only — tree, review gate, rendered reports + figures; launch playbook: the **crux-cockpit** skill) |
-| `validate` | lint, check | ○ | integrity checks (tree + wiki lint, plus the economy warnings). `--strict` fails on warnings; `--check=tree,economy` runs a subset |
+| `task add` \| `done` \| `drop` \| `list` \| `show` \| `categories` | todo, work | ○ | the work layer: append a task, close it with an output, query the frontier |
+| `task accept` | sign-off | ◆ | **the PI accepts what an experiment concluded** — never run this on your own judgment |
+| `task review` | — | ○ | experiments awaiting the PI's acceptance |
+| `validate` | lint, check | ○ | integrity checks (tree + wiki + rd + tasks lint, plus the economy warnings). `--strict` fails on warnings; `--check=tree,economy` runs a subset |
 
 Every verb above except `init`/`serve`/`selftest` takes **`--json`** — use it when you need to
 read a result back rather than show it. `crux status --json` is the whole vault; `crux status
@@ -237,8 +312,79 @@ and `crux answer` will refuse until it's signed.
 
 ## Guardrails
 
+- **Vocabulary — read `glossary.md` when you first touch a vault.** It is not a dictionary,
+  it is a model of what the PI already knows. A term under `## Terms` may be used **bare**.
+  Anything else you bring in — gloss it in the same breath, or ask. This holds for node prose
+  *and* for what you say to the PI, who should never be talked at in terminology they have
+  not agreed to. When `crux validate --check=glossary --propose "<term>"` surfaces a
+  candidate, ask about it **inline, one at a time**, and record the answer with
+  `crux glossary accept "<term>" -d "<one line>"` or `crux glossary decline "<term>"`.
+  **Never write to `glossary.md` directly** — membership is a claim about the PI, so only the
+  PI makes it. A term already declined is settled; do not raise it again.
 - **Pre-register verifiables.** A hypothesis isn't testable until its `## Verifiables` state a metric +
-  baseline + threshold. The engine refuses to mark an idea `running` with none.
+  baseline + threshold. The engine refuses to mark an idea `running` with none, with no
+  `[outcome-neutral]` control (or a written `neutral_optout:` reason), or — once there is
+  more than one claim-directed check — with no combination rule. When you choose `all`, say
+  the cost out loud: **two checks at 80% power each give 64% joint power, and thresholds may
+  not be loosened to compensate.**
+- **The commitment is locked when the run starts.** Going `running` content-hashes the
+  checks, their kinds and the rule. A later edit is *allowed* — research does discover a
+  check was wrong — but it raises a permanent **drift** flag on the node, in `validate`, and
+  beside the question in `crux review`. It blocks nothing. Say what changed and why in the
+  node; `git log -p <node>.md` is the diff.
+
+### A mixed result is a symptom, not an outcome
+
+Some checks passed, some did not — that is not a finding, it is a report that something
+upstream went wrong. Verifiables under one hypothesis are *supposed* to correlate: they are
+consequences of the same claim, so if it is true most pass together. Three diseases produce
+the same symptom, and it never announces which one it has:
+
+| cause | what actually went wrong | who fixes it |
+|---|---|---|
+| **compound claim** | the "hypothesis" was two or three claims; each check answered a different one | `crux-critic` — split the node |
+| **non-entailed check** | the check does not follow from the claim; it tests something adjacent | `crux-verifiables` — rewrite the check |
+| **the run could not discriminate** | underpowered, confounded, wrong instrument, no control | `crux-design` — fix the design |
+
+The question that makes this operational, and it belongs **before** the compute is spent, not
+after:
+
+> **Is there any plausible outcome of this run from which we would conclude nothing?**
+> If yes, the design is wrong — fix it before spending the compute.
+
+Answer it by enumerating the outcomes: take the pass/fail vector under the declared rule, plus
+the case where a control fails, and write the sentence you would be able to say for each. If
+one of those sentences is *"we learned nothing"*, that is the design defect, and it is
+cheapest to fix now.
+
+The engine owns the presence of a declaration, never its quality. Before a run, a hypothesis
+should carry a control, a combination rule, and — in frontmatter, beside `rule:` —
+`measurement:` (what is measured, and with what instrument) and `replicates:` (the n the claim
+will rest on). `crux validate` reports the gaps as information; whether the control is the
+*right* control is judgment. Note that `measurement:` is **not** `metric:` — the second is the
+headline result, written at `close`.
+
+### One experiment, several hypotheses — when that is allowed
+
+> **One experiment settles several hypotheses separately only when** each hypothesis is
+> turned by its own independently varied knob — a comparison the design can attribute to it
+> alone, at a resolution high enough for the kind of effect it claims — and no single shared
+> ingredient (one batch, one seed, one preprocessing path, one control) could flip all the
+> answers together without a pre-declared outcome-neutral check catching it and voiding the
+> whole run; **anything less means you ran one experiment with many labels, not many
+> answers.**
+
+Three checks, in the order they fail:
+- **Different lever.** Each hypothesis is turned by its own independently varied knob — its
+  own comparison, not shared with another and not a by-product of two others.
+- **Different failure.** No single shared ingredient may flip every answer at once
+  undetected. Block it, replicate it, cover it with an `[outcome-neutral]` check, or log it
+  as a risk on every hypothesis in the bundle. This is what outcome-neutral checks are *for*:
+  they are the dual of a shared failure, so **sharing one across a bundle is the fix, not the
+  flaw**.
+- **Different verdict.** Each hypothesis carries its own checks, its own rule, and can be
+  stated without reference to the others. If flipping one answer would change another, they
+  were never separable — that is one compound claim wearing several labels.
 - **Never hand-edit generated content** — `META.md`, `EXPERIMENTS.md`, or the `<!-- crux:ledger -->`
   block inside a question. Run a verb and let the engine regenerate. You *do* write the question's
   `## Answer so far` prose (above the ledger) and the idea's `## Findings`.
