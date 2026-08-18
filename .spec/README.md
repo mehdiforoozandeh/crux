@@ -15,7 +15,7 @@ being built — do not implement)
 | 05 | [Autoresearch: autonomous loops](05-autoresearch.md) | `autoresearch` | ⏸ |
 | 06 | [Node economy](06-node-economy.md) | `economy` | ☑ |
 | 07 | [RD layer](07-rd-layer.md) | `rd` | ☑ |
-| 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ☐ |
+| 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ◐ |
 | 09 | [Specialized agents](09-specialized-agents.md) | `agents` | ☑ |
 | 10 | [Agent evals](10-agent-evals.md) | `evals` | ☑ |
 | 11 | [prezit: presentations from a subtree](11-prezit.md) | `prezit` | ☑ |
@@ -31,7 +31,7 @@ the same runner, budget cap and autonomy envelope. **Both are deferred** — see
 
 ## What to build, and what not to
 
-**Two specs are `☐ todo`: 08 and 12** (15 is `◐ in progress`). They are the work.
+**No spec is `☐ todo`. Two are `◐ in progress` — 08 and 15** — and they are the work.
 (11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
 2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
 slots, and the `crux-situate` / `crux-design` agents. 10 landed 2026-08-16 as a **zero-bump**
@@ -45,7 +45,7 @@ be built before the machinery that makes them safe exists: [15](15-evidence-sema
 what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
 what stops it grading its own homework.
 
-01, 02, 03, 06, 07, 09, 10, 11, 13 and 14 are `☑ done` and are reference material, not work.
+01, 02, 03, 06, 07, 09, 10, 11, 12, 13 and 14 are `☑ done` and are reference material, not work.
 
 ## Dependency order
 
