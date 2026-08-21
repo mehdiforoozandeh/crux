@@ -691,8 +691,14 @@ a.ext { color: var(--accent); }
 .tk-row:hover { background: var(--panel2); }
 .tk-row.on { background: var(--panel2); box-shadow: inset 2px 0 0 var(--accent); }
 .tk-row.tk-dim { opacity: .35; }   /* search: non-matches recede, matches stay lit */
+/* hierarchy (PI ruling 2026-08-21): each level of a decomposition steps in, so the tree
+   is drawn, not implied. --tk-depth is set inline by taskRow. */
+.tk-row { padding-left: calc(8px + var(--tk-depth, 0) * 18px); }
+.tk-row.tk-ctx { opacity: .45; }   /* status filter: an ancestor kept as context, not a match */
 .tk-kind { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: var(--fs-ui-xs);
            color: var(--accent); border: 1px dashed var(--accent); }
+.tk-prog { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: var(--fs-ui-xs);
+           color: var(--ink-mute); border: 1px solid var(--line); }
 .tk-count { margin: 0 0 10px; font-size: var(--fs-ui-sm); color: var(--ink-mute); }
 .tk-group { margin: 14px 12px 4px; font-size: var(--fs-ui-xs); color: var(--ink-mute);
             text-transform: uppercase; letter-spacing: .06em; }

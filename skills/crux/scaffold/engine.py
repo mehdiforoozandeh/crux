@@ -3011,6 +3011,17 @@ def task_info(root, v=None):
         out.append(("task:dropped",
                     f"{n} task{'' if n == 1 else 's'} {'is' if n == 1 else 'are'} dropped — "
                     f"work deliberately not done. `git log` carries why.", n))
+    # hierarchy is operative (PI ruling 2026-08-21: warn, never refuse): a parent may
+    # legitimately close ahead of its parts, so this informs and `ok` never turns on it.
+    # A dropped subtask discharges, exactly as a dropped blocker clears its edge.
+    over = [t for t in tasks if t["status"] == "done"
+            and any(c["parent"] == t["id"] and not task_cleared(c) for c in tasks)]
+    if over:
+        out.append(("task:open-subtasks",
+                    f"{len(over)} done task{'' if len(over) == 1 else 's'} "
+                    f"({', '.join(t['id'] for t in over)}) "
+                    f"{'has' if len(over) == 1 else 'have'} open or blocked subtasks — "
+                    f"a parent closed over unfinished parts.", len(over)))
     return out
 
 def validate_tasks(root):

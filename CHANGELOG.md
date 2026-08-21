@@ -6,6 +6,21 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Task hierarchy is operative, not decorative.** `parent:` already existed on tasks; now
+  it does something. `crux validate` reports a new `task:open-subtasks` info line when a
+  `done` task still has open or blocked subtasks (info tier only — a parent may
+  legitimately close ahead of its parts, per PI ruling 2026-08-21, so `ok` never turns on
+  it; a dropped subtask discharges, exactly as a dropped blocker clears its edge). The
+  cockpit's taskhub renders All and Category views as a real nested tree — roots first,
+  subtasks indented by depth, parents carrying an `n/m subtasks` progress chip — while
+  Frontier and Timeline stay flat. A status filter never orphans a match: filtered-out
+  ancestors stay as dimmed context rows and the "showing N" count claims only matches. The
+  task detail gains a "Part of" link to the parent and subtask progress in its Subtasks
+  header. Frontend + validate info only: no format, snapshot, or roll-up change, no
+  `ENGINE_VERSION` bump.
+
 ### Fixed
 
 - **The taskhub pane of the cockpit actually works now.** A 2026-08-21 walk with four UX
