@@ -32,8 +32,8 @@
       <nav id="tabs" role="tablist" aria-label="Cockpit views" hidden>
         <button data-tab="tree" type="button" role="tab" class="on">Tree</button>
         <button data-tab="wiki" type="button" role="tab">Wiki</button>
-        <button data-tab="rd" type="button" role="tab">RD</button>
-        <button data-tab="tasks" type="button" role="tab">Tasks</button>
+        <!-- RDs live INSIDE the taskhub (PI ruling, 2026-08-21): an RD is a kind of task -->
+        <button data-tab="tasks" type="button" role="tab">Taskhub</button>
       </nav>
     </div>
     <div class="tools">
@@ -73,12 +73,6 @@
         <button id="help-btn" type="button" title="Controls help" aria-label="Toggle controls help">?</button>
         <span class="hint">scroll / pinch = zoom · drag = pan · click a node · ± to collapse · arrows = move · space = fold</span>
       </div>
-    </section>
-    <section id="rd-pane" hidden>
-      <aside id="rd-rail">
-        <div class="wr-head"><span>Requirements documents</span></div>
-        <div id="rd-rail-body"></div>
-      </aside>
     </section>
     <section id="tasks-pane" hidden>
       <aside id="tasks-rail">
@@ -121,7 +115,7 @@
            so PageUp/Down scroll the detail without a pointer -->
       <div id="detail-content" tabindex="-1"></div>
       <div id="ro-footer" title="The cockpit never writes to the vault. To change the tree, ask your agent (it drives the crux engine) or run the crux CLI.">
-        Read-only view — ask your agent to edit the tree <span class="ro-sub">(or use the crux CLI)</span>
+        Read-only view — ask your agent to edit the vault <span class="ro-sub">(or use the crux CLI)</span>
       </div>
     </aside>
   </main>

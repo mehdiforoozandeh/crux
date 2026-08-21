@@ -95,9 +95,13 @@ function computeGeom() {
 
 const state = {
   snap: null,
-  // taskhub (spec 08): which of the four views the Tasks tab is showing. Frontier first —
-  // "what can I do right now" is the question the layer exists to answer.
-  tasks: { view: localStorage.getItem("crux-tasks-view") || "frontier", key: "" },
+  // taskhub (spec 08; RDs merged in 2026-08-21): which view the Taskhub tab is showing.
+  // Frontier first — "what can I do right now" is the question the layer exists to answer.
+  // `selected` is a task id, or "rd:<slug>" for a requirements document (an RD is a kind
+  // of task, so it lives in this list); `status` is the row filter, "all" by default.
+  tasks: { view: localStorage.getItem("crux-tasks-view") || "frontier", key: "",
+           selected: null,
+           status: localStorage.getItem("crux-tasks-status") || "all" },
   lastJSON: "",
   etag: "",                 // /snapshot.json validator — echoed as If-None-Match; 304 = unchanged
   collapsed: new Set(),     // node ids whose subtree is hidden (client-only)
@@ -118,7 +122,7 @@ const state = {
   matchId: null,            // where the Enter/Shift+Enter search cycle is parked (node id / wiki slug)
   filter: null,             // legend chip key (e.g. "h-supported"), or null = show all
   centered: false,          // one-time fit after first snapshot
-  tab: "tree",              // "tree" | "wiki" | "rd" — applied from localStorage once the layer is known
+  tab: "tree",              // "tree" | "wiki" | "tasks" — applied from localStorage once the layer is known
   wiki: {
     selected: localStorage.getItem("crux-wiki-slug") || null,  // slug, or null => the _index page
     page: null,             // fetched /wiki/<slug>.json payload for the reader
@@ -240,6 +244,13 @@ function patchNodeEl(id) {
 function detailKeyOf() {
   if (!state.snap) return "";
   if (state.tab === "wiki") return "wiki";
+  if (state.tab === "tasks") {
+    const sel = state.tasks.selected;
+    if (sel && sel.startsWith("rd:")) return "taskrd";   // the RD reader keys itself
+    if (sel) return "task:" + sel + ":" +
+      JSON.stringify(taskById(sel) || null);             // re-render when THE task changes
+    return "taskgate:" + JSON.stringify((state.snap.tasks || {}).queue || []);
+  }
   if (state.report) return "report:" + state.report.path;
   if (state.selected)
     return "node:" + state.selected + ":" + JSON.stringify(state.snap.nodes[state.selected]);
@@ -257,6 +268,10 @@ function onSnapshot() {
   // drop selection if the node disappeared
   if (state.selected && !(state.selected in snap.nodes)) state.selected = null;
   if (state.report && !(state.report.node in snap.nodes)) state.report = null;
+  // same for a selected task ("rd:" selections fall back via refreshRdPage instead)
+  if (state.tasks.selected && !state.tasks.selected.startsWith("rd:")
+      && !taskById(state.tasks.selected))
+    state.tasks.selected = null;
   // Focus folds nodes that ARRIVE while you're focused — but only those. Re-deriving the
   // whole set each poll would silently undo any branch you expanded by hand a second later.
   if (state.focus) {
@@ -1017,7 +1032,14 @@ function renderDetail() {
   const pane = $("detail-content");
   if (!state.snap) { pane.innerHTML = ""; return; }
   state._detailKey = detailKeyOf();   // the snapshot poll re-renders only when this moves
-  if (state.tab === "rd") { renderPageReader(LAYERS.rd); return; }
+  if (state.tab === "tasks") {
+    const sel = state.tasks.selected;
+    if (sel && sel.startsWith("rd:")) { renderPageReader(LAYERS.rd); return; }
+    state.rd.readerKey = "";   // not showing the RD reader — force a fresh render on return
+    const t = sel ? taskById(sel) : null;
+    pane.innerHTML = t ? taskDetail(t) : taskGateDetail();
+    return;
+  }
   if (state.tab === "wiki") { renderWikiReader(); return; }
   state.wiki.readerKey = "";   // leaving the wiki reader — force a fresh render on return
   state.rd.readerKey = "";     // same for the RD reader — a stale key left the pane frozen (spec 07 audit)
@@ -1558,8 +1580,15 @@ $("detail-pane").addEventListener("click", (e) => {
   if (rl) { openRdPage(rl.getAttribute("data-rd")); return; }       // RD rail + reader links
   const wl = e.target.closest("[data-wiki]");
   if (wl) { openWikiPage(wl.getAttribute("data-wiki")); return; }   // [[wiki/…]] citations + reader links
+  const tk = e.target.closest("[data-task]");
+  if (tk) { selectTask(tk.getAttribute("data-task")); return; }     // task links in a task's detail
   const go = e.target.closest("[data-go]");
-  if (go) selectNode(go.getAttribute("data-go"), { center: true });
+  if (go) {
+    // a node link from a TASK detail jumps into the tree (PI ruling: chips navigate) —
+    // without the tab switch the selection would land invisibly behind the taskhub
+    if (state.tab === "tasks") setTab("tree");
+    selectNode(go.getAttribute("data-go"), { center: true });
+  }
 });
 
 // detail-pane text size — small / medium (default) / large, persisted
@@ -1838,6 +1867,7 @@ $("zoom-fit").addEventListener("click", () => { if (state.snap) fitToView(true);
 function applySearch() {
   if (!state.snap) return;
   if (state.tab === "wiki") { state.wiki.railKey = ""; renderWikiRail(); dimWikiGraph(); }
+  else if (state.tab === "tasks") { state.tasks.key = ""; renderTasks(); }  // rows dim, matches stay lit
   else applyCosmeticState();   // dim/hit by class toggle — a keystroke never rebuilds the SVG
   updateMatchCounter();
 }
@@ -1849,6 +1879,9 @@ function applySearch() {
 function searchMatches() {
   if (!state.search || !state.snap) return [];
   if (state.tab === "wiki") return wikiPages().filter(matchWiki).map((p) => p.slug);
+  if (state.tab === "tasks")
+    return taskItems().filter(matchTask).map((t) => t.id)
+      .concat(rdPages().filter(matchRd).map((p) => "rd:" + p.slug));
   const out = [];
   (function walk(n) {
     if (matchNode(state.snap.nodes[n.id])) out.push(n.id);
@@ -1873,6 +1906,7 @@ function cycleSearch(dir) {
                      : dir > 0 ? 0 : m.length - 1;             // first press lands on the first / last
   state.matchId = m[i];
   if (state.tab === "wiki") openWikiPage(m[i]);
+  else if (state.tab === "tasks") selectTask(m[i]);
   else selectNode(m[i], { center: true });
   updateMatchCounter();
 }
@@ -1940,32 +1974,34 @@ function wikiLink(target, alias) {
 }
 
 // ------------------------------------------------------------------ tabs
+// the taskhub tab is live when either half of it exists: tasks, or RDs (merged 2026-08-21)
+function hubActive() { return tasksActive() || rdActive(); }
 function setTab(tab) {
+  if (tab === "rd") tab = "tasks";   // pre-merge saved tabs land in the taskhub
   if (tab === "wiki" && !wikiActive()) tab = "tree";
-  if (tab === "rd" && !rdActive()) tab = "tree";
-  if (tab === "tasks" && !tasksActive()) tab = "tree";
+  if (tab === "tasks" && !hubActive()) tab = "tree";
   state.tab = tab;
   localStorage.setItem("crux-tab", tab);
   document.body.dataset.tab = tab;
   $("tree-pane").hidden = tab !== "tree";
   $("wiki-pane").hidden = tab !== "wiki";
-  $("rd-pane").hidden = tab !== "rd";
   $("tasks-pane").hidden = tab !== "tasks";
   document.querySelectorAll("#tabs [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.getAttribute("data-tab") === tab));
-  $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open" : "Search nodes · ↵ jump";
+  $("search").placeholder = tab === "wiki" ? "Search wiki · ↵ open"
+                          : tab === "tasks" ? "Search taskhub · ↵ open"
+                          : "Search nodes · ↵ jump";
   $("search").title = tab === "wiki"
     ? "Search wiki pages — Enter / Shift+Enter cycle the matches, Esc clears"
+    : tab === "tasks"
+    ? "Search tasks and RDs — Enter / Shift+Enter cycle the matches, Esc clears"
     : "Search the tree — Enter / Shift+Enter cycle the matches, Esc clears";
   updateReviewBtn();
   applySearch();
   renderDetail();
   if (tab === "tasks") {
     renderTasks();
-  }
-  if (tab === "rd") {
-    renderRd();
-    animateIn([$("rd-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
+    animateIn([$("tasks-pane"), $("detail-content")], { opacity: [0.35, 1] }, { duration: 0.25 });
   } else if (tab === "wiki") {
     renderWiki();
     if (!state.wiki.centered && fitWikiGraph()) state.wiki.centered = true;
@@ -1979,23 +2015,29 @@ function setTab(tab) {
 }
 let _tabsBooted = false;
 function updateTabs() {
-  const active = wikiActive(), rd = rdActive();
-  $("tabs").hidden = !(active || rd);
-  document.querySelector('#tabs [data-tab="wiki"]').hidden = !active;
-  document.querySelector('#tabs [data-tab="rd"]').hidden = !rd;
-  if (!active && state.tab === "wiki") { setTab("tree"); return; }
-  if (!rd && state.tab === "rd") { setTab("tree"); return; }
-  if (!_tabsBooted && (active || rd)) {
+  const wiki = wikiActive(), hub = hubActive();
+  $("tabs").hidden = !(wiki || hub);
+  document.querySelector('#tabs [data-tab="wiki"]').hidden = !wiki;
+  document.querySelector('#tabs [data-tab="tasks"]').hidden = !hub;
+  if (!wiki && state.tab === "wiki") { setTab("tree"); return; }
+  if (!hub && state.tab === "tasks") { setTab("tree"); return; }
+  if (!_tabsBooted && (wiki || hub)) {
     _tabsBooted = true;
     const want = localStorage.getItem("crux-tab");
-    if (want === "wiki" && active) { setTab("wiki"); return; }
-    if (want === "rd" && rd) { setTab("rd"); return; }
+    if (want === "wiki" && wiki) { setTab("wiki"); return; }
+    if ((want === "tasks" || want === "rd") && hub) { setTab("tasks"); return; }
   }
-  if (active && state.tab === "wiki") renderWiki();
-  if (rd && state.tab === "rd") renderRd();
+  if (wiki && state.tab === "wiki") renderWiki();
   if (state.tab === "tasks") renderTasks();
 }
 $("tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (b) setTab(b.getAttribute("data-tab"));
+});
+// the taskhub pane's own clicks: view switch, status filter, row selection. Attached HERE
+// — the buttons render inside this pane, so this is where their clicks arrive. (The old
+// listener sat on #tabs, a different subtree, which is why the Views rail was dead.)
+$("tasks-pane").addEventListener("click", (e) => {
   const tv = e.target.closest("[data-tk-view]");
   if (tv) {
     state.tasks.view = tv.getAttribute("data-tk-view");
@@ -2004,8 +2046,16 @@ $("tabs").addEventListener("click", (e) => {
     renderTasks();
     return;
   }
-  const b = e.target.closest("[data-tab]");
-  if (b) setTab(b.getAttribute("data-tab"));
+  const ts = e.target.closest("[data-tk-status]");
+  if (ts) {
+    state.tasks.status = ts.getAttribute("data-tk-status");
+    localStorage.setItem("crux-tasks-status", state.tasks.status);
+    state.tasks.key = "";
+    renderTasks();
+    return;
+  }
+  const row = e.target.closest("[data-task]");
+  if (row) selectTask(row.getAttribute("data-task"));
 });
 
 function renderWiki() {
@@ -2516,12 +2566,15 @@ function openWikiPage(slug) {
   fetchPage(LAYERS.wiki, slug);
 }
 
+// an RD opens in the TASKHUB (merged 2026-08-21): select its row there, then fetch the
+// page into the shared reader — the same reader the wiki uses, still not copied.
 function openRdPage(slug) {
-  if (state.tab !== "rd") setTab("rd");
+  if (state.tab !== "tasks") setTab("tasks");
   state.rd.selected = slug;
   localStorage.setItem("crux-rd-slug", slug);
-  state.rd.railKey = "";
-  renderRdRail();
+  state.tasks.selected = "rd:" + slug;
+  state.tasks.key = "";
+  renderTasks();
   fetchPage(LAYERS.rd, slug);
 }
 
@@ -2547,6 +2600,8 @@ function rdKeyOf(slug) {
   const p = rdPages().find((x) => x.slug === slug);
   return p ? slug + " " + p.hash : null;
 }
+// still the poll-refresh path for an OPEN RD; when the selected slug vanished, fall back
+// to a live design — opening a superseded one by default stays the thing this prevents
 function refreshRdPage() {
   let slug = state.rd.selected;
   if (slug == null || rdKeyOf(slug) == null) {
@@ -2555,29 +2610,10 @@ function refreshRdPage() {
   }
   state.rd.selected = slug;
   if (slug == null) { state.rd.page = null; state.rd.readerKey = ""; return; }
+  if (state.tasks.selected && state.tasks.selected.startsWith("rd:"))
+    state.tasks.selected = "rd:" + slug;
   if (rdKeyOf(slug) !== state.rd.pageKey) fetchPage(LAYERS.rd, slug);
   else renderPageReader(LAYERS.rd);
-}
-
-// the rail: RDs grouped by the node that owns them, active first, then its history
-function renderRdRail() {
-  const pages = rdPages();
-  const key = JSON.stringify([pages.map((p) => [p.slug, p.status, p.node]), state.rd.selected]);
-  if (key === state.rd.railKey) return;
-  state.rd.railKey = key;
-  const byNode = {};
-  pages.forEach((p) => (byNode[p.node] = byNode[p.node] || []).push(p));
-  const order = (p) => (p.status === "active" ? 0 : p.status === "draft" ? 1 : 2);
-  $("rd-rail-body").innerHTML = Object.keys(byNode).sort().map((nid) => {
-    const n = state.snap.nodes[nid];
-    return `<div class="wr-folder"><div class="wr-fold">${esc(nid)}${n ? " · " + esc(n.title) : ""}</div>` +
-      `<div class="wr-items">` +
-      byNode[nid].slice().sort((a, b) => order(a) - order(b) || a.slug.localeCompare(b.slug))
-        .map((p) => `<button class="wr-item${state.rd.selected === p.slug ? " on" : ""}` +
-          `${p.status === "superseded" ? " wr-dim" : ""}" data-rd="${esc(p.slug)}" ` +
-          `title="${esc(p.title || p.slug)} — ${esc(p.status)}">${esc(p.title || p.slug)}</button>`).join("") +
-      `</div></div>`;
-  }).join("") || `<div class="body muted">no RDs yet</div>`;
 }
 
 // ------------------------------------------------------------------ taskhub pane (spec 08)
@@ -2586,8 +2622,43 @@ function renderRdRail() {
 // rules — the same reason `limits` publishes the economy budgets.
 const TASK_VIEWS = [["frontier", "Frontier"], ["all", "All"],
                     ["category", "By category"], ["timeline", "Experiment timeline"]];
+// the stored vocabulary plus the one computed state — chips render counts from the live
+// items, so an engine-side vocabulary change surfaces as a new chip, never a hidden row
+const TASK_STATUS_ORDER = ["open", "blocked", "done", "dropped"];
 
 function taskCatVar(cat) { return `--t-${cat}`; }
+function taskItems() { return ((state.snap || {}).tasks || {}).items || []; }
+function taskById(id) { return taskItems().find((t) => t.id === id) || null; }
+
+function matchTask(t) {
+  const q = state.search.toLowerCase();
+  return q && (t.id.toLowerCase().includes(q)
+    || String(t.title || "").toLowerCase().includes(q)
+    || String(t.category || "").toLowerCase().includes(q));
+}
+function matchRd(p) {
+  const q = state.search.toLowerCase();
+  return q && (p.slug.toLowerCase().includes(q)
+    || String(p.title || "").toLowerCase().includes(q)
+    || String(p.node || "").toLowerCase().includes(q));
+}
+
+// select a row (a task id, or "rd:<slug>") and show it in the detail pane — the same
+// gesture a tree node or wiki page answers to. "rd:" rows fetch through the shared reader.
+function selectTask(id) {
+  state.tasks.selected = id;
+  state.tasks.key = "";
+  renderTasks();
+  if (id && id.startsWith("rd:")) {
+    const slug = id.slice(3);
+    state.rd.selected = slug;
+    localStorage.setItem("crux-rd-slug", slug);
+    state.rd.readerKey = "";
+    fetchPage(LAYERS.rd, slug);
+    return;
+  }
+  renderDetail();
+}
 
 function taskRow(t) {
   const cat = t.category || "default";
@@ -2597,68 +2668,189 @@ function taskRow(t) {
       'semantics (spec 15). Its verdict is frozen; this conclusion is a record on the task.' +
       '">pre-15</span>' : "") + `</span>`).join(" · ");
   const pending = t.pending_gate ? `<span class="tk-pending">awaiting your acceptance</span>` : "";
-  return `<div class="tk-row tk-${esc(t.state)}">` +
+  const dim = state.search && !matchTask(t) ? " tk-dim" : "";
+  const on = state.tasks.selected === t.id ? " on" : "";
+  return `<button type="button" class="tk-row tk-${esc(t.state)}${dim}${on}" data-task="${esc(t.id)}">` +
     `<span class="tk-id">${esc(t.id)}</span>` +
     `<span class="tk-cat" style="--tk: var(${taskCatVar(cat)}, var(--t-default))">${esc(cat)}</span>` +
+    (t.is_experiment ? `<span class="tk-kind">experiment</span>` : "") +
     `<span class="tk-title">${esc(t.title)}</span>` +
     (concl ? `<span>${concl}</span>` : "") + pending +
-    `<span class="tk-state">${esc(t.state)}</span></div>`;
+    `<span class="tk-state">${esc(t.state)}</span></button>`;
+}
+
+// RD rows in the same list (merge of 2026-08-21): an RD is a kind of task — a requirements
+// document for a large one — so it renders as a row here and opens in the shared reader
+function rdRows(pages) {
+  const order = (p) => (p.status === "active" ? 0 : p.status === "draft" ? 1 : 2);
+  return pages.slice().sort((a, b) => order(a) - order(b) || a.slug.localeCompare(b.slug))
+    .map((p) => {
+      const dim = state.search && !matchRd(p) ? " tk-dim" : "";
+      const on = state.tasks.selected === "rd:" + p.slug ? " on" : "";
+      return `<button type="button" class="tk-row${p.status === "superseded" ? " tk-dropped" : ""}${dim}${on}" ` +
+        `data-task="rd:${esc(p.slug)}">` +
+        `<span class="tk-id">${esc(p.node || p.slug)}</span>` +
+        `<span class="tk-kind">rd</span>` +
+        `<span class="tk-title">${esc(p.title || p.slug)}</span>` +
+        `<span class="tk-state">${esc(p.status)}</span></button>`;
+    }).join("");
 }
 
 function renderTasks() {
-  if (!tasksActive() || state.tab !== "tasks") return;
-  const tb = state.snap.tasks, view = state.tasks.view;
-  const key = JSON.stringify([view, tb.items.map((t) => [t.id, t.state, t.pending_gate])]);
+  if (!hubActive() || state.tab !== "tasks") return;
+  const tb = state.snap.tasks || { items: [], frontier: [], queue: [] };
+  const view = state.tasks.view, status = state.tasks.status, rds = rdPages();
+  const key = JSON.stringify([view, status, state.tasks.selected, state.search,
+    tb.items.map((t) => [t.id, t.state, t.pending_gate]),
+    rds.map((p) => [p.slug, p.status])]);
   if (key === state.tasks.key) return;
   state.tasks.key = key;
 
-  $("tasks-rail-body").innerHTML = TASK_VIEWS.map(([k, label]) =>
-    `<button class="tk-view${view === k ? " on" : ""}" data-tk-view="${k}">${label}</button>`).join("");
+  // rail: the four views, then a status filter with live counts — the counts come from
+  // the items themselves, so the chips can never disagree with the list
+  const counts = {};
+  tb.items.forEach((t) => (counts[t.state] = (counts[t.state] || 0) + 1));
+  const statuses = TASK_STATUS_ORDER.concat(
+    Object.keys(counts).filter((s) => !TASK_STATUS_ORDER.includes(s)).sort());
+  $("tasks-rail-body").innerHTML =
+    TASK_VIEWS.map(([k, label]) =>
+      `<button class="tk-view${view === k ? " on" : ""}" data-tk-view="${k}">${label}</button>`).join("") +
+    `<div class="tk-group">Status</div>` +
+    [["all", tb.items.length]].concat(statuses.map((s) => [s, counts[s] || 0]))
+      .map(([s, n]) => `<button class="tk-status${status === s ? " on" : ""}" ` +
+        `data-tk-status="${esc(s)}">${esc(s)}<span class="tk-n">${n}</span></button>`).join("");
 
   const byId = {};
   tb.items.forEach((t) => (byId[t.id] = t));
+  const pick = (ts) => ts.filter((t) => status === "all" || t.state === status);
   let html = "";
   if (tb.queue.length) {
     html += `<p class="tk-sec">Awaiting your acceptance</p>` +
-      tb.queue.map((r) => `<div class="tk-row">` +
+      tb.queue.map((r) => `<button type="button" class="tk-row` +
+        `${state.tasks.selected === r.id ? " on" : ""}" data-task="${esc(r.id)}">` +
         `<span class="tk-id">${esc(r.id)}</span><span class="tk-title">${esc(r.title)}</span>` +
         r.hypothesis_refs.map((h) => `<span class="tk-concl tk-c-${esc(h.conclusion)}">` +
           `${esc(h.id)} → ${esc(h.conclusion)}</span>`).join(" ") +
         (r.drifted.length ? `<span class="tk-drift" title="The commitment was edited after ` +
           `the run. Flagged, never blocking.">⚠ drift: ${esc(r.drifted.join(", "))}</span>` : "") +
-        `</div>`).join("") +
+        `</button>`).join("") +
       `<p class="tk-note">Accepting is the PI's call: <code>crux task accept &lt;id&gt;</code>. ` +
       `The cockpit is read-only.</p>`;
   }
+  let shown = 0;
+  const rowsOf = (ts) => { shown += ts.length; return ts.map(taskRow).join(""); };
+  let body = "";
   if (view === "frontier") {
-    html += `<p class="tk-sec">Frontier — ready to work now</p>` +
+    body = `<p class="tk-sec">Frontier — ready to work now</p>` +
       `<p class="tk-note">Open tasks whose blockers are all discharged. Chores and ` +
       `experiments in one list — that is the question a PI actually asks.</p>` +
-      (tb.frontier.map((id) => taskRow(byId[id])).join("") || `<p class="tk-note">nothing unblocked</p>`);
+      (rowsOf(pick(tb.frontier.map((id) => byId[id]).filter(Boolean)))
+        || `<p class="tk-note">nothing unblocked</p>`);
   } else if (view === "timeline") {
-    const exps = tb.items.filter((t) => t.is_experiment)
+    const exps = pick(tb.items.filter((t) => t.is_experiment))
       .sort((a, b) => String(a.updated).localeCompare(String(b.updated)));
-    html += `<p class="tk-sec">Experiment timeline</p>` +
+    body = `<p class="tk-sec">Experiment timeline</p>` +
       `<p class="tk-note">Tasks whose output is evidence, in completion order — what we ` +
       `actually ran, when, and what it concluded. A conclusion is written about a run and ` +
       `accepted by the PI; a hypothesis's own verdict is derived by the engine from its ` +
       `ticks and lives on the node.</p>` +
-      (exps.map(taskRow).join("") || `<p class="tk-note">no experiments yet</p>`);
+      (rowsOf(exps) || `<p class="tk-note">no experiments yet</p>`);
   } else if (view === "category") {
     const groups = {};
-    tb.items.forEach((t) => (groups[t.category || "default"] = groups[t.category || "default"] || []).push(t));
-    html += Object.keys(groups).sort().map((c) =>
-      `<p class="tk-sec">${esc(c)}</p>` + groups[c].map(taskRow).join("")).join("");
+    pick(tb.items).forEach((t) =>
+      (groups[t.category || "default"] = groups[t.category || "default"] || []).push(t));
+    body = Object.keys(groups).sort().map((c) =>
+      `<p class="tk-sec">${esc(c)}</p>` + rowsOf(groups[c])).join("");
+    if (rds.length) body += `<p class="tk-sec">rd</p>` + rdRows(rds);
   } else {
-    html += `<p class="tk-sec">All tasks</p>` + tb.items.map(taskRow).join("");
+    body = `<p class="tk-sec">All tasks</p>` + rowsOf(pick(tb.items));
+    if (rds.length) body += `<p class="tk-sec">Requirements documents</p>` + rdRows(rds);
   }
-  $("tasks-body").innerHTML = html;
+  // the list says what it is showing — 25 rows silently standing in for 200 was the
+  // single worst finding of the 2026-08-21 walk
+  const counted = `<p class="tk-count">showing ${shown} of ${tb.items.length} task` +
+    `${tb.items.length === 1 ? "" : "s"}` +
+    (rds.length ? ` · ${rds.length} RD${rds.length === 1 ? "" : "s"}` : "") +
+    (status !== "all" ? ` · status: ${esc(status)}` : "") + `</p>`;
+  $("tasks-body").innerHTML = counted + html + body;
+  // an open RD needs its page kept fresh by the poll, exactly as the RD tab used to do
+  if (state.tasks.selected && state.tasks.selected.startsWith("rd:")) refreshRdPage();
 }
 
-function renderRd() {
-  if (!rdActive() || state.tab !== "rd") return;
-  renderRdRail();
-  refreshRdPage();
+// one reference (a node id, a wiki page, another task, or plain text) as a detail row —
+// tasks point at all four, so the renderer resolves rather than assumes
+function taskRefRow(r) {
+  r = String(r).replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+  const slug = r.split("/").pop().replace(/\.md$/, "");
+  const n = state.snap.nodes[r];
+  if (n) return `<button class="rowlink" data-go="${esc(r)}">` +
+    `<span class="rid">${esc(r)}</span>${esc(n.title || "")}</button>`;
+  if (taskById(r)) return `<button class="rowlink" data-task="${esc(r)}">` +
+    `<span class="rid">${esc(r)}</span>${esc(taskById(r).title || "")}</button>`;
+  if (wikiHasSlug(slug)) return `<button class="rowlink" data-wiki="${esc(slug)}">` +
+    `<span class="rid">wiki</span>${esc(slug)}</button>`;
+  return `<div class="body"><span class="inline">${esc(r)}</span></div>`;
+}
+
+// the task detail pane — what clicking a row opens, exactly as a tree node or wiki page
+// opens. Everything here is the snapshot's own vocabulary; the pane invents nothing.
+function taskDetail(t) {
+  const cat = t.category || "default";
+  let badges = badge(t.state) + badge(cat, taskCatVar(cat));
+  if (t.is_experiment && cat !== "experiment") badges += badge("experiment");   // the reserved category already says it
+  if (t.pending_gate) badges += badge("awaiting your acceptance", "--q-review");
+  if (t.accepted) badges += badge("accepted");
+  if (t.created) badges += `<span class="badge">created <span class="inline">${esc(t.created)}</span></span>`;
+  if (t.updated) badges += `<span class="badge">updated <span class="inline">${esc(t.updated)}</span></span>`;
+
+  // hypothesis refs link into the tree (PI ruling: chips navigate); the conclusion is
+  // narrated as concluded — a hypothesis's own verdict is derived by the engine from its
+  // ticks and lives on the node, never here
+  const hyps = (t.hypothesis_refs || []).length
+    ? section("Hypotheses — what this run concluded",
+        t.hypothesis_refs.map((h) => {
+          const n = state.snap.nodes[h.id];
+          return `<button class="rowlink" data-go="${esc(h.id)}">` +
+            `<span class="rid">${esc(h.id)}</span>${esc(n ? n.title : "")}` +
+            `<span class="rsum"><span class="tk-concl tk-c-${esc(h.conclusion)}">` +
+            `concluded ${esc(h.conclusion)}</span>` +
+            (h.schema === 0 ? " · pre-15 (verdict frozen on the node)" : "") +
+            `</span></button>`;
+        }).join(""))
+    : "";
+  const refs = (t.refs || []).length
+    ? section("References", t.refs.map(taskRefRow).join("")) : "";
+  const deps =
+    ((t.blocked_by || []).length ? section("Blocked by", t.blocked_by.map(taskRefRow).join("")) : "") +
+    ((t.blocks || []).length ? section("Blocks", t.blocks.map(taskRefRow).join("")) : "") +
+    ((t.children || []).length ? section("Subtasks", t.children.map(taskRefRow).join("")) : "");
+  const outs = (t.outputs || []).length
+    ? section("Outputs", t.outputs.map(taskRefRow).join("")) : "";
+  const gate = t.pending_gate
+    ? section("Acceptance", `<div class="body">This experiment's conclusion awaits your ` +
+        `acceptance: <code>crux task accept ${esc(t.id)}</code>. The cockpit is read-only.</div>`)
+    : t.accepted
+    ? section("Acceptance", `<div class="body">Accepted — <span class="inline">${esc(t.accepted)}</span></div>`)
+    : "";
+  return head("taskhub · " + (t.is_experiment ? "experiment" : "task"), t.title) +
+    `<div class="badges">${badges}</div>` + hyps + gate + refs + deps + outs;
+}
+
+// nothing selected yet: the taskhub's own gate — the PI-facing question this layer exists
+// to surface — plus a pointer at how the list works. Replaces the dead default pane.
+function taskGateDetail() {
+  const tb = state.snap.tasks || { queue: [], items: [] };
+  const hd = head("taskhub · gate", "Awaiting your acceptance");
+  const hint = `<p class="d-empty">Click a task to see its detail. The Views rail switches ` +
+    `between the frontier, the whole list, categories and the experiment timeline; the ` +
+    `status chips filter it.</p>`;
+  if (!tb.queue.length) return hd + `<p class="d-empty">No task awaits your acceptance.</p>` + hint;
+  const rows = tb.queue.map((r) =>
+    `<button class="rowlink" data-task="${esc(r.id)}"><span class="rid">${esc(r.id)}</span>${esc(r.title)}` +
+    `<span class="rsum">${r.hypothesis_refs.map((h) => esc(h.id) + " → " + esc(h.conclusion)).join(" · ")}</span></button>`).join("");
+  return hd + `<div class="sec">${rows}</div>` +
+    `<p class="tk-note">Accepting is the PI's call: <code>crux task accept &lt;id&gt;</code>. ` +
+    `The cockpit is read-only.</p>` + hint;
 }
 
 // one fetch for both layers — the route comes from the layer descriptor
@@ -2683,7 +2875,12 @@ function renderWikiReader() { renderPageReader(LAYERS.wiki); }
 // tab renders through this exact function — spec 07's "reuse that reader, do not build a
 // third", honoured by parameterising the one that existed rather than copying it.
 function renderPageReader(layer) {
-  if (state.tab !== layer.key) return;
+  // a layer is "showing" on its own tab — or, for RDs, in the taskhub with an RD row
+  // selected (the merge moved the way in; the reader itself did not move)
+  const showing = state.tab === layer.key ||
+    (layer.key === "rd" && state.tab === "tasks" &&
+     state.tasks.selected && state.tasks.selected.startsWith("rd:"));
+  if (!showing) return;
   const st = state[layer.key];
   const pane = $("detail-content"), pg = st.page;
   if (!pg) { pane.innerHTML = `<div class="d-kind">${esc(layer.label)}</div><p class="d-empty">loading…</p>`; return; }

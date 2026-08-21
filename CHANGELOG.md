@@ -6,6 +6,30 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The taskhub pane of the cockpit actually works now.** A 2026-08-21 walk with four UX
+  agents on the 200-task SortLab vault found the pane shipped half-wired: it leaked into
+  every other tab (`#tasks-pane` never opted back in to `[hidden]`, the exact bug its
+  sibling panes had each fixed for themselves), its Views rail was dead (the click listener
+  sat on `#tabs` while the buttons render in `#tasks-rail-body`), task rows were inert
+  `<div>`s, `renderDetail()` had no task branch at all, and the pane never claimed its flex
+  share so the layout collapsed. All repaired: rows are buttons that open a full task detail
+  in the right pane (hypothesis conclusions link into the tree), the four views switch, a
+  status filter with live counts exists (spec 08's checklist claimed one shipped; none had),
+  search now searches tasks in this tab, the list says "showing N of M", experiments are
+  marked in the row, the tree's view controls no longer leak into non-tree tabs, and a
+  tasks-only vault no longer loses the whole tab bar.
+
+### Changed
+
+- **The RD tab merged into the taskhub** (PI ruling, 2026-08-21): an RD is a kind of task —
+  a requirements document for a large one — so RDs now render as rows in the Taskhub list
+  (kind chip `rd`) and open in the same shared reader, reached from the same list as
+  everything else workable. The tab is named **Taskhub**. Saved `crux-tab: rd` preferences
+  land in the taskhub; every `data-rd` link (node Design sections, wiki backlinks) still
+  works. Frontend-only — no engine, payload or vault-format change, so no version bump.
+
 ## [0.6.0] - 2026-08-18
 
 ### Added

@@ -3022,14 +3022,19 @@ def run_rd_gui():
           E.wiki_page_payload(root, a2)["title"] == "Same Slug, Wiki Side"
           and E.rd_page_payload(root, a2)["title"] == "the second design")
 
-    # the pane must hide by CSS as well as by the hidden attribute: an ID selector outranks
-    # the UA's [hidden] rule, and the first live walk of this tab found the rail rendering
-    # underneath the tree because of it
+    # The RD tab is MERGED into the taskhub (PI ruling, 2026-08-21): an RD is a kind of
+    # task — a requirements document for a large one — so it lives as rows in the Taskhub
+    # list, not as a fourth top-level tab. The reader is still the wiki's, shared not
+    # copied; only the way in changed.
     css = read(os.path.join(HERE, "webui", "style.css"))
-    check("rdgui: the RD pane opts back in to [hidden]", "#rd-pane[hidden]" in css)
     idx = read(os.path.join(HERE, "webui", "index.html"))
-    check("rdgui: the RD pane ships hidden", 'id="rd-pane" hidden' in idx)
-    check("rdgui: the RD tab is registered", 'data-tab="rd"' in idx)
+    app = read(os.path.join(HERE, "webui", "app.js"))
+    check("rdgui: the RD tab is merged into the taskhub, not a tab of its own",
+          'data-tab="rd"' not in idx and "rd-pane" not in idx)
+    check("rdgui: opening an RD lands in the taskhub tab",
+          'setTab("tasks")' in app.split("function openRdPage")[1].split("function ")[0])
+    check("rdgui: RD rows render inside the taskhub list",
+          "rdRows" in app.split("function renderTasks")[1].split("\nfunction ")[0])
 
     # the node -> RD pointer has to be reachable from the pane, or it is a snapshot key
     # nothing uses. Absent on a node with no RD, so it never becomes chrome.
@@ -3037,13 +3042,6 @@ def run_rd_gui():
           "function rdSection" in read(os.path.join(HERE, "webui", "app.js"))
           and "if (!n.rd) return \"\";" in read(os.path.join(HERE, "webui", "app.js")))
 
-    # the rail must reuse the wiki rail's DOM contract, or it inherits none of its styling
-    # (the first live walk rendered the rail as a horizontal run of text because of this)
-    app = read(os.path.join(HERE, "webui", "app.js"))
-    check("rdgui: the RD rail reuses the wiki rail's DOM classes",
-          'class="wr-folder"' in app and '"wr-items"' in app)
-    check("rdgui: the rail's scroll rule is shared, not restated",
-          "#wiki-rail-body, #rd-rail-body" in css)
     # opening a SUPERSEDED design by default is the one thing this lifecycle exists to prevent
     check("rdgui: the reader defaults to a live design",
           'p.status === "active"' in app)
@@ -4693,10 +4691,72 @@ def run_task_gui():
     html = read(os.path.join(HERE, "webui", "index.html"))
     css = read(os.path.join(HERE, "webui", "style.css"))
     tabs = re.findall(r'data-tab="([a-z]+)"', html)
-    check("ui: the tab list covers tree, wiki, rd and tasks",
-          set(tabs) >= {"tree", "wiki", "rd", "tasks"})
+    check("ui: the tab list is tree, wiki and the taskhub — RD merged in, not beside",
+          set(tabs) == {"tree", "wiki", "tasks"})
+    check("ui: the taskhub tab is NAMED Taskhub",
+          ">Taskhub<" in html)
     check("ui: the cockpit knows the taskhub is inert when absent",
           "tasksActive" in ui and "tasks-pane" in html)
+
+    # ---- the 2026-08-21 taskhub repair. Every check below pins a defect the PI hit on a
+    # live vault (four UX agents reproduced all of them on the 200-task SortLab vault):
+    # the pane leaked into other tabs, its Views rail was wired to the wrong DOM subtree,
+    # rows were inert, and the detail pane had no task branch at all.
+    # (a) the pane must opt back in to [hidden] — the exact bug #wiki-pane and the old
+    #     #rd-pane each already fixed for themselves; #tasks-pane had been skipped.
+    check("taskgui: the taskhub pane opts back in to [hidden]",
+          "#tasks-pane[hidden]" in css and 'id="tasks-pane" hidden' in html)
+    # (b) and claim its flex share, or the detail pane eats the width
+    check("taskgui: the taskhub pane claims the canvas share its siblings claim",
+          bool(re.search(r"#tasks-pane \{[^}]*flex: 1 1 62%", css)))
+    # (c) the Views rail listener must live where the buttons live — it was attached to
+    #     #tabs while the buttons render in #tasks-rail-body, so clicks never arrived
+    check("taskgui: the view switch is wired to the pane, not the tab bar",
+          'data-tk-view' not in ui.split('$("tabs").addEventListener')[1].split("});")[0]
+          and '$("tasks-pane").addEventListener' in ui)
+    # (d) rows are BUTTONS carrying their id — a plain <div> can never open a detail
+    check("taskgui: task rows are buttons that carry their task id",
+          'data-task="' in ui and "<button" in ui.split("function taskRow")[1].split("\nfunction ")[0])
+    # (e) the detail pane knows tasks: a dedicated renderer, a renderDetail branch, and a
+    #     detailKeyOf case (without the key the poll would stomp the pane every 2s)
+    check("taskgui: the detail pane has a task branch",
+          "function taskDetail" in ui
+          and '"tasks"' in ui.split("function renderDetail()")[1].split("\nfunction ")[0]
+          and '"tasks"' in ui.split("function detailKeyOf()")[1].split("\nfunction ")[0])
+    # (f) a status filter exists — spec 08's work item said "status filters" and shipped none
+    check("taskgui: a status filter exists and persists",
+          'data-tk-status' in ui and "crux-tasks-status" in ui)
+    # (g) the tab bar logic counts the taskhub: a tasks-only vault must still show tabs,
+    #     and a saved taskhub tab must survive reload
+    upd = ui.split("function updateTabs()")[1].split("\nfunction ")[0]
+    check("taskgui: the tab bar counts the taskhub",
+          "hubActive()" in upd and 'data-tab="tasks"' in upd
+          # the hub is live when EITHER half exists — tasks, or the merged-in RDs
+          and "tasksActive() || rdActive()" in ui.split("function hubActive()")[1].split("\n")[0])
+    check("taskgui: a saved taskhub tab survives reload",
+          'want === "tasks"' in upd)
+    # (h) the tree's view controls hide in the taskhub, as they already do in the wiki —
+    #     four dead tree buttons leaking into every other mode was a live finding
+    check("taskgui: tree view controls hide in the taskhub",
+          'body[data-tab="tasks"]' in css)
+    # (i) search serves the tab it is in: taskhub search matches tasks, and says so
+    check("taskgui: search knows the taskhub",
+          "Search taskhub" in ui
+          and '"tasks"' in ui.split("function searchMatches()")[1].split("\nfunction ")[0])
+    # (j) an experiment is tellable from a chore in the list itself
+    check("taskgui: experiments are marked in the row",
+          "is_experiment" in ui.split("function taskRow")[1].split("\nfunction ")[0])
+    # (k) hypothesis chips in the task detail jump to the node (PI ruling: chips navigate)
+    check("taskgui: a task's hypothesis refs link into the tree",
+          "function taskDetail" in ui
+          and 'data-go' in ui.split("function taskDetail")[1].split("\nfunction ")[0])
+    # (l) the list says what it is showing — 25 silently standing in for 200 was the
+    #     single worst finding of the walk
+    check("taskgui: the list counts what it shows against what exists",
+          "tk-count" in ui)
+    # (m) the read-only footer stopped claiming everything is a tree
+    check("taskgui: the read-only footer speaks for the whole vault",
+          "edit the vault" in html and "edit the tree" not in html)
     missing = [c for c in tb["categories"] + [tb["reserved_category"]]
                if f"--t-{c}" not in css]
     check("ui: every declared category has a colour", not missing)
