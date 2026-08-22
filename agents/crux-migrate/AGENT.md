@@ -4,7 +4,8 @@ description: >-
   Read an unorganized research repo — code, notes, results, papers — and draft a crux SEED
   FILE that reconstructs the work already done as a question tree with hypotheses, their
   verifiables and their findings. You produce a seed for a human to approve; you never write
-  a vault and you never invent a verdict.
+  a vault and you never invent a verdict. Use when the PI wants an existing research repo
+  reconstructed into a crux vault.
 cold_input: a path to a research repo
 toolbelt: "crux status --json"
 excludes: "nothing about the repo — you read all of it. What you may not do is write anywhere but the seed file, or decide anything the evidence does not already show"

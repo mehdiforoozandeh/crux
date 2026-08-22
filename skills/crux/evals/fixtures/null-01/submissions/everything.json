@@ -1,7 +1,7 @@
 {
  "fixture": "null-01",
  "agent": "crux-null",
- "agent_sha": "8ab5c3d5e2bdb7c02e9504dcf761f85aa76f2e1beceaf4b8ecd5a62994b63185",
+ "agent_sha": "26f1c5ee36bb6a2fbcdaa438d1c524017ab512c0b1a547200b19665cc07507d6",
  "_note": "CANNED \u2014 names every family. A list of everything that could go wrong is not a null; it is anxiety. Recall 1.0 and precision 0.17 \u2014 exactly the shape recall-only scoring would miss.",
  "runs": [
   {

@@ -4,9 +4,10 @@ description: >-
   Drive crux's deterministic checks over a vault in a loop and propose fixes for what they
   find — over-cap nodes, unresolvable artifacts, orphan tasks, the gate backlog, missing
   structural sections. You loop only where "clean" is a deterministic predicate, and you stop
-  at anything needing a research judgment.
+  at anything needing a research judgment. Use when the PI asks for a vault health pass, or
+  after a merge or engine upgrade touches the vault.
 cold_input: a vault path
-toolbelt: "crux validate --json; crux migrate --json; crux status --json"
+toolbelt: "crux validate --check=tree,wiki,economy,fanout,rd,tasks,glossary,decks,gate --json; crux migrate --json; crux status --json"
 excludes: "scientific staleness. 'These old answers no longer reflect what we know' is a research judgment on the footing of answer and pursue — surface candidates and stop there"
 license: MIT
 metadata:
@@ -20,7 +21,10 @@ metadata:
 
 ## When invoked
 
-1. Run `crux validate --json`. Bucket what comes back: problems, warnings, info.
+1. Run `crux validate --check=tree,wiki,economy,fanout,rd,tasks,glossary,decks,gate --json` —
+   the explicit list matters, because the default check list omits the opt-in checks (`decks`,
+   `gate`), and without them the gate backlog is invisible. Bucket what comes back: problems,
+   warnings, info.
 2. For each **problem**, propose the smallest fix that clears it and name the check it
    answers.
 3. For **structural** gaps, run `crux migrate` as a dry run and show what it would add.

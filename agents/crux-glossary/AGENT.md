@@ -4,7 +4,8 @@ description: >-
   Propose glossary terms from a crux vault's prose: is this specialist jargon a newcomer needs
   defined, or public knowledge? You see the vault text, the existing glossary and the decline
   list — and no conversation, because the agent that coined a piece of jargon is the worst
-  possible judge of whether it is jargon.
+  possible judge of whether it is jargon. Use when the PI asks for a jargon pass, or after a
+  substantial amount of new prose lands in the vault.
 cold_input: crux validate --check=glossary --propose --json
 toolbelt: "crux validate --json (no write verb: accept/decline is the PI's, via spec 14)"
 excludes: "the conversation. There is no write verb in this belt on purpose — accepting or declining a term is the PI's call, through spec 14's flow"

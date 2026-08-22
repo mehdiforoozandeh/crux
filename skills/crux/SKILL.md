@@ -310,6 +310,36 @@ choose `answer` (resolve) or `pursue` (keep digging). Never decide for them. If 
 draft the synthesis (`crux synthesize "…" --for q3`), show it, and wait — `crux approve` is theirs,
 and `crux answer` will refuse until it's signed.
 
+## The agent roster — when to hand off
+
+Ten isolated subagents ship with crux (`agents/`; `install.sh` puts them in `~/.claude/agents`).
+Each owns one bounded judgment, and each runs **cold**: `crux brief <id> --json` is assembled
+deterministically from vault state, so the advocacy that produced a claim never reaches the
+agent that sets its bar. **When agents named `crux-*` are available, you must not do these
+jobs inline** — the anti-bias architecture only works when the isolated agent, fed the
+engine-built brief, does the work. You never author the brief and never paraphrase the task
+beyond naming the node.
+
+| the moment | hand to | pass it |
+|---|---|---|
+| a node is drafted, before it is written | `crux-critic` | the draft text **alone** — no vault, no history; passing it context defeats its isolation |
+| a hypothesis exists, its `## Null` empty | `crux-null` | `crux brief <hid> --json`; the PI signs with `crux approve-null` |
+| null approved, no checks yet | `crux-verifiables` | the brief (it carries the approved null) |
+| before `crux test` spends compute | `crux-design` | the brief + `crux task list --ref <hid>` |
+| a run finished, `results/<hid>/` exists | `crux-close` | hypothesis id + results dir; it proposes ticks, the PI applies them |
+| the PI asks to be caught up | `crux-situate` | `crux brief <node> --mode=situate`; the answer is chat-only, never written to the vault |
+| an old research repo to import | `crux-migrate` | the repo path; it emits a seed for the PI to approve |
+| a vault health pass | `crux-audit` | the vault path |
+| tests against a requirement / RD | `crux-tests` | the requirement — never the implementation |
+| a jargon pass | `crux-glossary` | vault prose + glossary + decline list |
+
+Every agent **proposes**; the PI's signatures (`approve-null`, `approve`, `task accept`, the
+ticks at `close`) stay exactly where the leash puts them. **Roster not installed?** Do the
+job yourself under the same discipline — the null named and approved before checks, kinds +
+combination rule written *with* the checks (the *Pre-register verifiables* guardrail below),
+the conclude-nothing question asked before the compute — and never feed your own advocacy
+into the bar you set.
+
 ## Guardrails
 
 - **Vocabulary — read `glossary.md` when you first touch a vault.** It is not a dictionary,

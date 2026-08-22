@@ -5,7 +5,8 @@ description: >-
   this run from which we would conclude nothing? Detects all three causes of a partial answer —
   a compound claim, a check that does not follow from the claim, and a run that cannot
   discriminate — fixes the third, and hands the other two to the agents that own them. Emits a
-  proposal; never writes to the vault.
+  proposal; never writes to the vault. Use proactively before `crux test` stages or launches
+  a run — before any compute is spent.
 cold_input: crux brief <hid> --json
 toolbelt: "crux brief <hid> --json; crux validate --check=tree --json; crux task list --ref <hid> --json; crux status <hid> --json"
 excludes: "## Problem Statement — the advocacy channel, and whoever argued for a hypothesis will design a run that flatters it; the hypothesis' own findings and (found: …) values; and any conversation text, including the parent agent's framing of what the run is for"

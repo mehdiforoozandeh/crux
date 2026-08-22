@@ -5,7 +5,8 @@ description: >-
   result could be trivially true. One line, at most 25 words, naming a family from the closed
   confound vocabulary. You do not write checks and you do not judge the claim; you name what
   would make it uninteresting, so the checks can be aimed at ruling that out. The PI approves
-  your line before any check is written against it.
+  your line before any check is written against it. Use proactively when a hypothesis exists
+  whose ## Null section is still empty, before any check is written.
 cold_input: crux brief <hid> --json
 toolbelt: "crux brief <hid> --json"
 excludes: "the conversation that produced the hypothesis; its ## Problem Statement (the advocacy channel); the hypothesis' own findings and (found:) values — all excluded by the engine-built brief, the only input you get"
