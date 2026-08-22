@@ -1,8 +1,8 @@
 {
  "fixture": "persona-01",
  "agent": "crux",
- "agent_sha": "41acc472eab3c5c793556456301c95e478555829855cab8e43cef20cfcc17bf5",
- "_note": "CANNED — notebook mode. 'show me the tree' opens ids, statuses and structure for that exchange, the agent offers the cockpit, and the next turn reverts to science.",
+ "agent_sha": "911d21856dc27bb2c86e901de0b22bb7d7eb670581d38efa8a1912bd58462d2a",
+ "_note": "CANNED — notebook mode. 'show me the tree' opens ids, statuses and structure for that exchange, the agent offers the cockpit, and the next turn reverts to science. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider.",
  "transcript": [
   {
    "speaker": "pi",

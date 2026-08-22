@@ -557,10 +557,14 @@ def check_and_stamp_version(root):
     write_if_changed(cfg_path, yaml_dump(cfg) + "\n")
     if stamped is None:
         return None  # pre-versioned vault; silently adopt the stamp
+    # Third person, like every other line the CLI prints (spec 16): this is written ABOUT
+    # the PI, not to them. The second-person original invited the agent to quote it at the
+    # PI verbatim, which put "vault", "engine" and "verdicts" into a conversation the mirror
+    # rule keeps free of them.
     return (f"engine drift: this vault was written with crux engine v{stamped}, "
-            f"but you are running v{ENGINE_VERSION}. Verdicts and generated views may "
-            f"differ. Pin the matching engine (re-install the crux skill at v{stamped}) "
-            f"if you need to reproduce the recorded results exactly.")
+            f"but the engine now running is v{ENGINE_VERSION}. Verdicts and generated views "
+            f"may differ. Pin the matching engine (re-install the crux skill at v{stamped}) "
+            f"to reproduce the recorded results exactly.")
 
 # ----------------------------------------------------------------------------- templates
 _BUILTIN = {

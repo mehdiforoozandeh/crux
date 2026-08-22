@@ -7703,6 +7703,22 @@ def run_cli_third_person():
         bad = sorted({SECOND.search(t).group(0) for t in out if SECOND.search(t)})
         check(f"voice: no second-person address in the CLI's own text output ({bad})", not bad)
         check("voice: the init hint survives the rewrite", "cd cruxvault" in out[0])
+
+        # The drift warning escaped the sweep above: it goes to stderr and only fires on an
+        # already-drifted vault, so no verb in `out` can produce it. It is CLI text like any
+        # other and spec 16 binds it the same way — and it is the one string SKILL.md used to
+        # tell the agent to relay verbatim, which is how a second-person line addressed to
+        # the reader ends up quoted at the PI.
+        drift = E.check_and_stamp_version.__doc__ and None
+        cfg = os.path.join(vault, E.VAULT_MARKER)
+        E.write_if_changed(cfg, E.yaml_dump({**E.yaml_load(E.read(cfg)),
+                                             "engine_version": "0.1"}) + "\n")
+        drift = run(["status"], cwd=vault).stderr
+        check("voice: a drift warning actually fires when the stamp is behind",
+              "engine drift" in drift)
+        check(f"voice: no second-person address in the drift warning "
+              f"({SECOND.search(drift).group(0) if SECOND.search(drift) else ''})",
+              not SECOND.search(drift))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
