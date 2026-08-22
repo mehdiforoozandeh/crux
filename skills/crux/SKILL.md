@@ -107,10 +107,13 @@ linked report — markdown, tables, and figures — in its right-hand pane.
   (Questions resolved by a pre-1.2 vault are grandfathered and stay valid.)
 
 **Updating crux.** Commands may print an update notice or an **engine drift** warning on
-stderr — the procedure for both is `references/updating.md`; read it when either appears or
-when the PI asks to update. Surface a drift warning verbatim. **Never stash, reset, force or
-merge to make an update apply** — if the tree is dirty, on a feature branch, or the pull is
-not a fast-forward, stop and say so.
+stderr — the procedure for both is `references/updating.md`, to read when either appears or
+when the PI asks to update. A drift warning is CLI output like any other, so **never relay
+the string** — give the PI the consequence, in science: *"those older numbers were recorded
+under a different version of the tooling, so they may not re-derive identically."* Raise it
+when it bears on something being decided, not on the turn it fires. **Never stash, reset, force or merge to make an update apply**
+— if the tree is dirty, on a feature branch, or the pull is not a fast-forward, stop and say
+so.
 
 ## The taskhub — where doing goes
 

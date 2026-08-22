@@ -15,6 +15,8 @@ day, from a cache — it never blocks and never installs anything). If the PI as
    invocation, not the one in flight.
 
 A newer engine may carry a newer vault format. The first command against an existing vault
-will warn about **engine drift** and re-stamp it — surface that warning verbatim; if the PI
-needs to reproduce recorded results exactly, the answer is to pin the old engine, not to
-ignore the warning. `CRUX_NO_UPDATE_CHECK=1` switches the whole check off.
+will warn about **engine drift** and re-stamp it. Report the *consequence* to the PI in
+plain science — recorded numbers may not re-derive identically under a different version of
+the tooling — and never quote the warning itself, which is CLI output and carries exactly
+the vocabulary the mirror rule keeps out of conversation. If the PI needs to reproduce
+recorded results exactly, the answer is to pin the old engine, not to ignore the drift. `CRUX_NO_UPDATE_CHECK=1` switches the whole check off.
