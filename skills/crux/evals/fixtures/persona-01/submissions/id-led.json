@@ -1,0 +1,194 @@
+{
+ "fixture": "persona-01",
+ "agent": "crux",
+ "agent_sha": "41acc472eab3c5c793556456301c95e478555829855cab8e43cef20cfcc17bf5",
+ "_note": "CANNED — the regression this fixture exists to catch. Every fact is right and the notebook is kept; the agent narrates it in crux's own vocabulary at a PI who never used a word of it. Fails the voice scan, passes the state check.",
+ "transcript": [
+  {
+   "speaker": "pi",
+   "text": "I've been away most of the summer. Where did we get to on whether any of this carries over to data from somewhere else?"
+  },
+  {
+   "speaker": "agent",
+   "text": "Short version: one comparison is mid-flight and one has never been tried. The claim that the data advantage holds on data from a different source has been running since Tuesday on job 4208 — two checks were fixed before it started: the accuracy drop under the shift has to be smaller than the better model's, and it has to hold on all three shifted sources. The other one — that less data is needed once the source changes — is written down and untouched. Everything upstream is settled: on a level compute budget more data does not beat a better model, and the amount you can cut sits somewhere between a half and a tenth."
+  },
+  {
+   "speaker": "pi",
+   "text": "the shifted-source job finished overnight. numbers are in the run directory."
+  },
+  {
+   "speaker": "agent",
+   "text": "Read them. h6 came back with both verifiables unmet, so the engine derives refuted and it has rolled up into q3. There is still h7 sitting as an idea under q3, so the review gate has not tripped yet — want me to run h7?"
+  },
+  {
+   "speaker": "pi",
+   "text": "run it."
+  },
+  {
+   "speaker": "agent",
+   "text": "Back, and it goes the other way. Post-shift, half the data still matches the better model, and it holds on both tasks — both bars met, no caveats I can see in the curves.\n\nSo on whether any of it holds on data from elsewhere, I think we can answer that now, and the answer has two halves. The advantage does not survive a source change: the drop was larger, not smaller, on all but one source. The data floor does survive: half the data still matches after the shift, on both tasks. Here is how I would write that up as the standing answer:\n\n  “A source change costs the data advantage but not the data floor. The comparison that favoured more data reverses under shift — the drop is 2.4 points worse than the better model's, and it holds on only one of three shifted sources. The half-the-data result is unaffected: post-shift it still matches, on both tasks. Read together, what transfers is how much data you need, not which lever wins.”\n\nDo you buy that, or do you want to keep digging on the shifted sources first?"
+  },
+  {
+   "speaker": "pi",
+   "text": "yes, that's settled. good."
+  },
+  {
+   "speaker": "agent",
+   "text": "Filed. Two things fall out of it for whatever comes next: the shifted-source result kills the argument for spending on more data when the deployment domain moves, and the surviving floor means you can keep collecting half as much. Say the word when you want the next question opened."
+  }
+ ],
+ "vault_after": {
+  "nodes": {
+   "h1": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h2": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "partial",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h3": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h4": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h5": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h6": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h7": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "root": {
+    "type": "project",
+    "status": "active",
+    "verdict": null,
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "q1": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s1",
+    "approved": false,
+    "answered": true
+   },
+   "q2": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s2",
+    "approved": false,
+    "answered": true
+   },
+   "q3": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s3",
+    "approved": false,
+    "answered": true
+   },
+   "s1": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s2": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s3": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   }
+  },
+  "tasks": {
+   "t1": {
+    "status": "done",
+    "pending_gate": true
+   }
+  }
+ },
+ "runs": [
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  }
+ ]
+}

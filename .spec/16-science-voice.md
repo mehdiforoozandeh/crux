@@ -1,6 +1,6 @@
 # Spec 16 — Science voice: the invisible notebook
 
-**Label:** `voice` · **Status:** ☐ todo
+**Label:** `voice` · **Status:** ☑ done — landed 2026-08-22 as engine 3.2, [PRD 16.1](../docs/prd/16.1-science-voice.md)
 **Relates to:** [14 glossary](14-glossary.md) (the mirror-rule machinery this extends),
 [13 situate & design](13-situate-and-design.md) (owns the anchoring lint this amends),
 [09 specialized agents](09-specialized-agents.md) (crux-situate's contract changes),
@@ -220,43 +220,36 @@ positive case) and one that asks to see the notebook (notebook-mode case).
   settled this class of fix: instructions were never the binding constraint; the modeled
   dialogues are.
 
-## Open questions
+## Open questions — all settled at build time
 
-- The exact crux lexicon list for the deterministic scan — enumerate at build time from
-  SKILL.md and the glossary's stoplist mechanics, and where the list lives (engine
-  frozenset, like 14's stoplist, is the default).
-- The ID regex family — `\b[qhts]\d+\b` plus synthesis ids; false-positive risk on
-  legitimate science strings (e.g. "t5" the model) needs a measured pass over the example
-  vaults, the way 14 measured its matcher.
-- Which example vault the persona eval runs on, N personas and turns, and the pass bands —
-  [10](10-agent-evals.md) deliberately left bands to the PI; same here.
-- Whether the relevance gate ("same lineage or immediate sibling") should be computed by
-  the engine (a `--json` field on the gate listing saying which pending nodes are within
-  scope of a given node) or judged by the agent. Engine-computed is the default per
-  [09](09-specialized-agents.md)'s rule 1.
-- Whether `crux task review` acceptance rides the same signature phrasing (it should —
-  "Awaiting your acceptance" is the same gate in taskhub clothes).
+| question | answer | how it was settled |
+|---|---|---|
+| the exact crux lexicon, and where it lives | `CRUX_LEXICON`, a 38-term frozenset in `engine.py` beside 14's stoplist, normalised through `glossary_key` | measured. Each candidate was counted in the example vaults' `wiki/` prose — pure science voice by the wiki's one-way flow rule — and every candidate with real hits was dropped: `seed` (19, random seeds), `partial` (5), `anchor` (4), `idea` (4), `parent` (2). `brief` and `pursue` are out as plain English on their face. |
+| the ID regex, and the "t5" risk | `\b[qhts]\d+\b`, **case-sensitive** | measured over all four shipped example vaults the way 14 measured its matcher: 3,016 matches of the lowercase form, every one a real node or task id, **zero** false positives. Admitting uppercase produces exactly the collision this spec predicted — `T5`, the model, in `scaling_vault/wiki/transformer-language-models.md`. Uppercase is where science lives; lowercase is where crux lives. `selftest` re-runs the measurement rather than quoting it. |
+| which vault the persona eval runs on, N, and the bands | `scaling_vault`, **referenced not copied** (`example_vault:` in the manifest); five canned submissions, `k: 3`; `band: unset` | 13 nodes, deliberately jargon-free so the persona needs no field knowledge, and `q3` already carries one in-flight run and one untested idea — the states a signature-gate conversation needs. Bands stay the PI's, per [10](10-agent-evals.md). |
+| relevance gate: engine-computed or agent-judged | **engine-computed**, the spec's own default | `engine.gate_relation` + `crux review --json --near` / `crux task review --json --near`, carrying `relation` and `in_scope`. It annotates and never filters, because the rule binds agent initiative and a PI who asks gets everything. |
+| does `crux task review` acceptance ride the same phrasing | **yes** | it is the same gate in taskhub clothes: same `--near` annotation, same signature rule in SKILL.md rule 3, and `Awaiting the PI's acceptance` lost its second person along with the rest. |
 
 ## Work items
 
-- ☐ SKILL.md: new top-level **voice** section (rules 1–6); re-author the session
+- ☑ SKILL.md: new top-level **voice** section (rules 1–6); re-author the session
   dialogue, gate prose, and lifecycle snippets in the new voice
-- ☐ `agents/crux-situate/AGENT.md`: title-first anchoring; drop the ids-first-line
+- ☑ `agents/crux-situate/AGENT.md`: title-first anchoring; drop the ids-first-line
   mandate; keep the plain-language rule it already has
-- ☐ `engine.py`: `situate:unanchored` accepts anchor title (verbatim, case-insensitive)
+- ☑ `engine.py`: `situate:unanchored` accepts anchor title (verbatim, case-insensitive)
   or ID; `evals.py` oracle updated to match
-- ☐ `crux.py`: second-person → third-person in text output ("Awaiting the PI's
+- ☑ `crux.py`: second-person → third-person in text output ("Awaiting the PI's
   decision"); no other CLI text changes
-- ☐ Relevance-gate support: engine surfaces lineage/sibling relation of pending gates to
+- ☑ Relevance-gate support: engine surfaces lineage/sibling relation of pending gates to
   a given node in `--json` (or explicitly decide agent-judged; see open question)
-- ☐ Glossary: crux process terms become proposable vocabulary via the existing
+- ☑ Glossary: crux process terms become proposable vocabulary via the existing
   `crux-glossary` flow when the PI uses them
-- ☐ README transcript re-authored in the new voice
-- ☐ Situate eval fixtures (`perfect.json`, `verbose.json`, `invented.json`) re-authored
-- ☐ Persona eval: PI-persona harness, deterministic lexicon/ID scan with mirror-rule
+- ☑ README transcript re-authored in the new voice
+- ☑ Situate eval fixtures (`perfect.json`, `verbose.json`, `invented.json`) re-authored
+- ☑ Persona eval: PI-persona harness, deterministic lexicon/ID scan with mirror-rule
   licensing, vault-state assertions, judge rubric for soft behaviors; fixtures include a
   mirror-rule positive case and a notebook-mode case
-- ☐ `ENGINE_VERSION` bump + proof old vaults still load; `selftest.py` grown
+- ☑ `ENGINE_VERSION` bump + proof old vaults still load; `selftest.py` grown
 
 ## Acceptance criteria
 

@@ -139,31 +139,40 @@ runs **5 questions and 16 hypotheses** deep.
 **The loop.** One rhythm: you ask, the agent proposes a hypothesis with a **bar locked
 _before_ the run**, you approve, it runs and reports, you sign off, a verdict lands.
 
+And it talks to you in **science** — never in its own filing system. You are the advisor;
+the agent is the grad student; crux is the grad student's notebook. A grad student doesn't
+say "q19 is solved":
+
 ```text
 you    Does self-supervised pretraining beat supervised ImageNet init for
        segmentation transfer — same encoder, same decoder, full labels?
-crux   That's your open question q1. Pinning one hypothesis under it —
-       "iBOT+UPerNet beats supervised init" — and locking the bar before we run:
+crux   Nothing we've run settles that yet. Let me put one testable claim under it
+       — iBOT+UPerNet beats supervised init — and fix what would count as beating
+       it, before anything runs:
          • ADE20K val mIoU ≥ supervised + 2.0     (3-seed mean)
          • Cityscapes val mIoU ≥ supervised + 1.0 (3-seed mean)
-         • gain holds in all 3 seeds
-       Register it as h1?
+         • the gain holds in all 3 seeds
+       Are those the right bars?
 you    Yes.                        ← sign-off 1 · the bar, before it runs
-crux   Kicked off — slurm 83612 (wandb segssl/q1-ibot-vs-sup). h1 is running.
+crux   Running — slurm 83612 (wandb segssl/ibot-vs-sup).
        …
 crux   Back: +3.3 mIoU ADE20K (49.6 vs 46.3), +1.5 Cityscapes (80.6 vs 79.1),
-       and the gain held across all three seeds. All three bars met. Record it?
-you    Signed off.                 ← sign-off 2 · the verdict, before it counts
-crux   h1 → supported. iBOT/DINO is now the SegSSL default.
+       and the gain held in all three seeds — all three bars met. So on this
+       comparison self-supervised init wins. Do you buy it?
+you    Signed off.                 ← sign-off 2 · the result, before it counts
+crux   Recorded. iBOT/DINO is the SegSSL default from here.
 ```
 
-You never type the engine yourself, but that exchange is a handful of commands end to end:
+Everything got filed while you talked, and none of the filing reached the conversation. Ask
+to see the notebook — "show me the tree" — and the ids, statuses and structure are all
+there, with the cockpit one click away. That exchange above is a handful of commands end to
+end, and you never typed one:
 
 ```bash
 crux ask "Does SSL pretraining beat supervised ImageNet init for segmentation transfer?"  # opens q1
 crux hypothesize "iBOT+UPerNet beats supervised init" -p q1 \
      -v "ADE20K val mIoU ≥ supervised + 2.0 (3-seed mean)"                                 # h1, bar locked
-crux test h1 --run "slurm 83612 (wandb segssl/q1-ibot-vs-sup)"                             # idea → running
+crux test h1 --run "slurm 83612 (wandb segssl/ibot-vs-sup)"                             # idea → running
 crux close h1 -m "+3.3 mIoU ADE20K, +1.5 mIoU Cityscapes"                                  # verdict from ticked boxes
 crux serve                                                                                 # open the read-only cockpit
 ```

@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -65,6 +65,16 @@ ENGINE_VERSION = "3.1"          # bumped when verdict/roll-up/view logic or vaul
                                 # Deliberately NOT part of the hash-locked commitment: they
                                 # describe how a run is carried out, not what would settle
                                 # the claim, so adding them cannot drift a locked node.
+                                # 3.2: science voice (spec 16) — `situate:unanchored` now
+                                # accepts the anchor's TITLE as well as its id, so orienting
+                                # the PI no longer forces a node id into chat. A shipped
+                                # deterministic bound changed behaviour, and the stamp is how
+                                # a vault records which engine wrote it, so the counter
+                                # rolls. NOT a compatibility era: no vault format change, no
+                                # verdict/roll-up change, nothing to migrate. Also additive
+                                # and read-only: `voice_lint` + `CRUX_LEXICON` (the mirror
+                                # rule as code, consumed by the evals) and `gate_relation`
+                                # (the relevance gate, annotated onto `review --near`).
 CRUX_VERSION = "0.6.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -1859,14 +1869,29 @@ def glossary_candidates(root, propose, v=None):
         if " " not in key and key in GLOSSARY_STOPLIST:
             continue
         c = count_term(v, term)
-        if len(c["documents"]) < 2 and not c["titles"]:
+        # SPEC 16'S ONE EXCEPTION, and it is narrow. crux's own process vocabulary — "review
+        # gate", "verifiable", "synthesis" — is jargon the PI has not agreed to exactly like
+        # a coined project term, and spec 16 routes its permanent graduation through this
+        # flow. But it appears nowhere in the corpus centrality counts: the terms live in the
+        # SKILL and the conversation, not in the vault's prose. Without the waiver the
+        # graduation path is dead on arrival, and a PI who has said "gate" fifty times can
+        # never be offered the word.
+        #
+        # The waiver does not weaken the guarantee it sits inside. The filter exists so that
+        # agent enthusiasm cannot become PI interruptions, and CRUX_LEXICON is a closed,
+        # measured list of 38 terms — not something an agent can grow at proposal time.
+        crux_own = key in CRUX_LEXICON
+        if not crux_own and len(c["documents"]) < 2 and not c["titles"]:
             continue
         n, t = len(c["documents"]), len(c["titles"])
         out.append({"term": " ".join(str(term).split()), "key": key,
                     "documents": c["documents"], "occurrences": c["occurrences"],
                     "titles": c["titles"], "per_document": c["per_document"],
-                    "reason": f"{n} document{'' if n == 1 else 's'}"
-                              + (f", {t} title{'' if t == 1 else 's'}" if t else "")})
+                    "crux_vocabulary": crux_own,
+                    "reason": ("crux's own vocabulary, which the PI has been using"
+                               if crux_own and not c["documents"] and not c["titles"] else
+                               f"{n} document{'' if n == 1 else 's'}"
+                               + (f", {t} title{'' if t == 1 else 's'}" if t else ""))})
     return out
 
 def glossary_info(cands):
@@ -1986,6 +2011,181 @@ def cmd_glossary_list(root):
     """The vocabulary model, read-only. Creates nothing: a pre-14 vault stays pre-14 until
     the PI actually says something."""
     return load_glossary(root)
+
+# ----------------------------------------------------------------------------- science voice (spec 16)
+# THE FRAME, and it decides everything below: the PI is the advisor, the agent is the grad
+# student, and crux is the grad student's notebook. A grad student does not tell their
+# advisor "q19 is solved" — the advisor would ask what the hell q19 is. They say the science.
+#
+# So crux's own vocabulary — node ids AND process terms — is unagreed jargon under spec 14's
+# model of the PI's vocabulary, and the agent never introduces it in chat. The PI using a
+# word licenses it back: THE MIRROR RULE. Persistence is split, because the two halves decay
+# differently. Ids are ephemeral handles licensed for one conversation only ("the PI knew
+# what q19 was in March" will not be true in April); process terms graduate permanently
+# through the glossary flow spec 14 already built.
+#
+# This is a lint, not a filter. It reads a conversation and reports; nothing here rewrites a
+# sentence, and nothing here runs at chat time. Its consumers are the persona eval and
+# selftest, which is the point: spec 06 settled that instructions were never the binding
+# constraint on agent behaviour — the modeled dialogues are — so the dialogues are scanned.
+
+#: A node id as it appears in prose. CASE-SENSITIVE, and that is the measured half of spec
+#: 16's open question about false positives.
+#:
+#: Measured over the four shipped example vaults: 3,016 matches of the lowercase form, every
+#: one of them a real node or task id — zero false positives. Admitting uppercase produces
+#: exactly the collision spec 16 predicted by name: `T5`, the language model, in
+#: `scaling_vault/wiki/transformer-language-models.md`, plus `H1`/`H2`/`H3`/`Q2` at sentence
+#: starts. `selftest.run_science_voice` re-runs that measurement rather than quoting it, so a
+#: future vault that breaks it goes red instead of being remembered as fine.
+#:
+#: Uppercase is where science lives — T5, H1, Q2, H2O, S1 — and lowercase is where crux
+#: lives, because the engine allocates ids in lowercase and has since v0.1.
+NODE_ID_RE = re.compile(r"\b[qhts]\d+\b")
+
+#: crux's process vocabulary, normalised through `glossary_key` so hyphenation, case and a
+#: trailing plural cannot smuggle a term past the list. Spec 16's default home, and 14's
+#: precedent: a frozenset in the engine, one list rather than one per consumer.
+#:
+#: Membership was decided by MEASUREMENT, not by taste. Each candidate was counted in the
+#: example vaults' `wiki/` prose — pure science voice, guaranteed by the wiki layer's one-way
+#: flow rule — and any candidate with real hits there was dropped as a false-positive risk:
+#: `seed` (19 hits, random seeds), `partial` (5), `anchor` (4), `idea` (4), `parent` (2).
+#: `brief` and `pursue` are out as plain English on their face.
+#:
+#: What is deliberately ABSENT is the other half of the rule: plain science words — question,
+#: hypothesis, evidence, finding, experiment, check, result, supported, refuted,
+#: inconclusive, baseline — are standard scientific language, not crux coinage. The grad
+#: student does not owe their advisor a gloss for "hypothesis".
+CRUX_LEXICON = frozenset(glossary_key(t) for t in (
+    # the notebook and its parts
+    "crux", "cruxvault", "vault", "notebook", "node", "node id", "subtree", "tree",
+    "cockpit", "wiki", "wikilink", "glossary", "ledger", "evidence ledger",
+    "META.md", "EXPERIMENTS.md", "TASKHUB.md", "WIKI.md", "RD.md",
+    # the process
+    "verifiable", "verdict", "synthesis", "synthesize", "null", "review gate", "gate",
+    "taskhub", "situate", "roll-up", "seed file", "seed outline", "prose cap",
+    "outcome-neutral", "combination rule", "invalid-run", "commitment drift",
+    "rd", "requirements document",
+))
+
+#: The notebook surface. A PI who asks to see one of these is leafing through the notebook,
+#: which is the advisor's right — and for that exchange the notebook's own vocabulary,
+#: including ids, is theirs to hear. Reverts at their next turn.
+NOTEBOOK_TERMS = frozenset(glossary_key(t) for t in
+                           ("notebook", "tree", "cockpit", "vault", "cruxvault"))
+
+VOICE_SPEAKERS = ("pi", "agent")
+
+#: compiled once: a lint over a long transcript would otherwise rebuild ~40 patterns a turn
+_LEXICON_PATTERNS = tuple((k, term_pattern(k)) for k in sorted(CRUX_LEXICON))
+
+
+def is_crux_term(term):
+    """True when `term` is crux's own vocabulary rather than plain science."""
+    return glossary_key(term) in CRUX_LEXICON
+
+
+#: longest first, so a licensed phrase swallows the shorter term inside it. Without this,
+#: a PI who agreed to "review gate" would still be flagged for hearing "gate" — the words
+#: overlap in the text, and the shorter one is not a second leak, it is the same one counted
+#: twice. Same reason "evidence ledger" must not also report "ledger".
+_LEXICON_BY_LENGTH = tuple(sorted(_LEXICON_PATTERNS, key=lambda kv: -len(kv[0])))
+
+
+def _terms_used(text):
+    """The lexicon terms `text` uses, with each matched span consumed so a contained term
+    cannot fire a second time."""
+    rest, out = str(text or ""), set()
+    for k, rx in _LEXICON_BY_LENGTH:
+        masked, n = rx.subn(lambda m: " " * (m.end() - m.start()), rest)
+        if n:
+            out.add(k)
+            rest = masked
+    return out
+
+
+def voice_lint(turns, agreed=()):
+    """Findings on one CONVERSATION, as `(id, message)` pairs — empty when clean.
+
+    `turns` is ordered `(speaker, text)` with speaker in `VOICE_SPEAKERS`; `agreed` is the
+    PI's glossary terms, licensed from turn zero. Pure: no vault, no filesystem, no network.
+
+    Two findings, one per kind of leak:
+
+      voice:node-id    the agent said `q19` and the PI never had
+      voice:crux-term  the agent said "review gate", "verifiable", "synthesis" — the same
+                       what-the-hell-is-q19 problem in different clothes
+
+    Order matters and that is the whole mechanism: a term is licensed from the turn the PI
+    uses it, not for the turns before. Scanning a conversation rather than a message is what
+    makes the mirror rule checkable at all."""
+    licensed_terms = {glossary_key(t) for t in (agreed or ()) if str(t).strip()}
+    licensed_ids, notebook, out = set(), False, []
+    for i, turn in enumerate(turns, 1):
+        speaker, text = turn
+        speaker = str(speaker or "").strip().lower()
+        if speaker not in VOICE_SPEAKERS:
+            raise CruxError(f"voice: turn {i} is spoken by '{speaker}' — a conversation has "
+                            f"exactly two sides, {' and '.join(VOICE_SPEAKERS)}")
+        ids, terms = set(NODE_ID_RE.findall(str(text or ""))), _terms_used(text)
+        if speaker == "pi":
+            # the mirror rule: whatever the PI brings into the room is theirs to hear back
+            licensed_ids |= ids
+            licensed_terms |= terms
+            notebook = bool(terms & NOTEBOOK_TERMS)
+            continue
+        if notebook:
+            continue                      # leafing through the notebook — its words are open
+        for nid in sorted(ids - licensed_ids, key=natkey):
+            out.append(("voice:node-id",
+                        f"turn {i}: the agent said {nid!r}, which the PI has not used in "
+                        f"this conversation. Name the node by its title instead — a "
+                        f"paraphrase keeping the title's key terms, never a nickname."))
+        for t in sorted(terms - licensed_terms):
+            out.append(("voice:crux-term",
+                        f"turn {i}: the agent said {t!r}, which is crux vocabulary rather "
+                        f"than science. Say the science, or wait for the PI to say the word "
+                        f"first."))
+    return out
+
+
+GATE_RELATIONS = ("self", "ancestor", "descendant", "sibling", "unrelated")
+
+
+def _ancestors(v, nid):
+    """`nid`'s ancestors, nearest first. Cycle-safe: a malformed vault must not hang a lint."""
+    out, cur, seen = [], v.nodes.get(nid), {nid}
+    while cur is not None and cur.parent and cur.parent in v.nodes and cur.parent not in seen:
+        seen.add(cur.parent)
+        out.append(cur.parent)
+        cur = v.nodes[cur.parent]
+    return out
+
+
+def gate_relation(v, near, other):
+    """How `other` stands to `near`: one of `GATE_RELATIONS`.
+
+    Spec 16's relevance gate: the agent may raise a pending signature question on its own
+    initiative only when the node is in the current conversation's LINEAGE (ancestor or
+    descendant) or is an IMMEDIATE sibling. Computed here rather than judged, per spec 09's
+    rule 1 — the deterministic check is the goalpost.
+
+    It binds agent initiative only. A PI who asks what is pending gets everything, which is
+    why nothing in the engine filters on this: it annotates."""
+    if near == other:
+        return "self"
+    if near not in v.nodes or other not in v.nodes:
+        return "unrelated"
+    if other in _ancestors(v, near):
+        return "ancestor"
+    if near in _ancestors(v, other):
+        return "descendant"
+    p = v.nodes[near].parent
+    if p and p == v.nodes[other].parent:
+        return "sibling"
+    return "unrelated"
+
 
 # ----------------------------------------------------------------------------- wiki layer (Epic 3)
 # A PI-curated literature wiki: immutable sources under raw/, agent-compiled pages under
@@ -3522,6 +3722,18 @@ def cmd_review(root):
     return [(n.id, n.title, drifted(n.id)) for n in v.nodes.values()
             if n.type == "question" and n.status == "review"]
 
+def gate_scope(v, near, ids):
+    """`{id: (relation, in_scope)}` for a batch of pending gates against `near`.
+
+    One helper so the two queues — questions at `review`, experiments at `task review` —
+    annotate identically. They are different decisions, but "is this any of the PI's business
+    right now" is the same question for both."""
+    out = {}
+    for i in ids:
+        rel = gate_relation(v, near, i)
+        out[i] = (rel, rel != "unrelated")
+    return out
+
 def approved_synthesis(v, qid):
     """The approved synthesis that closes `qid`, or None. Deterministic when several
     relate to the same question: the lowest id wins."""
@@ -4428,7 +4640,14 @@ def situate_lint(text, anchors=()):
                            *confident*, not by *wrong*: a misresolution the PI can see in the
                            first line costs one correction, one buried under four fluent
                            paragraphs is believed. The lint cannot check that the resolution
-                           was right; it can check that it was disclosed."""
+                           was right; it can check that it was disclosed.
+
+    An anchor is either an id (`"q20"`) or an `(id, title)` pair, and a PAIR is satisfied by
+    EITHER form (title matched verbatim, case-insensitively). That is spec 16's amendment,
+    and it costs the check nothing: what the rule buys is disclosure of which subtree was
+    read, and "here's where things stand on 'how do we cut the label budget'" discloses it
+    exactly as well as "q20" does — to a PI who can act on it, rather than to one who has to
+    go look up what q20 was."""
     out = []
     paras = [p for p in re.split(r"\n\s*\n", (text or "").strip()) if _prose_tokens(p)]
     if not paras:
@@ -4450,13 +4669,46 @@ def situate_lint(text, anchors=()):
         out.append(("situate:too-long",
                     f"{total} words (max {SITUATE_BUDGET['total_words']}). Situating the PI "
                     f"is the whole job; a verbose orientation has failed at it."))
-    missing = [a for a in (anchors or ()) if a and a not in (text or "")]
+    missing = [_anchor_label(a) for a in (anchors or ()) if a and not _anchor_named(text, a)]
     if missing:
         out.append(("situate:unanchored",
-                    f"the answer never names what it oriented over ({', '.join(missing)}). "
-                    f"Say which node ids you read, in the first line — a wrong subtree must "
-                    f"be visible, not buried under four fluent paragraphs."))
+                    f"the answer never names what it oriented over ({'; '.join(missing)}). "
+                    f"Name the scope in the first line — the node's title is enough, and is "
+                    f"what the PI can act on — because a wrong subtree must be visible, not "
+                    f"buried under four fluent paragraphs."))
     return out
+
+
+def _anchor_forms(anchor):
+    """One anchor -> the strings that would satisfy it. A bare string is an id and nothing
+    else; a pair is `(id, title)` and either form counts."""
+    if isinstance(anchor, (list, tuple)):
+        return [str(x) for x in anchor if str(x or "").strip()]
+    return [str(anchor)]
+
+
+#: trailing sentence punctuation on a title, dropped before matching. Spec 16's own worked
+#: example is *"where things stand on 'how do we cut the label budget'"* and the node is
+#: titled "How do we cut the label budget?" — an anchor rule that fails on a dropped question
+#: mark is a rule about typography, not about disclosure. Leading and internal text is NOT
+#: normalised: the point of the check is that the PI can recognise the subtree.
+_TITLE_TAIL = " ?.!:;,"
+
+
+def _anchor_named(text, anchor):
+    forms = _anchor_forms(anchor)
+    low = str(text or "").lower()
+    # the id is matched case-sensitively (it is a token the engine allocated); the title
+    # case-insensitively, because a first line legitimately capitalises the start of a
+    # sentence and nobody should have to lower-case a question to satisfy a lint
+    return any((f in str(text or "")) if i == 0
+               else (f.strip().rstrip(_TITLE_TAIL).lower() in low)
+               for i, f in enumerate(forms))
+
+
+def _anchor_label(anchor):
+    forms = _anchor_forms(anchor)
+    return forms[0] if len(forms) < 2 else f"{forms[0]} — {forms[1]!r}"
 
 def _situate_child(v, cid):
     """One descendant, summary-shaped and recursive. Deliberately NOT the whole node: an

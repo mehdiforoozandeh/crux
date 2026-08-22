@@ -1,0 +1,194 @@
+{
+ "fixture": "persona-01",
+ "agent": "crux",
+ "agent_sha": "41acc472eab3c5c793556456301c95e478555829855cab8e43cef20cfcc17bf5",
+ "_note": "CANNED — the mirror-rule positive case. The persona types 'h6' and 'synthesis'; the agent may use both for the rest of the conversation, and the scan must not flag them.",
+ "transcript": [
+  {
+   "speaker": "pi",
+   "text": "I've been away most of the summer. Where did we get to on whether any of this carries over to data from somewhere else?"
+  },
+  {
+   "speaker": "agent",
+   "text": "Short version: one comparison is mid-flight and one has never been tried. The claim that the data advantage holds on data from a different source has been running since Tuesday on job 4208 — two checks were fixed before it started: the accuracy drop under the shift has to be smaller than the better model's, and it has to hold on all three shifted sources. The other one — that less data is needed once the source changes — is written down and untouched. Everything upstream is settled: on a level compute budget more data does not beat a better model, and the amount you can cut sits somewhere between a half and a tenth."
+  },
+  {
+   "speaker": "pi",
+   "text": "the shifted-source job finished overnight. numbers are in the run directory."
+  },
+  {
+   "speaker": "agent",
+   "text": "Read them. It came out the wrong way round: the accuracy drop under the shift was 2.4 points larger than the better model's, not smaller, and the direction only held on one of the three shifted sources rather than all three. Both checks we fixed beforehand came back unmet, so the claim that the advantage survives a source change is refuted — not weakly, on the check that was supposed to be the easy one. That leaves the second half of the picture open: whether the amount of data you need changes once the source changes. It is cheap — the arms already exist, it is one more sweep."
+  },
+  {
+   "speaker": "pi",
+   "text": "what's up with h6? and is the synthesis for that branch written yet?"
+  },
+  {
+   "speaker": "agent",
+   "text": "h6 is the shifted-source comparison, and it is the one that just came back — both checks unmet, so it reads refuted. No synthesis on that branch yet: it cannot be written until the second claim under the same question is settled, and that one has never been run. It is cheap — the arms already exist, it is one more sweep. Shall I?"
+  },
+  {
+   "speaker": "pi",
+   "text": "yes, that's settled. good."
+  },
+  {
+   "speaker": "agent",
+   "text": "Filed. Two things fall out of it for whatever comes next: the shifted-source result kills the argument for spending on more data when the deployment domain moves, and the surviving floor means you can keep collecting half as much. Say the word when you want the next question opened."
+  }
+ ],
+ "vault_after": {
+  "nodes": {
+   "h1": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h2": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "partial",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h3": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h4": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h5": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h6": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h7": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "root": {
+    "type": "project",
+    "status": "active",
+    "verdict": null,
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "q1": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s1",
+    "approved": false,
+    "answered": true
+   },
+   "q2": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s2",
+    "approved": false,
+    "answered": true
+   },
+   "q3": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s3",
+    "approved": false,
+    "answered": true
+   },
+   "s1": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s2": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s3": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   }
+  },
+  "tasks": {
+   "t1": {
+    "status": "done",
+    "pending_gate": true
+   }
+  }
+ },
+ "runs": [
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  }
+ ]
+}

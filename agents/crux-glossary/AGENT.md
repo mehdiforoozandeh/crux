@@ -35,6 +35,13 @@ metadata:
 - **Define in the project's language**, not the textbook's. Where the vault uses a term
   slightly differently from the field, say so — that difference is what a newcomer trips on.
 - **One sentence.** An entry needing a paragraph is a wiki page.
+- **crux's own vocabulary is proposable, but not by you.** "Review gate", "verifiable",
+  "synthesis" and the rest are jargon the PI never agreed to, and spec 16 routes their
+  permanent graduation through this same accept/decline flow — the engine waives the
+  centrality filter for them, since they appear nowhere in the vault's prose. What licenses
+  one is the PI *using* it, which is a fact about the conversation, and the conversation is
+  exactly what you are excluded from. So that proposal comes from the orchestrating agent,
+  never from you. You read prose; stick to the terms the prose coined.
 
 ## Output
 

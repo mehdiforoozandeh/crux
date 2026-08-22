@@ -23,7 +23,7 @@ being built — do not implement)
 | 13 | [Situate and design](13-situate-and-design.md) | `agents` | ☑ |
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☑ |
 | 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ◐ |
-| 16 | [Science voice: the invisible notebook](16-science-voice.md) | `voice` | ☐ |
+| 16 | [Science voice: the invisible notebook](16-science-voice.md) | `voice` | ☑ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
@@ -32,7 +32,7 @@ the same runner, budget cap and autonomy envelope. **Both are deferred** — see
 
 ## What to build, and what not to
 
-**One spec is `☐ todo` — 16. Two are `◐ in progress` — 08 and 15** — and they are the work.
+**No spec is `☐ todo`. Two are `◐ in progress` — 08 and 15** — and they are the work.
 (11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
 2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
 slots, and the `crux-situate` / `crux-design` agents. 10 landed 2026-08-16 as a **zero-bump**
@@ -46,7 +46,12 @@ be built before the machinery that makes them safe exists: [15](15-evidence-sema
 what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
 what stops it grading its own homework.
 
-01, 02, 03, 06, 07, 09, 10, 11, 12, 13 and 14 are `☑ done` and are reference material, not work.
+(16 landed 2026-08-22 as engine 3.2: the mirror rule as code — `voice_lint` + a measured
+`CRUX_LEXICON` — a situate anchor that accepts a title, an engine-computed relevance gate on
+`review --near`, third-person CLI text, and `persona-01`, the first eval whose subject is a
+conversation.)
+
+01, 02, 03, 06, 07, 09, 10, 11, 12, 13, 14 and 16 are `☑ done` and are reference material, not work.
 
 ## Dependency order
 

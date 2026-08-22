@@ -5,6 +5,9 @@ A scientific-method lab notebook: a tree of Questions (what we don't know) and
 Hypotheses (falsifiable, testable leaves), rooted at a project. The agent drives
 this CLI by default; it is also meant to be run directly by a human researcher.
 
+Text output here is AGENT-FACING: terse, id-led, `--json` with eyes. It is written about
+the PI, never to them, so no line of it is meant to be relayed to the PI verbatim.
+
 Quick tour:
     crux init "My project"                  # bootstrap a vault here
     crux ask "Can X improve Y?"             # open a question (alias: question, q, meta)
@@ -12,12 +15,12 @@ Quick tour:
         -v "metric ≥ +0.01 vs baseline"       # a leaf hypothesis (alias: hypothesis, idea)
     crux test h1 --run "job 4012"           # idea→staged→running (alias: experiment, run, stage, launch)
     crux close h1 -m "imp +0.012"           # verdict from verifiables (alias: record, conclude, verdict, land)
-    crux review                             # questions awaiting your decision (alias: gate, decide)
+    crux review                             # questions awaiting the PI's decision (alias: gate, decide)
     crux answer q1 -t "..."                 # resolve a question (alias: resolve, settle)
     crux pursue q1 --idea "next try"        # keep digging (alias: branch, extend, reopen)
     crux status                             # the tree / a node's ledger (alias: map, tree, where, show)
 
-`close` reads the `## Verifiables` checkboxes you (or the agent) ticked:
+`close` reads the `## Verifiables` checkboxes the agent (or the PI) ticked:
 all `- [x]` -> supported · any `- [ ]` -> refuted/partial · `- [-]` -> inconclusive.
 """
 import argparse, sys, os, json
@@ -163,7 +166,12 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("close", aliases=["record", "conclude", "verdict", "land"], help="close a hypothesis: derive verdict from verifiables"))
     s.add_argument("id"); s.add_argument("-m", "--metric", default=None); s.add_argument("-f", "--findings", default=None)
 
-    _jsonable(sub.add_parser("review", aliases=["gate", "decide"], help="list questions awaiting your close/reopen decision"))
+    s = _jsonable(sub.add_parser("review", aliases=["gate", "decide"], help="list questions awaiting the PI's close/reopen decision"))
+    s.add_argument("--near", default=None, metavar="ID",
+                   help="annotate each pending gate with how it stands to this node "
+                        "(self/ancestor/descendant/sibling/unrelated) and whether it is in "
+                        "scope. Annotates only — nothing is filtered out, because a PI who "
+                        "asks what is pending gets everything (spec 16).")
 
     s = _jsonable(sub.add_parser("answer", aliases=["resolve", "settle"], help="resolve a question (PI decision)"))
     s.add_argument("id"); s.add_argument("-t", "--text", default=None, help="the standing answer")
@@ -225,11 +233,15 @@ def main(argv=None):
     s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
     s.add_argument("id")
 
-    _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
+    ts = _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
+    ts.add_argument("--near", default=None, metavar="ID",
+                    help="annotate each pending acceptance with how the hypothesis it "
+                         "concluded about stands to this node, and whether it is in scope "
+                         "(spec 16). Annotates only; nothing is filtered out.")
 
     s = _jsonable(tsub.add_parser("accept", aliases=["sign-off", "signoff"],
                                   help="the PI accepts what an experiment concluded — never "
-                                       "run this on your own judgment"))
+                                       "run this on the agent\'s own judgment"))
     s.add_argument("id")
 
     s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
@@ -274,6 +286,9 @@ def main(argv=None):
                         "brevity bound (one ELI5 paragraph, three TL;DR paragraphs, "
                         f"{E.SITUATE_BUDGET['total_words']} words, the anchor named). "
                         "Exit 1 on any finding. Reads no vault and writes nothing.")
+    s.add_argument("--anchor-title", dest="anchor_title", default=None, metavar="TEXT",
+                   help="the anchor node's title, so the answer may name the scope by title "
+                        "instead of by id (spec 16). Either form satisfies the anchor rule.")
 
     s = _jsonable(sub.add_parser("validate", aliases=["lint", "check"], help="run all integrity checks on the vault (tree + wiki + economy + rd + tasks)"))
     s.add_argument("--strict", action="store_true",
@@ -393,16 +408,29 @@ def _dispatch_task(a):
                   f"PI.\n    crux task accept {a.id}")
     elif t == "review":
         rows = E.cmd_task_review(root)
+        # an experiment's relevance runs through the hypothesis it concluded about — the task
+        # itself is not in the tree, so it has no lineage of its own. NEAREST relation wins:
+        # an experiment bearing on two hypotheses is in scope if either one is.
+        near = getattr(a, "near", None)
+        v = E.Vault(root) if near else None
+        def scope_of(hr):
+            rels = [E.gate_relation(v, near, h) for h, _c in hr] or ["unrelated"]
+            best = min(rels, key=lambda r: E.GATE_RELATIONS.index(r))
+            return best, best != "unrelated"
         if a.json:
-            return _emit([{"id": i, "title": ti,
-                           "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
-                           "drifted": d} for i, ti, hr, d in rows])
+            out = [{"id": i, "title": ti,
+                    "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
+                    "drifted": d} for i, ti, hr, d in rows]
+            if near:
+                for r, (_i, _t, hr, _d) in zip(out, rows):
+                    r["relation"], r["in_scope"] = scope_of(hr)
+            return _emit(out)
         if not rows:
-            print("no experiments awaiting your acceptance.")
+            print("no experiments awaiting the PI's acceptance.")
             return 0
-        print("Awaiting your acceptance (what these runs concluded):")
+        print("Awaiting the PI's acceptance (what these runs concluded):")
         for i, ti, hr, d in rows:
-            print(f"  ◐ {i}  {ti}")
+            print(f"  ◐ {i}  {ti}" + (f"  [{scope_of(hr)[0]}]" if near else ""))
             for hid, concl in hr:
                 print(f"      {hid} → {concl}" + ("   ⚠ commitment drifted" if hid in d else ""))
     elif t in ("accept", "sign-off", "signoff"):
@@ -455,11 +483,11 @@ def dispatch(a):
             root, fn = E.cmd_init_from(a.seed, a.dir)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ materialized vault at {root} from {a.seed}\n  root node: {fn}\n"
-                  f"  next: {cd}crux status   — review the tree, then crux review for questions awaiting you")
+                  f"  next: {cd}crux status   — review the tree, then crux review for questions awaiting the PI")
         elif a.title:
             root, fn = E.cmd_init(a.title, a.dir, a.goal)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
-            print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: {cd}crux ask \"your first question\"")
+            print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: {cd}crux ask \"the first question\"")
         else:
             print("crux: init needs a project title, or --from <seed.md>", file=sys.stderr); return 1
     elif c in ("ask", "question", "q", "meta"):
@@ -494,20 +522,27 @@ def dispatch(a):
         for w in warns:
             print(f"  ⚠ {w}", file=sys.stderr)
     elif c in ("review", "gate", "decide"):
-        pend = E.cmd_review(_vault())
+        root = _vault()
+        pend = E.cmd_review(root)
+        scope = E.gate_scope(E.Vault(root), a.near, [n for n, _t, _d in pend]) if a.near else {}
         if a.json:
-            return _emit([{"id": nid, "title": title, "drift": drift}
-                          for nid, title, drift in pend])
+            rows = [{"id": nid, "title": title, "drift": drift}
+                    for nid, title, drift in pend]
+            for r in rows:
+                if r["id"] in scope:
+                    r["relation"], r["in_scope"] = scope[r["id"]]
+            return _emit(rows)
         if not pend:
             print("no questions awaiting a decision.")
         else:
-            print("Awaiting your decision (close with `answer`, or `pursue` to keep digging):")
+            print("Awaiting the PI's decision (close with `answer`, or `pursue` to keep digging):")
             for nid, title, drift in pend:
                 # the drift flag belongs HERE, at the moment the PI is deciding. It never
                 # blocks: the engine flags, the PI decides.
-                print(f"  ◐ {nid}  {title}" + ("   ⚠ a child hypothesis has DRIFT — its "
-                                               "verifiables changed after the run started"
-                                               if drift else ""))
+                rel = f"  [{scope[nid][0]}]" if nid in scope else ""
+                print(f"  ◐ {nid}  {title}{rel}"
+                      + ("   ⚠ a child hypothesis has DRIFT — its "
+                         "verifiables changed after the run started" if drift else ""))
     elif c in ("answer", "resolve", "settle"):
         root = _vault()
         E.cmd_answer(root, a.id, a.text)
@@ -578,7 +613,8 @@ def dispatch(a):
         if a.lint_situate:
             # deliberately vault-free: the lint is pure text, so an agent can run it from
             # anywhere and "writes nothing" is true by construction rather than by promise
-            found = E.situate_lint(sys.stdin.read(), [a.id] if a.id else [])
+            anchor = (a.id, a.anchor_title) if a.anchor_title else a.id
+            found = E.situate_lint(sys.stdin.read(), [anchor] if a.id else [])
             if a.json:
                 _emit({"ok": not found,
                        "findings": [{"id": i, "message": m} for i, m in found]})

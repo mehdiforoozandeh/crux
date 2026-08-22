@@ -1,0 +1,206 @@
+{
+ "fixture": "persona-01",
+ "agent": "crux",
+ "agent_sha": "41acc472eab3c5c793556456301c95e478555829855cab8e43cef20cfcc17bf5",
+ "_note": "CANNED — notebook mode. 'show me the tree' opens ids, statuses and structure for that exchange, the agent offers the cockpit, and the next turn reverts to science.",
+ "transcript": [
+  {
+   "speaker": "pi",
+   "text": "I've been away most of the summer. Where did we get to on whether any of this carries over to data from somewhere else?"
+  },
+  {
+   "speaker": "agent",
+   "text": "Short version: one comparison is mid-flight and one has never been tried. The claim that the data advantage holds on data from a different source has been running since Tuesday on job 4208 — two checks were fixed before it started: the accuracy drop under the shift has to be smaller than the better model's, and it has to hold on all three shifted sources. The other one — that less data is needed once the source changes — is written down and untouched. Everything upstream is settled: on a level compute budget more data does not beat a better model, and the amount you can cut sits somewhere between a half and a tenth."
+  },
+  {
+   "speaker": "pi",
+   "text": "the shifted-source job finished overnight. numbers are in the run directory."
+  },
+  {
+   "speaker": "agent",
+   "text": "Read them. It came out the wrong way round: the accuracy drop under the shift was 2.4 points larger than the better model's, not smaller, and the direction only held on one of the three shifted sources rather than all three. Both checks we fixed beforehand came back unmet, so the claim that the advantage survives a source change is refuted — not weakly, on the check that was supposed to be the easy one. That leaves the second half of the picture open: whether the amount of data you need changes once the source changes. It is cheap — the arms already exist, it is one more sweep."
+  },
+  {
+   "speaker": "pi",
+   "text": "run it."
+  },
+  {
+   "speaker": "agent",
+   "text": "Back, and it goes the other way. Post-shift, half the data still matches the better model, and it holds on both tasks — both bars met, no caveats I can see in the curves.\n\nSo on whether any of it holds on data from elsewhere, I think we can answer that now, and the answer has two halves. The advantage does not survive a source change: the drop was larger, not smaller, on all but one source. The data floor does survive: half the data still matches after the shift, on both tasks. Here is how I would write that up as the standing answer:\n\n  “A source change costs the data advantage but not the data floor. The comparison that favoured more data reverses under shift — the drop is 2.4 points worse than the better model's, and it holds on only one of three shifted sources. The half-the-data result is unaffected: post-shift it still matches, on both tasks. Read together, what transfers is how much data you need, not which lever wins.”\n\nDo you buy that, or do you want to keep digging on the shifted sources first?"
+  },
+  {
+   "speaker": "pi",
+   "text": "hold on, show me the tree before I sign anything."
+  },
+  {
+   "speaker": "agent",
+   "text": "Three questions under the project. q1 — does more data beat a better model? — resolved, closed on s1, with h1 supported, h2 partial, h3 refuted. q2 — how much of the data do we actually need? — resolved on s2, h4 supported, h5 refuted. q3 — does any of it hold on data from elsewhere? — open: h6 just closed refuted and h7 is still an idea. Want me to open the cockpit on it? `crux serve` renders the whole thing with the ledgers and the reports beside the tree, which is a much better read than this."
+  },
+  {
+   "speaker": "pi",
+   "text": "no, that's enough. go on."
+  },
+  {
+   "speaker": "pi",
+   "text": "yes, that's settled. good."
+  },
+  {
+   "speaker": "agent",
+   "text": "Filed. Two things fall out of it for whatever comes next: the shifted-source result kills the argument for spending on more data when the deployment domain moves, and the surviving floor means you can keep collecting half as much. Say the word when you want the next question opened."
+  }
+ ],
+ "vault_after": {
+  "nodes": {
+   "h1": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h2": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "partial",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h3": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h4": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h5": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h6": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "refuted",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "h7": {
+    "type": "idea",
+    "status": "done",
+    "verdict": "supported",
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "root": {
+    "type": "project",
+    "status": "active",
+    "verdict": null,
+    "synthesis": null,
+    "approved": false,
+    "answered": false
+   },
+   "q1": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s1",
+    "approved": false,
+    "answered": true
+   },
+   "q2": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s2",
+    "approved": false,
+    "answered": true
+   },
+   "q3": {
+    "type": "question",
+    "status": "resolved",
+    "verdict": null,
+    "synthesis": "s3",
+    "approved": false,
+    "answered": true
+   },
+   "s1": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s2": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   },
+   "s3": {
+    "type": "synthesis",
+    "status": null,
+    "verdict": null,
+    "synthesis": null,
+    "approved": true,
+    "answered": false
+   }
+  },
+  "tasks": {
+   "t1": {
+    "status": "done",
+    "pending_gate": true
+   }
+  }
+ },
+ "runs": [
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  },
+  {
+   "findings": [
+    "judge:science-gate",
+    "judge:shows-draft",
+    "judge:relevance",
+    "judge:pi-asks-everything",
+    "judge:cockpit",
+    "judge:title-anchor"
+   ]
+  }
+ ]
+}
