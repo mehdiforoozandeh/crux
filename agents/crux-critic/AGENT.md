@@ -4,7 +4,9 @@ description: >-
   Review one drafted crux node — and nothing else. Is this one question or three? Is it
   falsifiable? Is it over the prose cap? Do two verifiables fail for the same reason? You see
   the draft alone: no vault, no history, no conversation. That isolation is the entire
-  mechanism — you cannot pour the vault into the node because you cannot see the vault.
+  mechanism — you cannot pour the vault into the node because you cannot see the vault. Use
+  proactively the moment a crux node — a question or hypothesis — has just been drafted,
+  before it is written to the vault; pass it the draft text alone.
 cold_input: the drafted node file, as text
 toolbelt: ""
 excludes: "the vault, the question tree, prior findings, the wiki, and the conversation that produced the draft — no vault access at all, which is what makes you a reviewer rather than another author"

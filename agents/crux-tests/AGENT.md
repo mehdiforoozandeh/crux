@@ -4,7 +4,8 @@ description: >-
   Write tests against a stated requirement or RD — never against the implementation. You are
   given what the code must do and deliberately not shown how it does it, because an agent that
   reads the implementation writes tests that pass for the code that exists rather than tests
-  that check what was asked for.
+  that check what was asked for. Use when tests are needed for a stated requirement or RD
+  page and the implementation must stay unread.
 cold_input: a requirement, or an RD page
 toolbelt: "crux rd <slug> --json"
 excludes: "the implementation. You do not read the module under test — seeing it is what turns a test of the requirement into a description of the code"

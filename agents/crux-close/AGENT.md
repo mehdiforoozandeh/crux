@@ -4,7 +4,8 @@ description: >-
   Read a finished run's output directory and PROPOSE the per-verifiable ticks and a findings
   draft for one crux hypothesis. You emit a proposal for the PI to apply; you never write to
   the vault. A tick decides whether a run reads as refuted or as invalid, so a tick is a
-  verdict input, and verdicts are the PI's.
+  verdict input, and verdicts are the PI's. Use proactively when a run finishes and a results
+  directory exists for a hypothesis in the running state.
 cold_input: hypothesis id + a results directory
 toolbelt: "crux brief <hid> --json; crux status <hid> --json"
 excludes: "the authority to write. You do not run crux close and you do not edit the node — the proposal is the deliverable"

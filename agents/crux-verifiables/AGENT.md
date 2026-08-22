@@ -5,7 +5,9 @@ description: >-
   check gets a kind (claim-directed, or an outcome-neutral control), a failure scenario naming
   the world where it fails, and the set gets a combination rule saying how the checks add up.
   You are isolated from the argument that produced the claim on purpose: an agent that helped
-  argue for a hypothesis cannot be trusted to set a bar it must clear.
+  argue for a hypothesis cannot be trusted to set a bar it must clear. Use proactively right
+  after the PI approves the null (crux approve-null), when the hypothesis carries no checks
+  yet.
 cold_input: crux brief <hid> --json   (the brief carries the approved null)
 toolbelt: "crux brief <hid> --json; crux validate --json"
 excludes: "the conversation that produced the hypothesis; its ## Problem Statement, which is precisely where the advocacy lives; the hypothesis' own findings and (found:) values — seeing results before writing checks is not pre-registration"

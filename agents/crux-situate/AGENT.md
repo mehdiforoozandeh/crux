@@ -4,7 +4,9 @@ description: >-
   Orient the PI over one subtree of a crux vault after time away: what this is, where we are,
   what is known, what is yet to be tested, and the paths forward. Reads a deterministic
   payload the engine assembles from vault state, composes one ELI5 paragraph and three TL;DR
-  paragraphs, and writes nothing — the answer is ephemeral by ruling, so it can never go stale.
+  paragraphs, and writes nothing — the answer is ephemeral by ruling, so it can never go
+  stale. Use when the PI asks to be oriented or caught up on the vault or a subtree — "where
+  are we", "catch me up".
 cold_input: crux brief <node> --mode=situate --json
 toolbelt: "crux brief <node> --mode=situate --json; crux brief --lint-situate --json; crux status --json"
 excludes: "the conversation — every fact comes from the engine-assembled payload, never from what someone told you about this subtree; and every write verb, because a situate answer is ephemeral (chat only) by the PI's ruling: the vault records science, not summaries"

@@ -18,6 +18,13 @@ Four skills under [`skills/`](skills), plus the engine they share:
 `crux-wiki` and `crux-cockpit` drive the engine that ships inside the `crux` skill —
 **don't install them without it**.
 
+Plus the **specialized agent roster** under [`agents/`](agents) — the spec-09 subagents
+(`crux-critic`, `crux-null`, `crux-verifiables`, `crux-close`, `crux-audit`,
+`crux-migrate`, `crux-tests`, `crux-glossary`, `crux-situate`, `crux-design`). The clone
+path installs them as `<name>.md` symlinks in `~/.claude/agents`, the flat layout Claude
+Code reads subagents from. The npx path installs skills only; agents currently ship via
+Path B.
+
 ## Requirements
 
 - **Python ≥ 3.8** — the engine is stdlib-only, no packages. (`crux.py` checks and says
@@ -65,8 +72,11 @@ Windsurf, and Copilot CLI read). Notes:
 
 - **Keep the clone in place** — the skills are symlinks into it. If you move the clone,
   re-run `./install.sh`; if you delete it, the skills silently vanish.
-- **Custom target:** `SKILLS_DIR=/path/to/dir ./install.sh` installs into exactly that
-  one dir instead.
+- **Custom target:** `SKILLS_DIR=/path/to/dir ./install.sh` installs skills into exactly
+  that one dir instead; `AGENTS_DIR=/path/to/dir` does the same for the agent roster
+  (default `~/.claude/agents`).
+- **Agents too:** every `agents/<name>/AGENT.md` is symlinked as
+  `~/.claude/agents/<name>.md`, so Claude Code can spawn the crux subagents by name.
 - Safe and idempotent: it only creates/refreshes symlinks it manages; a real
   (non-symlink) folder of the same name is left untouched and reported.
 - Requires bash (`./install.sh`, not `sh install.sh` — Debian's `sh` is dash).
@@ -81,7 +91,7 @@ suite runs in seconds — no GPU, no tokens — and ends `ALL GREEN`.
 
 | | Update | Uninstall |
 |---|---|---|
-| **Clone path** | `git pull` in the clone — the symlinks stay live | delete the four symlinks from the skills dirs |
+| **Clone path** | `git pull` in the clone — the symlinks stay live | delete the skill symlinks from the skills dirs and the `crux-*.md` symlinks from `~/.claude/agents` |
 | **npx path** | `npx skills update` | `npx skills remove` |
 
 Restart / reload your agent after either.

@@ -1,7 +1,7 @@
 {
  "fixture": "close-01",
  "agent": "crux-close",
- "agent_sha": "29f410f4dc52b8d08652b7979caea3dcd0185e4336e0c0a2998ad9a9f22c5213",
+ "agent_sha": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
  "_note": "CANNED \u2014 every tick right, and the run called `refuted`. The control failed, so the run is INVALID and the claim learned nothing. Confusing those two sentences is the failure the kinds exist to prevent, and no distribution over K runs makes it acceptable \u2014 so it is a hard fail beside the band, not a number inside it.",
  "verdict_read": "refuted",
  "runs": [
