@@ -127,7 +127,21 @@ def load_manifest(name, root=None):
             "planted_ids": set(ids)}
 
 
+def repo_root():
+    return os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+
 def vault_of(manifest):
+    """The vault a fixture is graded over.
+
+    Normally the fixture's own `vault/`. A manifest may instead declare
+    `example_vault: <name>` and be graded over a SHIPPED example vault — spec 16's persona
+    eval does, because "the agent converses over one of the shipped example problems" is the
+    fixture's premise, and a copy would drift away from the thing it claims to be. Read-only
+    either way: nothing in this module writes to a vault."""
+    ex = str(manifest["fm"].get("example_vault") or "").strip()
+    if ex:
+        return os.path.join(repo_root(), "skills", "crux", "examples", ex)
     return os.path.join(manifest["dir"], "vault")
 
 
@@ -245,8 +259,22 @@ def _oracle_situate(m):
     avail |= {f"gap:{q}" for q in b["untested"]["open_questions"] if not settled(q)}
     ref = _section(m["body"], "Reference answer")
     cross = [("the reference answer lints clean",
-              ref.strip() != "" and E.situate_lint(ref, [anchor]) == [])]
+              ref.strip() != "" and E.situate_lint(ref, [situate_anchor(m)]) == []),
+             # spec 16: the gold answer is what trains hardest, so it is scanned rather than
+             # read. An ID-led reference would teach the voice the lint above no longer forces.
+             ("the reference answer speaks science — no node id, no crux vocabulary",
+              ref.strip() != "" and E.voice_lint([("agent", ref)]) == [])]
     return avail, cross
+
+
+def situate_anchor(m):
+    """`(id, title)` for a situate fixture's anchor, read from the fixture's own vault.
+
+    Spec 16 lets a situate answer name its scope by TITLE or by id, so the oracle has to know
+    both. The title comes from vault state rather than from the manifest for the reason every
+    other fact here does: a hand-copied title is a second source of truth that can drift."""
+    aid = str(m["fm"]["node"])
+    return (aid, E.Vault(vault_of(m)).get(aid).title or "")
 
 
 def _v_prose_cap(m):
@@ -350,10 +378,120 @@ def _oracle_stated_key(m):
     return set(m["planted_ids"]), cross
 
 
+
+# ----------------------------------------------------------------------------- persona (spec 16)
+# The one fixture class whose deliverable is a CONVERSATION. Spec 16 asks for grading in
+# three layers, cheapest first, and the ordering is the point: the voice rule is regexable,
+# so a model must never be the thing that checks it. A property graded by a judge is a
+# property that silently stops being checked.
+#
+#   1. deterministic  `engine.voice_lint` over the agent's turns, honouring the mirror rule
+#   2. vault state    the notebook was actually kept, despite the silence
+#   3. the judge      soft behaviours only — was the gate phrased as a science question, was
+#                     the draft shown, was an out-of-scope gate left alone, was the cockpit
+#                     offered. Those are the PLANTED ids, and they are a stated key, so the
+#                     fixture declares `ground_truth: proxy` like every other stated key here.
+#
+# The harness still never invokes an agent. Whoever ran the persona, attended, writes the
+# transcript and the captured end state into the submission — the same contract spec 10 set,
+# for the same reason: a runner that decides when to stop and caps what it spends is spec
+# 05's parked work under another name.
+
+#: the closed predicate vocabulary a manifest's `## Vault state` table may use. Closed on
+#: purpose: an open-ended expression language here would be a second engine, and a fixture
+#: that can assert anything can assert something wrong without anyone noticing.
+STATE_PREDICATES = ("status", "verdict", "synthesis", "approved", "answered", "task", "pending")
+
+
+def vault_state(status):
+    """The slice of `crux status --json` the state predicates read, and nothing else.
+
+    A projection rather than the whole payload: a submission carrying 30KB of vault JSON per
+    run is unreviewable, and every field kept here is one a predicate can name."""
+    nodes = {}
+    for i, n in (status.get("nodes") or {}).items():
+        ans = str(n.get("answer") or "").strip()
+        nodes[i] = {"type": n.get("type"), "status": n.get("status"),
+                    "verdict": n.get("verdict"), "synthesis": n.get("synthesis"),
+                    "approved": bool(n.get("approved")),
+                    # the template's `_(interpretation — …)_` placeholder is not an answer
+                    "answered": bool(ans) and not ans.startswith("_(")}
+    tasks = {t["id"]: {"status": t.get("status"), "pending_gate": bool(t.get("pending_gate"))}
+             for t in ((status.get("tasks") or {}).get("items") or [])}
+    return {"nodes": nodes, "tasks": tasks}
+
+
+def state_rows(m):
+    """`[(key, expectation, note)]` from the manifest's `## Vault state` table."""
+    out = []
+    for r in _table(m["body"], "Vault state"):
+        if len(r) < 2:
+            raise E.CruxError(f"fixture '{m['name']}': a vault-state row needs key | proves: {r}")
+        out.append((r[0].strip("`"), r[1], r[2] if len(r) > 2 else ""))
+    return out
+
+
+def check_state(m, after):
+    """Every declared predicate against a captured end state, as `[(key, ok, why)]`."""
+    nodes, tasks = (after or {}).get("nodes") or {}, (after or {}).get("tasks") or {}
+    out = []
+    for key, proves, _n in state_rows(m):
+        pred, _, rest = key.partition(":")
+        target, _, want = rest.partition("=")
+        if pred not in STATE_PREDICATES:
+            raise E.CruxError(f"fixture '{m['name']}': unknown state predicate '{pred}' — known "
+                              f"are {', '.join(STATE_PREDICATES)}")
+        n, t = nodes.get(target) or {}, tasks.get(target) or {}
+        got = {"status": n.get("status"), "verdict": n.get("verdict"),
+               "synthesis": n.get("synthesis"), "approved": n.get("approved"),
+               "answered": n.get("answered"), "task": t.get("status"),
+               "pending": t.get("pending_gate")}[pred]
+        ok = (str(got) == want) if want else bool(got)
+        out.append((f"{key} (got {got!r})", ok, proves))
+    return out
+
+
+def transcript_turns(submission):
+    """The submitted conversation as `voice_lint` turns. A submission with no transcript is
+    not scored clean — it is scored as having said nothing, which is a failure."""
+    return [(t.get("speaker"), t.get("text")) for t in (submission.get("transcript") or [])]
+
+
+def _oracle_persona(m):
+    """persona-01: the judge rubric is the key, and the fixture's own construction is checked.
+
+    The planted ids are `judge:*` and nothing else. Everything mechanical about this fixture
+    — the voice scan and the state assertions — sits in `hard_checks`, beside the band rather
+    than inside it, for the same reason situate's lint does: they are one bit each, and no
+    distribution over K runs makes an id leak acceptable."""
+    root = vault_of(m)
+    v = E.Vault(root)
+    cross = [("a judged key must be declared a proxy — no engine derives 'was that phrased "
+              "as a science question'", m["ground_truth"] == "proxy"),
+             ("every planted row is a judged behaviour, named as one",
+              all(p["id"].startswith("judge:") and p["note"].strip() for p in m["planted"])),
+             ("the fixture runs over a shipped example vault, not a copy of one",
+              bool(str(m["fm"].get("example_vault") or "").strip()) and os.path.isdir(root))]
+
+    # the relevance fixture has to actually plant something irrelevant, and the engine says
+    # so rather than the author. Without this the judge is asked whether the agent avoided a
+    # trap that was never set.
+    anchor = str(m["fm"].get("anchor") or "")
+    out_of = _csv(m["fm"].get("out_of_scope"))
+    cross.append((f"the conversation's anchor '{anchor}' is a real node", anchor in v.nodes))
+    cross.append((f"every id declared out of scope really is, per the engine ({out_of})",
+                  bool(out_of) and all(E.gate_relation(v, anchor, i) == "unrelated"
+                                       for i in out_of)))
+    cross.append(("the state table declares what the notebook must show",
+                  len(state_rows(m)) >= 3))
+    return set(m["planted_ids"]), cross
+
+
 ORACLES = {"validation_report": _oracle_validation_report,
            "verifiable_ticks": _oracle_ticks,
            "null_vocabulary": _oracle_null,
            "situate_payload": _oracle_situate,
+           "persona_voice": _oracle_persona,
            "stated_key": _oracle_stated_key}
 
 
@@ -422,8 +560,13 @@ def agent_sha(agent, repo=None):
     """sha256 of an agent's definition — what pins a submission to the prompt that produced
     it. Without it a score is a number with no provenance, and re-scoring after an edit
     silently compares one agent to a different one."""
-    repo = repo or os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    repo = repo or repo_root()
     p = os.path.join(repo, "agents", agent, "AGENT.md")
+    if not os.path.isfile(p):
+        # a fixture may grade the ORCHESTRATING agent rather than one of the isolated ten —
+        # spec 16's persona eval measures the voice rules, which live in the skill. The
+        # principle is unchanged: pin the score to the prompt that produced it.
+        p = os.path.join(repo, "skills", agent, "SKILL.md")
     with open(p, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
@@ -535,9 +678,24 @@ def hard_checks(m, submission):
                     f"the run reads as '{want}'"))
     if m["oracle"] == "situate_payload":
         answer = str(submission.get("answer") or "")
-        findings = situate_findings(answer, str(m["fm"]["node"]))
+        findings = situate_findings(answer, situate_anchor(m))
         out.append((f"the answer lints clean ({[i for i, _x in findings]})", not findings,
                     "brevity is situate's acceptance criterion, not a preference"))
+        leaks = E.voice_lint([("agent", answer)]) if answer.strip() else []
+        out.append((f"the answer speaks science ({[i for i, _x in leaks]})", not leaks,
+                    "spec 16: crux's own vocabulary reaches the PI only when they used it "
+                    "first, and a situate answer is spoken to the PI"))
+    if m["oracle"] == "persona_voice":
+        turns = transcript_turns(submission)
+        agreed = [t["term"] for t in E.load_glossary(vault_of(m))["terms"]]
+        leaks = E.voice_lint(turns, agreed) if turns else [("voice:empty", "no transcript")]
+        out.append((f"the agent spoke science throughout ({sorted({i for i, _x in leaks})})",
+                    not leaks,
+                    "spec 16: node ids and crux vocabulary reach the PI only when the PI "
+                    "used them first — the mirror rule, honoured turn by turn"))
+        for name, ok, why in check_state(m, submission.get("vault_after")):
+            out.append((f"state {name}", ok,
+                        why or "the notebook was kept, silence notwithstanding"))
     return out
 
 
@@ -581,7 +739,7 @@ WRITE_VERBS = ("crux ask", "crux hypothesize", "crux close", "crux answer", "cru
 
 def load_definitions(names, repo=None):
     """{name: (frontmatter, body)} for the agent definitions that exist."""
-    repo = repo or os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    repo = repo or repo_root()
     out = {}
     for n in names:
         p = os.path.join(repo, "agents", n, "AGENT.md")
@@ -663,6 +821,15 @@ def roster_properties(defs, verbs=""):
                           "--lint-situate" in sit_body)
     P["situate-shape"] = ("agents: crux-situate names the shape it owes — one ELI5 + three TL;DR",
                           "ELI5" in sit_body and "TL;DR" in sit_body)
+    # spec 16: the anchor is named by TITLE, and the ids-first-line mandate is gone. Both
+    # halves are checked, because dropping the mandate without adding the replacement leaves
+    # the agent with no anchoring instruction at all and the lint arguing with nothing.
+    P["situate-title-anchor"] = ("agents: crux-situate anchors by title, not by id "
+                                 "(spec 16), and still runs the lint that checks it",
+                                 "--anchor-title" in sit_body
+                                 and "name the ids" not in sit_body.lower()
+                                 and re.search(r"first line.{0,80}\bTITLE\b", sit_body,
+                                               re.I | re.S) is not None)
 
     des, des_body = fm_of("crux-design"), body_of("crux-design")
     P["design-isolated"] = ("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
@@ -702,6 +869,7 @@ MUTATIONS = {
     "critic-gains-belt":          ("crux-critic", "critic-isolated"),
     "verifiables-drops-exclusion": ("crux-verifiables", "verifiables-exclusion"),
     "situate-reads-isolated":     ("crux-situate", "situate-mode"),
+    "situate-anchors-by-id":      ("crux-situate", "situate-title-anchor"),
     "situate-gains-write":        ("crux-situate", "situate-readonly"),
     "design-reads-situate":       ("crux-design", "design-isolated"),
     "design-drops-never-invoke":  ("crux-design", "design-handoff"),
@@ -729,6 +897,10 @@ def mutate(fm, body, mutation):
         fm["toolbelt"] = "crux glossary accept <term>"
     elif mutation == "verifiables-drops-exclusion":
         fm["excludes"] = str(fm.get("excludes")).replace("## Problem Statement", "the draft")
+    elif mutation == "situate-anchors-by-id":
+        # the regression spec 16 exists to prevent: the ids-first-line mandate creeping back
+        body = re.sub(r"by its \*\*TITLE\*\*", "by name the ids", body)
+        body = body.replace("--anchor-title", "")
     elif mutation == "situate-reads-isolated":
         fm["cold_input"] = str(fm.get("cold_input")).replace("--mode=situate", "")
     elif mutation == "design-reads-situate":
@@ -782,7 +954,15 @@ def main(argv=None):
     ap.add_argument("--submission", help="a findings file produced by an ATTENDED agent run "
                                          "(this harness never invokes one)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--project-state", action="store_true",
+                    help="read `crux status --json` on stdin and print the projection a "
+                         "persona submission carries as `vault_after`. Hand-writing that "
+                         "object is how a state assertion quietly becomes a wish.")
     a = ap.parse_args(argv)
+
+    if a.project_state:
+        print(json.dumps(vault_state(json.load(sys.stdin)), indent=1, sort_keys=True))
+        return 0
 
     if a.fixture and a.submission:
         s = score(load_manifest(a.fixture), load_submission(a.submission))

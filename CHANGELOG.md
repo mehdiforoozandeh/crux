@@ -8,6 +8,49 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Science voice: the invisible notebook** (spec 16, engine **3.2**). The agent now talks
+  to the PI in the language of science — never node ids (`q19`, `h72`) or crux vocabulary
+  (review gate, verifiables, synthesis…) unless the PI used the term first. The frame: the
+  PI is the advisor, the agent is the grad student, crux is the grad student's notebook.
+  - **The mirror rule as code.** `engine.voice_lint()` scans a conversation and reports
+    unlicensed node ids and crux process terms, honouring order: a word the PI used is
+    licensed back from that turn on. `NODE_ID_RE` is case-**sensitive** and `CRUX_LEXICON`
+    is a measured 38-term frozenset beside spec 14's stoplist — both settled against the
+    four shipped example vaults (3,016 id matches, zero false positives; the six candidate
+    terms that collide with real science prose, `seed`/`partial`/`anchor`/`idea` among
+    them, are excluded). Plain science words — question, hypothesis, evidence, finding,
+    experiment, check, result — are free.
+  - **`situate:unanchored` accepts the anchor's title or its id.** A situate answer may now
+    say *"where things stand on 'how do we cut the label budget'"* instead of naming a node
+    id, and spec 13's deterministic misresolution check survives intact.
+    `crux brief --lint-situate` gains `--anchor-title`.
+  - **The relevance gate is engine-computed.** `crux review --json --near <id>` and
+    `crux task review --json --near <id>` annotate each pending sign-off with its `relation`
+    (self / ancestor / descendant / sibling / unrelated) and an `in_scope` flag. It
+    annotates and never filters: the rule binds the agent's initiative, and a PI who asks
+    what is pending still gets everything.
+  - **CLI text output is declared agent-facing** and speaks in the third person —
+    "Awaiting the PI's decision", not "yours". It stays id-led and terse; only the person
+    changed, so no line of it reads as words to relay verbatim.
+  - **Glossary graduation for crux's own vocabulary.** `crux validate --check=glossary
+    --propose` waives the centrality filter for a `CRUX_LEXICON` term, which appears nowhere
+    in a vault's prose — without it a PI who keeps saying "gate" could never be offered the
+    word.
+  - **`persona-01`, a permanent eval.** A PI persona converses with a crux-driving agent
+    over the shipped `scaling_vault`, graded in three layers: the deterministic voice scan,
+    vault-state assertions that the notebook was kept despite the silence, and an LLM judge
+    for the soft behaviours only. Five canned submissions ship, including a mirror-rule
+    positive, a notebook-mode case, and both regressions (id-led speech; flawless voice over
+    an untouched vault).
+  - **Every artifact that taught the old voice is re-authored** — README's transcript,
+    SKILL.md's session dialogue and gate prose (plus a new top-level **Voice** section),
+    `crux-situate`'s definition, and situate-01's three submissions. Examples train harder
+    than rules.
+  - Engine **3.1 → 3.2**: no vault format, verdict, roll-up or view change, and nothing to
+    migrate — the counter rolls because a shipped deterministic bound changed behaviour.
+    Proved in `selftest`: a 3.1-stamped vault reads identically under 3.2, and the re-stamp
+    touches the stamp and nothing else.
+
 - **Task hierarchy is operative, not decorative.** `parent:` already existed on tasks; now
   it does something. `crux validate` reports a new `task:open-subtasks` info line when a
   `done` task still has open or blocked subtasks (info tier only — a parent may

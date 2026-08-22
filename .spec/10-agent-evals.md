@@ -100,6 +100,12 @@ Shipped with 10.4, and `selftest` cross-checks it against every manifest — a f
 promoted by editing one side. The last column is the one that earns its place: `[proxy]` alone
 says the eval is weaker, not **in which direction** to distrust it.
 
+The table is a live index, not a 10.4 artifact: a later epic adding a fixture adds its row here,
+which is what the cross-check is for. `persona-01` came from
+[16 science voice](16-science-voice.md) and is the first fixture whose `agent` is the
+orchestrating **skill** rather than one of the isolated ten — the voice rules live in
+`SKILL.md`, so that is what its `agent_sha` pins to.
+
 | fixture | agent | ground truth | oracle | what it does **not** measure |
 |---|---|---|---|---|
 | `audit-01` | `crux-audit` | **yes** | `validation_report` | — |
@@ -112,6 +118,7 @@ says the eval is weaker, not **in which direction** to distrust it.
 | `tests-01` | `crux-tests` | proxy | stated key | whether the tests are valid, run, or actually fail — all three need execution |
 | `glossary-01` | `crux-glossary` | proxy | stated key | where the jargon line sits; the key is one reviewer's answer |
 | `design-01` | `crux-design` | proxy | stated key | whether the outcome enumeration is complete |
+| `persona-01` | `crux` (the skill) | proxy | judged rubric + `voice_lint` + vault state | whether the conversation was *good science* — only that it was said in science, and that the notebook was kept |
 
 ## Design notes
 

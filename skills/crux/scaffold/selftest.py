@@ -6814,10 +6814,15 @@ def run_agent_evals():
             bad.append(f"{n}: missing a contract field")
     check(f"evals: a manifest declares the seven contract fields (bad: {bad[:2]})", not bad)
 
-    adir = os.path.join(repo, "agents")
+    # a fixture's `agent` resolves to a real definition — one of the isolated ten under
+    # `agents/`, or (spec 16's persona eval) the orchestrating skill whose voice rules are
+    # what it measures. Either way the score is pinned to a prompt that exists.
     ghosts = [n for n in names
-              if not os.path.isfile(os.path.join(adir, V.load_manifest(n)["agent"], "AGENT.md"))]
-    check(f"evals: every fixture names a real agent (ghosts: {ghosts})", not ghosts)
+              if not (os.path.isfile(os.path.join(repo, "agents",
+                                                  V.load_manifest(n)["agent"], "AGENT.md"))
+                      or os.path.isfile(os.path.join(repo, "skills",
+                                                     V.load_manifest(n)["agent"], "SKILL.md")))]
+    check(f"evals: every fixture names a real definition (ghosts: {ghosts})", not ghosts)
 
     # -- the checks list is the MANIFEST's, never a default. `gate` is opt-in: a certifier
     #    running the defaults decides audit-01 has no gate backlog, and then scores a CORRECT
@@ -6879,8 +6884,13 @@ def run_agent_evals():
     # -- THE GATE-4 ARGUMENT, asserted rather than asserted-in-prose. Spec 10 alters no vault
     #    format, no verdict/roll-up logic and no view, so the stamp does not move. Precedents:
     #    09.4 and 13.3, both doc-only, both explicitly no-bump.
-    check(f"evals: the fixture contract does not bump the engine (at {E.ENGINE_VERSION})",
-          E.ENGINE_VERSION == "3.1")
+    #
+    #    Written as `>= 3.1` rather than `== 3.1`: the claim is "spec 10 did not move the
+    #    stamp", and a literal equality restates it as "the stamp has never moved since",
+    #    which is a different claim that a LATER spec falsifies. Spec 16 falsified it — see
+    #    `at_least_version`'s own docstring, which predicted this exact failure.
+    check(f"evals: the fixture contract did not bump the engine (spec 10 landed at 3.1; "
+          f"now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
     # -- gate 3 of the evolve-crux gate walks examples/ and asks "did anything break". These
     #    vaults are validate-RED BY CONSTRUCTION, so putting them there would make the one
@@ -7017,8 +7027,8 @@ def run_eval_scorer():
     check("evals: the runner is exit-coded",
           rc("perfect.json") == 0 and rc("short.json") == 1 and rc("stale-sha.json") == 1)
 
-    check(f"evals: the scorer does not bump the engine (at {E.ENGINE_VERSION})",
-          E.ENGINE_VERSION == "3.1")
+    check(f"evals: the scorer did not bump the engine (spec 10 landed at 3.1; now "
+          f"{E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
 def run_mutation_harness():
@@ -7090,8 +7100,8 @@ def run_mutation_harness():
     check(f"evals: every agent has at least one mutation covering it "
           f"(uncovered: {sorted(set(expected) - covered)})", covered == set(expected))
 
-    check(f"evals: the mutation harness does not bump the engine (at {E.ENGINE_VERSION})",
-          E.ENGINE_VERSION == "3.1")
+    check(f"evals: the mutation harness did not bump the engine (spec 10 landed at 3.1; "
+          f"now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
 def run_ground_truth_fixtures():
@@ -7168,7 +7178,14 @@ def run_ground_truth_fixtures():
     anchor = str(m["fm"]["node"])
     ref = V._section(m["body"], "Reference answer")
     check("evals: situate-01's reference answer lints clean",
-          ref.strip() and E.situate_lint(ref, [anchor]) == [])
+          ref.strip() and E.situate_lint(ref, [V.situate_anchor(m)]) == [])
+    # spec 16: the gold answer is the thing that trains hardest, so it is scanned as speech
+    # too. It must anchor by TITLE and carry no crux vocabulary — an id-led reference would
+    # keep teaching the voice the anchor rule no longer forces.
+    check("evals: situate-01's reference answer carries no node id and no crux vocabulary",
+          E.voice_lint([("agent", ref)]) == [])
+    check("evals: ... and it is the TITLE doing the anchoring, not an id left in the prose",
+          [i for i, _m in E.situate_lint(ref, [anchor])] == ["situate:unanchored"])
 
     payload = E.brief(V.vault_of(m), anchor, mode="situate")
     check(f"evals: situate-01 plants both a gap and an invention trap ({sorted(m['planted_ids'])})",
@@ -7200,8 +7217,8 @@ def run_ground_truth_fixtures():
     check(f"evals: every planted defect is structural, never a research judgment ({smell})",
           not smell)
 
-    check(f"evals: the ground-truth fixtures do not bump the engine (at {E.ENGINE_VERSION})",
-          E.ENGINE_VERSION == "3.1")
+    check(f"evals: the ground-truth fixtures did not bump the engine (spec 10 landed at "
+          f"3.1; now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
 def run_proxy_register():
@@ -7226,9 +7243,15 @@ def run_proxy_register():
 
     roster = sorted(os.listdir(os.path.join(repo, "agents")))
     covered = {V.load_manifest(n)["agent"] for n in V.fixture_names()}
+    # every roster agent is covered, and the set may be a SUPERSET: spec 16's persona-01
+    # grades the orchestrating skill, which is not a roster agent and never will be.
     check(f"evals: every agent in the roster has a fixture "
           f"(uncovered: {sorted(set(roster) - covered)})",
-          covered == set(roster) and len(roster) == 10)
+          set(roster) <= covered and len(roster) == 10)
+    check(f"evals: and a fixture outside the roster grades a definition that exists "
+          f"({sorted(covered - set(roster))})",
+          all(os.path.isfile(os.path.join(repo, "skills", a, "SKILL.md"))
+              for a in covered - set(roster)))
 
     # -- the register, parsed out of the spec and diffed against the manifests both ways
     rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")}
@@ -7299,8 +7322,519 @@ def run_proxy_register():
           "PARKED" in spec and "P1" in spec and "do not implement 05" in spec.lower()
           and "--spawn" in spec)
 
-    check(f"evals: spec 10 is a zero-bump epic (ENGINE_VERSION {E.ENGINE_VERSION})",
-          E.ENGINE_VERSION == "3.1")
+    check(f"evals: spec 10 was a zero-bump epic — it landed at 3.1 and the stamp only moved "
+          f"later, for spec 16's changed lint (now {E.ENGINE_VERSION})",
+          at_least_version("3.1"))
+
+
+def _voice_vault():
+    """A tiny tree with two branches, for the relevance gate: q1 -> (q2 -> h1,h2 ; q3 -> h3).
+
+    Two branches is the minimum that can tell `sibling` from `unrelated`, which is the only
+    distinction the gate actually turns on."""
+    root = tempfile.mkdtemp(prefix="crux_voice_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Voice", root)
+    q1, _ = E.cmd_ask(root, "how do we cut the label budget", None)
+    q2, _ = E.cmd_ask(root, "does pretraining help at low label count", q1)
+    q3, _ = E.cmd_ask(root, "which augmentation family matters", q1)
+    hy = lambda t, p: E.cmd_hypothesize(root, t, parent=p, verifiables=["accuracy >= +2.0"],
+                                        neutral=["the baseline reproduces its published number"])[0]
+    h1 = hy("pretraining beats scratch", q2)
+    h2 = hy("pretraining still helps at 20 labels", q2)
+    h3 = hy("colour jitter is the family that matters", q3)
+    return root, {"q1": q1, "q2": q2, "q3": q3, "h1": h1, "h2": h2, "h3": h3}
+
+
+def run_science_voice():
+    """Spec 16 PRD 16.1 — the mirror rule as code, and the two measurements behind it.
+
+    Spec 16's frame: the PI is the advisor, the agent is the grad student, crux is the grad
+    student's notebook. A grad student does not tell their advisor "q19 is solved" — the
+    advisor would ask what the hell q19 is. So node ids and crux's own process vocabulary
+    reach the PI only when the PI brought them there.
+
+    Everything here is deterministic. Spec 16 is explicit that the scan comes FIRST and the
+    judge only afterwards, for the reason spec 10 gives about proxies: a regexable property
+    graded by a model is a property that silently stops being checked."""
+    print("\n# science voice — the mirror rule, measured (spec 16, PRD 16.1)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+    # ---- the id pattern, and why it is case-SENSITIVE. Spec 16 flagged the false-positive
+    #      risk by name ("t5" the model); the answer is measured, two asserts down.
+    hit = lambda s: bool(E.NODE_ID_RE.search(s))
+    check("voice: the id pattern matches every node-id family",
+          all(hit(x) for x in ("q19", "h72", "t91", "s1")) and hit("what about q19?"))
+    check("voice: ... and never the uppercase strings that are science, not ids",
+          not any(hit(x) for x in ("T5", "H1", "Q2", "S1", "H2O", "Q10 of the survey")))
+    check("voice: ... and never a bare letter, a bare number, or a fragment of a word",
+          not any(hit(x) for x in ("h", "19", "hq1x", "sha1sum", "epoch5", "top5")))
+
+    # ---- THE MEASUREMENT. Spec 14 settled its matcher against the shipped example vaults
+    #      rather than by argument; spec 16 asks for the same pass, and this is it, run every
+    #      time rather than quoted from a build-day notebook.
+    ex = os.path.join(HERE, "..", "examples")
+    fp, scanned, matches = [], 0, 0
+    for name in sorted(os.listdir(ex)):
+        vroot = os.path.join(ex, name)
+        if not os.path.isfile(os.path.join(vroot, E.VAULT_MARKER)):
+            continue
+        scanned += 1
+        real = set(E.Vault(vroot).nodes) | {t["id"] for t in E.scan_tasks(vroot)}
+        for dp, _d, fs in os.walk(vroot):
+            for f in sorted(fs):
+                if not f.endswith((".md", ".txt")):
+                    continue
+                for m in E.NODE_ID_RE.findall(read(os.path.join(dp, f))):
+                    matches += 1
+                    if m not in real:
+                        fp.append(f"{name}/{f}: {m}")
+    check(f"voice: measured over {scanned} shipped example vaults, every one of {matches} "
+          f"id-pattern matches is a real node or task id ({fp[:3]})",
+          scanned >= 3 and matches > 1000 and not fp)
+
+    # ---- the lexicon. Where it lives is spec 16's own default: a frozenset beside 14's
+    #      stoplist, so there is one list rather than one per consumer.
+    check("voice: the lexicon carries crux's own process vocabulary",
+          all(E.is_crux_term(t) for t in
+              ("verifiable", "verifiables", "review gate", "synthesis", "verdict", "taskhub",
+               "vault", "node", "cockpit", "roll-up", "outcome-neutral", "invalid-run",
+               "situate", "null", "ledger", "glossary", "RD", "seed file", "META.md")))
+    check("voice: plain science words are free — a grad student owes no gloss for 'hypothesis'",
+          not any(E.is_crux_term(t) for t in
+                  ("question", "hypothesis", "evidence", "finding", "experiment", "check",
+                   "result", "supported", "refuted", "inconclusive", "baseline")))
+    check("voice: and the words measured to collide with real science prose stay out",
+          not any(E.is_crux_term(t) for t in
+                  ("seed", "partial", "anchor", "idea", "brief", "pursue", "parent")))
+    check("voice: membership is normalised, so hyphenation and plurals cannot smuggle a term "
+          "past the list",
+          E.is_crux_term("Roll-Up") and E.is_crux_term("roll up") and E.is_crux_term("nodes")
+          and E.is_crux_term("Outcome-Neutral"))
+
+    # ---- the mirror rule itself
+    pi, ag = "pi", "agent"
+    def ids_of(turns, agreed=()):
+        return sorted(i for i, _m in E.voice_lint(turns, agreed))
+
+    clean = [(pi, "did the extra data actually help?"),
+             (ag, "yes — the accuracy gain held in all three repeat runs, so I think that "
+                  "one is settled. Do you buy it?"),
+             (pi, "yes")]
+    check("voice: a conversation that speaks only science lints clean", ids_of(clean) == [])
+
+    leaks = [(pi, "did the extra data actually help?"),
+             (ag, "h1 came back supported, and there is a synthesis waiting on your approval "
+                  "at the review gate.")]
+    check("voice: an unlicensed node id is a finding",
+          "voice:node-id" in ids_of(leaks))
+    check("voice: an unlicensed crux term is a finding, and every leaked term is reported, "
+          "not just the first",
+          ids_of(leaks).count("voice:crux-term") >= 2)
+
+    mirrored = [(pi, "what's up with q19? is the synthesis any good?"),
+                (ag, "q19 is the label-budget question, and the synthesis reads well to me.")]
+    check("voice: an id and a term the PI used first are licensed back — the mirror rule",
+          ids_of(mirrored) == [])
+    check("voice: licensing is directional — the PI using q19 does not license h4",
+          ids_of([(pi, "what's up with q19?"), (ag, "q19 is fine; h4 is the open one.")])
+          == ["voice:node-id"])
+    check("voice: an id licensed in one conversation is not licensed in the next — ids are "
+          "ephemeral handles, and a stale one is a trap",
+          ids_of([(ag, "q19 is fine.")]) == ["voice:node-id"])
+
+    check("voice: a term in the PI's glossary is licensed from turn zero — the permanent "
+          "graduation path spec 14 already owns",
+          ids_of([(ag, "the review gate is open on that one.")], agreed=["review gate"]) == [])
+
+    notebook = [(pi, "show me the tree"),
+                (ag, "q1 holds q2 and q3; h1 is done, h2 is an idea, h3 is running. Want me "
+                     "to open the cockpit on it?"),
+                (pi, "thanks. so does the extra data help?"),
+                (ag, "h1 says yes.")]
+    f = E.voice_lint(notebook)
+    check("voice: an explicit notebook request opens ids and notebook vocabulary for that "
+          "exchange, and closes again at the next PI turn",
+          [i for i, _m in f] == ["voice:node-id"] and "turn 4" in f[0][1])
+
+    expect_error("voice: an unknown speaker is refused, never coerced to one side",
+                 lambda: E.voice_lint([("reviewer", "q1")]))
+    check("voice: the scan is pure — same turns, same findings, no vault and no filesystem",
+          E.voice_lint(leaks) == E.voice_lint(leaks))
+
+    # ---- the teaching artifacts. Spec 06 settled that instructions were never the binding
+    #      constraint; the modeled dialogues are. So the dialogues are scanned, not read.
+    def dialogue(text, marks):
+        """Agent-side speech turns out of a markdown transcript, as voice_lint turns."""
+        turns, cur, who = [], [], None
+        for line in text.splitlines():
+            for mark, speaker in marks:
+                if line.strip().startswith(mark):
+                    if who: turns.append((who, " ".join(cur)))
+                    who, cur = speaker, [line.strip()[len(mark):]]
+                    break
+            else:
+                if who and line.strip() and not line.strip().startswith("```"):
+                    cur.append(line.strip())
+                elif who and not line.strip():
+                    turns.append((who, " ".join(cur))); who, cur = None, []
+        if who: turns.append((who, " ".join(cur)))
+        return turns
+
+    readme = read(os.path.join(repo, "README.md"))
+    block = readme.split("```text")[1].split("```")[0] if "```text" in readme else ""
+    rt = dialogue(block, [("you", pi), ("crux", ag)])
+    check(f"voice: README's transcript has agent turns to scan at all ({len(rt)} turns)",
+          sum(1 for s, _t in rt if s == ag) >= 2)
+    check(f"voice: README's transcript is ID-free science ({ids_of(rt)})", ids_of(rt) == [])
+
+    skill = read(os.path.join(repo, "skills", "crux", "SKILL.md"))
+    st = dialogue(skill, [("> **PI:**", pi), ("> **You:**", ag)])
+    check(f"voice: SKILL.md's session dialogue has agent turns to scan ({len(st)} turns)",
+          sum(1 for s, _t in st if s == ag) >= 2)
+    check(f"voice: SKILL.md's session dialogue is ID-free science ({ids_of(st)})",
+          ids_of(st) == [])
+    check("voice: SKILL.md carries a top-level voice section naming all six rules",
+          re.search(r"^## .*[Vv]oice", skill, re.M)
+          and all(k in skill for k in ("mirror rule", "Silent bookkeeping", "Signature",
+                                       "relevance", "title", "Notebook mode")))
+
+    # ---- glossary graduation. Without the waiver a crux process term can never be
+    #      proposed: it appears nowhere in the corpus the centrality filter counts, so the
+    #      path spec 16 relies on would be dead on arrival.
+    root, ids = _voice_vault()
+    try:
+        got = [c["term"] for c in E.glossary_candidates(root, ["review gate", "flumox"])]
+        check(f"voice: a crux process term the vault never mentions is still proposable ({got})",
+              got == ["review gate"])
+        check("voice: and the waiver is narrow — a non-lexicon term still has to be central",
+              E.glossary_candidates(root, ["flumox"]) == [])
+
+        # ---- the relevance gate, engine-computed (09's rule 1, and spec 16's own default)
+        rel = lambda near, other: E.gate_relation(E.Vault(root), near, other)
+        check("voice: lineage and immediate siblings are in scope, an unrelated branch is not",
+              [rel(ids["q2"], x) for x in (ids["q2"], ids["q1"], ids["h1"], ids["q3"], ids["h3"])]
+              == ["self", "ancestor", "descendant", "sibling", "unrelated"])
+        check("voice: sibling means IMMEDIATE sibling — a cousin is unrelated",
+              rel(ids["h1"], ids["h3"]) == "unrelated" and rel(ids["h1"], ids["h2"]) == "sibling")
+        check("voice: every relation the engine can emit is in the declared vocabulary",
+              all(rel(ids["q2"], o) in E.GATE_RELATIONS for o in ids.values()))
+
+        # trip a real gate, then read it back through the CLI the agent actually uses
+        for hid in (ids["h3"],):
+            declare_null(root, hid)
+            E.cmd_test(root, hid, "staged"); E.cmd_test(root, hid, "running", run="job 1")
+            n = E.Vault(root).get(hid)
+            E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"].replace("- [ ]", "- [x]")))
+            E.cmd_close(root, hid, metric="+2.1", findings="it held")
+        pend = E.cmd_review(root)
+        check(f"voice: the fixture actually trips a gate to annotate ({[p[0] for p in pend]})",
+              [p[0] for p in pend] == [ids["q3"]])
+
+        out = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
+                              "--json", "--near", ids["q2"]],
+                             capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+        rows = json.loads(out.stdout)
+        check("voice: `crux review --json --near` annotates every pending gate with its "
+              "relation and whether it is in scope",
+              out.returncode == 0 and rows
+              and all({"relation", "in_scope"} <= set(r) for r in rows)
+              and rows[0]["relation"] == "sibling" and rows[0]["in_scope"] is True)
+        far = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
+                              "--json", "--near", ids["h1"]],
+                             capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+        check("voice: a gate outside the lineage reads out-of-scope — the agent never raises "
+              "it on its own initiative",
+              json.loads(far.stdout)[0]["in_scope"] is False)
+        plain = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review", "--json"],
+                               capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+        check("voice: without --near nothing is annotated — a PI asking what is pending gets "
+              "everything, and the restriction binds agent initiative only",
+              "relation" not in json.loads(plain.stdout)[0])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run_situate_title_anchor():
+    """Spec 16 — `situate:unanchored` accepts the anchor's TITLE or its id.
+
+    Spec 13 bought a deterministic misresolution check with that lint, and spec 16 keeps it
+    while taking the ids out of chat: orienting confidently over the wrong subtree is still
+    situate's worst failure, and naming the subtree by its title discloses it just as well."""
+    print("\n# science voice — situate anchors by title (spec 16, PRD 16.1)")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    TITLE = "how do we cut the label budget"
+
+    def draft(head):
+        body = "\n\n".join(" ".join(["word"] * 40) for _ in range(3))
+        return head + " " + " ".join(["word"] * 15) + "\n\n" + body
+
+    anchor = ("q20", TITLE)
+    ids_of = lambda text: [i for i, _m in E.situate_lint(text, [anchor])]
+    check("voice: an answer naming the anchor's title passes the lint",
+          ids_of(draft(f"Here's where things stand on '{TITLE}' and everything under it.")) == [])
+    check("voice: title matching is case-insensitive, because chat is not a database",
+          ids_of(draft("Where we are on How Do We Cut The Label Budget:")) == [])
+    check("voice: the id form still passes — the PI who wants ids is not broken",
+          ids_of(draft("Resolved: q20 —")) == [])
+    check("voice: an answer naming neither still fails",
+          ids_of(draft("Here is where things stand:")) == ["situate:unanchored"])
+    check("voice: a plain-string anchor keeps its old meaning — id only",
+          [i for i, _m in E.situate_lint(draft(f"on '{TITLE}'"), ["q20"])]
+          == ["situate:unanchored"])
+    check("voice: the finding names the title, so the PI can see what was expected",
+          TITLE in dict(E.situate_lint(draft("nothing named here"), [anchor]))["situate:unanchored"])
+
+    # ---- the CLI the agent actually pipes its draft through
+    root = tempfile.mkdtemp(prefix="crux_titlelint_")
+    shutil.rmtree(root); os.makedirs(root)
+    try:
+        E.cmd_init("Lint", root)
+        argv = [sys.executable, os.path.join(HERE, "crux.py"), "brief", "q20",
+                "--lint-situate", "--anchor-title", TITLE]
+        r = subprocess.run(argv, input=draft(f"Where we are on '{TITLE}':"),
+                           capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+        check("voice: `--lint-situate --anchor-title` accepts a title-anchored draft",
+              r.returncode == 0)
+        rb = subprocess.run(argv + ["--json"], input=draft("no anchor at all here"),
+                            capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+        check("voice: and still fails one that names neither",
+              rb.returncode == 1
+              and [f["id"] for f in json.loads(rb.stdout)["findings"]] == ["situate:unanchored"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ---- the agent definition moves with the lint, or the lint is arguing with its own agent
+    import evals as V
+    P = V.roster_properties(V.load_definitions(["crux-situate"], repo))
+    check(*P["situate-title-anchor"])
+    body = read(os.path.join(repo, "agents", "crux-situate", "AGENT.md"))
+    check("voice: crux-situate no longer mandates ids in the first line",
+          "name the ids" not in body.lower())
+
+    check("voice: ENGINE_VERSION at or past 3.2", at_least_version("3.2"))
+
+    # ---- GATE 4. Spec 16 changes no vault format, no verdict, no roll-up and no view — but a
+    #      shipped deterministic bound changed behaviour, and the stamp is how a vault records
+    #      which engine wrote it, so the counter rolls and the migration is proved rather than
+    #      asserted. A 3.1 vault must read IDENTICALLY: same verdicts, same views, byte for
+    #      byte apart from the stamp the drift path is supposed to rewrite.
+    old = tempfile.mkdtemp(prefix="crux_v31_")
+    try:
+        src = os.path.join(HERE, "..", "examples", "scaling_vault")
+        was, now = os.path.join(old, "v31"), os.path.join(old, "current")
+        shutil.copytree(src, was); shutil.copytree(src, now)
+        # the shipped example vaults carry OLD stamps on purpose, so rewrite the line
+        # rather than substituting the current version out of it
+        cfg = os.path.join(was, E.VAULT_MARKER)
+        E.write_if_changed(cfg, re.sub(r"(?m)^engine_version:.*$", "engine_version: 3.1",
+                                       read(cfg)))
+
+        def readout(root):
+            """Everything this engine DERIVES from a vault — verdicts, roll-ups, the gate,
+            and the structural checks. If a stamp could change any of it, the stamp would be
+            a compatibility era rather than a counter, and this suite would be lying."""
+            v = E.Vault(root)
+            return {"verdicts": {i: n["fm"].get("verdict") for i, n in sorted(v.nodes.items())},
+                    "status": {i: n.status for i, n in sorted(v.nodes.items())},
+                    "ledger": {i: E.ledger_counts(v, i) for i, n in sorted(v.nodes.items())
+                               if n.type == "question"},
+                    "gate": E.cmd_review(root),
+                    "checks": E.validation_report(root, checks=("tree", "economy", "fanout",
+                                                                "rd", "tasks"))}
+        before = _tree_hashes(was)
+        a, b = readout(was), readout(now)
+        check("voice: a 3.1-stamped vault reads IDENTICALLY under 3.2 — same verdicts, same "
+              "roll-up, same gate, same structural checks",
+              json.dumps(a, sort_keys=True, default=str)
+              == json.dumps(b, sort_keys=True, default=str)
+              and a["verdicts"]["h2"] == "partial" and a["checks"]["ok"])
+        check("voice: and reading it wrote nothing — the drift path is the only writer",
+              _tree_hashes(was) == before)
+
+        warn = E.check_and_stamp_version(was)
+        check(f"voice: the drift warning names both versions and re-stamps, which is expected "
+              f"({(warn or '')[:38]}…)",
+              warn and "3.1" in warn and E.ENGINE_VERSION in warn
+              and E.Vault(was).cfg.get("engine_version") == E.ENGINE_VERSION)
+        check("voice: re-stamping touches the stamp and nothing else",
+              sorted(k for k, h in _tree_hashes(was).items() if before.get(k) != h)
+              == [E.VAULT_MARKER])
+        check("voice: and the readout is still identical afterwards — no verdict moved",
+              json.dumps(readout(was)["verdicts"], sort_keys=True)
+              == json.dumps(b["verdicts"], sort_keys=True))
+    finally:
+        shutil.rmtree(old, ignore_errors=True)
+
+
+def run_cli_third_person():
+    """Spec 16 — the CLI's text output is declared AGENT-FACING.
+
+    It stays ID-led and terse: it is `--json` with eyes, and the humans who bypass the agent
+    and run crux by hand are exactly the ones who want ids. The one change is person. Second
+    person was quietly nudging the agent to relay the line verbatim — "Awaiting your
+    decision" reads as words addressed to the reader, and the reader of a tool result is the
+    agent, not the PI."""
+    print("\n# science voice — the CLI speaks of the PI, not to them (spec 16, PRD 16.1)")
+    SECOND = re.compile(r"\b(you|your|yours|yourself|yourselves|you're)\b", re.I)
+    crux = os.path.join(HERE, "crux.py")
+
+    def run(argv, cwd=None, **kw):
+        return subprocess.run([sys.executable, crux] + argv, capture_output=True,
+                              cwd=cwd, encoding="utf-8", errors="replace", **kw)
+
+    verbs = [l.split()[0] for l in run(["--help"]).stdout.splitlines()
+             if l.startswith("    ") and l.strip() and l[4] not in " -"]
+    helps = {"--help": run(["--help"]).stdout}
+    for v in sorted(set(verbs)):
+        r = run([v, "--help"])
+        if r.returncode == 0:
+            helps[v] = r.stdout
+    bad = sorted(f"{k}: {SECOND.search(t).group(0)!r}" for k, t in helps.items() if SECOND.search(t))
+    check(f"voice: no second-person address in any of {len(helps)} help screens ({bad[:3]})",
+          len(helps) > 10 and not bad)
+
+    root = tempfile.mkdtemp(prefix="crux_person_")
+    try:
+        out = [run(["init", "Person Project"], cwd=root).stdout]
+        vault = os.path.join(root, "cruxvault")
+        for argv in (["review"], ["task", "review"], ["status"], ["validate"]):
+            out.append(run(argv, cwd=vault).stdout)
+        bad = sorted({SECOND.search(t).group(0) for t in out if SECOND.search(t)})
+        check(f"voice: no second-person address in the CLI's own text output ({bad})", not bad)
+        check("voice: the init hint survives the rewrite", "cd cruxvault" in out[0])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run_persona_eval():
+    """Spec 16 — the persona eval, a PERMANENT fixture class rather than an acceptance run.
+
+    Spec 16 rejects the one-off by name: *"the next prompt edit silently regresses and
+    nothing catches it."* So the voice rule joins spec 10's harness, under spec 10's
+    architecture — the harness never invokes an agent, it scores a submitted transcript —
+    and the grading is layered cheapest-first, because a regexable property graded by a
+    model is a property that has silently stopped being checked."""
+    print("\n# science voice — the persona eval (spec 16, PRD 16.1)")
+    import evals as V
+    m = V.load_manifest("persona-01")
+    SUB = os.path.join(V.FIXTURES, "persona-01", "submissions")
+    sc = lambda n: V.score(m, V.load_submission(os.path.join(SUB, n)))
+    hard = lambda n: {name.split(" (")[0]: ok for name, ok, _w in sc(n)["hard"]}
+    voice_ok = lambda n: hard(n)["the agent spoke science throughout"]
+    state_ok = lambda n: all(v for k, v in hard(n).items() if k.startswith("state "))
+
+    before = _tree_hashes(V.vault_of(m))
+    r = V.certify("persona-01")
+    check(f"persona: the fixture certifies ({r['missing']} {r['cross_failed']})", r["ok"])
+    check("persona: it is graded over the SHIPPED example vault, not a copy of one",
+          os.path.abspath(V.vault_of(m))
+          == os.path.abspath(os.path.join(HERE, "..", "examples", "scaling_vault"))
+          and os.path.isfile(os.path.join(V.vault_of(m), E.VAULT_MARKER)))
+    check("persona: a judged key is declared a proxy, and the band is still the PI's",
+          m["ground_truth"] == "proxy" and m["band"] == V.BAND_UNSET)
+
+    # ---- layer 1: the deterministic scan
+    check("persona: the clean session passes the voice scan and the state assertions",
+          voice_ok("clean.json") and state_ok("clean.json"))
+    check("persona: an ID-LED session fails the scan even though every fact is right and "
+          "the notebook was kept",
+          not voice_ok("id-led.json") and state_ok("id-led.json")
+          and sc("id-led.json")["verdict"] == V.FAIL)
+    check("persona: ... and it fails on BOTH kinds of leak, not just the ids",
+          {i for i, _x in E.voice_lint(V.transcript_turns(
+              V.load_submission(os.path.join(SUB, "id-led.json"))))}
+          == {"voice:node-id", "voice:crux-term"})
+
+    # ---- the mirror-rule positive case, and the proof that it is the PI's turn doing it
+    mirror = V.load_submission(os.path.join(SUB, "mirror.json"))
+    turns = V.transcript_turns(mirror)
+    check("persona: the mirror-rule case passes — the persona typed an id and a crux term, "
+          "so the agent may use both",
+          voice_ok("mirror.json")
+          and any(E.NODE_ID_RE.search(t) for sp, t in turns if sp == "pi"))
+    stripped = [(sp, t) for sp, t in turns
+                if not (sp == "pi" and E.NODE_ID_RE.search(t))]
+    check("persona: ... and it is the persona's turn doing the licensing — delete it and the "
+          "very same agent text is a leak",
+          E.voice_lint(stripped) != [] and E.voice_lint(turns) == [])
+
+    # ---- notebook mode, same construction
+    nb = V.transcript_turns(V.load_submission(os.path.join(SUB, "notebook.json")))
+    check("persona: the notebook-mode case passes, and offers the cockpit",
+          voice_ok("notebook.json")
+          and any("crux serve" in t for sp, t in nb if sp == "agent"))
+    check("persona: ... and it is the 'show me the tree' turn that opened it",
+          E.voice_lint([(sp, t) for sp, t in nb
+                        if not (sp == "pi" and "show me the tree" in t)]) != [])
+    check("persona: notebook mode closes again — the turns after it are science",
+          E.voice_lint(nb) == [])
+
+    # ---- layer 2: silence is only a virtue if the notebook is kept behind it
+    check("persona: flawless voice with an untouched vault FAILS — the notebook has to be "
+          "kept, not merely unmentioned",
+          voice_ok("idle.json") and not state_ok("idle.json")
+          and sc("idle.json")["verdict"] == V.FAIL)
+    check("persona: the state table asserts every step of the silent bookkeeping",
+          {k.split(":")[0] for k, _p, _n in V.state_rows(m)}
+          == {"verdict", "answered", "synthesis", "approved", "pending"})
+    expect_error("persona: an unknown state predicate is refused, not silently skipped",
+                 lambda: V.check_state({"name": "x", "body": "## Vault state\n\n| k | p |\n"
+                                                             "|---|---|\n| `orbit:h1` | x |\n"},
+                                       {"nodes": {}, "tasks": {}}))
+
+    check("persona: the rubric grades BOTH halves of the relevance rule — what the agent may "
+          "not raise, and what the PI asking makes fair game",
+          {"judge:relevance", "judge:pi-asks-everything"} <= m["planted_ids"])
+    clean = V.transcript_turns(V.load_submission(os.path.join(SUB, "clean.json")))
+    check("persona: the clean session actually contains the PI-asks-everything exchange",
+          any(sp == "pi" and "waiting on me" in t for sp, t in clean))
+
+    # ---- the relevance trap is armed MECHANICALLY, not by assertion in prose
+    v = E.Vault(V.vault_of(m))
+    anchor, out_of = str(m["fm"]["anchor"]), V._csv(m["fm"]["out_of_scope"])
+    check(f"persona: every id the fixture calls out-of-scope really is, per the engine "
+          f"({[(i, E.gate_relation(v, anchor, i)) for i in out_of]})",
+          out_of and all(E.gate_relation(v, anchor, i) == "unrelated" for i in out_of))
+    check("persona: and the trap was actually armed — the out-of-scope acceptance is pending "
+          "in the end state",
+          V.load_submission(os.path.join(SUB, "clean.json"))
+           ["vault_after"]["tasks"]["t1"]["pending_gate"] is True)
+
+    # ---- the projection a submitter is told to produce, produced the way they are told to.
+    #      On a COPY, because `crux status` re-stamps a drifted vault and the shipped example
+    #      vaults carry old stamps deliberately — that write is the engine working, not a leak.
+    tmp = tempfile.mkdtemp(prefix="crux_project_")
+    try:
+        copy = os.path.join(tmp, "vault")
+        shutil.copytree(V.vault_of(m), copy)
+        raw = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "status", "--json"],
+                             capture_output=True, cwd=copy, encoding="utf-8", errors="replace")
+        proj = subprocess.run([sys.executable, os.path.join(HERE, "evals.py"), "--project-state"],
+                              input=raw.stdout, capture_output=True, encoding="utf-8",
+                              errors="replace")
+        got = json.loads(proj.stdout)
+        check("persona: `evals.py --project-state` turns a real status payload into the object "
+              "a submission carries",
+              proj.returncode == 0 and set(got) == {"nodes", "tasks"}
+              and got["nodes"]["q1"]["synthesis"] == "s1"
+              and got["nodes"]["s1"]["approved"] is True
+              and got["nodes"]["q3"]["answered"] is False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    check("persona: certifying and scoring write nothing to the shipped example vault",
+          _tree_hashes(V.vault_of(m)) == before)
+
+    # ---- the submission is pinned to the prompt that produced it, as every other one is
+    sub = V.load_submission(os.path.join(SUB, "clean.json"))
+    check("persona: the submission is pinned to SKILL.md's hash — the voice rules are what "
+          "was measured",
+          sub["agent_sha"] == V.agent_sha("crux")
+          and V.agent_sha("crux") == hashlib.sha256(
+              open(os.path.join(HERE, "..", "SKILL.md"), "rb").read()).hexdigest())
+    stale = dict(sub, agent_sha="0" * 64)
+    check("persona: a submission measured against a different SKILL.md is REFUSED",
+          V.score(m, stale)["verdict"] == V.REFUSED)
 
 
 def run_cli_help():
@@ -7378,6 +7912,10 @@ def main():
     run_methodology()
     run_methodology_migration()
     run_design_agent()
+    run_science_voice()
+    run_situate_title_anchor()
+    run_cli_third_person()
+    run_persona_eval()
     run_glossary()
     run_glossary_migration()
     run_glossary_counting()

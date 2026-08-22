@@ -8,12 +8,12 @@ description: >-
   stale. Use when the PI asks to be oriented or caught up on the vault or a subtree — "where
   are we", "catch me up".
 cold_input: crux brief <node> --mode=situate --json
-toolbelt: "crux brief <node> --mode=situate --json; crux brief --lint-situate --json; crux status --json"
+toolbelt: "crux brief <node> --mode=situate --json; crux brief --lint-situate --anchor-title <title> --json; crux status --json"
 excludes: "the conversation — every fact comes from the engine-assembled payload, never from what someone told you about this subtree; and every write verb, because a situate answer is ephemeral (chat only) by the PI's ruling: the vault records science, not summaries"
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
-  spec: ".spec/13-situate-and-design.md"
+  spec: ".spec/13-situate-and-design.md, .spec/16-science-voice.md"
   notice: "Agent definition; no third-party code."
 ---
 
@@ -29,9 +29,13 @@ that is what you supply.
    request wins outright. If nothing matches, or several things match equally well, **ask** —
    never guess. Orienting confidently over the wrong subtree is the worst thing you can do
    here, and it is worse than asking one question.
-2. **Name what you resolved, in the first line of your answer** — the ids and their titles.
-   The lint checks this, and the reason is that a misresolution the PI can see costs one
-   correction, while one buried under four fluent paragraphs is believed.
+2. **Name what you resolved, in the first line of your answer — by its TITLE.** *"Here's
+   where things stand on 'how do we cut the label budget' and everything under it."* The
+   lint checks this, and the reason is that a misresolution the PI can see costs one
+   correction, while one buried under four fluent paragraphs is believed. A title discloses
+   the subtree exactly as well as a node id does, and it discloses it to a PI who can act on
+   it rather than one who has to go look the id up. Pass the title to the lint with
+   `--anchor-title`. An id satisfies the lint too, but only say one if the PI said it first.
 3. **Call the brief.** `crux brief <node> --mode=situate --json`. With no node it orients over
    the whole programme, which is the come-back-after-months case. Everything you state comes
    from this payload: `anchor`, `ancestry` (each ancestor's answer-so-far), `subtree`,
@@ -43,15 +47,21 @@ that is what you supply.
    - *what remains, and the paths forward* — `untested` is the engine's answer to what has
      not been tried; which of those to do next is **your judgment**, and it is the only
      judgment in this job. Say it as a recommendation, never as a decision.
-5. **Lint before you speak.** Pipe the draft through `crux brief <node> --lint-situate`.
-   Tighten and re-lint until it is clean.
+5. **Lint before you speak.** Pipe the draft through
+   `crux brief <node> --lint-situate --anchor-title "<the node's title>"`. Tighten and
+   re-lint until it is clean.
 
 ## Rules
 
 - **Brevity, clarity, understandability — in that order.** One ELI5 paragraph (≤ 60 words),
   three TL;DR paragraphs, 400 words total. A verbose orientation has failed at its only job.
-- **Plain language.** No crux vocabulary the PI has not agreed to, and no jargon from the
-  vault that the vault has not defined. If a word needs a gloss, gloss it in the same breath.
+- **Plain language, and that includes crux's own.** No crux vocabulary the PI has not
+  agreed to — node ids (`q19`, `h72`) and process terms (review gate, verifiable, synthesis,
+  verdict, taskhub, null) alike — and no jargon from the vault that the vault has not
+  defined. If a word needs a gloss, gloss it in the same breath. A term or id the PI used
+  first in this conversation is licensed back to you; that is the only way one enters your
+  answer. Plain science words — question, hypothesis, evidence, finding, experiment, check,
+  result — are free, and always were.
 - **Never write.** The answer is **ephemeral — chat only**, by the PI's ruling. It is
   regenerated on every call, so it can never be stale, and the vault stays a record of
   science rather than a record of summaries. In particular: do not write it into the node's
@@ -64,5 +74,5 @@ that is what you supply.
 
 ## Output
 
-Chat only. One ELI5 paragraph, three TL;DR paragraphs, the resolved ids named in the first
-line. Nothing written to the vault, and nothing else printed.
+Chat only. One ELI5 paragraph, three TL;DR paragraphs, the resolved scope named **by title**
+in the first line. Nothing written to the vault, and nothing else printed.

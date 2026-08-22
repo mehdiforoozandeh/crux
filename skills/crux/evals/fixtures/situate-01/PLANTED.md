@@ -38,19 +38,21 @@ under q3 is a false positive and costs precision.
 
 ## Reference answer
 
-The answer below is the fixture's own proof that the bound is clearable: it lints clean at 292
-words, names `q1` in its first line, carries all three planted facts, and says q3 is empty
-rather than filling it. It is **not** a target to reproduce — an agent matching its wording
-would be graded on style, which nothing here measures.
+The answer below is the fixture's own proof that the bound is clearable: it lints clean at 298
+words, names the anchor **by its title** in the first line (spec 16 — an id would pass the lint
+too, and would be the wrong thing to say to a PI who never used one), carries all three planted
+facts, and says the augmentation branch is empty rather than filling it. It carries no node id
+and no crux vocabulary anywhere, which `voice_lint` checks. It is **not** a target to reproduce —
+an agent matching its wording would be graded on style, which nothing here measures.
 
 ```
-Resolved: q1 — "How do we cut the label budget?", with q2 and q3 beneath it. We are teaching a system to label pictures using far fewer hand-labelled examples than usual. One idea worked, one is still running, and one branch is empty.
+Where we are on how do we cut the label budget, and everything under it. We are teaching a system to label pictures using far fewer hand-labelled examples than usual. One idea worked, one is still running, and one branch is empty.
 
-q1 asks how to cut the label budget for the segmenter, under a goal of making the segmenter work with fewer labels. Two questions sit beneath it: q2, on whether pretraining helps when labels are scarce, and q3, on which augmentation family matters. The linked literature page on pretraining for dense prediction says the benefit is largest exactly where labels are scarce.
+The overall question is how to cut the label budget for the segmenter, under a goal of making it work with fewer labels. Two questions sit beneath it: whether pretraining helps when labels are scarce, and which augmentation family matters. The background reading on pretraining for dense prediction says the benefit is largest exactly where labels are scarce.
 
-Under q2, h1 is closed and supported: pretraining beat training from scratch by 4.1 mIoU at 100 labels over three seeds, and the control reproduced the published scratch number at 1000 labels, so the harness reads correctly. Its findings note the catch — the declared null was capacity, the pretrained encoder is larger, and a width-matched scratch arm was never run, so that null is not ruled out. h3 is running now on cluster job 8812, asking whether a longer schedule widens the gap. Nothing is settled under q3 yet: it has no hypotheses at all.
+On whether pretraining helps at low label counts: pretraining beat training from scratch by 4.1 mIoU at 100 labels over three seeds, and the control reproduced the published from-scratch number at 1000 labels, so the harness reads correctly. There is a catch worth carrying — the boring explanation was capacity, the pretrained encoder is larger, and a width-matched from-scratch arm was never run, so that explanation is not ruled out. Whether a longer pretraining schedule widens the gap is executing now on cluster job 8812. Nothing is settled on which augmentation family matters: nothing has been tried under it at all.
 
-What remains is three different kinds of thing. h2 — does pretraining still help at 20 labels — has never been run. h3 is in flight, so the move there is to wait rather than to start anything. q3 is empty, so the move there is to write a first hypothesis. My recommendation is to run h2 next: it is the cheapest check on whether h1's result survives at the label count you actually care about, with the width-matched scratch arm a close second. Which to pursue is yours to decide.
+What remains is three different kinds of thing. Whether pretraining still helps at 20 labels has never been run. The longer-schedule comparison is in flight, so the move there is to wait rather than to start anything. The augmentation branch is empty, so the move there is to write a first claim worth testing. My recommendation is to run the 20-label comparison next: it is the cheapest check on whether the 100-label result survives at the label count you actually care about, with the width-matched from-scratch arm a close second. Which to chase is yours to decide.
 ```
 
 ## Scoring
