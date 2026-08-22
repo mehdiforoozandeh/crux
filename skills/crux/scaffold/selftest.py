@@ -4146,6 +4146,22 @@ def run_task_graph():
           r.returncode == 0 and [x["id"] for x in json.loads(r.stdout)]
           == [t["id"] for t in E.task_frontier(root)])
 
+    # -- hierarchy is operative, not decorative (PI ruling 2026-08-21: warn, never refuse).
+    #    A parent closed over unfinished parts is worth a flag; it is never a defect, so it
+    #    lives at the info tier and `ok` must not turn on it.
+    tp, _ = E.cmd_task_add(root, "Assemble the release", category="implementation")
+    tc, _ = E.cmd_task_add(root, "Write the release notes", category="manuscript", parent=tp)
+    E.cmd_task_done(root, tp, outputs=[f"[[{q}]]"])
+    rep = E.validation_report(root)
+    hinfo = {x["id"]: x for x in rep["info"]}
+    check("hier: a done parent with an open subtask is reported as info",
+          "task:open-subtasks" in hinfo and hinfo["task:open-subtasks"]["count"] == 1
+          and tp in hinfo["task:open-subtasks"]["message"] and rep["ok"] is True)
+    E.cmd_task_drop(root, tc)   # a drop is a decision — it discharges, exactly like a blocker
+    check("hier: a terminal subtask discharges the warning",
+          "task:open-subtasks" not in
+          {x["id"] for x in E.validation_report(root)["info"]})
+
     # -- TASKHUB.md: shaped by the query it serves. The wiki layer taught this the hard way —
     #    its index resolved pages while queries were pitched at sub-page granularity, so
     #    retrieval fell back to grep.
@@ -4757,6 +4773,29 @@ def run_task_gui():
     # (m) the read-only footer stopped claiming everything is a tree
     check("taskgui: the read-only footer speaks for the whole vault",
           "edit the vault" in html and "edit the tree" not in html)
+    # ---- hierarchy in the taskhub (PI ruling 2026-08-21: nested tree in All/Category,
+    # Frontier and Timeline stay flat — they answer different questions).
+    # (n) All and Category render a real tree; the two flat views never call it
+    tkr = ui.split("function renderTasks()")[1].split("\nfunction ")[0]
+    check("hiergui: All and Category views nest subtasks under their parent",
+          "function taskTreeRows" in ui and "taskTreeRows(" in tkr
+          and "taskTreeRows" not in
+              tkr.split('view === "frontier"')[1].split('view === "timeline"')[0])
+    # (o) depth is drawn, not implied — each nested row indents by its depth
+    check("hiergui: nested rows indent by depth",
+          "--tk-depth" in ui and "--tk-depth" in css)
+    # (p) a parent says it is a container: n/m subtask progress in the row AND the detail
+    check("hiergui: parent rows and the detail carry subtask progress",
+          "tk-prog" in ui.split("function taskRow")[1].split("\nfunction ")[0]
+          and "tk-prog" in ui.split("function taskDetail")[1].split("\nfunction ")[0]
+          and ".tk-prog" in css)
+    # (q) the hierarchy climbs as well as descends: the detail links the parent
+    check("hiergui: the task detail links its parent",
+          '"Part of"' in ui.split("function taskDetail")[1].split("\nfunction ")[0])
+    # (r) a status filter never orphans a match — non-matching ancestors stay as dimmed
+    #     context rows, and only matches are counted
+    check("hiergui: filtered-out ancestors render as context, not holes",
+          "tk-ctx" in ui and ".tk-ctx" in css)
     missing = [c for c in tb["categories"] + [tb["reserved_category"]]
                if f"--t-{c}" not in css]
     check("ui: every declared category has a colour", not missing)

@@ -2660,7 +2660,25 @@ function selectTask(id) {
   renderDetail();
 }
 
-function taskRow(t) {
+// does this task pass the rail's status filter? Shared by the flat views, the tree walk
+// and the "showing N" count, so the three can never disagree
+function taskMatchesStatus(t) {
+  return state.tasks.status === "all" || t.state === state.tasks.status;
+}
+
+// subtask progress for a parent: terminal = done OR dropped, matching blocker-discharge
+// semantics (a drop is a decision, and it discharges). null for a leaf.
+function taskSubProgress(t) {
+  const ch = t.children || [];
+  if (!ch.length) return null;
+  const done = ch.filter((c) => {
+    const s = taskById(c);
+    return s && (s.state === "done" || s.state === "dropped");
+  }).length;
+  return { done, total: ch.length };
+}
+
+function taskRow(t, depth, ctx) {
   const cat = t.category || "default";
   const concl = (t.hypothesis_refs || []).map((h) =>
     `<span class="tk-concl tk-c-${esc(h.conclusion)}">${esc(h.id)} → ${esc(h.conclusion)}` +
@@ -2668,15 +2686,48 @@ function taskRow(t) {
       'semantics (spec 15). Its verdict is frozen; this conclusion is a record on the task.' +
       '">pre-15</span>' : "") + `</span>`).join(" · ");
   const pending = t.pending_gate ? `<span class="tk-pending">awaiting your acceptance</span>` : "";
+  const prog = taskSubProgress(t);
   const dim = state.search && !matchTask(t) ? " tk-dim" : "";
   const on = state.tasks.selected === t.id ? " on" : "";
-  return `<button type="button" class="tk-row tk-${esc(t.state)}${dim}${on}" data-task="${esc(t.id)}">` +
+  // ctx: the row fails the status filter but an off-spring matches — it renders as dimmed
+  // context so the match is never orphaned, and the counter does not count it
+  return `<button type="button" class="tk-row tk-${esc(t.state)}${dim}${ctx ? " tk-ctx" : ""}${on}" ` +
+    `data-task="${esc(t.id)}"${depth ? ` style="--tk-depth: ${depth}"` : ""}>` +
     `<span class="tk-id">${esc(t.id)}</span>` +
     `<span class="tk-cat" style="--tk: var(${taskCatVar(cat)}, var(--t-default))">${esc(cat)}</span>` +
     (t.is_experiment ? `<span class="tk-kind">experiment</span>` : "") +
     `<span class="tk-title">${esc(t.title)}</span>` +
+    (prog ? `<span class="tk-prog" title="Subtasks discharged (done or dropped)">` +
+      `${prog.done}/${prog.total} subtasks</span>` : "") +
     (concl ? `<span>${concl}</span>` : "") + pending +
     `<span class="tk-state">${esc(t.state)}</span></button>`;
+}
+
+// the nested tree (PI ruling 2026-08-21): roots first, children indented one level per
+// depth. Only the All and Category views call this — Frontier answers "what can I work
+// now" and Timeline "what ran when", and nesting adds nothing to either.
+function taskTreeRows(ts) {
+  const inSet = new Set(ts.map((t) => t.id));
+  const kids = {};
+  ts.forEach((t) => {
+    if (t.parent && inSet.has(t.parent)) (kids[t.parent] = kids[t.parent] || []).push(t);
+  });
+  const seen = new Set();
+  const walk = (t, depth) => {
+    if (seen.has(t.id)) return "";
+    seen.add(t.id);
+    const sub = (kids[t.id] || []).map((c) => walk(c, depth + 1)).join("");
+    if (!taskMatchesStatus(t) && !sub) return "";
+    return taskRow(t, depth, !taskMatchesStatus(t)) + sub;
+  };
+  // a root is a task with no parent — or whose parent is outside this slice of the vault
+  let html = ts.filter((t) => !t.parent || !inSet.has(t.parent))
+    .map((t) => walk(t, 0)).join("");
+  // a parent cycle (validate reports it; the cockpit must survive it) leaves its members
+  // reachable from no root — they render flat rather than vanish
+  html += ts.filter((t) => !seen.has(t.id) && taskMatchesStatus(t))
+    .map((t) => taskRow(t, 0)).join("");
+  return html;
 }
 
 // RD rows in the same list (merge of 2026-08-21): an RD is a kind of task — a requirements
@@ -2701,7 +2752,7 @@ function renderTasks() {
   const tb = state.snap.tasks || { items: [], frontier: [], queue: [] };
   const view = state.tasks.view, status = state.tasks.status, rds = rdPages();
   const key = JSON.stringify([view, status, state.tasks.selected, state.search,
-    tb.items.map((t) => [t.id, t.state, t.pending_gate]),
+    tb.items.map((t) => [t.id, t.state, t.pending_gate, t.parent]),
     rds.map((p) => [p.slug, p.status])]);
   if (key === state.tasks.key) return;
   state.tasks.key = key;
@@ -2738,7 +2789,10 @@ function renderTasks() {
       `The cockpit is read-only.</p>`;
   }
   let shown = 0;
-  const rowsOf = (ts) => { shown += ts.length; return ts.map(taskRow).join(""); };
+  const rowsOf = (ts) => { shown += ts.length; return ts.map((t) => taskRow(t)).join(""); };
+  // the tree views count MATCHES, not rendered rows — a filtered-out ancestor kept as
+  // context is scenery, and "showing N" must never claim it
+  const treeOf = (ts) => { shown += ts.filter(taskMatchesStatus).length; return taskTreeRows(ts); };
   let body = "";
   if (view === "frontier") {
     body = `<p class="tk-sec">Frontier — ready to work now</p>` +
@@ -2756,14 +2810,26 @@ function renderTasks() {
       `ticks and lives on the node.</p>` +
       (rowsOf(exps) || `<p class="tk-note">no experiments yet</p>`);
   } else if (view === "category") {
+    // grouped by the ROOT's category: a subtask follows its parent rather than being torn
+    // into its own group — the decomposition is the thing this view must not break
+    const rootOf = (t) => {
+      const hop = new Set();
+      while (t.parent && byId[t.parent] && !hop.has(t.id)) { hop.add(t.id); t = byId[t.parent]; }
+      return t;
+    };
     const groups = {};
-    pick(tb.items).forEach((t) =>
-      (groups[t.category || "default"] = groups[t.category || "default"] || []).push(t));
-    body = Object.keys(groups).sort().map((c) =>
-      `<p class="tk-sec">${esc(c)}</p>` + rowsOf(groups[c])).join("");
+    tb.items.forEach((t) => {
+      const c = rootOf(t).category || "default";
+      (groups[c] = groups[c] || []).push(t);
+    });
+    body = Object.keys(groups).sort()
+      .map((c) => {
+        const rows = treeOf(groups[c]);
+        return rows ? `<p class="tk-sec">${esc(c)}</p>` + rows : "";
+      }).join("");
     if (rds.length) body += `<p class="tk-sec">rd</p>` + rdRows(rds);
   } else {
-    body = `<p class="tk-sec">All tasks</p>` + rowsOf(pick(tb.items));
+    body = `<p class="tk-sec">All tasks</p>` + treeOf(tb.items);
     if (rds.length) body += `<p class="tk-sec">Requirements documents</p>` + rdRows(rds);
   }
   // the list says what it is showing — 25 rows silently standing in for 200 was the
@@ -2820,10 +2886,14 @@ function taskDetail(t) {
     : "";
   const refs = (t.refs || []).length
     ? section("References", t.refs.map(taskRefRow).join("")) : "";
+  const prog = taskSubProgress(t);
   const deps =
+    // the hierarchy climbs as well as descends: the parent is one click away
+    (t.parent ? section("Part of", taskRefRow(t.parent)) : "") +
     ((t.blocked_by || []).length ? section("Blocked by", t.blocked_by.map(taskRefRow).join("")) : "") +
     ((t.blocks || []).length ? section("Blocks", t.blocks.map(taskRefRow).join("")) : "") +
-    ((t.children || []).length ? section("Subtasks", t.children.map(taskRefRow).join("")) : "");
+    (prog ? section(`Subtasks <span class="tk-prog">${prog.done}/${prog.total} done</span>`,
+        t.children.map(taskRefRow).join("")) : "");
   const outs = (t.outputs || []).length
     ? section("Outputs", t.outputs.map(taskRefRow).join("")) : "";
   const gate = t.pending_gate
