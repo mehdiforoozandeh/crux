@@ -8,6 +8,16 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **`crux doctor`** — a deterministic install + drift health check. Answers "is this
+  install healthy?" in one command: Python version, the engine's own modules, whether the
+  skill and agent symlinks still resolve to a live clone (the silent failure — `install.sh`
+  links *into* the clone, so moving it breaks the skills with no error anywhere), the
+  release/update stamp from the cache, and — inside a vault — engine drift and a pending
+  `crux migrate`. Three levels: `ok` · `warn` (works, degraded) · `fail`; exit `1` only on
+  a `fail`, so drift stays scriptable. Every non-ok line carries the literal fix command.
+  Strictly read-only — it is the one verb that must not re-stamp the vault, since that
+  would silently repair the drift it reports. No network, no repair, `--json` throughout.
+
 - **Science voice: the invisible notebook** (spec 16, engine **3.2**). The agent now talks
   to the PI in the language of science — never node ids (`q19`, `h72`) or crux vocabulary
   (review gate, verifiables, synthesis…) unless the PI used the term first. The frame: the

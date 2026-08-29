@@ -3965,6 +3965,188 @@ def cmd_migrate(root, apply=False):
     refresh(root)
     return {"applied": True, "changes": plan}
 
+# ------------------------------------------------------------------------------- doctor
+# The install's own health check. Everything INSTALL.md documents under "Troubleshooting" is
+# a state a machine can read, and the worst of them is silent: install.sh symlinks the skills
+# and the agent roster INTO a clone, so moving that clone leaves dangling links and the skills
+# simply stop existing — no error, anywhere, ever.
+#
+# Deterministic on purpose. Every check below is an os.path call, a version tuple compare, or
+# a string compare on the vault stamp. There is no judgment in it, which is what lets it run
+# from a bare clone with no agent present and lets selftest gate it.
+#
+# THREE levels, because two is a loophole. A drifted vault and an available release are both
+# real things to say and neither is a broken install; folding them into `fail` would make the
+# exit code useless in a script, and dropping them would make the verb blind to the second
+# most common way crux confuses someone.
+DOCTOR_SKILL_DIRS = ("~/.claude/skills", "~/.agents/skills")   # Claude Code · the shared dir
+DOCTOR_AGENT_DIR  = "~/.claude/agents"                          # flat <name>.md, per install.sh
+SCAFFOLD_MODULES  = ("engine", "render", "serve", "update", "evals", "crux")
+SCAFFOLD_DIRS     = ("templates", "webui")
+
+
+def _install_shape():
+    """('clone' | 'skills' | 'unknown', path) — the layout this engine runs from. Local
+    import, matching every other update.py call site here; a missing module means the
+    layout is simply unknown, never a crashed health check."""
+    try:
+        import update as _u
+        return _u.detect_install(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        return "unknown", os.path.dirname(os.path.abspath(__file__))
+
+
+def _doc(name, level, detail, fix=""):
+    """One line of the report. `fix` is the literal command to run, and is REQUIRED on
+    anything that is not ok — a diagnostic that leaves you to search the docs for the remedy
+    has moved the problem rather than solved it."""
+    return {"name": name, "level": level, "detail": detail, "fix": fix}
+
+
+def _link_state(path):
+    """('missing' | 'dangling' | 'link' | 'real', resolved-target-or-None).
+
+    `os.path.exists` follows symlinks, so a dangling link is exists()==False and
+    islink()==True at once — which is exactly the state that makes this failure invisible."""
+    if os.path.islink(path):
+        target = os.path.realpath(path)
+        return ("link", target) if os.path.exists(target) else ("dangling", target)
+    if os.path.exists(path):
+        return "real", path
+    return "missing", None
+
+
+def _doctor_python():
+    v = "%d.%d.%d" % sys.version_info[:3]
+    if sys.version_info < (3, 8):
+        return _doc("python", "fail", f"{v} at {sys.executable} — crux needs >= 3.8",
+                    "install Python 3.8+ and put it on PATH")
+    return _doc("python", "ok", f"{v} at {sys.executable}")
+
+
+def _doctor_engine():
+    here = os.path.dirname(os.path.abspath(__file__))
+    missing = [m + ".py" for m in SCAFFOLD_MODULES if not os.path.exists(os.path.join(here, m + ".py"))]
+    missing += [d + "/" for d in SCAFFOLD_DIRS if not os.path.isdir(os.path.join(here, d))]
+    if missing:
+        return _doc("engine", "fail", f"{here} is missing {', '.join(missing)}",
+                    "re-clone crux, or `npx skills update`")
+    return _doc("engine", "ok",
+                f"{len(SCAFFOLD_MODULES)} modules + {'/, '.join(SCAFFOLD_DIRS)}/ present in {here}")
+
+
+def _doctor_skills(skills_dirs=None):
+    dirs = [os.path.expanduser(d) for d in (skills_dirs or DOCTOR_SKILL_DIRS)]
+    live, dead, notes = [], [], []
+    for d in dirs:
+        state, target = _link_state(os.path.join(d, "crux"))
+        if state == "dangling":
+            dead.append(d); notes.append(f"{d}/crux → {target} (gone)")
+        elif state in ("link", "real"):
+            live.append(d); notes.append(f"{d}/crux → {target}" if state == "link" else f"{d}/crux (copy)")
+    if dead:
+        return _doc("skills", "fail", "; ".join(notes),
+                    "the clone the symlink points into moved or was deleted — re-clone crux "
+                    "and re-run ./install.sh")
+    if live:
+        return _doc("skills", "ok", "; ".join(notes))
+    # Not an error: `./crux --help` and `crux serve --dir …` work from a bare clone with no
+    # agent anywhere. Say the install is absent, do not call it broken.
+    return _doc("skills", "warn", "crux is in none of " + ", ".join(dirs),
+                "./install.sh   (or: npx skills add mehdiforoozandeh/crux --all)")
+
+
+def _doctor_agents(agents_dir=None):
+    d = os.path.expanduser(agents_dir or DOCTOR_AGENT_DIR)
+    kind, repo = _install_shape()
+    roster = []
+    if kind == "clone" and os.path.isdir(os.path.join(repo, "agents")):
+        roster = sorted(n for n in os.listdir(os.path.join(repo, "agents"))
+                        if os.path.isfile(os.path.join(repo, "agents", n, "AGENT.md")))
+    if not os.path.isdir(d):
+        return _doc("agents", "warn", f"no agent directory at {d}", "./install.sh")
+    installed, dead = [], []
+    for f in sorted(os.listdir(d)):
+        if not f.startswith("crux-") or not f.endswith(".md"):
+            continue
+        state, _t = _link_state(os.path.join(d, f))
+        (dead if state == "dangling" else installed).append(f[:-3])
+    if dead:
+        return _doc("agents", "fail", f"{len(dead)} dangling in {d}: {', '.join(dead)}",
+                    "re-clone crux and re-run ./install.sh")
+    if roster and set(roster) - set(installed):
+        miss = sorted(set(roster) - set(installed))
+        return _doc("agents", "warn",
+                    f"{len(installed)} of {len(roster)} installed in {d} — missing {', '.join(miss)}",
+                    "./install.sh")
+    return _doc("agents", "ok", f"{len(installed)} crux-*.md in {d}")
+
+
+def _doctor_version():
+    kind, path = _install_shape()
+    where = {"clone": f"clone at {path}", "skills": f"skills install at {path}"}.get(kind, f"unknown layout at {path}")
+    base = f"crux v{CRUX_VERSION} · engine v{ENGINE_VERSION} · {where}"
+    try:
+        import update as _u
+        cache = _u.read_cache()
+        latest = cache.get("latest")
+        # Cache only — never a socket. doctor is the verb you run when something is already
+        # wrong, which is exactly when a network round-trip is the last thing you want.
+        if latest and _u.is_newer(latest, CRUX_VERSION):
+            return _doc("version", "warn", f"{base} — v{latest} is available",
+                        _u.update_command(kind, path))
+    except Exception:
+        pass
+    return _doc("version", "ok", base)
+
+
+def _doctor_vault(root):
+    cfg = yaml_load(read(os.path.join(root, VAULT_MARKER)))
+    stamped = cfg.get("engine_version")
+    stamped = None if stamped is None else str(stamped)
+    if stamped is None:
+        return _doc("vault", "ok", f"{root} — unstamped; the next write adopts v{ENGINE_VERSION}")
+    if stamped != ENGINE_VERSION:
+        return _doc("vault", "warn",
+                    f"{root} — engine drift: stamped v{stamped}, running v{ENGINE_VERSION}",
+                    f"pin the matching engine to reproduce recorded results, or run any "
+                    f"write verb to re-stamp to v{ENGINE_VERSION}")
+    return _doc("vault", "ok", f"{root} — stamped v{stamped}")
+
+
+def _doctor_migrate(root):
+    plan = _migrate_plan(Vault(root))
+    if plan:
+        return _doc("migrate", "warn",
+                    f"{len(plan)} node(s) missing structural sections: "
+                    + ", ".join(e["id"] for e in plan[:6]) + ("…" if len(plan) > 6 else ""),
+                    "crux migrate            (dry run)   ·   crux migrate --apply")
+    return _doc("migrate", "ok", "every node has the sections this engine expects")
+
+
+def cmd_doctor(root=None, skills_dirs=None, agents_dir=None):
+    """Is this install healthy? Reports; never repairs.
+
+    `root=None` resolves a vault upward from the current directory and simply omits the two
+    vault checks when there is none — the state a broken install is usually in.
+
+    Read-only, and strictly: this is the ONE verb that must not call
+    `check_and_stamp_version`, because re-stamping would silently repair the very drift it
+    exists to report. `skills_dirs` / `agents_dir` default to the real install targets and
+    are parameters so the suite can point them at a scratch dir."""
+    checks = [_doctor_python(), _doctor_engine(),
+              _doctor_skills(skills_dirs), _doctor_agents(agents_dir), _doctor_version()]
+    if root is None:
+        try:
+            root = find_vault()
+        except CruxError:
+            root = None
+    if root:
+        checks += [_doctor_vault(root), _doctor_migrate(root)]
+    return {"ok": not any(c["level"] == "fail" for c in checks),
+            "checks": checks, "crux_version": CRUX_VERSION, "engine_version": ENGINE_VERSION}
+
+
 def gate_warnings(v):
     """The gate backlog: a question parked in `review` with no synthesis drafted for it. The
     one item on spec 09's audit list that was not already a check — over-cap nodes,

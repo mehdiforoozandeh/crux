@@ -83,7 +83,23 @@ Windsurf, and Copilot CLI read). Notes:
 
 ## Verify the install
 
-From a clone: `./crux selftest`. From a skills-CLI install:
+**`crux doctor`** is the fast answer to "is this thing wired up?" — it checks the Python
+version, that the engine's own modules are all present, that the skill and agent symlinks
+resolve to a live clone, and (when you run it inside a vault) whether the vault's engine
+stamp has drifted or has structural sections a newer engine expects. Every line that is
+not `ok` prints the exact command that fixes it. Nothing is written, nothing is repaired,
+and no network request is made.
+
+```bash
+crux doctor
+```
+
+It exits `0` when there is nothing broken — warnings alone still exit `0`, so it is safe
+in a script — and `1` when a check fails. `crux doctor --json` gives the same report as
+one JSON object.
+
+For the deeper check that the engine itself is correct, run the test suite — from a
+clone: `./crux selftest`; from a skills-CLI install:
 `python3 <skills-dir>/crux/scaffold/crux.py selftest`. Either way the engine's full test
 suite runs in seconds — no GPU, no tokens — and ends `ALL GREEN`.
 
@@ -106,6 +122,8 @@ forwards to `skills/crux/scaffold/crux.py`), and the cockpit over the bundled ex
 ```
 
 ## Troubleshooting
+
+**Run `crux doctor` first** — it detects most of the list below and prints the fix.
 
 - **The npx picker shows nothing selected** — that's the default; use `--all` (or
   space-toggle the four skills).
