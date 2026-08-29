@@ -7857,7 +7857,7 @@ def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
-                 ["brief", "--help"], ["glossary", "--help"]):
+                 ["brief", "--help"], ["glossary", "--help"], ["doctor", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         check(f"help: crux {' '.join(argv)}", r.returncode == 0 and len(r.stdout) > 40)
@@ -7869,6 +7869,156 @@ def run_cli_help():
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "init", "Hint Project"],
                            capture_output=True, text=True, encoding="utf-8", cwd=tmp)
         check("init hint: includes `cd cruxvault`", r.returncode == 0 and "cd cruxvault" in r.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))   # <clone>/skills/crux/scaffold -> <clone>
+
+
+def _byte_map(root):
+    """{relpath: sha256} for EVERY file under root — `.crux.yaml` included.
+
+    Deliberately not `fingerprint()`: that one excludes the engine-version stamp, because an
+    upgrade is *supposed* to rewrite it. doctor is the one verb for which rewriting the stamp
+    would be a bug — it would silently repair the drift it is reporting — so here nothing is
+    excluded."""
+    out = {}
+    for dp, dn, fn in os.walk(root):
+        for f in fn:
+            p = os.path.join(dp, f)
+            with open(p, "rb") as fh:
+                out[os.path.relpath(p, root)] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+def _level(res, name):
+    for c in res["checks"]:
+        if c["name"] == name:
+            return c["level"]
+    return None
+
+
+def _check(res, name):
+    return next((c for c in res["checks"] if c["name"] == name), None)
+
+
+def run_doctor():
+    """`crux doctor` — the deterministic install + drift health check.
+
+    Every failure in INSTALL.md's troubleshooting list is a state a machine can read, and
+    the worst one is silent: install.sh symlinks skills and agents INTO the clone, so moving
+    the clone leaves dangling links and the skills stop working with no error anywhere.
+
+    The whole verb is os.path calls and two string compares, which is the argument for it
+    being a verb rather than an agent — it runs from a bare clone with no agent present, and
+    a checklist with no judgment in it can be gated by this suite."""
+    print("\n# crux doctor — install + drift health")
+    tmp = tempfile.mkdtemp(prefix="crux_doc_")
+    try:
+        skills_ok  = os.path.join(tmp, "skills_ok");   os.makedirs(skills_ok)
+        skills_bad = os.path.join(tmp, "skills_bad");  os.makedirs(skills_bad)
+        skills_none = os.path.join(tmp, "skills_none"); os.makedirs(skills_none)
+        os.symlink(os.path.join(REPO, "skills", "crux"), os.path.join(skills_ok, "crux"))
+        os.symlink(os.path.join(tmp, "gone"), os.path.join(skills_bad, "crux"))
+
+        roster = sorted(d for d in os.listdir(os.path.join(REPO, "agents"))
+                        if os.path.isfile(os.path.join(REPO, "agents", d, "AGENT.md")))
+        def agents_dir(names, dangle=False):
+            d = tempfile.mkdtemp(prefix="crux_ag_", dir=tmp)
+            for n in names:
+                os.symlink(os.path.join(REPO, "agents", n, "AGENT.md"), os.path.join(d, n + ".md"))
+            if dangle:
+                os.symlink(os.path.join(tmp, "gone"), os.path.join(d, "crux-ghost.md"))
+            return d
+        ag_full  = agents_dir(roster)
+        ag_short = agents_dir(roster[:-1])
+        ag_dang  = agents_dir(roster, dangle=True)
+
+        # ---------------------------------------------------------------- shape
+        res = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=ag_full)
+        check("doctor: returns ok + checks + both versions",
+              set(res) >= {"ok", "checks", "crux_version", "engine_version"}
+              and res["crux_version"] == E.CRUX_VERSION and res["engine_version"] == E.ENGINE_VERSION)
+        check("doctor: every check carries name, level and detail",
+              res["checks"] and all(c.get("name") and c.get("detail") is not None
+                                    and c.get("level") in ("ok", "warn", "fail") for c in res["checks"]))
+        check("doctor: python and engine are ok on a working install",
+              _level(res, "python") == "ok" and _level(res, "engine") == "ok")
+
+        # ---------------------------------------------------------------- skills linkage
+        check("doctor: a symlink resolving into this repo is ok", _level(res, "skills") == "ok")
+        bad = E.cmd_doctor(root=None, skills_dirs=[skills_bad], agents_dir=ag_full)
+        check("doctor: a DANGLING skill symlink fails — the silent breakage, made loud",
+              _level(bad, "skills") == "fail" and bad["ok"] is False)
+        none = E.cmd_doctor(root=None, skills_dirs=[skills_none], agents_dir=ag_full)
+        check("doctor: no crux in any skills dir WARNS — a bare clone is a supported install",
+              _level(none, "skills") == "warn" and none["ok"] is True)
+
+        # ---------------------------------------------------------------- agent roster
+        check("doctor: the full roster is ok", _level(res, "agents") == "ok")
+        short = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=ag_short)
+        check("doctor: a roster short of the repo's warns — a stale install.sh",
+              _level(short, "agents") == "warn" and short["ok"] is True)
+        dang = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=ag_dang)
+        check("doctor: a dangling agent symlink fails",
+              _level(dang, "agents") == "fail" and dang["ok"] is False)
+
+        # ---------------------------------------------------------------- vault drift + migrate
+        drift = os.path.join(tmp, "drifted")
+        shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), drift)
+        stamped = E.yaml_load(read(os.path.join(drift, E.VAULT_MARKER)))["engine_version"]
+        before = _byte_map(drift)
+        dr = E.cmd_doctor(root=drift, skills_dirs=[skills_ok], agents_dir=ag_full)
+        check("doctor: an old-stamped vault warns, naming both versions",
+              _level(dr, "vault") == "warn"
+              and str(stamped) in _check(dr, "vault")["detail"]
+              and E.ENGINE_VERSION in _check(dr, "vault")["detail"])
+        check("doctor: drift is a warn, not a fail — the vault still reads", dr["ok"] is True)
+        check("doctor: pending structural sections warn",
+              _level(dr, "migrate") == "warn" and "crux migrate" in _check(dr, "migrate")["fix"])
+
+        # THE LINE: doctor reports drift and must never be the thing that repairs it.
+        check("doctor: writes NOTHING — the engine stamp included", _byte_map(drift) == before)
+
+        clean = os.path.join(tmp, "clean"); os.makedirs(clean)
+        E.cmd_init("Doctor Clean", clean)
+        cl = E.cmd_doctor(root=clean, skills_dirs=[skills_ok], agents_dir=ag_full)
+        check("doctor: a current vault is ok on both vault checks",
+              _level(cl, "vault") == "ok" and _level(cl, "migrate") == "ok")
+
+        # ---------------------------------------------------------------- the fix line
+        for r in (bad, none, short, dang, dr):
+            check("doctor: every non-ok check hands over a fix command",
+                  all(c.get("fix") for c in r["checks"] if c["level"] != "ok"))
+
+        # ---------------------------------------------------------------- CLI contract
+        cli = [sys.executable, os.path.join(HERE, "crux.py"), "doctor"]
+        r = subprocess.run(cli + ["--json"], capture_output=True, text=True,
+                           encoding="utf-8", cwd=clean)
+        check("doctor: --json prints exactly one object on stdout",
+              r.returncode == 0 and isinstance(json.loads(r.stdout), dict))
+        r = subprocess.run(cli + ["--json"], capture_output=True, text=True,
+                           encoding="utf-8", cwd=tmp)
+        names = [c["name"] for c in json.loads(r.stdout)["checks"]]
+        check("doctor: runs with NO vault in sight — the state a broken install is in",
+              r.returncode in (0, 1) and "vault" not in names and "migrate" not in names)
+        check("doctor: no vault means no traceback", "Traceback" not in r.stderr)
+        check("doctor: the install checks still all ran",
+              names == ["python", "engine", "skills", "agents", "version"])
+
+        # -- the exit code IS the contract: warns are scriptable, a fail is not.
+        before_cli = _byte_map(drift)
+        r = subprocess.run(cli, capture_output=True, text=True, encoding="utf-8", cwd=drift)
+        check("doctor: warns alone exit 0 — drift is reportable, not fatal", r.returncode == 0)
+        check("doctor: the CLI path writes nothing either", _byte_map(drift) == before_cli)
+
+        home = os.path.join(tmp, "home"); os.makedirs(os.path.join(home, ".claude", "skills"))
+        os.symlink(os.path.join(tmp, "gone"), os.path.join(home, ".claude", "skills", "crux"))
+        env = dict(os.environ, HOME=home, USERPROFILE=home)
+        r = subprocess.run(cli, capture_output=True, text=True, encoding="utf-8", cwd=clean, env=env)
+        check("doctor: any fail exits 1", r.returncode == 1 and "FAIL" in r.stdout)
+        check("doctor: and the fix is printed next to it", "install.sh" in r.stdout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -7945,6 +8095,7 @@ def main():
     run_ground_truth_fixtures()
     run_proxy_register()
     run_cli_help()
+    run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
         print("  FAILURES:")

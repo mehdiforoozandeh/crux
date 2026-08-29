@@ -327,6 +327,8 @@ def main(argv=None):
     g2.add_argument("term")
     _jsonable(gs.add_parser("list", help="print the vocabulary model (terms + the decline list)"))
 
+    s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
+
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
     s.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
 
@@ -789,6 +791,20 @@ def dispatch(a):
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)
+    elif c == "doctor":
+        r = E.cmd_doctor()
+        if a.json:
+            _emit(r)
+            return 0 if r["ok"] else 1
+        print(f"crux doctor — v{r['crux_version']} (engine v{r['engine_version']})\n")
+        mark = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
+        for ck in r["checks"]:
+            print(f"  {mark[ck['level']]}  {ck['name']:<8} {ck['detail']}")
+            if ck["fix"]:
+                print(f"          fix: {ck['fix']}")
+        bad = [ck["level"] for ck in r["checks"] if ck["level"] != "ok"]
+        print("\n" + (f"{bad.count('fail')} fail · {bad.count('warn')} warn" if bad else "all clear"))
+        return 0 if r["ok"] else 1
     elif c == "selftest":
         import subprocess
         st = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selftest.py")
