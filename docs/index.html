@@ -94,8 +94,11 @@ header.hero h1 .g{color:var(--gold)}
 .deck b{color:var(--ink); font-weight:600}
 .kicker{margin:0 0 18px; font:400 13px/1 var(--mono); color:var(--mute); letter-spacing:.06em}
 .links{display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:28px; font-size:14.5px}
-/* The install line lives up here as well as in §Install: on a 10,935px page the
-   command sat 11.4 viewport-heights down, which is past where any first visit ends. */
+/* SUPERSEDED 31 Aug 2026 — the hero install line is gone; §Install below the
+   scroll story is the only one now. The original reason it was duplicated up
+   here: on a 10,935px page the command sat 11.4 viewport-heights down, which is
+   past where any first visit ends. Rules kept, unused, in case that argument
+   wins again. */
 .hero-cta{margin-top:30px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px}
 /* flex:none — as a shrinkable flex item the box narrows below its own text, and
    `overflow-x:auto; white-space:pre` then slides the command under the copy button */
@@ -414,9 +417,6 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
   <p class="kicker">an agentic lab notebook</p>
   <h1>AI does the legwork.<br><span class="g">You stay the lead scientist.</span></h1>
   <p class="deck">Projects now grow faster than anyone can keep track. Crux records and organizes the research session &mdash; a science tree, a literature wiki, and a task list in plain markdown, filled by agents while you talk science.</p>
-  <div class="hero-cta">
-    <div class="code mini" id="c0"><button class="copy" data-t="c0">copy</button>npx skills add mehdiforoozandeh/crux --all</div>
-  </div>
   <p class="cue"><i></i> scroll</p>
 </header>
 </div>
