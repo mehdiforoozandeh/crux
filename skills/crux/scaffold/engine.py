@@ -11,7 +11,7 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, json, html, datetime, tempfile, shutil, hashlib
+import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex
 
 # ----------------------------------------------------------------------------- constants
 ENGINE_VERSION = "3.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
@@ -2109,11 +2109,16 @@ def _terms_used(text):
     return out
 
 
-def voice_lint(turns, agreed=()):
+def voice_lint(turns, agreed=(), report_from=1):
     """Findings on one CONVERSATION, as `(id, message)` pairs — empty when clean.
 
     `turns` is ordered `(speaker, text)` with speaker in `VOICE_SPEAKERS`; `agreed` is the
     PI's glossary terms, licensed from turn zero. Pure: no vault, no filesystem, no network.
+
+    `report_from` scopes the REPORT without touching the licensing: turns before it still
+    license what the PI said, they just stop producing findings. The chat-time consumer
+    (PRD 16.2) needs exactly that — the mirror rule is cumulative over a conversation, but
+    re-reporting turn 3's slip on every later tool call turns the signal into wallpaper.
 
     Two findings, one per kind of leak:
 
@@ -2141,6 +2146,8 @@ def voice_lint(turns, agreed=()):
             continue
         if notebook:
             continue                      # leafing through the notebook — its words are open
+        if i < report_from:
+            continue                      # licensed above, reported by a narrower consumer
         for nid in sorted(ids - licensed_ids, key=natkey):
             out.append(("voice:node-id",
                         f"turn {i}: the agent said {nid!r}, which the PI has not used in "
@@ -2152,6 +2159,212 @@ def voice_lint(turns, agreed=()):
                         f"than science. Say the science, or wait for the PI to say the word "
                         f"first."))
     return out
+
+
+def chat_handle(nid, title):
+    """The one line every id-minting verb prints beside the id it just allocated.
+
+    Spec 16 gave the agent a prohibition — never introduce an id in chat — and put it two
+    hundred lines from the receipt that hands it one. PRD 16.2's reading of why that lost:
+    the agent reaches for `t81` partly because it needs SOME handle for the thing it just
+    filed, and the id is the nearest handle in context. A prohibition removes the wrong
+    answer; it does not supply the right one. So the receipt supplies it, in the same breath
+    as the id it replaces — rule 5's title-anchored paraphrase, at the moment of temptation
+    rather than in a section read once.
+
+    Agent-facing and third person like every line the CLI prints (spec 16), so nothing here
+    is phrased as words to relay."""
+    return f'  in chat: "{title}" — the id {nid} is notebook-side'
+
+
+# --- the lint at CHAT time (PRD 16.2) -------------------------------------------------
+# Spec 16 shipped `voice_lint` with its consumers named as "the persona eval and selftest",
+# and said so in the comment above: *nothing here runs at chat time.* The PI then reported
+# the leak twice from live sessions. That is the gap, and this closes it: the same pure lint,
+# a new consumer, reading the session transcript a Claude Code hook hands over.
+#
+# What this CANNOT do, stated once so nobody expects otherwise: a PostToolUse hook fires
+# AFTER the message it judges. There is no interception point between the agent composing
+# PI-facing text and the PI reading it, so this catches the REPETITION, not the first leak.
+# `chat_handle` above is the preventive half; this is the measurement half.
+
+#: The tool calls worth judging. `crux` as a whole word or as `crux.py`, so `cd cruxvault`
+#: does not trigger and `python …/scaffold/crux.py status` does.
+VOICE_HOOK_TRIGGER = re.compile(r"(?:^|[^\w./-])(?:\./)?crux(?:\.py)?(?:[^\w-]|$)")
+
+#: Injected context is not the PI talking. A `<system-reminder>` block rides inside a user
+#: turn and carries whatever the harness felt like adding — treating it as the PI's own words
+#: would license any id it happens to mention, which is the one way this lint could be talked
+#: into approving exactly what it exists to catch.
+_INJECTED_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S | re.I)
+
+VOICE_HOOK_EVENT = "PostToolUse"
+VOICE_HOOK_MATCHER = "Bash"
+DOCTOR_SETTINGS_PATHS = ("~/.claude/settings.json", "~/.claude/settings.local.json")
+
+
+def _turn_text(content):
+    """The chat text of one message, and ONLY that.
+
+    Tool-use and tool-result blocks are dropped, and the drop is the whole point: a tool
+    result is where ids legitimately live — `✓ t81  (tasks/t81_x.md)` is a receipt, not the
+    PI saying `t81` — so counting one as a spoken turn would license every id in the vault
+    and the lint would pass every conversation forever."""
+    if isinstance(content, str):
+        return content
+    out = []
+    for b in (content or ()):
+        if isinstance(b, dict) and b.get("type") == "text":
+            out.append(str(b.get("text") or ""))
+    return "\n".join(out)
+
+
+def transcript_turns(path):
+    """A Claude Code JSONL transcript → `voice_lint`'s `(speaker, text)` turns.
+
+    Tolerant by policy: an unparseable line is skipped, never raised on. This runs inside a
+    hook, and a hook that breaks a session is strictly worse than the leak it was added to
+    catch. Sidechain records are dropped too — a subagent's conversation is not the PI's, and
+    the other `crux-*` agents keep their ids by ruling."""
+    turns = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(rec, dict) or rec.get("isSidechain") or rec.get("isMeta"):
+                continue
+            kind = rec.get("type")
+            if kind not in ("user", "assistant"):
+                continue
+            msg = rec.get("message")
+            text = _turn_text(msg.get("content") if isinstance(msg, dict) else None)
+            if kind == "user":
+                text = _INJECTED_RE.sub(" ", text)
+            if not text.strip():
+                continue
+            turns.append(("pi" if kind == "user" else "agent", text))
+    return turns
+
+
+def voice_hook_command():
+    """The literal command the hook runs — this engine's own `crux.py`, absolutely pathed.
+
+    Absolute on purpose: a hook has no working directory it can rely on, and the whole point
+    of `crux doctor`'s check is to notice when the clone this points into has moved."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return "%s %s voice --hook" % (shlex.quote(sys.executable),
+                                   shlex.quote(os.path.join(here, "crux.py")))
+
+
+def hook_report(payload):
+    """The hook's whole decision: a context string to hand back, or None to stay silent.
+
+    Silent is the default and covers every uninteresting case — the tool call was not a crux
+    command, the transcript is unreadable, the newest turn is the PI's, the agent's newest
+    turn is clean. Reporting is scoped to the NEWEST agent turn while licensing stays
+    cumulative over the conversation: without the scoping, one slip in turn 3 re-fires on
+    every tool call for the rest of the session, and a warning that never stops is a warning
+    nobody reads."""
+    if not isinstance(payload, dict):
+        return None
+    cmd = payload.get("tool_input")
+    cmd = cmd.get("command") if isinstance(cmd, dict) else None
+    if not VOICE_HOOK_TRIGGER.search(str(cmd or "")):
+        return None
+    path = payload.get("transcript_path")
+    path = os.path.expanduser(str(path)) if path else None
+    if not path or not os.path.isfile(path):
+        return None
+    turns = transcript_turns(path)
+    agent_turns = [i for i, (s, _t) in enumerate(turns, 1) if s == "agent"]
+    if not agent_turns:
+        return None
+    agreed = ()
+    try:
+        agreed = [t["term"] for t in load_glossary(find_vault(payload.get("cwd") or None))["terms"]]
+    except Exception:
+        pass                      # no vault, or an unreadable one: lint with an empty model
+    found = voice_lint(turns, agreed, report_from=agent_turns[-1])
+    if not found:
+        return None
+    lines = ["crux voice — the newest PI-facing message broke the mirror rule "
+             "(SKILL.md, \"Voice — the invisible notebook\"):"]
+    lines += ["  · %s  %s" % (i, m) for i, m in found]
+    lines.append("Say it again in science before going on: name the node by its title, and "
+                 "give the PI what the bookkeeping MEANS rather than the fact that it "
+                 "happened. No apology and no meta-commentary about this notice — just the "
+                 "science, from here on.")
+    return "\n".join(lines)
+
+
+def install_voice_hook(settings_path, command=None):
+    """Register the chat-time lint in a Claude Code settings file. Returns what it did.
+
+    Idempotent by SEARCH, not by equality: an existing `voice --hook` entry is rewritten to
+    the current path rather than duplicated, so re-running `./install.sh` after moving the
+    clone repairs the hook instead of stacking a second dead one. Every unrelated key and
+    every unrelated hook in the file is preserved — this is the user's settings file, and a
+    tool that eats it has done more damage than the leak it was fixing."""
+    path = os.path.expanduser(settings_path)
+    cfg = {}
+    if os.path.isfile(path):
+        try:
+            cfg = json.loads(read(path) or "{}")
+        except Exception as e:
+            raise CruxError(f"{path} is not valid JSON ({e}) — fix or move it, then re-run")
+    if not isinstance(cfg, dict):
+        raise CruxError(f"{path} does not hold a JSON object — fix or move it, then re-run")
+    cmd = command or voice_hook_command()
+    hooks = cfg.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise CruxError(f"{path}: 'hooks' does not hold a JSON object — fix it, then re-run")
+    groups = hooks.setdefault(VOICE_HOOK_EVENT, [])
+    if not isinstance(groups, list):
+        raise CruxError(f"{path}: 'hooks.{VOICE_HOOK_EVENT}' does not hold a list — fix it, "
+                        f"then re-run")
+    for g in groups:
+        for h in (g.get("hooks") or []) if isinstance(g, dict) else ():
+            if isinstance(h, dict) and "voice --hook" in str(h.get("command") or ""):
+                if h["command"] == cmd:
+                    return "present"
+                h["command"] = cmd
+                _write_settings(path, cfg)
+                return "repaired"
+    groups.append({"matcher": VOICE_HOOK_MATCHER,
+                   "hooks": [{"type": "command", "command": cmd}]})
+    _write_settings(path, cfg)
+    return "installed"
+
+
+def _write_settings(path, cfg):
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    write_if_changed(path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+
+
+def voice_hook_state(settings_paths=None):
+    """(registered-paths, searched-paths) for the chat-time hook."""
+    searched = [os.path.expanduser(p) for p in (settings_paths or DOCTOR_SETTINGS_PATHS)]
+    found = []
+    for p in searched:
+        if not os.path.isfile(p):
+            continue
+        try:
+            cfg = json.loads(read(p) or "{}")
+        except Exception:
+            continue
+        groups = (cfg.get("hooks") or {}).get(VOICE_HOOK_EVENT) or [] if isinstance(cfg, dict) else []
+        for g in groups if isinstance(groups, list) else ():
+            for h in (g.get("hooks") or []) if isinstance(g, dict) else ():
+                if isinstance(h, dict) and "voice --hook" in str(h.get("command") or ""):
+                    found.append(p)
+    return sorted(set(found)), searched
 
 
 GATE_RELATIONS = ("self", "ancestor", "descendant", "sibling", "unrelated")
@@ -4124,7 +4337,23 @@ def _doctor_migrate(root):
     return _doc("migrate", "ok", "every node has the sections this engine expects")
 
 
-def cmd_doctor(root=None, skills_dirs=None, agents_dir=None):
+def _doctor_voice_hook(settings_paths=None):
+    """Is the chat-time voice lint actually wired in? (PRD 16.2)
+
+    A WARN when absent, never a fail, for `_doctor_skills`' reason: crux runs perfectly well
+    from a bare clone with no agent anywhere, and an install that is merely incomplete must
+    not be reported as broken. The hook only means something where an agent is driving."""
+    found, searched = voice_hook_state(settings_paths)
+    if found:
+        return _doc("voice-hook", "ok",
+                    f"the chat-time voice lint is registered in {', '.join(found)}")
+    return _doc("voice-hook", "warn",
+                "the chat-time voice lint is in none of " + ", ".join(searched)
+                + " — crux's own ids and vocabulary can reach the PI unnoticed",
+                "./install.sh   (or: crux voice --install-hook)")
+
+
+def cmd_doctor(root=None, skills_dirs=None, agents_dir=None, settings_paths=None):
     """Is this install healthy? Reports; never repairs.
 
     `root=None` resolves a vault upward from the current directory and simply omits the two
@@ -4132,10 +4361,11 @@ def cmd_doctor(root=None, skills_dirs=None, agents_dir=None):
 
     Read-only, and strictly: this is the ONE verb that must not call
     `check_and_stamp_version`, because re-stamping would silently repair the very drift it
-    exists to report. `skills_dirs` / `agents_dir` default to the real install targets and
+    exists to report. `skills_dirs` / `agents_dir` / `settings_paths` default to the real install targets
     are parameters so the suite can point them at a scratch dir."""
     checks = [_doctor_python(), _doctor_engine(),
-              _doctor_skills(skills_dirs), _doctor_agents(agents_dir), _doctor_version()]
+              _doctor_skills(skills_dirs), _doctor_agents(agents_dir),
+              _doctor_voice_hook(settings_paths), _doctor_version()]
     if root is None:
         try:
             root = find_vault()

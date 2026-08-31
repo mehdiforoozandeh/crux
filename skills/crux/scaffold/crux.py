@@ -327,6 +327,17 @@ def main(argv=None):
     g2.add_argument("term")
     _jsonable(gs.add_parser("list", help="print the vocabulary model (terms + the decline list)"))
 
+    s = _jsonable(sub.add_parser("voice", help="lint a conversation for crux's own vocabulary reaching the PI"))
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--hook", action="store_true",
+                   help="read a Claude Code hook payload on stdin; report on the newest agent turn only")
+    g.add_argument("--turns", metavar="PATH",
+                   help='lint a JSON conversation: [["pi", "..."], ["agent", "..."]]')
+    g.add_argument("--install-hook", dest="install_hook", action="store_true",
+                   help="register the chat-time lint in a Claude Code settings file (idempotent)")
+    s.add_argument("--settings", default=None,
+                   help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
+
     s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
 
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
@@ -344,13 +355,56 @@ def main(argv=None):
     if not args.cmd:
         p.print_help(); return 0
 
-    _update_notice()
+    if args.cmd != "voice":
+        _update_notice()
 
     try:
         return dispatch(args)
     except E.CruxError as e:
         print(f"crux: {e}", file=sys.stderr)
         return 1
+
+
+def _voice_turns(raw):
+    """A JSON conversation → `voice_lint`'s pairs. Both shapes a caller reaches for first:
+    `[["pi", "..."], ...]` and `[{"speaker": "pi", "text": "..."}, ...]`."""
+    if not isinstance(raw, list):
+        raise E.CruxError("a conversation is a JSON list of turns, newest last")
+    out = []
+    for i, turn in enumerate(raw, 1):
+        if isinstance(turn, dict):
+            out.append((turn.get("speaker"), turn.get("text")))
+        elif isinstance(turn, (list, tuple)) and len(turn) == 2:
+            out.append((turn[0], turn[1]))
+        else:
+            raise E.CruxError(f"turn {i} is neither a [speaker, text] pair nor an object "
+                              f"carrying 'speaker' and 'text'")
+    return out
+
+
+def _voice_agreed():
+    """The PI's agreed vocabulary, licensed from turn zero — empty when there is no vault.
+
+    Read-only and never stamping: linting a conversation must not touch the vault, and the
+    absence of one is not an error here."""
+    try:
+        return [x["term"] for x in E.cmd_glossary_list(E.find_vault())["terms"]]
+    except Exception:
+        return []
+
+
+def _voice_hook():
+    """The `PostToolUse` entry point. Exits 0 and silent on ANY failure, with no exception:
+    a hook that breaks a session is strictly worse than the leak it was added to catch, and
+    this one runs after every Bash call the agent makes."""
+    try:
+        ctx = E.hook_report(json.loads(sys.stdin.read() or "{}"))
+    except Exception:
+        return 0
+    if ctx:
+        _emit({"hookSpecificOutput": {"hookEventName": E.VOICE_HOOK_EVENT,
+                                      "additionalContext": ctx}})
+    return 0
 
 
 def _csv_arg(val):
@@ -395,7 +449,7 @@ def _dispatch_task(a):
                           "is_experiment": rec["is_experiment"], "refs": a.refs,
                           "hypothesis_refs": rec["hypothesis_refs"],
                           "blocked_by": _csv_arg(a.blocked_by)})
-        print(f"✓ {tid}  ({E.TASK_DIR}/{fn})")
+        print(f"✓ {tid}  ({E.TASK_DIR}/{fn})\n" + E.chat_handle(tid, a.title))
         if rec["is_experiment"]:
             print(f"  this task is an experiment (category `{E.TASK_RESERVED_CATEGORY}`, "
                   f"computed from --concluded)")
@@ -496,7 +550,7 @@ def dispatch(a):
         nid, fn = E.cmd_ask(_vault(), a.title, a.parent, a.body)
         if a.json:
             return _emit({"id": nid, "file": fn})
-        print(f"✓ {nid}  ({fn})")
+        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
     elif c in ("hypothesize", "hypothesis", "idea"):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
@@ -504,7 +558,8 @@ def dispatch(a):
                                           measurement=a.measurement, replicates=a.replicates)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
-        print(f"✓ {nid}  ({fn})" + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
+        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title)
+              + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
         if warn:
             print(f"  ⚠ {warn}", file=sys.stderr)
     elif c in ("test", "experiment", "run", "stage", "launch"):
@@ -574,7 +629,7 @@ def dispatch(a):
         nid, fn = E.cmd_synthesize(_vault(), a.title, [x.strip() for x in a.questions.split(",")])
         if a.json:
             return _emit({"id": nid, "file": fn})
-        print(f"✓ {nid}  ({fn})")
+        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
     elif c in ("ingest", "source", "add-source"):
         state, rel = E.cmd_ingest(_vault(), a.path, a.title)
         if a.json:
@@ -588,7 +643,7 @@ def dispatch(a):
         if a.json:
             return _emit({"slug": slug, "file": f"{E.RD_DIR}/{fn}", "node": a.node,
                           "status": "active", "supersedes": a.supersedes})
-        print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})"
+        print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})\n" + E.chat_handle(slug, a.title)
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
     elif c in ("approve-null", "approve_null"):
@@ -791,6 +846,24 @@ def dispatch(a):
     elif c in ("serve", "gui", "ui", "cockpit"):
         import serve as SV
         SV.serve(_vault_ro(a.dir), port=a.port, force_open=a.open)
+    elif c == "voice":
+        if a.hook:
+            return _voice_hook()
+        if a.install_hook:
+            path = a.settings or E.DOCTOR_SETTINGS_PATHS[0]
+            state = E.install_voice_hook(path)
+            if a.json:
+                return _emit({"settings": os.path.expanduser(path), "state": state,
+                              "command": E.voice_hook_command()})
+            print(f"✓ voice hook {state}  ({os.path.expanduser(path)})")
+            return 0
+        found = E.voice_lint(_voice_turns(json.loads(E.read(a.turns))), _voice_agreed())
+        if a.json:
+            return _emit({"ok": not found,
+                          "findings": [{"id": i, "message": m} for i, m in found]})
+        for i, m in found:
+            print(f"{i}  {m}")
+        return 1 if found else 0
     elif c == "doctor":
         r = E.cmd_doctor()
         if a.json:
@@ -799,7 +872,7 @@ def dispatch(a):
         print(f"crux doctor — v{r['crux_version']} (engine v{r['engine_version']})\n")
         mark = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
         for ck in r["checks"]:
-            print(f"  {mark[ck['level']]}  {ck['name']:<8} {ck['detail']}")
+            print(f"  {mark[ck['level']]}  {ck['name']:<10} {ck['detail']}")
             if ck["fix"]:
                 print(f"          fix: {ck['fix']}")
         bad = [ck["level"] for ck in r["checks"] if ck["level"] != "ok"]

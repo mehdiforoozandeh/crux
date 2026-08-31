@@ -18,6 +18,9 @@
 #   SKILLS_DIR=/tmp/x ./install.sh  # install skills into exactly one custom dir instead
 #   AGENTS_DIR=/tmp/y ./install.sh  # install agents into a custom dir instead
 #
+# Also registers crux's chat-time voice lint as a Claude Code PostToolUse hook in
+# ~/.claude/settings.json, idempotently (see `crux voice --install-hook`).
+#
 # Safe by design: only ever creates/refreshes symlinks it manages; a real
 # (non-symlink) folder of the same name is left untouched and reported.
 
@@ -64,6 +67,17 @@ if compgen -G "$REPO_DIR/agents/*/AGENT.md" > /dev/null; then
     ln -sfn "$src" "$dest"
     echo "  ✓ $name → $AGENT_TARGET"; linked=$((linked+1))
   done
+fi
+
+# The chat-time voice lint (PRD 16.2). crux is meant to run in the background without the
+# researcher ever seeing its ids or its vocabulary; the rules for that live in the skill and
+# were shown, twice, not to hold on their own. This registers the check that measures them.
+# Idempotent, and it preserves every unrelated key in the settings file it edits.
+if python3 "$REPO_DIR/skills/crux/scaffold/crux.py" voice --install-hook; then
+  :
+else
+  echo "  ! could not register the voice hook — run it by hand: ./crux voice --install-hook" >&2
+  skipped=$((skipped+1))
 fi
 
 echo "== crux: $linked linked, $skipped skipped =="

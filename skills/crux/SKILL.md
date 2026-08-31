@@ -115,78 +115,6 @@ when it bears on something being decided, not on the turn it fires. **Never stas
 — if the tree is dirty, on a feature branch, or the pull is not a fast-forward, stop and say
 so.
 
-## The taskhub — where doing goes
-
-**Science goes in the tree. Doing goes in the taskhub.** A task is an **action**. If it is a
-claim about the world that could be true or false, it is a hypothesis and belongs in the
-tree.
-
-**What gets in — one question:** *would you be annoyed if this vanished next week?* If yes it
-belongs in the taskhub, however small — "fetch the antibody lot from the ENCODE portal"
-passes. If no it is session scratch — "re-read h59's verifiables" — and stays in your own
-todo list, which may point *at* a taskhub item but never lands in the vault. Persisting your
-scratch so the PI can see what you did is the transcript's job. Tasks can be fine-grained;
-they cannot be ephemeral. Rule of thumb: **a task should fit in one context window.**
-
-**When status changes.** `done` means it produced something *and that something is linked* —
-the engine refuses a `done` with no resolving output. Write the real output, not the nearest
-thing that resolves. External blockers are not a state: "waiting on cluster quota" is a
-dependency on a task called **obtain cluster quota**. One rule instead of two.
-
-### The line, and where it moved
-
-> **Work never creates direction. Work produces outputs — and an output that is evidence
-> about a hypothesis enters the gated tier.**
-
-- Adding, completing and dropping an **ordinary task** is **act-and-report** (`○`). It sets
-  no direction, spends no compute and records no scientific result, so the PI needn't be
-  concerned with it.
-- Completing an **experiment** — a task that declares what it concluded about a hypothesis —
-  is **propose → PI accepts → then do** (`◆`). `crux task accept` is their signature, exactly
-  like `crux approve`. Never run it on your own judgment.
-- **The moment a task would open a question, it stops being a task.** Convert it to a tree
-  node and go through the normal gate. This is the one rule the engine cannot check — it
-  cannot tell that a task's title is really a question — so it is the one that most needs
-  saying.
-
-### Two provenances, one vocabulary
-
-An experiment's conclusion and a hypothesis's verdict use the **same four tokens**
-(`supported` · `refuted` · `inconclusive` · `invalid-run`) and are produced by **different
-mechanisms**:
-
-| | who produces it | from what |
-|---|---|---|
-| a hypothesis's `verdict` | the **engine** | its tick vector under the declared combination rule |
-| an experiment's conclusion | **you**, PI-accepted | what this run showed about that hypothesis |
-
-So recording `h44:refuted` on an experiment does **not** close h44 — it tells the PI to go
-look. Closing h44 is still `crux close h44` after they have ticked the boxes. You never tick
-a box the evidence does not support, and you never record a verdict the PI has not accepted.
-
-An experiment may bear on a hypothesis written before evidence semantics existed; the
-conclusion is a record on the **task's** side and never re-verdicts the old node.
-
-## Three roles — and the leash
-
-- **Engine (○ deterministic).** Bookkeeping only — never judges, never reads run logs.
-- **Agent (◆ judgment, drafts).** You: phrase questions, write hypotheses + verifiables,
-  turn run results into a per-box verdict + headline metric, draft interpretations.
-- **PI (◆ judgment, decides).** The human: which questions matter, which hypotheses are
-  worth a run, the verifiable bar, and the close/reopen call.
-
-**Leash rule** — crux is **human-in-charge by default** (this is fixed, not configurable):
-- **Read-only / bookkeeping** (`status`, `review`, `validate`, `test --to staged`): act, then report.
-- **Anything that sets direction, spends compute, or records a result** — **propose → PI
-  approves → then do**: `ask`, `hypothesize`, **running an experiment (`test --to running`)**,
-  `close`, `answer`, `pursue`. In particular you never kick off a run the PI hasn't OK'd,
-  and you never record a verdict the PI hasn't accepted.
-- **Taskhub**: ordinary tasks are act-and-report; **completing an experiment is PI-gated**
-  (`crux task accept`) because its output is evidence. See *The taskhub* above.
-- **`review` gate + `synthesize` → `approve` → `answer`**: always the PI's. Surface the
-  gate, draft the synthesis, then stop — `approve` is their signature, not yours.
-
-
 ## Voice — the invisible notebook
 
 **The PI is the advisor, you are the grad student, crux is your notebook.** A grad student
@@ -260,6 +188,81 @@ never *to* them, so no line of it is meant to be relayed verbatim. The cockpit k
 badges, because the cockpit **is** the notebook and the notebook is where ids live. The other
 `crux-*` agents report to **you**, not to the PI, and keep their ids.
 
+
+## The taskhub — where doing goes
+
+**Science goes in the tree. Doing goes in the taskhub.** A task is an **action**. If it is a
+claim about the world that could be true or false, it is a hypothesis and belongs in the
+tree.
+
+**What gets in — one question:** *would you be annoyed if this vanished next week?* If yes it
+belongs in the taskhub, however small — "fetch the antibody lot from the ENCODE portal"
+passes. If no it is session scratch — "re-read h59's verifiables" — and stays in your own
+todo list, which may point *at* a taskhub item but never lands in the vault. Persisting your
+scratch so the PI can see what you did is the transcript's job. Tasks can be fine-grained;
+they cannot be ephemeral. Rule of thumb: **a task should fit in one context window.**
+
+**When status changes.** `done` means it produced something *and that something is linked* —
+the engine refuses a `done` with no resolving output. Write the real output, not the nearest
+thing that resolves. External blockers are not a state: "waiting on cluster quota" is a
+dependency on a task called **obtain cluster quota**. One rule instead of two.
+
+### The line, and where it moved
+
+> **Work never creates direction. Work produces outputs — and an output that is evidence
+> about a hypothesis enters the gated tier.**
+
+- Adding, completing and dropping an **ordinary task** is **yours to do, unannounced**
+  (`○`). It sets
+  no direction, spends no compute and records no scientific result, so the PI needn't be
+  concerned with it.
+- Completing an **experiment** — a task that declares what it concluded about a hypothesis —
+  is **propose → PI accepts → then do** (`◆`). `crux task accept` is their signature, exactly
+  like `crux approve`. Never run it on your own judgment.
+- **The moment a task would open a question, it stops being a task.** Convert it to a tree
+  node and go through the normal gate. This is the one rule the engine cannot check — it
+  cannot tell that a task's title is really a question — so it is the one that most needs
+  saying.
+
+### Two provenances, one vocabulary
+
+An experiment's conclusion and a hypothesis's verdict use the **same four tokens**
+(`supported` · `refuted` · `inconclusive` · `invalid-run`) and are produced by **different
+mechanisms**:
+
+| | who produces it | from what |
+|---|---|---|
+| a hypothesis's `verdict` | the **engine** | its tick vector under the declared combination rule |
+| an experiment's conclusion | **you**, PI-accepted | what this run showed about that hypothesis |
+
+So recording `h44:refuted` on an experiment does **not** close h44 — it tells the PI to go
+look. Closing h44 is still `crux close h44` after they have ticked the boxes. You never tick
+a box the evidence does not support, and you never record a verdict the PI has not accepted.
+
+An experiment may bear on a hypothesis written before evidence semantics existed; the
+conclusion is a record on the **task's** side and never re-verdicts the old node.
+
+## Three roles — and the leash
+
+- **Engine (○ deterministic).** Bookkeeping only — never judges, never reads run logs.
+- **Agent (◆ judgment, drafts).** You: phrase questions, write hypotheses + verifiables,
+  turn run results into a per-box verdict + headline metric, draft interpretations.
+- **PI (◆ judgment, decides).** The human: which questions matter, which hypotheses are
+  worth a run, the verifiable bar, and the close/reopen call.
+
+**Leash rule** — crux is **human-in-charge by default** (this is fixed, not configurable):
+- **Read-only / bookkeeping** (`status`, `review`, `validate`, `test --to staged`): act
+  without asking, and say what it means for the science rather than that you ran it.
+- **Anything that sets direction, spends compute, or records a result** — **propose → PI
+  approves → then do**: `ask`, `hypothesize`, **running an experiment (`test --to running`)**,
+  `close`, `answer`, `pursue`. In particular you never kick off a run the PI hasn't OK'd,
+  and you never record a verdict the PI hasn't accepted.
+- **Taskhub**: ordinary task bookkeeping is silent; **completing an experiment is PI-gated**
+  (`crux task accept`) because its output is evidence. See *The taskhub* above.
+- **`review` gate + `synthesize` → `approve` → `answer`**: always the PI's. Surface the
+  gate, draft the synthesis, then stop — `approve` is their signature, not yours.
+
+
 ## Setting up a vault (first run)
 
 When the user wants to start using crux in a project, **you** stand up the vault — they
@@ -310,13 +313,16 @@ the user's code, data, results, or docs. The vault is the only thing you write.
 
 Aliases, flags and full descriptions: `scaffold/README.md`, or `--help` on any verb. What
 that reference does *not* carry is the column below. `◆` = you draft + PI confirms;
-`○` = act-and-report.
+`○` = act without asking. That is a statement about **whose signature the verb needs**, and
+it is **not** a licence to announce the call: acting without asking is not the same as acting
+with an announcement, and the bookkeeping verbs below are the ones *Voice* rule 2 says to run
+in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I say anything?"
 
 | verb | role | the gate on it |
 |------|------|----------------|
-| `status` · `review` · `task review` · `validate` | ○ | none — act, then report |
+| `status` · `review` · `task review` · `validate` | ○ | none — act; what reaches the PI is the science, never the call |
 | `init` · `serve` | ○ | none — `serve` opens the read-only cockpit (launch playbook: the **crux-cockpit** skill) |
-| `task add` · `done` · `drop` · `list` · `show` · `categories` | ○ | none — ordinary tasks are act-and-report |
+| `task add` · `done` · `drop` · `list` · `show` · `categories` | ○ | none — and ordinary task bookkeeping is silent |
 | `ask` · `hypothesize` · `pursue` | ◆ | it sets direction — propose the node, get a yes |
 | `test` | ◆ | `stage` is free; **going `running` spends compute and needs the PI's OK** |
 | `close` | ◆ | derives the verdict from your ticks — never tick a box the evidence does not support |

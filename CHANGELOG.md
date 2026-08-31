@@ -6,6 +6,43 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Science voice, enforced instead of stated** ([PRD 16.2](docs/prd/16.2-voice-enforcement.md),
+  spec 16). The PI reported crux's own ids reaching conversation — `t81` — for the second
+  time. Two causes, both in the repo. **`skills/crux/SKILL.md` contradicted itself:** voice
+  rule 2 says bookkeeping is silent, while `○ = act-and-report` told the agent, in five
+  places over exactly those verbs, to announce it — so the agent filed a task, read "report
+  it", and reported it with the only handle it had. The `○`/`◆` glyph carried the
+  **signature** axis (does this need the PI's yes?) and spec 16 added an independent
+  **disclosure** axis (do I say anything?); the two had collapsed onto one symbol. They are
+  now separate: "act-and-report" is gone, the legend denies the second reading, and the
+  Voice section moved above the table that used to contradict it. **And nothing checked the
+  voice at chat time:** `voice_lint` shipped with its consumers named as the persona eval
+  and selftest, so it graded shipped fixtures in CI and never a live session. It now also
+  runs live.
+  - **`crux voice`** — a new read-only verb. `--turns <json>` lints a conversation (exit 1
+    on a finding, like every other crux lint); `--hook` reads a Claude Code `PostToolUse`
+    payload on stdin, parses the session transcript into turns, and returns any leak on the
+    **newest agent turn** as hook context; `--install-hook` registers it idempotently,
+    preserving every unrelated key in the settings file. Registered by `install.sh` and
+    checked by `crux doctor` (a `warn` when absent — crux runs fine with no agent anywhere).
+  - Tool-use and tool-result blocks are excluded from the turns, and that exclusion is the
+    load-bearing part: a receipt reading `✓ t81  (tasks/t81_x.md)` is not the PI saying
+    `t81`, and counting it as one would license every id in the vault forever. Injected
+    `<system-reminder>` blocks and subagent sidechains are dropped for the same reason.
+  - Every id-minting verb (`ask`, `hypothesize`, `task add`, `synthesize`, `rd`) now prints
+    the chat-safe handle beside the id it just allocated. A prohibition removes the wrong
+    answer; the agent still needs *a* handle for what it just filed, and the id was the
+    nearest one in context.
+  - Honest limit, stated once: a `PostToolUse` hook fires *after* the message it judges, so
+    the hook catches the repetition, not the first leak. The receipt line is the preventive
+    half; the hook is the measurement half.
+  - `voice_lint` gains `report_from`, which scopes the report without touching the
+    cumulative licensing — re-reporting turn 3's slip on every later tool call would turn
+    the signal into wallpaper. No vault-format change, so `ENGINE_VERSION` is unchanged and
+    there is no migration.
+
 ### Added
 
 - **`crux doctor`** — a deterministic install + drift health check. Answers "is this
