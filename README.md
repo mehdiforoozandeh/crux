@@ -61,19 +61,6 @@ the vault behind the screenshots below): pan the status-colored tree, open h1's 
 ledger and its rendered **report with figures**, flip to the **Wiki** tab for the literature
 graph. (Port taken? `--port 8890`.)
 
-## Why not just a doc, Notion, or W&B?
-
-Those hold notes, a graph, and run logs. crux adds what they don't:
-
-| Your current setup | What crux adds on top |
-|---|---|
-| **Obsidian / Notion** — notes + a link graph | a **question → hypothesis** structure the engine keeps consistent, and rolls findings up automatically |
-| **A spreadsheet / lab notebook** | **pass/fail bars you lock in _before_ the run**, and a **mechanical verdict** derived from them — no post-hoc goalpost-moving |
-| **W&B / MLflow** — run logs & metrics | a human **review gate** and evidence roll-up across many parallel hypotheses; crux sits **beside** your tracker, not on top of it |
-
-It's plain markdown, written only under `cruxvault/` — non-destructive, Obsidian-compatible,
-and able to migrate a repo you already have.
-
 ## The cockpit
 
 Your vault opens in **Obsidian**, but crux has a purpose-built home for it. **`crux serve`**
