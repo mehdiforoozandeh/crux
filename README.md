@@ -9,12 +9,12 @@ p-hacked or forgotten across dozens of experiments. The agent runs the loop;
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-hero-dark.gif">
-    <img src="assets/crux-hero-light.gif" width="860" alt="One hypothesis — 'Twice the data beats a better model' — with three pre-registered verifiables ticking off one at a time until the verdict 'supported' falls out of them; a gutter marks who owns each part (you write the hypothesis and the verifiables, the agent runs it and checks each bar, the verdict is derived). The view then pulls back: that hypothesis is one of three under a question, colored supported / partial / refuted, over the caption 'a question holds hypotheses; a hypothesis holds verifiables'. The question is then one of many in a research programme that grows across the frame, and finally the programme's open questions resolve into the Southern Cross of the Crux mark.">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-chat-dark.gif">
+    <img src="assets/crux-chat-light.gif" width="860" alt="A split screen. On the left, a scientist and an agent talk about an experiment in ordinary language — the scientist states a question and a guess, the agent reports what the nearest prior work did and did not rule out, the scientist names the two outcomes that would settle it and says to run it. On the right, a cockpit fills itself in as they talk: a question, a hypothesis and two checks appear on a tree with their tick boxes still empty, a literature graph of papers and areas, then a task list working through a plan. When the run comes back the agent reports only what the data did — one check green, one red — and the hypothesis is marked refuted only after the scientist says it is dead. Nobody types on the cockpit side; a caption reads 'the agents maintain this notebook, the human only talks science'.">
   </picture>
 </p>
 
-<p align="center"><sub><em>The model.</em> A Project holds Questions; Questions hold falsifiable Hypotheses, each with verifiables written down <em>before</em> the run — so the verdict is derived from the boxes you set, not argued from the number that came back. You decide what to ask; the agent does the legwork; nothing gets quietly dropped.</sub></p>
+<p align="center"><sub><em>You talk science; the notebook fills.</em> The conversation never mentions crux. On the right, agents keep the science tree, the literature wiki and the task list in step with the talk — checks written down <em>before</em> the run, so the verdict is derived from the bar you set, not argued from the number that came back. The agent supplies the evidence; the verdict is yours.</sub></p>
 
 Months in, can you still say what you asked, what you tested, and whether each question is
 settled? `crux` keeps that explicit:
@@ -105,91 +105,6 @@ literature → wiki → tree.
 </p>
 
 <p align="center"><sub>The <b>literature wiki</b> as crux's own knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources.</sub></p>
-
-## Driving crux
-
-The cockpit **shows**; the agent **drives**. You never edit `cruxvault/` by hand or memorize
-the engine's verbs — you talk to your agent, it runs the engine, and **you approve**.
-
-**Two ways in.** Tell your agent to set up crux in your repo; a short interview stands up
-the vault one of two ways:
-
-- **New project** — describe the idea (or point it at a proposal or draft paper). It drafts your first question and a hypothesis or two.
-- **Migrate an existing repo** — months of code and results on disk? It *reads* them and reconstructs what was **asked, tested, and found**, pinning already-run hypotheses with the verdicts they earned. It writes only under `cruxvault/` and **never touches your files**.
-
-Either way you approve **one seed outline** and the engine materializes the whole notebook
-at once — here with a **fresh** hypothesis and a **migrated** `[tested]` one:
-
-```
-- Project: SegSSL — label-efficient segmentation
-  - Q: Does SSL pretraining beat supervised ImageNet init?
-    - H: iBOT+UPerNet beats supervised init                       # fresh — an idea to run
-      - v: ADE20K val mIoU ≥ supervised + 2.0 (3-seed mean)
-    - H: [tested] MAE beats supervised only under full fine-tuning # migrated — already-run work
-      - v: [x] ADE20K mIoU ≥ +1.5 (found: +1.8 full-FT; −6.7 linear-probe)
-      - finding: partial — wins under full FT, collapses when frozen.
-```
-```bash
-crux init --from seed.md --dir cruxvault
-```
-
-That seed grows into a months-long program — [segssl_vault](skills/crux/examples/segssl_vault)
-runs **5 questions and 16 hypotheses** deep.
-
-**The loop.** One rhythm: you ask, the agent proposes a hypothesis with a **bar locked
-_before_ the run**, you approve, it runs and reports, you sign off, a verdict lands.
-
-And it talks to you in **science** — never in its own filing system. You are the advisor;
-the agent is the grad student; crux is the grad student's notebook. A grad student doesn't
-say "q19 is solved":
-
-```text
-you    Does self-supervised pretraining beat supervised ImageNet init for
-       segmentation transfer — same encoder, same decoder, full labels?
-crux   Nothing we've run settles that yet. Let me put one testable claim under it
-       — iBOT+UPerNet beats supervised init — and fix what would count as beating
-       it, before anything runs:
-         • ADE20K val mIoU ≥ supervised + 2.0     (3-seed mean)
-         • Cityscapes val mIoU ≥ supervised + 1.0 (3-seed mean)
-         • the gain holds in all 3 seeds
-       Are those the right bars?
-you    Yes.                        ← sign-off 1 · the bar, before it runs
-crux   Running — slurm 83612 (wandb segssl/ibot-vs-sup).
-       …
-crux   Back: +3.3 mIoU ADE20K (49.6 vs 46.3), +1.5 Cityscapes (80.6 vs 79.1),
-       and the gain held in all three seeds — all three bars met. So on this
-       comparison self-supervised init wins. Do you buy it?
-you    Signed off.                 ← sign-off 2 · the result, before it counts
-crux   Recorded. iBOT/DINO is the SegSSL default from here.
-```
-
-Everything got filed while you talked, and none of the filing reached the conversation. Ask
-to see the notebook — "show me the tree" — and the ids, statuses and structure are all
-there, with the cockpit one click away. That exchange above is a handful of commands end to
-end, and you never typed one:
-
-```bash
-crux ask "Does SSL pretraining beat supervised ImageNet init for segmentation transfer?"  # opens q1
-crux hypothesize "iBOT+UPerNet beats supervised init" -p q1 \
-     -v "ADE20K val mIoU ≥ supervised + 2.0 (3-seed mean)"                                 # h1, bar locked
-crux test h1 --run "slurm 83612 (wandb segssl/ibot-vs-sup)"                             # idea → running
-crux close h1 -m "+3.3 mIoU ADE20K, +1.5 mIoU Cityscapes"                                  # verdict from ticked boxes
-crux serve                                                                                 # open the read-only cockpit
-```
-
-**The verdict is mechanical.** `crux close` reads the checkboxes (`[x]` met · `[ ]` unmet ·
-`[-]` n/a) and derives `supported` / `partial` / `refuted` / `inconclusive`. The engine
-**never reads your run logs**, and the bar was fixed before the run, so there's no goalpost
-left to move: h1 ticked all three → **supported**; MAE's h2 met one of three → **partial**,
-not a rounded-up win; h3's DenseCL landed **refuted**, recorded so you never re-run a dead
-end. What the run produced goes under `## Artifacts` (`results/<id>/`), and `crux validate`
-speaks up when results sit on disk with no report linked.
-
-**A question closes on a synthesis, not a status flip.** Once every child is terminal the
-question trips the **review gate**: the agent drafts a synthesis, *you* approve it
-(`crux approve`), and only then can `crux answer` resolve the question. Two sign-offs per
-hypothesis, one per question. Seed spec:
-[`skills/crux/scaffold/README.md`](skills/crux/scaffold/README.md).
 
 ## License
 
