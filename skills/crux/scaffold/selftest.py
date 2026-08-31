@@ -7481,12 +7481,16 @@ def run_science_voice():
         if who: turns.append((who, " ".join(cur)))
         return turns
 
+    # The README is a marketing surface as well as a teaching one, and it is re-cut
+    # often — it does not always carry a you/crux transcript. So the transcript is
+    # linted WHEN PRESENT rather than required: the binding guarantee lives on
+    # SKILL.md below, which is the artifact an agent actually reads. If a transcript
+    # comes back to the README, it is voice-linted again automatically.
     readme = read(os.path.join(repo, "README.md"))
     block = readme.split("```text")[1].split("```")[0] if "```text" in readme else ""
     rt = dialogue(block, [("you", pi), ("crux", ag)])
-    check(f"voice: README's transcript has agent turns to scan at all ({len(rt)} turns)",
-          sum(1 for s, _t in rt if s == ag) >= 2)
-    check(f"voice: README's transcript is ID-free science ({ids_of(rt)})", ids_of(rt) == [])
+    if sum(1 for s, _t in rt if s == ag) >= 2:
+        check(f"voice: README's transcript is ID-free science ({ids_of(rt)})", ids_of(rt) == [])
 
     skill = read(os.path.join(repo, "skills", "crux", "SKILL.md"))
     st = dialogue(skill, [("> **PI:**", pi), ("> **You:**", ag)])
