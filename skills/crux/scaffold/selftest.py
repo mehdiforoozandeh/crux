@@ -7723,6 +7723,207 @@ def run_cli_third_person():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def run_voice_enforcement():
+    """Spec 16 PRD 16.2 — the voice rules, enforced where they were only stated.
+
+    16.1 landed the rules and the lint and the leak survived, twice. This suite pins the
+    three mechanisms that replace "the modeled dialogues will bind":
+
+      A  the skill stops contradicting itself — `act-and-report` told the agent to announce
+         exactly the bookkeeping voice rule 2 says to do in silence
+      B  the receipt that mints an id also hands over the handle to use instead of it
+      C  `voice_lint` runs at CHAT time, against the live transcript, instead of only over
+         shipped fixtures in CI
+
+    C's honest limit is asserted too: a hook fires AFTER the message it is judging, so it
+    catches the repetition rather than the first leak. That is why B exists."""
+    print("\n# science voice — enforced, not just stated (spec 16, PRD 16.2)")
+    crux = os.path.join(HERE, "crux.py")
+    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+
+    def run(argv, cwd=None, stdin=None):
+        return subprocess.run([sys.executable, crux] + argv, capture_output=True, cwd=cwd,
+                              input=stdin, encoding="utf-8", errors="replace")
+
+    # ---- A · the contradiction. `○` was the SIGNATURE axis (does this need the PI's yes?);
+    #      spec 16 added the DISCLOSURE axis (do I say anything?) and the two collapsed onto
+    #      one glyph, so "act-and-report" ended up instructing the announcement that rule 2
+    #      forbids. The phrase is the defect; its absence is the fix.
+    check("voice: SKILL.md no longer tells the agent to report its bookkeeping",
+          "act-and-report" not in skill and "act, then report" not in skill)
+    check("voice: ... and the ○ legend denies the second reading it used to invite",
+          re.search(r"`○`\s*=\s*act without asking", skill)
+          and re.search(r"not.{0,40}announc", skill, re.I))
+    # Order is load-bearing: the rule has to be read before the table that contradicted it.
+    check("voice: the Voice section is read before the first ○ in the file",
+          skill.index("## Voice — the invisible notebook") < skill.index("○"))
+
+    # ---- B · the handle. The agent reaches for `t81` partly because it needs SOME handle
+    #      and the id is the nearest one in context. Hand over the substitute at the moment
+    #      the id is minted.
+    check("voice: the engine has one chat-handle line, so every verb prints the same shape",
+          'in chat' in E.chat_handle("t81", "fetch the antibody lot")
+          and "fetch the antibody lot" in E.chat_handle("t81", "fetch the antibody lot")
+          and "t81" in E.chat_handle("t81", "fetch the antibody lot"))
+
+    root = tempfile.mkdtemp(prefix="crux_voice_")
+    try:
+        run(["init", "Voice Project"], cwd=root)
+        vault = os.path.join(root, "cruxvault")
+        minted = {}
+        minted["ask"] = run(["ask", "does more data beat a better model"], cwd=vault).stdout
+        qid = re.search(r"✓ (q\d+)", minted["ask"]).group(1)
+        minted["hypothesize"] = run(["hypothesize", "doubling the data wins on held-out",
+                                     "--parent", qid, "-v", "imp-Spearman >= +0.01"],
+                                    cwd=vault).stdout
+        hid = re.search(r"✓ (h\d+)", minted["hypothesize"]).group(1)
+        minted["task add"] = run(["task", "add", "fetch the antibody lot",
+                                  "--category", "data-acquisition", "--blocked-by", "None"],
+                                 cwd=vault).stdout
+        minted["synthesize"] = run(["synthesize", "what the data question settled",
+                                    "--for", qid], cwd=vault).stdout
+        minted["rd"] = run(["rd", hid, "the sweep design"], cwd=vault).stdout
+        titles = {"ask": "does more data beat a better model",
+                  "hypothesize": "doubling the data wins on held-out",
+                  "task add": "fetch the antibody lot",
+                  "synthesize": "what the data question settled",
+                  "rd": "the sweep design"}
+        bad = sorted(v for v, out in minted.items()
+                     if "in chat" not in out or titles[v] not in out)
+        check(f"voice: every id-minting verb hands over the chat handle beside the id ({bad})",
+              len(minted) == 5 and not bad)
+        SECOND = re.compile(r"\b(you|your|yours|you're)\b", re.I)
+        hits = sorted(v for v, out in minted.items() if SECOND.search(out))
+        check(f"voice: ... and the new line keeps the CLI's third person ({hits})", not hits)
+
+        # ---- C · the lint at chat time. Same `voice_lint`, new consumer.
+        def turns_file(turns):
+            p = os.path.join(root, "turns.json")
+            with open(p, "w", encoding="utf-8") as f: json.dump(turns, f)
+            return p
+
+        leak = turns_file([["pi", "did the extra data actually help?"],
+                           ["agent", f"{hid} is refuted — the review gate is open."]])
+        r = run(["voice", "--turns", leak], cwd=vault)
+        check("voice: --turns reports a leaked id and a leaked crux term",
+              r.returncode == 1 and "voice:node-id" in r.stdout
+              and "voice:crux-term" in r.stdout)
+        clean = turns_file([["pi", "did the extra data actually help?"],
+                            ["agent", "the doubled-data arm cleared the bar we set."]])
+        r = run(["voice", "--turns", clean], cwd=vault)
+        check("voice: ... and says nothing at all on a clean conversation",
+              r.returncode == 0 and not r.stdout.strip())
+        mirrored = turns_file([["pi", f"what's up with {hid}?"],
+                               ["agent", f"{hid} is refuted."]])
+        r = run(["voice", "--turns", mirrored], cwd=vault)
+        check("voice: ... and the mirror rule still licenses what the PI said first",
+              r.returncode == 0 and not r.stdout.strip())
+
+        # A transcript is not a conversation: tool results are where the ids legitimately
+        # live, and counting one as the PI speaking would license every id in the vault.
+        def transcript(lines):
+            p = os.path.join(root, "t.jsonl")
+            with open(p, "w", encoding="utf-8") as f:
+                for l in lines: f.write(json.dumps(l) + "\n")
+            return p
+
+        def hook(tpath, command="crux task add x", cwd=vault):
+            payload = {"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": command},
+                       "transcript_path": tpath, "cwd": cwd}
+            return run(["voice", "--hook"], cwd=vault, stdin=json.dumps(payload))
+
+        user = lambda t: {"type": "user", "message": {"role": "user",
+                          "content": [{"type": "text", "text": t}]}}
+        asst = lambda t: {"type": "assistant", "message": {"role": "assistant",
+                          "content": [{"type": "text", "text": t}]}}
+        result = lambda t: {"type": "user", "message": {"role": "user",
+                            "content": [{"type": "tool_result", "content": t}]}}
+
+        r = hook(transcript([user("did the extra data help?"),
+                             result(f"✓ {hid}  (vault/{hid}_x.md)"),
+                             asst(f"{hid} came out refuted.")]))
+        out = json.loads(r.stdout) if r.stdout.strip() else {}
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        check("voice: --hook flags an id the agent used and the PI never did",
+              r.returncode == 0 and hid in ctx and "voice:node-id" in ctx)
+        check("voice: ... and a tool result full of ids never counts as the PI speaking",
+              "additionalContext" in json.dumps(out))
+
+        r = hook(transcript([user("did the extra data help?"),
+                             asst("the doubled-data arm cleared the bar.")]))
+        check("voice: --hook is silent when the newest turn is clean",
+              r.returncode == 0 and not r.stdout.strip())
+
+        # Cumulative licensing, turn-scoped reporting: without this, one old slip re-fires on
+        # every later tool call and the signal is noise inside a minute.
+        r = hook(transcript([user("did it help?"),
+                             asst(f"{hid} is refuted."),
+                             user("ok, and the other arm?"),
+                             asst("the equal-compute rerun cut the gain to 0.4.")]))
+        check("voice: --hook reports only the newest agent turn, never the whole backlog",
+              r.returncode == 0 and not r.stdout.strip())
+
+        r = hook(transcript([user("did it help?"), asst(f"{hid} is refuted.")]),
+                 command="ls -la")
+        check("voice: --hook ignores a tool call that was not a crux command",
+              r.returncode == 0 and not r.stdout.strip())
+
+        # A hook that breaks a session is strictly worse than the leak it was added to catch.
+        for name, stdin_, tp in (("malformed json", "{not json", None),
+                                 ("empty stdin", "", None),
+                                 ("missing transcript", None, os.path.join(root, "nope.jsonl"))):
+            r = (run(["voice", "--hook"], cwd=vault, stdin=stdin_) if tp is None
+                 else hook(tp))
+            check(f"voice: --hook survives {name} — exit 0, no output",
+                  r.returncode == 0 and not r.stdout.strip())
+
+        # Glossary graduation, spec 14's flow reused: a term the PI accepted is theirs to
+        # hear from turn zero, with no PI turn needed to license it.
+        E.cmd_glossary_accept(vault, "review gate", "the point where a question waits on me")
+        r = run(["voice", "--turns", turns_file(
+            [["pi", "anything need me?"], ["agent", "the review gate is open on the data question."]])],
+            cwd=vault)
+        check("voice: a glossary-graduated crux term is licensed from turn zero",
+              r.returncode == 0 and "voice:crux-term" not in r.stdout)
+
+        # ---- C · registration. Idempotent, and it must not eat a settings file it found.
+        sp = os.path.join(root, "settings.json")
+        with open(sp, "w", encoding="utf-8") as f:
+            json.dump({"model": "opus", "hooks": {"PreToolUse": [{"matcher": "Write"}]}}, f)
+        run(["voice", "--install-hook", "--settings", sp])
+        run(["voice", "--install-hook", "--settings", sp])
+        cfg = json.loads(read(sp))
+        posts = cfg.get("hooks", {}).get("PostToolUse", [])
+        entries = [h for g in posts for h in g.get("hooks", [])
+                   if "voice --hook" in h.get("command", "")]
+        check("voice: --install-hook is idempotent — twice run, one entry",
+              len(entries) == 1)
+        check("voice: ... and unrelated settings survive it",
+              cfg.get("model") == "opus"
+              and cfg.get("hooks", {}).get("PreToolUse") == [{"matcher": "Write"}])
+        check("voice: ... and it registers on PostToolUse over Bash",
+              any(g.get("matcher") == "Bash" for g in posts
+                  if any("voice --hook" in h.get("command", "") for h in g.get("hooks", []))))
+
+        # ---- C · doctor. Absent is a WARN: crux runs fine by hand with no agent anywhere,
+        #      which is exactly the state `_doctor_skills` already refuses to call broken.
+        rep = E.cmd_doctor(root=vault, settings_paths=[os.path.join(root, "absent.json")])
+        hookchk = [c for c in rep["checks"] if c["name"] == "voice-hook"]
+        check("voice: doctor carries a voice-hook check", len(hookchk) == 1)
+        check("voice: ... which warns rather than fails when the hook is not registered",
+              hookchk and hookchk[0]["level"] == "warn" and hookchk[0]["fix"])
+        rep = E.cmd_doctor(root=vault, settings_paths=[sp])
+        hookchk = [c for c in rep["checks"] if c["name"] == "voice-hook"]
+        check("voice: ... and reports ok once it is",
+              hookchk and hookchk[0]["level"] == "ok")
+
+        check("voice: install.sh registers the hook",
+              "voice --install-hook" in read(os.path.join(HERE, "..", "..", "..", "install.sh")))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def run_persona_eval():
     """Spec 16 — the persona eval, a PERMANENT fixture class rather than an acceptance run.
 
@@ -8005,7 +8206,7 @@ def run_doctor():
               r.returncode in (0, 1) and "vault" not in names and "migrate" not in names)
         check("doctor: no vault means no traceback", "Traceback" not in r.stderr)
         check("doctor: the install checks still all ran",
-              names == ["python", "engine", "skills", "agents", "version"])
+              names == ["python", "engine", "skills", "agents", "voice-hook", "version"])
 
         # -- the exit code IS the contract: warns are scriptable, a fail is not.
         before_cli = _byte_map(drift)
@@ -8081,6 +8282,7 @@ def main():
     run_science_voice()
     run_situate_title_anchor()
     run_cli_third_person()
+    run_voice_enforcement()
     run_persona_eval()
     run_glossary()
     run_glossary_migration()

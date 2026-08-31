@@ -1,8 +1,8 @@
 {
  "fixture": "persona-01",
  "agent": "crux",
- "agent_sha": "911d21856dc27bb2c86e901de0b22bb7d7eb670581d38efa8a1912bd58462d2a",
- "_note": "CANNED — the session spec 16 is asking for: the persona never says a crux word, and neither does the agent, while the notebook is kept underneath. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider.",
+ "agent_sha": "0149be95b52389ffeb1d535db848aa66296f190530dca71feb0d8380ea28dd2e",
+ "_note": "CANNED — the session spec 16 is asking for: the persona never says a crux word, and neither does the agent, while the notebook is kept underneath. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider.",
  "transcript": [
   {
    "speaker": "pi",
