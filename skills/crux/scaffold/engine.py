@@ -75,7 +75,7 @@ ENGINE_VERSION = "3.2"          # bumped when verdict/roll-up/view logic or vaul
                                 # and read-only: `voice_lint` + `CRUX_LEXICON` (the mirror
                                 # rule as code, consumed by the evals) and `gate_relation`
                                 # (the relevance gate, annotated onto `review --near`).
-CRUX_VERSION = "0.6.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+CRUX_VERSION = "0.7.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"

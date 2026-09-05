@@ -6,6 +6,8 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-05
+
 ### Fixed
 
 - **Science voice, enforced instead of stated** ([PRD 16.2](docs/prd/16.2-voice-enforcement.md),
