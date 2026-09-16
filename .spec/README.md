@@ -28,11 +28,12 @@ being built — do not implement)
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
 retired**: it merged into [05](05-autopilot.md), because both were unattended loops needing
-the same runner, budget cap and autonomy envelope. **Both are deferred** — see below.
+the same runner, budget cap and autonomy envelope. ERA survives inside 05 as the selection
+rule and the inner search; see below.
 
 ## What to build, and what not to
 
-**No spec is `☐ todo`. Two are `◐ in progress` — 08 and 15** — and they are the work.
+**No spec is `☐ todo`. Three are `◐ in progress` — 05, 08 and 15** — and they are the work.
 (11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
 2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
 slots, and the `crux-situate` / `crux-design` agents. 10 landed 2026-08-16 as a **zero-bump**
@@ -40,11 +41,13 @@ epic — ten certified fixtures, a scorer that never invokes an agent, and a mut
 with its pass bands deliberately left `unset` for the PI. Statuses above are the authority; this
 paragraph follows them.)
 
-**Do not implement 05.** ERA and the outer autoresearch loop are `⏸ deferred` — designed, kept,
-deliberately unbuilt. Unattended loops are the riskiest thing crux could add, and they must not
-be built before the machinery that makes them safe exists: [15](15-evidence-semantics.md) is
-what stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) is
-what stops it grading its own homework.
+**05 is unparked (2026-09-16), renamed `autopilot`, and is now the work.** It was deferred on
+2026-08-15 on the grounds that unattended loops are the riskiest thing crux could add and must
+not be built before the machinery that makes them safe exists: [15](15-evidence-semantics.md)
+stops a loop banking a partial answer as a result, and [09](09-specialized-agents.md) stops it
+grading its own homework. Both shipped in v0.6.0, so the condition is met. 15 is the
+load-bearing one — it made a verdict a total function of (kinds, rule, pass/fail vector), which
+is what lets an attempt close unattended against a bar the PI signed in advance.
 
 (16 landed 2026-08-22 as engine 3.2: the mirror rule as code — `voice_lint` + a measured
 `CRUX_LEXICON` — a situate anchor that accepts a title, an engine-computed relevance gate on
