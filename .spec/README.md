@@ -12,7 +12,7 @@ being built — do not implement)
 | 01 | [Graphical UI for crux](01-gui-cockpit.md) | `ui` | ☑ |
 | 02 | [Marketing animation + README hero](02-marketing.md) | `marketing` | ☑ |
 | 03 | [LLM wiki](03-llm-wiki.md) | `wiki` | ☑ |
-| 05 | [Autoresearch: autonomous loops](05-autoresearch.md) | `autoresearch` | ⏸ |
+| 05 | [Autopilot: crux run unattended](05-autopilot.md) | `autopilot` | ◐ |
 | 06 | [Node economy](06-node-economy.md) | `economy` | ☑ |
 | 07 | [RD layer](07-rd-layer.md) | `rd` | ☑ |
 | 08 | [Taskhub — incl. experiments](08-taskhub.md) | `taskhub` | ◐ |
@@ -27,7 +27,7 @@ being built — do not implement)
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
-retired**: it merged into [05](05-autoresearch.md), because both were unattended loops needing
+retired**: it merged into [05](05-autopilot.md), because both were unattended loops needing
 the same runner, budget cap and autonomy envelope. **Both are deferred** — see below.
 
 ## What to build, and what not to
