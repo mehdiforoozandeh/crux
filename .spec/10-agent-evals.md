@@ -143,7 +143,7 @@ orchestrating **skill** rather than one of the isolated ten — the voice rules 
 
 ## PARKED — needs the PI, not decided here
 
-Seven items. Each would weaken the leash, reverse a ruling, or build [05](05-autoresearch.md)'s
+Seven items. Each would weaken the leash, reverse a ruling, or build [05](05-autopilot.md)'s
 deferred machinery. None is behind a flag; none is designed around.
 
 - **P1 — the model-invoking, K-run runner.** *This spec asks for one in plain words.* A program

@@ -2,7 +2,7 @@
 
 **Label:** `agents` · **Status:** ☑ done — built as PRDs 09.0–09.4 (engine 2.3→2.7); the roster ships in `agents/`, and 13 and 14 are unparked
 **Depends on:** [06 node economy](06-node-economy.md) (for the `--json` CLI surface)
-**Supersedes parts of:** [05 autoresearch](05-autoresearch.md)
+**Supersedes parts of:** [05 autopilot](05-autopilot.md)
 
 ## Goal
 
