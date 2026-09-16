@@ -1,8 +1,8 @@
 {
  "fixture": "persona-01",
  "agent": "crux",
- "agent_sha": "0149be95b52389ffeb1d535db848aa66296f190530dca71feb0d8380ea28dd2e",
- "_note": "CANNED — the inverse failure. Flawless science voice, and nothing was written down: silence is only a virtue when the notebook is being kept behind it. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider.",
+ "agent_sha": "6eba95da8b60c0c4a55e711939cb1a68b9827478421d60212680e16a2e9fcb81",
+ "_note": "CANNED — the inverse failure. Flawless science voice, and nothing was written down: silence is only a virtue when the notebook is being kept behind it. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider. RE-PINNED 2026-09-16 for PRD 05.0: SKILL.md gained two verb-table rows (auto check/brief, auto guide) and one note on hypothesize --builds-on; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged.",
  "transcript": [
   {
    "speaker": "pi",

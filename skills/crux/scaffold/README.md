@@ -36,6 +36,7 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 | `ingest` | source, add-source | register a PI-curated `raw/` source into the literature wiki |
 | `serve` | gui, ui, cockpit | open the read-only browser cockpit over the vault (localhost, view-only) |
 | `validate` | lint, check | run all integrity checks (tree + wiki lint, plus economy warnings) |
+| `auto` | autopilot | flight plans — `auto check` lints one, `auto brief` assembles the next attempt's brief, `auto guide` appends the PI's guidance (see **Autopilot**) |
 
 Every verb except `init`, `serve` and `selftest` takes `--json`, so a caller reads a result
 instead of parsing prose. `crux status --json` is the whole snapshot, `crux status q3 --json`
@@ -122,6 +123,34 @@ For a **`[tested]`** hypothesis the engine ticks the verifiables as written, rec
 finding, and **closes it** — deriving the verdict *mechanically* from the ticks (`[x]`
 met · `[ ]` unmet · `[-]` n/a). It never invents a verdict; you supply the ticks. Fresh
 (un-`[tested]`) hypotheses land as open `idea`s to run through the normal flow.
+
+## Autopilot (05.0)
+
+A **flight plan** is the standing contract for an automated search under one anchor question.
+It lives at `auto/<qid>/plan.md` — outside the node tree, so it is never itself a node — and
+it is an ordinary crux document: flat frontmatter (`anchor`, `mode`, `baseline`, the budgets,
+the `frozen`/`writable` paths, the combination `rule`, …) followed by five sections.
+
+| section | what it holds |
+|---------|---------------|
+| `## Goal` | what the search is for, in prose |
+| `## Objective` | three lines — `address::` (a dotted key path into `results/<hid>/metrics.json`), `direction::` (`min` or `max`), `bar::` (a number) |
+| `## Null` | the boring explanation every attempt has to rule out — one line |
+| `## Verifiables` | the checks every attempt inherits, in the **node format** (`- [ ]`, `[outcome-neutral]`, `fails-if::`, `discriminates::`) and read by the same parser |
+| `## Guidance` | the PI's standing instructions to workers — **append-only** |
+
+- `crux auto check <plan>` validates the whole plan and lists every problem at once.
+- `crux auto brief <hid>` assembles the brief for the next attempt built on `<hid>`; `--lint`
+  prints that brief plus each of the six checks and exits non-zero on a failure.
+- `crux auto guide <plan> --author <name> "<text>"` appends one line to `## Guidance`, stamped
+  with the time and the author. Nothing else in the file moves, and no entry is ever edited.
+- `builds_on: <hid>` on an idea node records which attempt it was branched from.
+  `crux hypothesize --builds-on <hid>` writes it, and `crux validate` reports a missing
+  target, a target that is not a hypothesis, a target under another question, and a cycle.
+  A node without the field validates exactly as before.
+
+**Nothing in 05.0 starts a process.** These verbs read the plan and the vault and stop; the
+git layer, the driver loop and the worker agents are later slices.
 
 ## Engine version stamp
 
