@@ -5,7 +5,7 @@ invariant. No GPU / tokens / SLURM; pure file ops. Exit non-zero on any failure.
     python selftest.py [--keep DIR]   # --keep leaves the demo vault for inspection
 """
 import os, sys, shutil, tempfile, subprocess, argparse, hashlib, re, json, collections
-import io, math, contextlib
+import io, math, contextlib, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
@@ -8137,12 +8137,17 @@ def _plan_fm(anchor, baseline, islands):
 
 def _plan_text(anchor, baseline, islands="", drop=(), drop_sections=(), goal=None,
                objective=None, address="eval.loss", direction="min", bar="0.85", null=None,
-               verifiables=None, guidance=None, **fm):
+               verifiables=None, guidance=None, extra=(), **fm):
     """§2's template with ids filled. One defect per call: `drop` removes frontmatter lines,
     `**fm` overrides their values, `drop_sections` removes whole sections, and any section
     passed as "" is present but empty. A plan built with no argument but the ids is CLEAN —
-    which is what makes each refusal test a test of one thing."""
+    which is what makes each refusal test a test of one thing.
+
+    `extra` appends (key, value) rows after `updated`. `**fm` can only override a row the
+    template already carries, so a field 05.0 never had — `repo:`, `scorer_timeout:` — has to
+    come in this way."""
     rows = [(k, fm.get(k, v)) for k, v in _plan_fm(anchor, baseline, islands) if k not in drop]
+    rows += [(k, v) for k, v in extra]
     head = "---\n"
     for k, v in rows:
         s = "" if v is None else str(v)
@@ -9110,7 +9115,11 @@ def run_auto_cli():
         check("auto: ENGINE_VERSION at or past 3.3", at_least_version("3.3"))
 
         # ------------------------------------------------------------------- check and guide
-        ok = cli("auto", "check", rel)
+        # `--static` is 05.1's flag for what 05.0's bare `auto check` did: engine checks and
+        # nothing else. The default now runs the PI's scorer, which this fixture's vault — a
+        # bare temp directory inside no repository — has no repository to run it in, so every
+        # 05.0 assert about the engine-only result moves to the flag that still means it.
+        ok = cli("auto", "check", rel, "--static")
         write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, mode="drift"))
         bad = cli("auto", "check", rel)
         write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi))
@@ -9157,7 +9166,7 @@ def run_auto_cli():
         shutil.rmtree(broken, ignore_errors=True)
 
         # ------------------------------------------------- criterion 22: --json on every verb
-        j1 = cli("auto", "check", rel, "--json")
+        j1 = cli("auto", "check", rel, "--static", "--json")
         j2 = cli("auto", "brief", hp, "--json")
         j3 = cli("auto", "brief", hp, "--lint", "--json")
         j4 = cli("auto", "guide", rel, "--author", "pi", "keep the scorer frozen", "--json")
@@ -9209,9 +9218,9 @@ def run_auto_cli():
             for m, n, _ in saved:
                 setattr(m, n, boom)
             os.chdir(root)
-            rc_ok, out_ok = in_process(["auto", "check", rel, "--json"])
+            rc_ok, out_ok = in_process(["auto", "check", rel, "--static", "--json"])
             write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, mode="drift"))
-            rc_bad, out_bad = in_process(["auto", "check", rel, "--json"])
+            rc_bad, out_bad = in_process(["auto", "check", rel, "--static", "--json"])
         finally:
             for m, n, fn in saved:
                 setattr(m, n, fn)
@@ -9219,9 +9228,10 @@ def run_auto_cli():
         write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi))
         payload_ok = _auto_val(lambda: json.loads(out_ok))
         payload_bad = _auto_val(lambda: json.loads(out_bad))
-        check("auto: check validates a plan without spawning any process",
+        check("auto: check --static validates a plan without spawning any process",
               spawned == [] and rc_ok == 0 and rc_bad == 1
               and isinstance(payload_ok, dict) and payload_ok.get("ok") is True
+              and set(payload_ok) == {"ok", "plan", "anchor", "mode", "problems"}
               and isinstance(payload_bad, dict) and payload_bad.get("ok") is False
               and not re.search(r"^\s*(import|from)\s+(subprocess|threading|socket|urllib)",
                                 read(os.path.join(HERE, "engine.py")), re.M))
@@ -9231,12 +9241,1046 @@ def run_auto_cli():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ------------------------------------------------- 05.1: the git and workspace layer, fixtures
+# Everything below is written against the PRD and the interface contract alone — the module it
+# exercises did not exist when these asserts were written, which is the point: a test that has
+# read the implementation asserts what the code does, not what was asked for.
+GIT_ID = ["-c", "user.name=crux-selftest", "-c", "user.email=selftest@crux.invalid",
+          "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.excludesFile="]
+
+
+def _git(cwd, *args, check=True):
+    """git, carrying the suite's own identity.
+
+    The machine running this may have no `user.name`, no `init.defaultBranch` and a signing key
+    that prompts — none of which is the subject of any test here — so every fixture git pins its
+    own identity and names its branch by hand. The hooks path and the excludes file are emptied
+    for the same reason one step further out: a developer whose global config points every
+    repository at a `pre-commit` hook, or hides `work/` from every `git add`, would otherwise
+    see these fixtures fail for a reason that has nothing to do with crux."""
+    r = subprocess.run(["git"] + GIT_ID + list(args), cwd=cwd, capture_output=True,
+                       encoding="utf-8", errors="replace")
+    if check and r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {r.stderr}")
+    return r.stdout.strip()
+
+
+# The scorer's whole contract in six lines: stdout is one JSON object, stderr is free text.
+# Each variant below breaks exactly one clause of it, so each failure name has a witness.
+SCORE_PY = '''import json, os, sys
+sys.stderr.write("scoring\\n")
+print(json.dumps({"eval": {"loss": {"value": 0.80}},
+                  "env": {"attempt": {"value": os.environ.get("CRUX_ATTEMPT", "")},
+                          "workspace": {"value": os.environ.get("CRUX_WORKSPACE", "")}}}))
+'''
+SCORE_EXIT = '''import sys
+sys.stderr.write("boom: the dataset is missing\\n")
+sys.exit(3)
+'''
+SCORE_SLOW = '''import time
+time.sleep(30)
+print("{}")
+'''
+SCORE_TEXT = '''print("loss 0.8")
+'''
+SCORE_TWO = '''import json
+print(json.dumps({"eval": {"loss": {"value": 0.8}}}))
+print(json.dumps({"eval": {"loss": {"value": 0.7}}}))
+'''
+SCORE_NUM = '''print(0.8)
+'''
+SCORE_NOADDR = '''import json
+print(json.dumps({"eval": {"acc": {"value": 0.5}}}))
+'''
+SCORE_STR = '''import json
+print(json.dumps({"eval": {"loss": {"value": "not a number"}}}))
+'''
+SCORE_NOISY = '''import sys
+sys.stderr.write("head-marker " + "x" * 5000 + " tail-marker\\n")
+sys.exit(1)
+'''
+SCORERS = (("score.py", SCORE_PY), ("score_exit.py", SCORE_EXIT), ("score_slow.py", SCORE_SLOW),
+           ("score_text.py", SCORE_TEXT), ("score_two.py", SCORE_TWO), ("score_num.py", SCORE_NUM),
+           ("score_noaddr.py", SCORE_NOADDR), ("score_str.py", SCORE_STR),
+           ("score_noisy.py", SCORE_NOISY))
+
+
+_AUTO_TRASH = []      # every fixture repository made below, so none can outlive its section
+
+
+def _auto_sweep():
+    """Remove every fixture repository made since the last sweep. Each section calls this in
+    its `finally`, rather than removing the name it got back: `_auto_repo` can raise after the
+    directory exists — `git init` on a full disk, a vault that will not build — and a name that
+    was never returned is a temp directory nobody will ever delete."""
+    while _AUTO_TRASH:
+        shutil.rmtree(_AUTO_TRASH.pop(), ignore_errors=True)
+
+
+def _auto_repo(scorer="python3 score.py", extra=(), retention="failed", islands=True):
+    """A throwaway git repository with a crux vault tracked inside it — the normal shape, where
+    the notebook records the project it sits in. Returns (repo, root, qa, qi, hb, rel).
+
+    `main` is pinned by hand because `init.defaultBranch` is unset on plenty of machines, and
+    the repository is realpath'd because macOS hands out `/var/...` for a directory whose real
+    name is `/private/var/...` — a difference every path comparison below would trip over.
+
+    Plan defaults: frozen `score.py, data/`, writable `work/, results/` — so the workspace is
+    `<repo>/work/<hid>`, the shared roots are `<repo>/work` and `<repo>/results`, and the
+    effective frozen set adds `cruxvault`. Objective `eval.loss`, min, bar 0.85."""
+    repo = os.path.realpath(tempfile.mkdtemp(prefix="crux_arepo_"))
+    _AUTO_TRASH.append(repo)                     # registered BEFORE anything can raise
+    _git(repo, "init", "-q")
+    _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    for name, text in SCORERS:
+        write(os.path.join(repo, name), text)
+    write(os.path.join(repo, "train.py"), "print('train')\n")
+    write(os.path.join(repo, "data", "train.txt"), "1 2 3\n")
+    root = os.path.join(repo, "cruxvault")
+    E.cmd_init("Autopilot", root, goal="drive the held-out loss below the bar")
+    qa, _ = E.cmd_ask(root, "the anchor question")
+    qi, _ = E.cmd_ask(root, "island one", parent=qa)
+    hb = _auto_attempt(root, qa, "the baseline attempt", score=0.90)
+    rel = f"auto/{qa}/plan.md"
+    write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi if islands else "",
+                                           scorer=scorer, retention=retention, extra=extra))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "initial")
+    return repo, root, qa, qi, hb, rel
+
+
+def _auto_mod():
+    """`autopilot` when it imports, and a stand-in whose every name raises when it does not.
+
+    These asserts were written before the module existed. A bare `import autopilot` at the top
+    of a section would cost the whole section one red line saying nothing about which criterion
+    is unmet; the stand-in costs each criterion its own line, which is the only reason to write
+    the tests first. Imported inside the section body, never at module scope, for the same
+    reason: a top-level import of an absent module kills the suite."""
+    try:
+        import autopilot
+        return autopilot
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        class _Absent(object):
+            def __getattr__(self, name):
+                raise E.CruxError(f"autopilot.{name} is not implemented ({e})")
+        return _Absent()
+
+
+def _auto_ok(fn):
+    """`bool(fn())`, and False when fn raises — one red line per criterion, never a dead section."""
+    return bool(_auto_val(fn, False))
+
+
+def run_auto_lock():
+    """Spec 05 PRD 05.1 §C — the one vault-level lock at `auto/.lock`.
+
+    Two runs in one vault share one id counter and one set of index files, so the lock is
+    vault-level rather than per-anchor. What is asserted is the part a human has to trust at
+    3 a.m.: a held lock refuses the second caller by pid rather than hanging, and a lock whose
+    owner died is reclaimed once instead of waited out for the full sixty seconds."""
+    print("\n# autopilot — the vault lock (spec 05, PRD 05.1)")
+    root = tempfile.mkdtemp(prefix="crux_alock_")
+    try:
+        A = _auto_mod()
+        shutil.rmtree(root); os.makedirs(root)
+        E.cmd_init("Autopilot", root, goal="drive the held-out loss below the bar")
+
+        # ------------------------------------------------- criterion 11: the second acquirer
+        st = {}
+        try:
+            st["first"] = A.acquire_lock(root, "test")
+            t0 = time.monotonic()
+            st["msg"] = _auto_msg(lambda: A.acquire_lock(root, "second", wait=0.3))
+            st["elapsed"] = time.monotonic() - t0
+            st["held"] = A.read_lock(root)
+            A.release_lock(root)
+            st["gone"] = not os.path.exists(A.lock_path(root))
+            st["after"] = A.read_lock(root)
+            st["twice"] = _auto_val(lambda: A.release_lock(root), "raised") is None
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            st["oops"] = repr(e)
+        check("alock: a second acquirer fails after the stated wait, naming the holder's pid",
+              _auto_ok(lambda: (
+                  f"pid {os.getpid()}" in st["msg"] and "gave up after 0.3s" in st["msg"]
+                  and "auto/.lock" in st["msg"] and "test" in st["msg"]
+                  and 0.3 <= st["elapsed"] < 5.0
+                  and st["first"] == A.lock_path(root)
+                  and st["held"]["op"] == "test" and st["held"]["host"] == A.HOST
+                  and st["held"]["pid"] == os.getpid()
+                  and st["gone"] and st["after"] is None and st["twice"])))
+
+        # ------------------------------------------------------ criterion 12: the stale lock
+        s2 = {}
+        try:
+            p = subprocess.Popen([sys.executable, "-c", "pass"])
+            p.wait()                                         # reaped, so os.kill(pid, 0) fails
+            write(A.lock_path(root), json.dumps({"pid": p.pid, "host": A.HOST,
+                                                 "time": E.now(), "op": "ghost"}))
+            s2["got"] = A.acquire_lock(root, "reclaim", wait=1.0)
+            s2["rec"] = A.read_lock(root)
+            s2["again"] = _auto_msg(lambda: A.acquire_lock(root, "third", wait=0.2))
+            A.release_lock(root)
+            write(A.lock_path(root), json.dumps({"pid": os.getpid(), "host": A.HOST,
+                                                 "time": E.now(), "op": "aged"}))
+            old = time.time() - 1000
+            os.utime(A.lock_path(root), (old, old))
+            s2["aged"] = A.acquire_lock(root, "byage", wait=0.5)
+            s2["aged_rec"] = A.read_lock(root)
+            A.release_lock(root)
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            s2["oops"] = repr(e)
+        check("alock: a lock left by a dead pid on this host is reclaimed once and the reclaimer holds it",
+              _auto_ok(lambda: (
+                  s2["got"] == A.lock_path(root)
+                  and s2["rec"]["pid"] == os.getpid() and s2["rec"]["op"] == "reclaim"
+                  and s2["rec"]["host"] == A.HOST
+                  and f"pid {os.getpid()}" in s2["again"]
+                  and "gave up after 0.2s" in s2["again"])))
+        check("alock: a lock past stale_after is reclaimed by age even when its pid is alive",
+              _auto_ok(lambda: s2["aged"] == A.lock_path(root)
+                       and s2["aged_rec"]["op"] == "byage"))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"alock: section ran without crashing ({e!r})", False)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run_auto_reserve():
+    """Spec 05 PRD 05.1 §D — ids reserved centrally, before any node exists.
+
+    The counter in `.crux.yaml` is a plain read-modify-write, so two workers that ask at the
+    same moment get one id and one of them silently overwrites the other's node. The assert is
+    four real processes rather than four threads: the thing under test is a file on disk, and
+    threads inside one interpreter would never contend for it."""
+    print("\n# autopilot — id reservation (spec 05, PRD 05.1)")
+    root = tempfile.mkdtemp(prefix="crux_aid_")
+    root2 = tempfile.mkdtemp(prefix="crux_aid2_")
+    try:
+        A = _auto_mod()
+        for r in (root, root2):
+            shutil.rmtree(r); os.makedirs(r)
+
+        def _counter(r):
+            m = re.search(r"^counter_h:\s*(\d+)", read(os.path.join(r, ".crux.yaml")), re.M)
+            return int(m.group(1)) if m else -1
+
+        # ----------------------------------------- criterion 9: twenty ids, four processes
+        E.cmd_init("Autopilot", root, goal="drive the held-out loss below the bar")
+        qa, _ = E.cmd_ask(root, "the anchor question")
+        st = {}
+        try:
+            st["before"] = _counter(root)
+            procs = [subprocess.Popen([sys.executable, os.path.join(HERE, "autopilot.py"),
+                                       "reserve", root, qa, "5"],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      encoding="utf-8", errors="replace") for _ in range(4)]
+            # Bounded: the thing under test is a lock, and the way a lock fails is by never
+            # letting go. Without the timeout that failure hangs the suite instead of failing it.
+            outs = [p.communicate(timeout=30) for p in procs]
+            st["rcs"] = [p.returncode for p in procs]
+            st["ids"] = [l.strip() for out, _ in outs for l in out.splitlines() if l.strip()]
+            st["after"] = _counter(root)
+            st["rec"] = A.reservations(root, qa)
+            st["file"] = os.path.isfile(os.path.join(root, "auto", qa, "reserved.json"))
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            st["oops"] = repr(e)
+        check("aid: twenty ids from four concurrent processes are distinct and every one is in reserved.json",
+              _auto_ok(lambda: (
+                  len(st["ids"]) == 20 and len(set(st["ids"])) == 20
+                  and all(re.fullmatch(r"h\d+", x) for x in st["ids"])
+                  and st["rcs"] == [0, 0, 0, 0] and st["file"]
+                  and set(st["rec"]) >= set(st["ids"])
+                  and all(st["rec"][i]["state"] == "reserved" for i in st["ids"])
+                  and all(st["rec"][i]["island"] == qa for i in st["ids"])
+                  and st["after"] - st["before"] == 20)))
+
+        # -------------------------------- criterion 10: a reservation that never became a node
+        E.cmd_init("Autopilot", root2, goal="drive the held-out loss below the bar")
+        qb, _ = E.cmd_ask(root2, "the anchor question")
+        s2 = {}
+        try:
+            s2["before"] = E.cmd_validate(root2)
+            s2["h"] = A.reserve_id(root2, qb)
+            s2["mid"] = E.cmd_validate(root2)
+            h2, _, _ = E.cmd_hypothesize(
+                root2, "next", parent=qb, rule="all",
+                verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
+                neutral=["the baseline re-run reproduces to within 0.01"],
+                fails_if=["the median of three seeds stays above 0.85",
+                          "the baseline re-run lands outside 0.01"],
+                discriminates=[True, False])
+            s2["h2"] = h2
+            s2["rec"] = A.reservations(root2, qb)
+            s2["node"] = _auto_val(lambda: E.Vault(root2).get(s2["h"]))
+            s2["after"] = E.cmd_validate(root2)
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            s2["oops"] = repr(e)
+        check("aid: a reserved id with no node stays reserved, is never handed out again, and validate is unchanged",
+              _auto_ok(lambda: (
+                  s2["h2"] != s2["h"] and E.natkey(s2["h2"]) > E.natkey(s2["h"])
+                  and s2["rec"][s2["h"]]["state"] == "reserved"
+                  and s2["node"] is None
+                  and s2["mid"] == s2["before"] and s2["after"] == s2["before"]
+                  and not any(s2["h"] in m for _, m in s2["after"]))))
+
+        # ------------------- a reservation file that will not parse is the record, damaged
+        s3 = {}
+        try:
+            p = A.reserved_path(root2, qb)
+            s3["was"] = read(p)
+            write(p, "{not json")
+            s3["counter"] = _counter(root2)
+            s3["msg"] = _auto_msg(lambda: A.reserve_id(root2, qb))
+            s3["still"] = read(p)
+            s3["counter_after"] = _counter(root2)
+            s3["locked"] = os.path.exists(A.lock_path(root2))
+            write(p, s3["was"])
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            s3["oops"] = repr(e)
+        check("aid: a reserved.json that will not parse is refused, not silently reset",
+              _auto_ok(lambda: (
+                  f"auto/{qb}/reserved.json" in s3["msg"]
+                  and s3["still"] == "{not json"            # the damaged file is left alone
+                  and s3["counter_after"] == s3["counter"]  # and the refusal costs no id
+                  and not s3["locked"])))                   # and the lock is not left behind
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aid: section ran without crashing ({e!r})", False)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(root2, ignore_errors=True)
+
+
+def run_auto_git():
+    """Spec 05 PRD 05.1 §E — refs, branches and worktrees.
+
+    An attempt is a commit under `refs/crux/auto/<qid>/<hid>`, which is what lets the worktree
+    go the moment the commit is recorded. The two failures this guards against are a ref that
+    dies with its worktree — losing the run — and a branch layout git refuses halfway through,
+    since a reference cannot also be a directory of references. `main` is checked after every
+    single step rather than at the end: a run that moves the PI's branch and moves it back is
+    still a run that moved it."""
+    print("\n# autopilot — refs, branches and worktrees (spec 05, PRD 05.1)")
+    repo = None
+    try:
+        A = _auto_mod()
+        repo, root, qa, qi, hb, rel = _auto_repo()
+        plan = _auto_val(lambda: E.load_flight_plan(root, rel), {})
+        main0 = _git(repo, "rev-parse", "main")
+        clean = []
+
+        def snap(label):
+            """`main`, HEAD and the main working tree, after one step. Vault writes and the
+            workspace are by design — nothing else may appear."""
+            clean.append((label, (
+                _git(repo, "rev-parse", "main") == main0
+                and _git(repo, "symbolic-ref", "HEAD") == "refs/heads/main"
+                and _git(repo, "rev-parse", "HEAD") == main0
+                and _git(repo, "status", "--porcelain", "--", ".", ":(exclude)cruxvault",
+                         ":(exclude)work", ":(exclude)results") == "")))
+
+        st = {}
+        try:
+            # Before anything is open: the only thing that tells `add_worktree` where to cut
+            # from is the base ref, and in this fixture base, HEAD and `main` are the same
+            # commit — so without this line "cut from base" is also satisfied by code that
+            # never reads the ref at all.
+            st["notopen"] = _auto_msg(lambda: A.add_worktree(root, plan, "h900"))
+            st["info"] = A.open_run(root, plan); snap("open")
+            st["reopen"] = _auto_msg(lambda: A.open_run(root, plan))
+            st["base"] = _git(repo, "rev-parse", A.base_ref(qa))
+            st["made"] = sorted(_git(repo, "for-each-ref", "--format=%(refname:short)",
+                                     "refs/heads/crux/auto/").splitlines())
+            h1 = A.reserve_id(root, qa, island=qi); st["h1"] = h1; snap("reserve")
+            wt1 = A.add_worktree(root, plan, h1); st["wt1"] = wt1; snap("worktree")
+            st["wt1_at"] = _git(wt1, "rev-parse", "HEAD")
+            st["wt1_where"] = os.path.join(A.git_common_dir(repo), "crux-auto", qa, h1)
+            write(os.path.join(wt1, "work_notes.txt"), "one\n")
+            _git(wt1, "add", "-A"); _git(wt1, "commit", "-q", "-m", "attempt 1"); snap("commit")
+            st["head1"] = _git(wt1, "rev-parse", "HEAD")
+            st["sha1"] = A.record_attempt(root, plan, h1); snap("record")
+            st["ref1"] = _git(repo, "rev-parse", A.attempt_ref(qa, h1))
+            st["again"] = A.record_attempt(root, plan, h1)     # same sha: idempotent, not a refusal
+            h2 = A.reserve_id(root, qa, island=qi, parent=h1); st["h2"] = h2
+            st["wt2_at"] = _git(A.add_worktree(root, plan, h2, parent=h1), "rev-parse", "HEAD")
+            h3 = A.reserve_id(root, qa, island=qi); st["h3"] = h3
+            st["wt3_at"] = _git(A.add_worktree(root, plan, h3), "rev-parse", "HEAD")
+            st["dup"] = _auto_msg(lambda: A.add_worktree(root, plan, h3))
+            st["noparent"] = _auto_msg(lambda: A.add_worktree(root, plan, "h999", parent="h998"))
+            A.make_workspace(root, plan, h1)
+            A.write_manifest(root, plan, h1); snap("manifest")
+            st["rm1"] = A.remove_worktree(root, plan, h1)
+            st["rm1_gone"] = not os.path.isdir(wt1)
+            st["ref1_after"] = _git(repo, "rev-parse", A.attempt_ref(qa, h1))
+            st["rm_twice"] = A.remove_worktree(root, plan, h1)
+            A.apply_retention(root, plan, h1); snap("retention")
+            # "a directory is there" and "git holds a worktree there" come apart in both
+            # directions, and a driver that treats either as the other loses a run: one way it
+            # refuses to clean up, the other it reports a checkout nobody can open.
+            stray = os.path.join(A.git_common_dir(repo), "crux-auto", qa, "h901")
+            os.makedirs(stray)
+            st["stray"] = A.remove_worktree(root, plan, "h901")
+            st["stray_kept"] = os.path.isdir(stray)
+            hv = A.reserve_id(root, qa, island=qi); st["hv"] = hv
+            shutil.rmtree(A.add_worktree(root, plan, hv))   # deleted behind git's back
+            st["listed"] = [w["id"] for w in A.auto_refs(root, qa)["worktrees"]]
+            hn = _auto_attempt(root, qi, "the promoted attempt", score=0.70)
+            wtn = A.add_worktree(root, plan, hn)
+            write(os.path.join(wtn, "work_notes.txt"), "n\n")
+            _git(wtn, "add", "-A"); _git(wtn, "commit", "-q", "-m", "attempt n")
+            st["shan"] = A.record_attempt(root, plan, hn)
+            A.remove_worktree(root, plan, hn)
+            st["promo"] = A.promote(root, hn); snap("promote")
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            st["oops"] = repr(e)
+        bs = _auto_val(lambda: [st["info"]["run_branch"]]
+                       + list(st["info"]["island_branches"].values()), [])
+
+        check("agit: record_attempt sets refs/crux/auto/<qid>/<hid> to the worktree HEAD and the ref survives worktree removal",
+              _auto_ok(lambda: (
+                  A.attempt_ref(qa, st["h1"]) == f"refs/crux/auto/{qa}/{st['h1']}"
+                  and st["sha1"] == st["head1"] and st["ref1"] == st["head1"]
+                  and st["head1"] != main0 and st["again"] == st["sha1"]
+                  and st["rm1"] is True and st["rm1_gone"] and st["rm_twice"] is False
+                  and st["ref1_after"] == st["sha1"])))
+        check("agit: a worktree is cut from its parent attempt's commit, and an island's first from base",
+              _auto_ok(lambda: (
+                  st["wt1"] == st["wt1_where"] and st["wt1_at"] == main0
+                  and st["wt2_at"] == st["sha1"] and st["wt3_at"] == main0
+                  and st["base"] == main0
+                  and f"auto run for {qa} is not open" in st["notopen"]
+                  and f"refs/crux/auto/{qa}/base does not exist" in st["notopen"])))
+        check("agit: a leftover directory is not a worktree, and one whose directory vanished is not listed",
+              _auto_ok(lambda: (
+                  st["stray"] is False and st["stray_kept"]
+                  and st["hv"] not in st["listed"])))
+        check("agit: add_worktree refuses a path already in use and a parent with no ref",
+              _auto_ok(lambda: (
+                  "already exists" in st["dup"]
+                  and f"has no ref refs/crux/auto/{qa}/h998" in st["noparent"])))
+        check("agit: open_run creates the run branch and one island branch per island at base, none a prefix-directory of another",
+              _auto_ok(lambda: (
+                  st["info"]["anchor"] == qa and st["info"]["base"] == main0
+                  and os.path.realpath(st["info"]["repo"]) == repo
+                  and st["info"]["run_branch"] == f"crux/auto/{qa}/run"
+                  and set(st["info"]["island_branches"]) == {qi}
+                  and st["info"]["island_branches"][qi] == f"crux/auto/{qa}/island/{qi}"
+                  and _git(repo, "rev-parse", A.run_branch(qa)) == main0
+                  and _git(repo, "rev-parse", A.island_branch(qa, qi)) == main0
+                  and len(bs) == 2 and sorted(bs) == st["made"]
+                  and not any(b != c and c.startswith(b + "/") for b in bs for c in bs)
+                  and "already open" in st["reopen"])))
+        check("agit: main and the main working tree are untouched across open, reserve, worktree, commit, record, manifest, retention and promote",
+              _auto_ok(lambda: (
+                  [l for l, _ in clean] == ["open", "reserve", "worktree", "commit", "record",
+                                            "manifest", "retention", "promote"]
+                  and all(o for _, o in clean)
+                  and _git(repo, "rev-parse", "main") == main0
+                  and _git(repo, "symbolic-ref", "HEAD") == "refs/heads/main")))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"agit: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_workspace():
+    """Spec 05 PRD 05.1 §F, §G — the three path sets, and the manifest over the shared ones.
+
+    Frozen paths and the manifest answer two halves of one question: what did this attempt
+    touch that it had no business touching. Git answers it for tracked files; the manifest
+    answers it for the scratch and dataset directories git cannot see. 05.1 only reports —
+    the `invalid-run` close is 05.2's — so every assert here also checks that nothing closed."""
+    print("\n# autopilot — frozen paths, workspace and manifest (spec 05, PRD 05.1)")
+    repo = flat = None
+    try:
+        A = _auto_mod()
+        repo, root, qa, qi, hb, rel = _auto_repo()
+        plan = _auto_val(lambda: E.load_flight_plan(root, rel), {})
+        main0 = _git(repo, "rev-parse", "main")
+
+        # ------------------------------------------- criteria 16 and 17: the frozen path set
+        st = {}
+        try:
+            A.open_run(root, plan)
+            ho = _auto_attempt(root, qi, "the open attempt", close=False)
+            st["node_before"] = read(node_path(root, ho))
+            st["status_before"] = E.Vault(root).get(ho).status
+            h1 = A.reserve_id(root, qa, island=qi)
+            wt1 = A.add_worktree(root, plan, h1)
+            write(os.path.join(wt1, "work_notes.txt"), "one\n")
+            _git(wt1, "add", "-A"); _git(wt1, "commit", "-q", "-m", "attempt 1")
+            sha1 = A.record_attempt(root, plan, h1)
+
+            h2 = A.reserve_id(root, qa, island=qi, parent=h1)   # touches the PI's scorer
+            wt2 = A.add_worktree(root, plan, h2, parent=h1)
+            write(os.path.join(wt2, "score.py"), SCORE_PY + "# tuned\n")
+            _git(wt2, "add", "-A"); _git(wt2, "commit", "-q", "-m", "touch the scorer")
+            st["v_frozen"] = A.frozen_violations(root, plan, sha1, _git(wt2, "rev-parse", "HEAD"))
+
+            h3 = A.reserve_id(root, qa, island=qi)              # touches its own notebook
+            wt3 = A.add_worktree(root, plan, h3)
+            vrel = os.path.relpath(node_path(root, hb), repo).replace(os.sep, "/")
+            write(os.path.join(wt3, vrel), read(os.path.join(wt3, vrel)) + "\nedited\n")
+            _git(wt3, "add", "-A"); _git(wt3, "commit", "-q", "-m", "touch the vault")
+            st["vrel"] = vrel
+            st["v_vault"] = A.frozen_violations(root, plan, main0, _git(wt3, "rev-parse", "HEAD"))
+
+            h5 = A.reserve_id(root, qa, island=qi)              # renames the PI's scorer away
+            wt5 = A.add_worktree(root, plan, h5)
+            _git(wt5, "mv", "score.py", "scorer_renamed.py")
+            _git(wt5, "commit", "-q", "-m", "rename the scorer")
+            st["v_moved"] = A.frozen_violations(root, plan, main0,
+                                                _git(wt5, "rev-parse", "HEAD"))
+
+            h4 = A.reserve_id(root, qa, island=qi)              # touches only what it may
+            wt4 = A.add_worktree(root, plan, h4)
+            write(os.path.join(wt4, "train.py"), "print('train harder')\n")
+            _git(wt4, "add", "-A"); _git(wt4, "commit", "-q", "-m", "train only")
+            st["v_clean"] = A.frozen_violations(root, plan, main0, _git(wt4, "rev-parse", "HEAD"))
+
+            st["eff"] = A.effective_frozen(root, plan)
+            st["node_after"] = read(node_path(root, ho))
+            st["status_after"] = E.Vault(root).get(ho).status
+            st["verdict_after"] = E.Vault(root).get(ho)["fm"].get("verdict")
+            st["rec"] = A.reservations(root, qa)
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            st["oops"] = repr(e)
+        check("awork: a commit touching an effective frozen path is reported naming the path and the attempt stays open",
+              _auto_ok(lambda: (
+                  st["v_frozen"] == ["score.py"] and st["v_clean"] == []
+                  and st["node_after"] == st["node_before"]
+                  and st["status_after"] == st["status_before"]
+                  and not st["verdict_after"]
+                  and st["rec"] and all(r["state"] == "reserved" for r in st["rec"].values()))))
+        check("awork: a frozen file moved away is reported under the frozen name, not the new one",
+              _auto_ok(lambda: st["v_moved"] == ["score.py"]))
+        check("awork: the vault's own path is frozen when it lies inside the repository",
+              _auto_ok(lambda: (
+                  st["eff"] == ["cruxvault", "data", "score.py"]
+                  and st["v_vault"] == [st["vrel"]]
+                  and st["vrel"].startswith("cruxvault/"))))
+
+        # a vault that IS the repository has no separable notebook path to freeze
+        flat = os.path.realpath(tempfile.mkdtemp(prefix="crux_aflat_"))
+        _git(flat, "init", "-q")
+        _git(flat, "symbolic-ref", "HEAD", "refs/heads/main")
+        E.cmd_init("Flat", flat, goal="drive the held-out loss below the bar")
+        qf, _ = E.cmd_ask(flat, "the anchor question")
+        hf = _auto_attempt(flat, qf, "the baseline attempt", score=0.90)
+        write(_plan_path(flat, qf), _plan_text(qf, hf))
+        fplan = _auto_val(lambda: E.load_flight_plan(flat, f"auto/{qf}/plan.md"), {})
+        check("awork: a vault that is the repository toplevel adds no vault path to the frozen set",
+              _auto_ok(lambda: A.effective_frozen(flat, fplan) == ["data", "score.py"]))
+
+        # ------------------------------------------------------ criterion 18: the manifest
+        s2 = {}
+        try:
+            hm = A.reserve_id(root, qa, island=qi); s2["hm"] = hm
+            ws = A.make_workspace(root, plan, hm); s2["ws"] = ws
+            write(os.path.join(repo, "work", "other", "shared.txt"), "a")
+            s2["paths"] = [f["path"] for f in A.write_manifest(root, plan, hm)["files"]]
+            write(os.path.join(repo, "work", "other", "shared.txt"), "abcd")   # size, not mtime
+            write(os.path.join(repo, "results", "new.csv"), "x")
+            write(os.path.join(ws, "mine.txt"), "y")
+            s2["r1"] = A.recheck_manifest(root, plan, hm)
+            s2["r2"] = A.recheck_manifest(root, plan, hm)
+            s2["doc"] = json.loads(read(A.manifest_path(root, qa, hm)))
+            hu = A.reserve_id(root, qa, island=qi)             # untouched between the two walks
+            A.make_workspace(root, plan, hu)
+            A.write_manifest(root, plan, hu)
+            s2["clean"] = A.recheck_manifest(root, plan, hu)
+            s2["none"] = _auto_msg(lambda: A.recheck_manifest(root, plan, "h999"))
+            os.makedirs(os.path.join(repo, "work", "target"))
+            write(os.path.join(repo, "work", "target", "deep.txt"), "z")
+            os.symlink(os.path.join(repo, "work", "target"), os.path.join(repo, "work", "link"))
+            hs = A.reserve_id(root, qa, island=qi)
+            A.make_workspace(root, plan, hs)
+            s2["sym"] = [f["path"] for f in A.write_manifest(root, plan, hs)["files"]]
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            s2["oops"] = repr(e)
+        check("awork: the manifest re-check reports added and changed under shared roots, nothing inside the workspace, clean when untouched",
+              _auto_ok(lambda: (
+                  "work/other/shared.txt" in s2["paths"]
+                  and not any(p.startswith("work/%s/" % s2["hm"]) for p in s2["paths"])
+                  and s2["r1"]["changed"] == ["work/other/shared.txt"]
+                  and s2["r1"]["added"] == ["results/new.csv"]
+                  and s2["r1"]["removed"] == []
+                  # the recorded files are the BEFORE-picture and are never refreshed, so a
+                  # second re-check over the same change reports the same change again
+                  and {k: s2["r2"][k] for k in ("added", "removed", "changed")}
+                  == {k: s2["r1"][k] for k in ("added", "removed", "changed")}
+                  and s2["clean"]["added"] == [] and s2["clean"]["changed"] == []
+                  and s2["clean"]["removed"] == []
+                  and len(s2["doc"]["rechecks"]) == 2
+                  and s2["doc"]["attempt"] == s2["hm"]
+                  and s2["doc"]["workspace"] == "work/%s" % s2["hm"]
+                  and s2["doc"]["excluded"] == ["work/%s" % s2["hm"]]
+                  and s2["doc"]["roots"] == ["work", "results"])))
+        check("awork: a symlink under a shared root is one entry and its target is not walked",
+              _auto_ok(lambda: (
+                  "work/link" in s2["sym"] and "work/target/deep.txt" in s2["sym"]
+                  and "work/link/deep.txt" not in s2["sym"]
+                  and "no manifest for h999" in s2["none"])))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"awork: section ran without crashing ({e!r})", False)
+    finally:
+        if flat:
+            shutil.rmtree(flat, ignore_errors=True)
+        _auto_sweep()
+
+
+def run_auto_retention():
+    """Spec 05 PRD 05.1 §G — retention spares the record.
+
+    `retention:` decides what happens to a workspace that may hold sixty gigabytes of
+    checkpoints. What it must never decide is whether the run can still be read afterwards, so
+    the assert is as much about what survives — the ref, the node, the metrics file, the
+    manifest — as about what goes. The worktree goes in every setting: it is a checkout, and
+    the commit it held is already in a ref."""
+    print("\n# autopilot — retention (spec 05, PRD 05.1)")
+    repo = None
+    try:
+        A = _auto_mod()
+        repo, root, qa, qi, hb, rel = _auto_repo()
+        rows = []
+        try:
+            A.open_run(root, E.load_flight_plan(root, rel))
+            for retention in ("none", "all", "failed"):
+                write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, retention=retention))
+                plan = E.load_flight_plan(root, rel)
+                for verdict, close in (("supported", True), ("refuted", True),
+                                       ("invalid-run", True), ("supported", False)):
+                    h = _auto_attempt(root, qi, f"the {retention} {verdict} attempt",
+                                      score=0.70, verdict=verdict, close=close)
+                    wt = A.add_worktree(root, plan, h)
+                    ws = A.make_workspace(root, plan, h)
+                    write(os.path.join(ws, "checkpoint.bin"), "0" * 16)
+                    A.write_manifest(root, plan, h)
+                    sha = A.record_attempt(root, plan, h)
+                    res = A.apply_retention(root, plan, h)
+                    got = E.Vault(root).get(h)["fm"].get("verdict") or None
+                    rows.append({
+                        "retention": retention, "verdict": got, "res": res,
+                        "kept": os.path.isdir(ws), "worktree": os.path.isdir(wt),
+                        "ref": _git(repo, "rev-parse", A.attempt_ref(qa, h), check=False),
+                        "sha": sha, "node": os.path.isfile(node_path(root, h)),
+                        "metrics": os.path.isfile(os.path.join(root, "results", h,
+                                                               "metrics.json")),
+                        "manifest": os.path.isfile(A.manifest_path(root, qa, h))})
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            rows.append({"oops": repr(e)})
+
+        def _want(row):
+            """The PRD's table: none deletes every workspace, all keeps every one, failed keeps
+            what there is something to debug."""
+            if row["retention"] == "none":
+                return False
+            if row["retention"] == "all":
+                return True
+            return row["verdict"] != "supported"
+
+        check("aret: none deletes the workspace, all keeps it, failed keeps refuted and deletes supported; ref, node, metrics and manifest survive and no worktree remains",
+              _auto_ok(lambda: (
+                  len(rows) == 12
+                  and {r["verdict"] for r in rows} == {"supported", "refuted", "invalid-run", None}
+                  and all(r["kept"] is _want(r) for r in rows)
+                  and all(r["res"]["retention"] == r["retention"] for r in rows)
+                  and all(r["res"]["workspace_removed"] is (not _want(r)) for r in rows)
+                  and all(r["res"]["worktree_removed"] is True for r in rows)
+                  and all(r["res"]["verdict"] == r["verdict"] for r in rows)
+                  and all(r["ref"] == r["sha"] for r in rows)
+                  and all(r["node"] and r["metrics"] and r["manifest"] for r in rows)
+                  and not any(r["worktree"] for r in rows))))
+        bad = _auto_msg(lambda: A.apply_retention(
+            root, dict(E.load_flight_plan(root, rel), retention="keep"), hb))
+        check("aret: apply_retention refuses a retention value outside all, failed, none",
+              "flight plan retention must be one of all, failed, none (got 'keep')" in bad)
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aret: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_scorer():
+    """Spec 05 PRD 05.1 §B — the scorer prints one JSON object, and the driver writes it.
+
+    The number that decides a verdict comes from the command's standard output, never from a
+    file a worker could rewrite — so `metrics.json` is written by the driver, verbatim, and the
+    engine only ever reads it. `auto check` is where a PI finds out the contract is broken
+    before forty attempts run against it, which is why each of the four failures is named
+    rather than reported as one 'the scorer did not work'."""
+    print("\n# autopilot — the scorer contract (spec 05, PRD 05.1)")
+    repo = bare = None
+    try:
+        A = _auto_mod()
+        repo, root, qa, qi, hb, rel = _auto_repo()
+
+        def checked(scorer="python3 score.py", **kw):
+            """`auto check` over a plan rewritten with these fields — one defect per call, and
+            a vault write rather than a repository one, so the repo stays the PI's."""
+            write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, scorer=scorer, **kw))
+            return _auto_val(lambda: A.auto_check(root, rel), {})
+
+        def names(res):
+            return [p.get("check") for p in (res.get("problems") or [])] if isinstance(res, dict) else None
+
+        def first(res):
+            p = (res.get("problems") or []) if isinstance(res, dict) else []
+            return p[0].get("message", "") if p and isinstance(p[0], dict) else ""
+
+        r_exit = checked(scorer="python3 score_exit.py")
+        r_start = checked(scorer="no_such_binary_crux score.py")
+        r_noisy = checked(scorer="python3 score_noisy.py")
+        t0 = time.monotonic()
+        r_slow = checked(scorer="python3 score_slow.py", extra=(("scorer_timeout", "1"),))
+        slow_s = time.monotonic() - t0
+        r_text = checked(scorer="python3 score_text.py")
+        r_two = checked(scorer="python3 score_two.py")
+        r_num = checked(scorer="python3 score_num.py")
+        r_noaddr = checked(scorer="python3 score_noaddr.py")
+        r_str = checked(scorer="python3 score_str.py")
+        r_ok = checked()
+        results_now = sorted(_auto_val(lambda: os.listdir(os.path.join(root, "results")), []))
+
+        check("ascore: check names scorer-exit with a bounded stderr tail when the scorer exits non-zero or cannot start",
+              _auto_ok(lambda: (
+                  names(r_exit) == ["scorer-exit"]
+                  and "scorer exited 3" in first(r_exit)
+                  and "boom: the dataset is missing" in first(r_exit)
+                  and r_exit["ok"] is False and r_exit["scorer"]["ran"] is True
+                  and names(r_start) == ["scorer-exit"]
+                  and first(r_start).startswith("scorer cannot start:")
+                  and names(r_noisy) == ["scorer-exit"]
+                  and "tail-marker" in first(r_noisy)
+                  and "head-marker" not in first(r_noisy)
+                  and len(first(r_noisy)) <= 2600)))
+        check("ascore: check names scorer-timeout when the scorer runs past scorer_timeout",
+              _auto_ok(lambda: names(r_slow) == ["scorer-timeout"]
+                       and "scorer_timeout 1s" in first(r_slow) and slow_s < 3))
+        check("ascore: check names scorer-output when stdout is not exactly one JSON object",
+              _auto_ok(lambda: (
+                  names(r_text) == ["scorer-output"]
+                  and "not one JSON object" in first(r_text) and "loss 0.8" in first(r_text)
+                  and r_text["ok"] is False
+                  and names(r_two) == ["scorer-output"]
+                  and names(r_num) == ["scorer-output"])))
+        check("ascore: check names scorer-address when the objective does not resolve to a number in the output",
+              _auto_ok(lambda: (
+                  names(r_noaddr) == ["scorer-address"]
+                  and "objective 'eval.loss' does not resolve in the scorer's output"
+                  in first(r_noaddr)
+                  and r_noaddr["scorer"]["ran"] is True and r_noaddr["scorer"]["value"] is None
+                  and names(r_str) == ["scorer-address"]
+                  and "is not a number" in first(r_str))))
+        check("ascore: check passes a plan whose scorer prints a metrics object the objective resolves in",
+              _auto_ok(lambda: (
+                  r_ok["ok"] is True and r_ok["problems"] == []
+                  and os.path.realpath(r_ok["repo"]) == repo
+                  and set(r_ok) >= {"ok", "plan", "anchor", "mode", "problems", "repo", "scorer"}
+                  and r_ok["scorer"]["ran"] is True and r_ok["scorer"]["value"] == 0.8
+                  and r_ok["scorer"]["cmd"] == "python3 score.py"
+                  and os.path.realpath(r_ok["scorer"]["cwd"]) == repo
+                  and r_ok["scorer"]["address"] == "eval.loss"
+                  and isinstance(r_ok["scorer"]["seconds"], float)
+                  and r_ok["scorer"]["seconds"] >= 0
+                  and results_now == [hb])))              # a dry run writes nothing anywhere
+
+        # The complement of criterion 5: `--static` starts nothing, and the bare verb starts the
+        # scorer on purpose — that is the whole of what this slice added to `auto check`.
+        spawn, s5 = [], {}
+        saved = _auto_val(lambda: A._run)
+        try:
+            if saved is not None:
+                def rec5(argv, *a, **k):
+                    spawn.append(list(argv))
+                    return saved(argv, *a, **k)
+                A._run = rec5
+            s5["live"] = _auto_val(lambda: A.auto_check(root, rel), {})
+            s5["ran"] = list(spawn)
+            del spawn[:]
+            s5["static"] = _auto_val(lambda: A.auto_check(root, rel, static=True), {})
+            s5["still"] = list(spawn)
+        finally:
+            if saved is not None:
+                A._run = saved
+        check("ascore: check without --static reaches the scorer, and with --static starts nothing",
+              _auto_ok(lambda: (
+                  any("score.py" in " ".join(a) for a in s5["ran"])
+                  and s5["still"] == []
+                  and set(s5["static"]) == {"ok", "plan", "anchor", "mode", "problems"})))
+
+        # ------------------------------ criterion 6: no repository, and no git attempted after
+        bare = tempfile.mkdtemp(prefix="crux_abare_")
+        shutil.rmtree(bare); os.makedirs(bare)
+        E.cmd_init("Autopilot", bare, goal="drive the held-out loss below the bar")
+        qb, _ = E.cmd_ask(bare, "the anchor question")
+        hbb = _auto_attempt(bare, qb, "the baseline attempt", score=0.90)
+        brel = f"auto/{qb}/plan.md"
+        write(_plan_path(bare, qb), _plan_text(qb, hbb, scorer="python3 score.py"))
+        seen, s6 = [], {}
+        saved_run = _auto_val(lambda: A._run)
+        saved_ceiling = os.environ.get("GIT_CEILING_DIRECTORIES")
+        try:
+            if saved_run is not None:
+                def rec(argv, *a, **k):
+                    seen.append(list(argv))
+                    return saved_run(argv, *a, **k)
+                A._run = rec
+            os.environ["GIT_CEILING_DIRECTORIES"] = os.path.dirname(os.path.realpath(bare))
+            s6["res"] = _auto_val(lambda: A.auto_check(bare, brel), {})
+        finally:
+            if saved_run is not None:
+                A._run = saved_run
+            if saved_ceiling is None:
+                os.environ.pop("GIT_CEILING_DIRECTORIES", None)
+            else:
+                os.environ["GIT_CEILING_DIRECTORIES"] = saved_ceiling
+        check("ascore: check names repo when nothing encloses the vault and runs no git afterwards",
+              _auto_ok(lambda: (
+                  s6["res"]["ok"] is False
+                  and [p["check"] for p in s6["res"]["problems"]] == ["repo"]
+                  and "set repo: in the flight plan" in s6["res"]["problems"][0]["message"]
+                  and s6["res"]["repo"] is None
+                  and len(seen) == 1 and "rev-parse" in seen[0]
+                  and not any("score" in " ".join(a) for a in seen))))
+
+        # ------------------------- criterion 7: the two new fields are optional, and checked
+        base_msgs = _plan_msgs(root, _plan_text(qa, hb, islands=qi), rel)
+        empties = _plan_msgs(root, _plan_text(qa, hb, islands=qi,
+                                              extra=(("repo", ""), ("scorer_timeout", ""))), rel)
+        bad_t = _plan_msgs(root, _plan_text(qa, hb, islands=qi,
+                                            extra=(("scorer_timeout", "soon"),)), rel)
+        bad_z = _plan_msgs(root, _plan_text(qa, hb, islands=qi,
+                                            extra=(("scorer_timeout", "0"),)), rel)
+        bad_r = _plan_msgs(root, _plan_text(qa, hb, islands=qi, retention="keep"), rel)
+        write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, scorer="python3 score.py"))
+        p05 = _auto_val(lambda: E.load_flight_plan(root, rel), {})
+        check("ascore: a 05.0 plan without repo: or scorer_timeout: validates unchanged",
+              _auto_ok(lambda: (
+                  base_msgs == [] and empties == []
+                  and p05["scorer_timeout"] == 600.0 and p05["repo"] is None
+                  and p05["scorer"] == "python3 score.py" and p05["retention"] == "failed"
+                  and sorted(p05["frozen"]) == ["data", "score.py"]
+                  and p05["writable"] == ["work", "results"]
+                  and bad_t == ["flight plan field 'scorer_timeout' must be a positive number (got 'soon')"]
+                  and bad_z == ["flight plan field 'scorer_timeout' must be a positive number (got '0')"]
+                  and bad_r == ["flight plan retention must be one of all, failed, none (got 'keep')"])))
+
+        # -------------------------------- criterion 8: the driver writes, the engine reads
+        s8 = {}
+        try:
+            plan = E.load_flight_plan(root, rel)
+            A.open_run(root, plan)
+            h = A.reserve_id(root, qa, island=qi); s8["h"] = h
+            A.add_worktree(root, plan, h)
+            s8["obj"] = A.score_attempt(root, plan, h)
+            s8["file"] = json.loads(read(os.path.join(root, "results", h, "metrics.json")))
+            s8["ws"] = A.workspace_path(root, plan, h)
+            s8["nowt"] = _auto_msg(lambda: A.score_attempt(root, plan, "h999"))
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            s8["oops"] = repr(e)
+        eng = "\n".join(l for l in read(os.path.join(HERE, "engine.py")).splitlines()
+                        if not l.lstrip().startswith("#"))
+        check("ascore: score_attempt writes the scorer's object verbatim to results/<hid>/metrics.json and engine.py never writes that path",
+              _auto_ok(lambda: (
+                  s8["file"] == s8["obj"]
+                  and s8["obj"]["eval"]["loss"]["value"] == 0.80
+                  and s8["obj"]["env"]["attempt"]["value"] == s8["h"]
+                  and s8["obj"]["env"]["workspace"]["value"] == s8["ws"]
+                  and "no worktree for h999" in s8["nowt"]
+                  and not re.search(r"(write_if_changed|open)\([^\n]*(METRICS_FILE|metrics\.json)", eng)
+                  and not re.search(r"(METRICS_FILE|metrics\.json)[^\n]*['\"]w['\"]", eng))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"ascore: section ran without crashing ({e!r})", False)
+    finally:
+        if bare:
+            shutil.rmtree(bare, ignore_errors=True)
+        _auto_sweep()
+
+
+def run_auto_verbs():
+    """Spec 05 PRD 05.1 §H — `crux auto promote` and `crux auto refs`.
+
+    `promote` is the only new verb that writes, and everything it writes is a branch of the
+    PI's choosing at a commit the run already recorded: no checkout, no merge, and `main`
+    untouched. `refs` answers the one question a PI has after a run — what does this own right
+    now — and answers it without creating so much as a directory."""
+    print("\n# autopilot — promote, refs and the JSON surface (spec 05, PRD 05.1)")
+    repo = tmp = None
+    try:
+        A = _auto_mod()
+        repo, root, qa, qi, hb, rel = _auto_repo()
+        plan = _auto_val(lambda: E.load_flight_plan(root, rel), {})
+        main0 = _git(repo, "rev-parse", "main")
+
+        def cli(*argv, **kw):
+            return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(argv),
+                                  capture_output=True, cwd=kw.get("cwd") or root,
+                                  encoding="utf-8", errors="replace")
+
+        st = {}
+        try:
+            A.open_run(root, plan)
+            h1 = _auto_attempt(root, qi, "the recorded attempt", score=0.70); st["h1"] = h1
+            wt1 = A.add_worktree(root, plan, h1)
+            write(os.path.join(wt1, "work_notes.txt"), "one\n")
+            _git(wt1, "add", "-A"); _git(wt1, "commit", "-q", "-m", "attempt 1")
+            st["sha1"] = A.record_attempt(root, plan, h1)
+            A.remove_worktree(root, plan, h1)
+            h0 = _auto_attempt(root, qi, "the unrecorded attempt", score=0.80); st["h0"] = h0
+            st["wt0"] = A.add_worktree(root, plan, h0)        # a worktree with no recorded ref
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            st["oops"] = repr(e)
+
+        p1 = cli("auto", "promote", st.get("h1", "h404"), "--json")
+        p2 = cli("auto", "promote", st.get("h1", "h404"))
+        p3 = cli("auto", "promote", st.get("h1", "h404"), "--branch", "keep/h1", "--json")
+        p4 = cli("auto", "promote", "h99")
+        p5 = cli("auto", "promote", st.get("h0", "h404"))
+        p6 = cli("auto", "promote", qa)
+        j1 = _auto_val(lambda: json.loads(p1.stdout), {})
+        j3 = _auto_val(lambda: json.loads(p3.stdout), {})
+        check("apromote: promote branches at the attempt ref and refuses an unknown id, an unrecorded id and a taken branch name",
+              _auto_ok(lambda: (
+                  p1.returncode == 0
+                  and set(j1) == {"id", "anchor", "ref", "commit", "branch", "repo"}
+                  and j1["id"] == st["h1"] and j1["anchor"] == qa
+                  and j1["ref"] == "refs/crux/auto/%s/%s" % (qa, st["h1"])
+                  and j1["commit"] == st["sha1"]
+                  and j1["branch"] == "crux/auto/%s/promoted/%s" % (qa, st["h1"])
+                  and _git(repo, "rev-parse", j1["branch"]) == st["sha1"]
+                  and p2.returncode == 1
+                  and p2.stderr.strip() == "crux: auto promote: branch 'crux/auto/%s/promoted/%s' already exists" % (qa, st["h1"])
+                  and p3.returncode == 0 and j3["branch"] == "keep/h1"
+                  and _git(repo, "rev-parse", "keep/h1") == st["sha1"]
+                  and p4.returncode == 1 and p4.stderr.strip() == "crux: no node with id 'h99'"
+                  and p5.returncode == 1 and "has no ref refs/crux/auto/" in p5.stderr
+                  and _git(repo, "rev-parse", "main") == main0)))
+        check("apromote: promote refuses a node that is not an attempt",
+              _auto_ok(lambda: p6.returncode == 1 and "auto promote is per-attempt" in p6.stderr))
+
+        r1 = cli("auto", "refs", "--json")
+        r2 = cli("auto", "refs", qa)
+        c1 = cli("auto", "check", rel, "--json")
+        c2 = cli("auto", "check", rel, "--static", "--json")
+        jr = _auto_val(lambda: json.loads(r1.stdout), {})
+        jc = _auto_val(lambda: json.loads(c1.stdout), {})
+        js = _auto_val(lambda: json.loads(c2.stdout), {})
+        # §11 prints a branch without `refs/heads/` and nothing else: the FULL name, the way
+        # `git branch --list` prints it, because the tail alone is not a name a PI can paste
+        # into a git command.
+        want = _auto_val(lambda: ["crux/auto/%s/run" % qa, "crux/auto/%s/island/%s" % (qa, qi),
+                                  "crux/auto/%s/promoted/%s" % (qa, st["h1"])], [])
+        check("acli: promote and refs emit JSON under --json, and check --json keeps every 05.0 key",
+              _auto_ok(lambda: (
+                  r1.returncode == 0
+                  and set(jr) == {"anchor", "repo", "refs", "branches", "worktrees"}
+                  and jr["anchor"] == qa and os.path.realpath(jr["repo"]) == repo
+                  and all(set(x) == {"name", "id", "commit"} for x in jr["refs"])
+                  and {x["id"] for x in jr["refs"]} >= {"base", st["h1"]}
+                  and jr["refs"][0]["id"] == "base"
+                  and bool(want) and {n["name"] for n in jr["branches"]} == set(want)
+                  and jr["branches"][0]["name"] == "crux/auto/%s/run" % qa
+                  and all(set(x) == {"name", "commit"} for x in jr["branches"])
+                  and [x["id"] for x in jr["worktrees"]] == [st["h0"]]
+                  and all(set(x) == {"id", "path", "commit"} for x in jr["worktrees"])
+                  and os.path.realpath(jr["worktrees"][0]["path"]) == os.path.realpath(st["wt0"])
+                  and r2.returncode == 0 and "refs/crux/auto/%s/" % qa in r2.stdout
+                  and c1.returncode == 0
+                  and set(jc) >= {"ok", "plan", "anchor", "mode", "problems", "repo", "scorer"}
+                  and jc["ok"] is True and jc["scorer"]["ran"] is True
+                  and jc["scorer"]["value"] == 0.8
+                  and c2.returncode == 0
+                  and set(js) == {"ok", "plan", "anchor", "mode", "problems"})))
+
+        # Both verbs ACT on the plan rather than report on it, so both inherit the engine's own
+        # field checks. What is asserted is the shape of the refusal: one line a PI can read,
+        # the same line from both verbs, and nothing created on the way out.
+        write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi,
+                                               extra=(("scorer_timeout", "soon"),)))
+        b1 = cli("auto", "refs", "--json")
+        b2 = cli("auto", "promote", st.get("h1", "h404"), "--branch", "later/h1")
+        write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi))
+        want_msg = ("crux: flight plan field 'scorer_timeout' must be a positive number "
+                    "(got 'soon')")
+        check("acli: refs and promote refuse a flight plan whose field will not parse, with one line and no traceback",
+              _auto_ok(lambda: (
+                  b1.returncode == 1 and b2.returncode == 1
+                  and b1.stderr.strip() == want_msg and b2.stderr.strip() == want_msg
+                  and "Traceback" not in b1.stderr and "Traceback" not in b2.stderr
+                  and _git(repo, "branch", "--list", "later/h1") == "")))
+
+        # ------------------------- criterion 24: a vault written before any of this still loads
+        tmp = tempfile.mkdtemp(prefix="crux_anoauto_")
+        dst = os.path.join(tmp, "demo")
+        shutil.copytree(os.path.join(REPO, "skills", "crux", "examples", "demo_vault"), dst)
+        runs = [cli("status", cwd=dst), cli("validate", "--json", cwd=dst),
+                cli("review", cwd=dst), cli("status", "--json", cwd=dst)]
+        vj = _auto_val(lambda: json.loads(runs[1].stdout), {})
+        norefs = cli("auto", "refs", cwd=dst)
+        check("acli: a vault with no auto/ directory loads, validates and renders unchanged, drift warning aside",
+              _auto_ok(lambda: (
+                  all(r.returncode == 0 for r in runs)
+                  and all("engine drift" in l for r in runs for l in r.stderr.splitlines()
+                          if l.strip())
+                  and set(vj) >= {"ok", "problems"}
+                  and not any(s in runs[1].stdout for s in ("auto/", ".lock", "reserved"))
+                  and norefs.returncode == 1
+                  and norefs.stderr.strip()
+                  == "crux: auto refs: no flight plan in this vault (auto/<qid>/plan.md)"
+                  and not os.path.isdir(os.path.join(dst, "auto")))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"acli: section ran without crashing ({e!r})", False)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+        _auto_sweep()
+
+
+def run_auto_purity():
+    """Spec 05 PRD 05.1, D19 — the line between the engine and the driver.
+
+    The engine is the part a reader has to be able to trust by reading it: no process, no
+    network, no clock-dependent branch. That is a property of the source text, so it is checked
+    as source text rather than by hoping no test happens to spawn anything. The import
+    direction is one-way — `autopilot` imports `engine`, never the reverse — and `crux.py`
+    imports `autopilot` inside the function that needs it, so the verbs that start nothing
+    never load the module that can."""
+    print("\n# autopilot — the purity line (spec 05, PRD 05.1)")
+    try:
+        eng = "\n".join(l for l in read(os.path.join(HERE, "engine.py")).splitlines()
+                        if not l.lstrip().startswith("#"))
+        ap = os.path.join(HERE, "autopilot.py")
+        auto = read(ap) if os.path.isfile(ap) else ""
+        allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "engine"}
+        imports = [m.group(1).split(".")[0] for m in
+                   re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
+        cl = read(os.path.join(HERE, "crux.py")).splitlines()
+        lazy = [l for l in cl if re.match(r"\s*import autopilot\b", l)]
+        check("apure: engine.py imports nothing impure and names no git command; autopilot.py imports only stdlib and engine; engine never imports autopilot",
+              not re.search(r"^\s*(import|from)\s+(subprocess|threading|socket|urllib|fcntl|"
+                            r"multiprocessing|asyncio|signal)\b", eng, re.M)
+              and not re.search(r"\bos\.(system|popen|fork|exec\w*|spawn\w*|posix_spawn\w*)\s*\(",
+                                eng)
+              and not re.search(r"""["']git["']""", eng)
+              and not re.search(r"^\s*(import|from)\s+autopilot\b", eng, re.M)
+              and os.path.isfile(ap)
+              and bool(re.search(r"^import engine as E", auto, re.M))
+              and bool(imports) and all(x in allowed for x in imports)
+              and bool(lazy) and all(l.lstrip() != l for l in lazy)
+              and not any(re.match(r"^import subprocess\b", l) for l in cl))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"apure: section ran without crashing ({e!r})", False)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
                  ["brief", "--help"], ["glossary", "--help"], ["doctor", "--help"],
-                 ["auto", "--help"]):
+                 ["auto", "--help"], ["auto", "check", "--help"],
+                 ["auto", "promote", "--help"], ["auto", "refs", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         # `auto` is PRD 05.0's own verb: its check is named with the autopilot prefix the
@@ -9483,6 +10527,14 @@ def main():
     run_puct()
     run_auto_brief()
     run_auto_cli()
+    run_auto_lock()
+    run_auto_reserve()
+    run_auto_git()
+    run_auto_workspace()
+    run_auto_retention()
+    run_auto_scorer()
+    run_auto_verbs()
+    run_auto_purity()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

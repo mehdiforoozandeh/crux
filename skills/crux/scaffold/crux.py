@@ -343,17 +343,33 @@ def main(argv=None):
     s.add_argument("--settings", default=None,
                    help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
 
-    # autopilot (spec 05, PRD 05.0). Three verbs, all read-only or append-only: `check` and
-    # `brief` touch nothing, `guide` appends the PI's own words to one section of one file.
-    # The loop that spawns workers is 05.2 — nothing under `auto` starts a process.
+    # autopilot (spec 05, PRD 05.0 + 05.1). `brief` and `guide` still touch nothing and no
+    # process; `check` now dry-runs the PI's scorer once (`--static` is what it used to do),
+    # `refs` lists a run's refs read-only, and `promote` cuts one branch at a recorded
+    # attempt. The loop that spawns workers is still 05.2.
     ap = sub.add_parser("auto", aliases=["autopilot"],
-                        help="autopilot (spec 05): validate a flight plan, print a worker's "
-                             "brief, append the PI's guidance — nothing here starts a process")
+                        help="autopilot (spec 05): validate a flight plan and dry-run its "
+                             "scorer, print a worker's brief, append the PI's guidance, "
+                             "promote an attempt or list a run's refs")
     asub = ap.add_subparsers(dest="acmd", metavar="<sub-verb>")
 
     s = _jsonable(asub.add_parser("check", help="validate a flight plan and report every "
                                                 "problem it carries, not just the first"))
     s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+    s.add_argument("--static", action="store_true",
+                   help="validate the plan only — engine checks, no process started")
+
+    s = _jsonable(asub.add_parser("promote", help="create a branch in the repository at a "
+                                                  "recorded attempt's commit (no checkout, "
+                                                  "no merge)"))
+    s.add_argument("id", help="the recorded attempt to promote")
+    s.add_argument("--branch", dest="branch", default=None,
+                   help="the branch to create (default: crux/auto/<qid>/promoted/<hid>)")
+
+    s = _jsonable(asub.add_parser("refs", help="list a run's refs, branches and live "
+                                               "worktrees — creates nothing"))
+    s.add_argument("qid", nargs="?", default=None,
+                   help="the anchor question; optional when the vault holds one flight plan")
 
     s = _jsonable(asub.add_parser("brief", help="assemble the worker brief for the next "
                                                 "attempt built on a given attempt"))
@@ -442,25 +458,66 @@ def _csv_arg(val):
 
 
 def _dispatch_auto(a):
-    """`crux auto <sub-verb>` (spec 05, PRD 05.0). `check` and `brief` resolve the vault
-    read-only — they never re-stamp it — and `guide` is the one that writes, appending the
-    PI's words to `## Guidance`."""
+    """`crux auto <sub-verb>` (spec 05, PRD 05.0 + 05.1). Every verb but `guide` resolves the
+    vault read-only and never re-stamps it; `guide` is the one that writes, appending the PI's
+    words to `## Guidance`.
+
+    `autopilot` is imported HERE, inside the verbs that need it, and never at module scope:
+    `check --static`, `brief` and `guide` start no process, and the way that stays true is
+    that the module which CAN start one is not even loaded on their path."""
     t = getattr(a, "acmd", None)
     if not t:
-        print("crux: auto needs a sub-verb — check / brief / guide", file=sys.stderr)
+        print("crux: auto needs a sub-verb \u2014 check / brief / guide / promote / refs",
+              file=sys.stderr)
         return 1
     if t == "check":
-        res = E.auto_check(_vault_ro(None), a.plan)
+        root = _vault_ro(None)
+        if getattr(a, "static", False):
+            res = E.auto_check(root, a.plan)
+        else:
+            import autopilot
+            res = autopilot.auto_check(root, a.plan)
         if a.json:
             _emit(res)
             return 0 if res["ok"] else 1
         if res["ok"]:
             print(f"\u2713 flight plan valid: {res['plan']}  "
                   f"(anchor {res['anchor']}, mode {res['mode']})")
+            sc = res.get("scorer") or {}
+            if sc.get("ran"):
+                print(f"\u2713 scorer ok: {sc['address']} = {sc['value']}  ({sc['cmd']})")
             return 0
         for p in res["problems"]:
             print(f"\u2717 {p['check']}: {p['message']}")
         return 1
+    if t == "promote":
+        import autopilot
+        res = autopilot.promote(_vault_ro(None), a.id, branch=a.branch)
+        if a.json:
+            return _emit(res)
+        print(f"\u2713 promoted {res['id']} to {res['branch']}  ({res['commit'][:12]})")
+        return 0
+    if t == "refs":
+        import autopilot
+        res = autopilot.auto_refs(_vault_ro(None), a.qid)
+        if a.json:
+            return _emit(res)
+        print(f"refs/crux/auto/{res['anchor']}/  ({res['repo']})")
+        for r in res["refs"]:
+            print(f"  {(r['commit'] or '')[:12]}  {r['name']}")
+        if not res["refs"]:
+            print("  (none)")
+        print("branches:")
+        for b in res["branches"]:
+            print(f"  {(b['commit'] or '')[:12]}  {b['name']}")
+        if not res["branches"]:
+            print("  (none)")
+        print("worktrees:")
+        for w in res["worktrees"]:
+            print(f"  {(w['commit'] or '')[:12]}  {w['id']}  {w['path']}")
+        if not res["worktrees"]:
+            print("  (none)")
+        return 0
     if t == "brief":
         root = _vault_ro(None)
         if a.lint:
