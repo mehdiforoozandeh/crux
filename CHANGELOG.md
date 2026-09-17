@@ -31,7 +31,9 @@ verdict/roll-up/view logic changes.
     `[ ]`, and an address that does not resolve — or no metrics document at all — ticks `[-]`. The
     driver supplies ticks and never a verdict: the verdict rule and the close path are untouched.
     Every check in a plan must now be a metric comparison, refused by `auto check` under the new
-    problem slug `check-grammar`.
+    problem slug `check-grammar`. Three fields the loop cannot run without are refused there too,
+    under the existing slug `field-type`: `replicates:` that names no whole number of seeds, and
+    `parallel_total:` or `parallel_island:` below one attempt.
   - **State, ledger and resume.** `auto/<qid>/state.json` is rewritten whole after every event and
     `auto/<qid>/ledger.jsonl` appends one JSON object per line from a closed vocabulary of seventeen
     events, both under 05.1's vault lock. An attempt sits in one of five phases, each leaving

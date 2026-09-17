@@ -8109,10 +8109,10 @@ def _plan_path(root, qid):
 # The plan's two checks, in the node's own format (§2: no new parser). The claim-directed one
 # names the objective address `eval.loss` as a token, which is what check 14 looks for.
 AUTO_PLAN_VERIFIABLES = (
-    "- [ ] eval.loss lands at or below 0.85 on the held-out split\n"
+    "- [ ] eval.loss <= 0.85 on the held-out split\n"
     "      fails-if:: the median of three seeds stays above 0.85\n"
     "      discriminates:: true\n"
-    "- [ ] [outcome-neutral] the baseline re-run reproduces to within 0.01\n"
+    "- [ ] [outcome-neutral] baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01\n"
     "      fails-if:: the baseline re-run lands outside 0.01\n")
 AUTO_PLAN_GUIDANCE = ("_(the PI's standing instructions to workers — appended with "
                       "`crux auto guide`, never edited)_\n")
@@ -8198,8 +8198,8 @@ def _auto_attempt(root, parent, title, score=None, verdict="supported", findings
     that waited for it would wait forever."""
     hid, _, _ = E.cmd_hypothesize(
         root, title, parent=parent, rule="all",
-        verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
-        neutral=["the baseline re-run reproduces to within 0.01"],
+        verifiables=["eval.loss <= 0.85 on the held-out split"],
+        neutral=["baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01"],
         fails_if=["the median of three seeds stays above 0.85",
                   "the baseline re-run lands outside 0.01"],
         discriminates=[True, False])
@@ -8357,7 +8357,7 @@ def run_flight_plan():
               "flight plan verifiables carry no outcome-neutral control"
               in _plan_msgs(root, _plan_text(
                   qa, hb, islands=qi,
-                  verifiables=("- [ ] eval.loss lands at or below 0.85 on the held-out split\n"
+                  verifiables=("- [ ] eval.loss <= 0.85 on the held-out split\n"
                                "      fails-if:: the median of three seeds stays above 0.85\n"
                                "      discriminates:: true\n")), rel))
         check("plan: refuses an objective no discriminating check names",
@@ -8365,10 +8365,10 @@ def run_flight_plan():
               "check: no verifiable marked discriminates:: true names it"
               in _plan_msgs(root, _plan_text(
                   qa, hb, islands=qi,
-                  verifiables=("- [ ] the held-out score lands at or below the bar\n"
+                  verifiables=("- [ ] eval.score <= 0.85 — the held-out score lands at or below the bar\n"
                                "      fails-if:: the median of three seeds stays above the bar\n"
                                "      discriminates:: true\n"
-                               "- [ ] [outcome-neutral] the baseline re-run reproduces to within 0.01\n"
+                               "- [ ] [outcome-neutral] baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01\n"
                                "      fails-if:: the baseline re-run lands outside 0.01\n")), rel))
         check("plan: refuses an objective address that does not resolve in the baseline metrics",
               any(m.startswith(f"flight plan objective 'eval.nosuch' does not resolve in "
@@ -8390,9 +8390,9 @@ def run_flight_plan():
               "flight plan verifiable(s) 1 have no failure scenario"
               in _plan_msgs(root, _plan_text(
                   qa, hb, islands=qi,
-                  verifiables=("- [ ] eval.loss lands at or below 0.85 on the held-out split\n"
+                  verifiables=("- [ ] eval.loss <= 0.85 on the held-out split\n"
                                "      discriminates:: true\n"
-                               "- [ ] [outcome-neutral] the baseline re-run reproduces to within 0.01\n"
+                               "- [ ] [outcome-neutral] baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01\n"
                                "      fails-if:: the baseline re-run lands outside 0.01\n")), rel))
         check("plan: every problem carries the check slug that found it",
               set(_auto_val(lambda: {p["check"] for p in E.flight_plan_problems(
@@ -8577,8 +8577,8 @@ def run_builds_on():
               and _auto_val(lambda: E.BUILDS_ON_FIELD) == "builds_on")
         made = _auto_val(lambda: E.cmd_hypothesize(
             root, "a branched attempt", parent=q1, rule="all",
-            verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
-            neutral=["the baseline re-run reproduces to within 0.01"],
+            verifiables=["eval.loss <= 0.85 on the held-out split"],
+            neutral=["baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01"],
             fails_if=["the median of three seeds stays above 0.85",
                       "the baseline re-run lands outside 0.01"],
             discriminates=[True, False], builds_on=h1))
@@ -8590,22 +8590,22 @@ def run_builds_on():
         check("builds_on: cmd_hypothesize refuses a bad target before writing the node",
               _auto_msg(lambda: E.cmd_hypothesize(
                   root, "a doomed attempt", parent=q1, rule="all",
-                  verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
-                  neutral=["the baseline re-run reproduces to within 0.01"],
+                  verifiables=["eval.loss <= 0.85 on the held-out split"],
+                  neutral=["baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01"],
                   fails_if=["a world", "another world"], discriminates=[True, False],
                   builds_on="h99")) == "builds_on 'h99' does not exist"
               and _auto_msg(lambda: E.cmd_hypothesize(
                   root, "another doomed attempt", parent=q1, rule="all",
-                  verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
-                  neutral=["the baseline re-run reproduces to within 0.01"],
+                  verifiables=["eval.loss <= 0.85 on the held-out split"],
+                  neutral=["baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01"],
                   fails_if=["a world", "another world"], discriminates=[True, False],
                   builds_on=h3)) == f"builds_on '{h3}' sits under '{q2}', not under '{q1}'")
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                             "a CLI branched attempt", "-p", q1, "--builds-on", h1,
-                            "-v", "eval.loss lands at or below 0.85 on the held-out split",
+                            "-v", "eval.loss <= 0.85 on the held-out split",
                             "--fails-if", "the median of three seeds stays above 0.85",
                             "--discriminates",
-                            "-n", "the baseline re-run reproduces to within 0.01",
+                            "-n", "baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01",
                             "--fails-if", "the baseline re-run lands outside 0.01",
                             "--rule", "all", "--json"],
                            capture_output=True, cwd=root, encoding="utf-8", errors="replace")
@@ -9312,9 +9312,12 @@ def _auto_sweep():
     """Remove every fixture repository made since the last sweep. Each section calls this in
     its `finally`, rather than removing the name it got back: `_auto_repo` can raise after the
     directory exists — `git init` on a full disk, a vault that will not build — and a name that
-    was never returned is a temp directory nobody will ever delete."""
+    was never returned is a temp directory nobody will ever delete.
+
+    Removal goes through `_loop_rmtree`: nearly every fixture here is a git repository, git
+    writes its loose objects read-only, and on Windows a read-only file cannot be unlinked."""
     while _AUTO_TRASH:
-        shutil.rmtree(_AUTO_TRASH.pop(), ignore_errors=True)
+        _loop_rmtree(_AUTO_TRASH.pop())
 
 
 def _auto_repo(scorer="python3 score.py", extra=(), retention="failed", islands=True):
@@ -9505,8 +9508,8 @@ def run_auto_reserve():
             s2["mid"] = E.cmd_validate(root2)
             h2, _, _ = E.cmd_hypothesize(
                 root2, "next", parent=qb, rule="all",
-                verifiables=["eval.loss lands at or below 0.85 on the held-out split"],
-                neutral=["the baseline re-run reproduces to within 0.01"],
+                verifiables=["eval.loss <= 0.85 on the held-out split"],
+                neutral=["baseline.drift <= 0.01 — the baseline re-run reproduces to within 0.01"],
                 fails_if=["the median of three seeds stays above 0.85",
                           "the baseline re-run lands outside 0.01"],
                 discriminates=[True, False])
@@ -10253,7 +10256,8 @@ def run_auto_purity():
         ap = os.path.join(HERE, "autopilot.py")
         auto = read(ap) if os.path.isfile(ap) else ""
         allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
-                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "engine"}
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal",
+                   "engine"}
         imports = [m.group(1).split(".")[0] for m in
                    re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
         cl = read(os.path.join(HERE, "crux.py")).splitlines()
@@ -10274,13 +10278,1722 @@ def run_auto_purity():
         check(f"apure: section ran without crashing ({e!r})", False)
 
 
+# --------------------------------------------------- 05.2: the driver loop, fixtures and golden
+# Everything from here to `run_cli_help` was written against PRD 05.2 and that slice's interface
+# contract ALONE — `auto_run`, the ledger, the comparison grammar and the approval hash did not
+# exist when these asserts were written. That is the point of writing them first: a test with the
+# implementation in front of it asserts what the code does, and the only question worth asking is
+# whether the code does what was asked for.
+
+# The node a hypothesis closed BY HAND leaves, captured from the engine as it stood BEFORE 05.2.
+# Stored as lines rather than one triple-quoted block because three frontmatter lines end in a
+# space, and an editor that strips trailing whitespace would move the golden silently.
+HAND_CLOSE_GOLDEN = "\n".join((
+    '---',
+    'id: h1',
+    'type: idea',
+    'schema: 2',
+    'title: x = 3',
+    'parent: q1',
+    'status: done',
+    'rule: all',
+    'measurement: ',
+    'replicates: ',
+    'verdict: supported',
+    'metric: ',
+    'created: "2026-01-01T00:00:00"',
+    'updated: "2026-01-01T00:00:00"',
+    'null_approved: "2026-01-01T00:00:00"',
+    'null_hash: f286200254531a1e',
+    'lock: c4befb40dbab3840',
+    'locked: "2026-01-01T00:00:00"',
+    'lock_at: running',
+    '---',
+    '',
+    '# h1 — x = 3',
+    '',
+    'Parent:: [[q1_does_x_reach_3]]',
+    '',
+    '## ELI5',
+    '',
+    '_(one sentence, plain language, no jargon)_',
+    '',
+    '## TL;DR',
+    '',
+    '_(one paragraph: what this claims, and what would settle it)_',
+    '',
+    '## Null',
+    'chance — seed noise alone lifts the score past the bar',
+    '',
+    '## Problem Statement',
+    '',
+    '_(why this is worth testing)_',
+    '',
+    '## Idea / Hypothesis',
+    '',
+    'x = 3',
+    '',
+    '## Verifiables',
+    '',
+    '<!-- on close, tick each box met/unmet/could-not-evaluate; the verdict is derived from them. -->',
+    '- [x] obj.score >= -0.5 on the frozen scorer (found: 0.0)',
+    '      fails-if:: x stays two or more steps away from 3',
+    '      discriminates:: true',
+    '- [x] [outcome-neutral] obj.score <= 0 — the objective is never positive (found: 0.0)',
+    '      fails-if:: the scorer adds a positive offset',
+    '',
+    '## Planned Intervention',
+    '',
+    '_(how this hypothesis will be tested)_',
+    '',
+    '## Run Links',
+    '',
+    '_(none yet)_',
+    '',
+    '## Artifacts',
+    '',
+    '<!-- what the run produced. Keep files under results/h1/ and link at least the report:',
+    '     - [Report](results/h1/report.md)   - results/h1/curve.png -->',
+    '_(none yet)_',
+    '',
+    '## Findings',
+    '',
+    'closed by hand',
+    '',
+))
+
+# The leash, pinned byte-for-byte at the commit 05.2 branched from. 05.2 is the slice that first
+# lets a machine close a hypothesis, so the four bullets that say a human decides are exactly the
+# text most at risk of being softened while nobody is looking — and a softened bullet would pass
+# every other check in this suite.
+LEASH_BULLETS = "\n".join((
+    '- **Read-only / bookkeeping** (`status`, `review`, `validate`, `test --to staged`): act',
+    '  without asking, and say what it means for the science rather than that you ran it.',
+    '- **Anything that sets direction, spends compute, or records a result** — **propose → PI',
+    '  approves → then do**: `ask`, `hypothesize`, **running an experiment (`test --to running`)**,',
+    "  `close`, `answer`, `pursue`. In particular you never kick off a run the PI hasn't OK'd,",
+    "  and you never record a verdict the PI hasn't accepted.",
+    '- **Taskhub**: ordinary task bookkeeping is silent; **completing an experiment is PI-gated**',
+    '  (`crux task accept`) because its output is evidence. See *The taskhub* above.',
+    "- **`review` gate + `synthesize` → `approve` → `answer`**: always the PI's. Surface the",
+    '  gate, draft the synthesis, then stop — `approve` is their signature, not yours.',
+))
+CLOSE_ROW = ('| `close` | ◆ | derives the verdict from your ticks — never tick a box the evidence '
+             'does not support |')
+
+
+# ------------------------------------------------------------------------------- tier zero
+# The whole experiment is one number in `params.json`. The scorer reports `-(x - 3)**2` with a
+# seeded jitter below a millionth, so the objective is deterministic per seed, never positive, and
+# improved only by moving x toward 3 — which is what the stub agent does. A full search therefore
+# runs in seconds, and every invariant the PRD promises (a crash closes `invalid-run`, a killed run
+# resumes, `main` is never written) is provable here rather than argued.
+LOOP_SCORE_PY = '''import json, os, random, sys
+if "--fail-always" in sys.argv:
+    sys.stderr.write("scorer broken on purpose\\n")
+    sys.exit(4)
+if os.path.exists("crash_scorer"):
+    sys.stderr.write("scorer crashed on purpose\\n")
+    sys.exit(3)
+with open("params.json", encoding="utf-8") as f:
+    x = json.load(f)["x"]
+seed = int(os.environ.get("CRUX_SEED") or 0)
+tiny = random.Random(seed).random() * 1e-6
+value = -(x - 3) ** 2 - tiny
+if "--miss-confirm" in sys.argv and seed != 0:
+    value = -9.0 - tiny
+print(json.dumps({"obj": {"score": {"value": value}}}))
+'''
+
+# The stub worker. `mode` is the single argument the plan's `agent:` carries, and each mode breaks
+# exactly one clause of the worker contract — so every refusal below has a witness that differs
+# from the working case in one thing only.
+LOOP_AGENT_PY = '''import json, os, subprocess, sys
+mode = sys.argv[1] if len(sys.argv) > 1 else "step"
+GIT = ["git", "-c", "user.name=crux-stub", "-c", "user.email=stub@crux.invalid",
+       "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+with open(os.environ["CRUX_BRIEF"], encoding="utf-8") as f:
+    if "## Objective" not in f.read():
+        sys.exit(7)
+if mode == "exit1":
+    sys.stderr.write("stub failed on purpose\\n")
+    sys.exit(1)
+with open("params.json", encoding="utf-8") as f:
+    x = json.load(f)["x"]
+if mode != "still":
+    x = x + (1 if x < 3 else (-1 if x > 3 else 0))
+with open("params.json", "w", encoding="utf-8") as f:
+    json.dump({"x": x}, f)
+if mode == "frozen":
+    with open("score.py", "a", encoding="utf-8") as f:
+        f.write("\\n# touched by the worker\\n")
+if mode == "shared":
+    shared = os.path.join(os.path.dirname(os.environ["CRUX_WORKSPACE"]), "shared")
+    os.makedirs(shared, exist_ok=True)
+    with open(os.path.join(shared, "x"), "a", encoding="utf-8") as f:
+        f.write(os.environ["CRUX_ATTEMPT"] + "\\n")
+if mode == "crashscore":
+    with open("crash_scorer", "w", encoding="utf-8") as f:
+        f.write("1\\n")
+subprocess.run(GIT + ["add", "-A"], check=True)
+subprocess.run(GIT + ["commit", "-q", "--allow-empty", "-m", "attempt " + os.environ["CRUX_ATTEMPT"]], check=True)
+proposal = {"claim": "x = %s" % x}
+if mode == "longclaim":
+    proposal["claim"] = " ".join(["word"] * 401)
+if mode == "extrakey":
+    proposal["verdict"] = "supported"
+if mode == "taggedcontrol":
+    proposal["controls"] = [{"text": "[hypothesis] obj.score <= 1 the value stays small", "fails_if": "the scorer drifts upward"}]
+if mode == "control":
+    proposal["controls"] = [{"text": "obj.score <= 1 — the value stays at most one", "fails_if": "the scorer drifts upward"}]
+with open(os.environ["CRUX_PROPOSAL"], "w", encoding="utf-8") as f:
+    json.dump(proposal, f)
+'''
+
+LOOP_NULL = "chance — seed noise alone lifts the score past the bar"
+LOOP_GOAL = "x can be moved to the optimum of the frozen objective"
+LOOP_VERIFIABLES = ("- [ ] obj.score >= -0.5 on the frozen scorer\n"
+                    "      fails-if:: x stays two or more steps away from 3\n"
+                    "      discriminates:: true\n"
+                    "- [ ] [outcome-neutral] obj.score <= 0 — the objective is never positive\n"
+                    "      fails-if:: the scorer adds a positive offset\n")
+
+# Every tier-zero plan field, so each fixture below names only what it changes. A variant that has
+# to restate nineteen fields to change one is a variant nobody can read.
+LOOP_PLAN = dict(mode="climb", island_cap="3", budget_attempts="8", budget_hours="1",
+                 budget_model_calls="40", parallel_total="1", parallel_island="1", retries="1",
+                 retention="failed", scorer="python3 score.py", run="python3 train.py",
+                 frozen="score.py", writable="work/", agent="python3 agent.py step",
+                 steward="false", stall_attempts="2", abort_invalid_runs="2",
+                 replicates="2 seeds", rule="all")
+
+
+def _loop_rmtree(path):
+    """`shutil.rmtree` that survives a git object directory.
+
+    git writes its loose objects read-only, and on Windows a read-only file cannot be unlinked —
+    so the obvious `rmtree` leaves a fixture repository behind on exactly the platform where a
+    leftover temp directory is hardest to notice."""
+    def retry(fn, p, _exc):
+        try:
+            os.chmod(p, 0o700)
+            fn(p)
+        except OSError:
+            pass
+    shutil.rmtree(path, onerror=retry)
+
+
+def _loop_plan_text(qa, hb, isl=(), verifiables=None, **plan):
+    """The tier-zero flight plan as text, for the checks that want a plan and no repository."""
+    fields = dict(LOOP_PLAN)
+    fields.update(plan)
+    return _plan_text(qa, hb, islands=", ".join(isl), goal=LOOP_GOAL, address="obj.score",
+                      direction="max", bar="-0.5", null=LOOP_NULL,
+                      verifiables=LOOP_VERIFIABLES if verifiables is None else verifiables,
+                      extra=(("scorer_timeout", "20"),), **fields)
+
+
+def _loop_write_plan(root, qa, hb, name="plan.md", **kw):
+    """Write a tier-zero plan into the vault and return its vault-relative path."""
+    rel = f"{E.AUTO_DIR}/{qa}/{name}"
+    write(os.path.join(root, E.AUTO_DIR, qa, name), _loop_plan_text(qa, hb, **kw))
+    return rel
+
+
+def _loop_load_plan(root, qa):
+    """The plan on disk as the driver will read it, or None while `load_flight_plan` refuses."""
+    return _auto_val(lambda: E.load_flight_plan(root, f"{E.AUTO_DIR}/{qa}/plan.md"))
+
+
+def _loop_repo(x0=0, islands=0, **plan):
+    """A tier-zero repository with an approved flight plan on it.
+    Returns (repo, root, qa, isl, hb, rel).
+
+    `x0` is where the search starts — the baseline scores `-(x0 - 3)**2`, so `x0=0` is three steps
+    from the optimum and `x0=2` is one. `islands` is how many island questions hang under the
+    anchor; zero means the anchor is its own island, which is the ordinary Climb shape. `**plan`
+    overrides any flight-plan field, and `_approve=False` leaves the plan unsigned.
+
+    The baseline is closed BY HAND — `cmd_approve_null`, `cmd_test --to running`, the ticks, then
+    `cmd_close` — because the thing under test is the driver doing exactly that, and a fixture
+    built with the code it is testing proves nothing."""
+    approve = plan.pop("_approve", True)
+    verifiables = plan.pop("verifiables", None)
+    repo = os.path.realpath(tempfile.mkdtemp(prefix="crux_aloop_"))
+    _AUTO_TRASH.append(repo)                     # registered BEFORE anything can raise
+    _git(repo, "init", "-q")
+    _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    write(os.path.join(repo, "score.py"), LOOP_SCORE_PY)
+    write(os.path.join(repo, "agent.py"), LOOP_AGENT_PY)
+    write(os.path.join(repo, "train.py"), "print('train')\n")
+    write(os.path.join(repo, "params.json"), json.dumps({"x": x0}))
+    root = os.path.join(repo, "cruxvault")
+    E.cmd_init("Tier zero", root, goal=LOOP_GOAL)
+    qa, _ = E.cmd_ask(root, "can x reach the optimum")
+    isl = [E.cmd_ask(root, f"island {k}", parent=qa)[0] for k in "ab"[:islands]]
+    hb, _, _ = E.cmd_hypothesize(
+        root, f"x = {x0}", parent=qa, rule="all", null=LOOP_NULL,
+        verifiables=["obj.score >= -0.5 on the frozen scorer"],
+        neutral=["obj.score <= 0 — the objective is never positive"],
+        fails_if=["x stays two or more steps away from 3",
+                  "the scorer adds a positive offset"],
+        discriminates=[True, False])
+    base = -(x0 - 3) ** 2
+    write(os.path.join(root, E.RESULTS_DIR, hb, E.METRICS_FILE),
+          json.dumps({"obj": {"score": {"value": base}}}))
+    E.cmd_approve_null(root, hb)
+    E.cmd_test(root, hb, to="running")
+    p = node_path(root, hb)
+    edit(p, "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
+    if base >= -0.5:
+        edit(p, "- [ ] obj.score >= -0.5", "- [x] obj.score >= -0.5")
+    E.cmd_close(root, hb, findings="the baseline, closed by hand before any run")
+    rel = _loop_write_plan(root, qa, hb, isl=isl, verifiables=verifiables, **plan)
+    if approve:
+        E.cmd_auto_approve(root, rel)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "initial")
+    return repo, root, qa, isl, hb, rel
+
+
+def _loop_fixture(**kw):
+    """`_loop_repo(**kw)`, or six Nones when building it raises.
+
+    The builder signs the plan with `crux auto approve`, a verb that did not exist when this was
+    written — so in wave one every build fails, and every criterion that needed a fixture has to
+    fail on its own line rather than take the whole section down with it."""
+    return _auto_val(lambda: _loop_repo(**kw), (None, None, None, None, None, None))
+
+
+def _loop_copy(fx):
+    """A byte copy of an already-built tier-zero repository, as a fresh 6-tuple.
+
+    `cmd_init` plus `git init` plus a hand-closed baseline cost more than a whole tier-zero search
+    does, so a section that wants the same fixture six times builds it once. Copied BEFORE any
+    run, so no worktree, lock, reservation or ref is ever copied along with it."""
+    repo, root, qa, isl, hb, rel = fx
+    if not repo:
+        return fx
+    dst = os.path.realpath(tempfile.mkdtemp(prefix="crux_aloop_"))
+    _AUTO_TRASH.append(dst)
+    _loop_rmtree(dst)
+    shutil.copytree(repo, dst, symlinks=True)
+    return dst, os.path.join(dst, os.path.relpath(root, repo)), qa, isl, hb, rel
+
+
+_LOOP_RUNS = {}          # fixture name -> everything one `auto run` left behind
+_LOOP_CLOSED = []        # (attempt id, the verdict on the node, the verdict the engine derives)
+
+
+def _loop_state_path(root, qa):
+    # "" for a fixture that was never built, so a wave-1 section reports every criterion
+    # rather than dying on the first os.path.join(None, ...)
+    return os.path.join(root, E.AUTO_DIR, qa, E.AUTO_STATE_FILE) if root and qa else ""
+
+
+def _loop_ledger_path(root, qa):
+    return os.path.join(root, E.AUTO_DIR, qa, E.AUTO_LEDGER_FILE) if root and qa else ""
+
+
+def _loop_note_verdicts(root, ids):
+    """Remember, for every closed attempt, what its file says the verdict is and what the engine's
+    own truth table says about the same ticks.
+
+    Captured here rather than at the end of the suite because the section that built the fixture
+    deletes it, and the criterion that compares the two is asserted after every fixture is gone."""
+    for hid in (ids or ()) if root else ():
+        n = _auto_val(lambda h=hid: E.Vault(root).get(h))
+        if not n:
+            continue
+        by = _auto_val(lambda: E.count_verifiables_by_kind(n["body"]), {})
+        want = _auto_val(lambda: E.derive_verdict_15(by[E.DEFAULT_KIND], by[E.NEUTRAL_KIND],
+                                                     *E.node_rule(n)))
+        _LOOP_CLOSED.append((hid, n["fm"].get("verdict"), want))
+
+
+def _loop_run(name, root, qa, rel, **kw):
+    """One `auto run`, and everything it left on disk: the state it returned, the state file, the
+    ledger's parsed events, and the refusal when it refused.
+
+    Every criterion below reads this dict rather than starting the driver again. A tier-zero search
+    is cheap but not free, and two sections asking the same question of two different runs are not
+    asking the same question."""
+    A = _auto_mod()
+    out = {"name": name, "root": root, "anchor": qa, "error": "", "returned": None,
+           "state": None, "events": [], "raw": ""}
+    if not root:                                             # pragma: no cover - wave-1 guard
+        out["error"] = "<no fixture: the plan could not be built or signed>"
+        _LOOP_RUNS[name] = out
+        return out
+    try:
+        out["returned"] = A.auto_run(root, rel, **kw)
+    except E.CruxError as e:
+        out["error"] = str(e)
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        out["error"] = f"<not implemented: {e!r}>"
+    out["state"] = _auto_val(lambda: json.loads(read(_loop_state_path(root, qa))))
+    lp = _loop_ledger_path(root, qa)
+    if os.path.isfile(lp):
+        out["raw"] = read(lp)
+        for line in out["raw"].splitlines():
+            ev = _auto_val(lambda l=line: json.loads(l))
+            if isinstance(ev, dict):
+                out["events"].append(ev)
+    _LOOP_RUNS[name] = out
+    _loop_note_verdicts(root, (out["state"] or {}).get("closed") or [])
+    return out
+
+
+def _ev(run, event):
+    """Every ledger event of one kind, in the order the driver appended them."""
+    return [e for e in (run or {}).get("events", []) if e.get("event") == event]
+
+
+def _loop_stop(run):
+    return ((run or {}).get("state") or {}).get("stop") or {}
+
+
+def _since_resume(run):
+    """Only the events the LAST resume appended. `ledger.jsonl` is append-only across runs, so
+    a resumed run's file still opens with everything the driver that died wrote."""
+    evs = (run or {}).get("events", [])
+    for i in range(len(evs) - 1, -1, -1):
+        if evs[i].get("event") == "resumed":
+            return {"events": evs[i:]}
+    return {"events": list(evs)}
+
+
+def _loop_untouched(repo, root, qa):
+    """Nothing on disk from a refused run — no state, no ledger, no reservation, no base ref.
+
+    The whole weight of "before any reservation" is here: a refusal that had already reserved an id
+    would have burned a hypothesis number that can never be handed out again."""
+    if not repo or not root:                                 # pragma: no cover - wave-1 guard
+        return False
+    d = os.path.join(root, E.AUTO_DIR, qa)
+    res = _auto_val(lambda: _auto_mod().reserved_path(root, qa),
+                    os.path.join(d, "reserved.json"))
+    return (not os.path.exists(os.path.join(d, E.AUTO_STATE_FILE))
+            and not os.path.exists(os.path.join(d, E.AUTO_LEDGER_FILE))
+            and not os.path.exists(res)
+            and _git(repo, "rev-parse", "--verify", "--quiet",
+                     f"refs/crux/auto/{qa}/base", check=False) == "")
+
+
+def _loop_lock_free(A, root):
+    """True when the vault's one lock can be taken right now — so an `auto run` that died did
+    not die holding it."""
+    A.acquire_lock(root, "probe", wait=0.3)
+    A.release_lock(root)
+    return True
+
+
+# Everything in a brief that a search legitimately moves. `budget.attempts.used` counts the
+# attempts under the anchor, and `migration` reports every other island's best — both are what
+# a run produces, and neither says anything about whether `island=None` still behaves as 05.0.
+_BRIEF_MOVES = ("budget", "migration")
+
+
+def _brief_fixed(payload):
+    return {k: v for k, v in (payload or {}).items() if k not in _BRIEF_MOVES}
+
+
+def _skip_first_materialize(A):
+    """Drop the FIRST `materialized` reservation write a run makes, exactly as a kill landing
+    between the node-filed write and that out-of-lock call would. Returns (restore, skipped).
+
+    §2 pins `materialized` right after filing, and no resume rule re-enters the filing step
+    once the node exists — so unless a later step sets it again, one unlucky kill leaves a
+    closed attempt reading `reserved` for good."""
+    orig = _auto_val(lambda: A.set_reservation_state)
+    skipped = []
+    if orig is None:                                         # pragma: no cover - wave-1 guard
+        return (lambda: None), skipped
+
+    def patched(root, qid, hid, state):
+        if state == "materialized" and not skipped:
+            skipped.append(hid)
+            return {"state": state}
+        return orig(root, qid, hid, state)
+
+    A.set_reservation_state = patched
+
+    def restore():
+        A.set_reservation_state = orig
+    return restore, skipped
+
+
+# §2's three nested records inside state.json. Spelled out here rather than derived from the
+# implementation: a key set a test reads back off the object it is checking asserts nothing.
+_ISLAND_KEYS = {"branch", "pointer", "best", "best_score", "seen_score", "stall"}
+_BEST_KEYS = {"id", "score"}
+_IN_FLIGHT_KEYS = {"island", "parent", "from", "phase", "worker_tries", "scorer_tries",
+                   "pid", "failure", "started"}
+
+
+def _record_probe(A, root, qa):
+    """Watch `autopilot._record`, so the state and the ledger are inspected after EVERY event
+    rather than once at the end. Returns (restore, findings).
+
+    A run that leaves a well-formed `state.json` at its stop says nothing about the twenty moments
+    in between — and those are the moments a crash actually lands in. `findings` is the list of
+    what was not true, each line tagged with the criterion it belongs to, so the assert is on an
+    empty list rather than on a boolean nobody can debug."""
+    bad, prev = [], {"raw": b""}
+    orig = _auto_val(lambda: A._record)
+    if orig is None:
+        return (lambda: None), bad
+    sp, lp = _loop_state_path(root, qa), _loop_ledger_path(root, qa)
+
+    def look():
+        st = json.loads(read(sp))                            # parses, after every event
+        if set(st) != set(E.AUTO_STATE_KEYS):
+            bad.append(f"state: keys {sorted(set(st) ^ set(E.AUTO_STATE_KEYS))}")
+        # the three nested records §2 pins, checked WHILE they exist: `in_flight` is empty by
+        # the time the run stops, so the stop's own state file can say nothing about its shape
+        for i, rec in (st.get("islands") or {}).items():
+            if set(rec) != _ISLAND_KEYS:
+                bad.append(f"state: islands[{i}] keys {sorted(set(rec) ^ _ISLAND_KEYS)}")
+        if set(st.get("best") or {}) != _BEST_KEYS:
+            bad.append(f"state: best keys {sorted(set(st.get('best') or {}) ^ _BEST_KEYS)}")
+        for hid, rec in (st.get("in_flight") or {}).items():
+            if set(rec) != _IN_FLIGHT_KEYS:
+                bad.append(f"state: in_flight[{hid}] keys "
+                           f"{sorted(set(rec) ^ _IN_FLIGHT_KEYS)}")
+        raw = b""
+        if os.path.isfile(lp):
+            with open(lp, "rb") as fh:
+                raw = fh.read()
+        if not raw.startswith(prev["raw"]):                  # append-only, byte for byte
+            bad.append("ledger: an earlier line changed")
+        prev["raw"] = raw
+        lines = [json.loads(l) for l in raw.decode("utf-8", "replace").splitlines()
+                 if l.strip().startswith("{")]
+        if st.get("events") != len(lines):
+            bad.append(f"state: events {st.get('events')} for {len(lines)} ledger lines")
+        for ev in lines:
+            if ev.get("event") not in E.AUTO_LEDGER_EVENTS:
+                bad.append(f"ledger: '{ev.get('event')}' is not a ledger event")
+        for nid, nd in E.Vault(root).nodes.items():          # nothing left proposed and unrun
+            if nd.type == "idea" and nd.status == "idea":
+                bad.append(f"unrun: {nid} is still an idea between events")
+
+    def probe(ctx, event, fields, work=None):
+        out = orig(ctx, event, fields, work=work)
+        try:
+            look()
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            bad.append(f"state: probe could not read what {event} wrote ({e!r})")
+        return out
+
+    A._record = probe
+
+    def restore():
+        A._record = orig
+    return restore, bad
+
+
+def run_auto_grammar():
+    """Spec 05 PRD 05.2 §1.2/§1.3 — the comparison grammar and the tick vector.
+
+    This bounds what the driver is allowed to conclude from a number. A check written as prose
+    cannot be ticked by a machine without the machine deciding what the prose meant, so the plan
+    refuses prose at the moment it is written and every check in a run is a comparison the engine
+    can evaluate. The tick is then arithmetic, the `(found: …)` note is the evidence, and neither
+    may move the lock hash — a ticked box is not a re-registration."""
+    print("\n# autopilot — the comparison grammar and the ticks (spec 05, PRD 05.2)")
+    root = os.path.realpath(tempfile.mkdtemp(prefix="crux_agrade_"))
+    _AUTO_TRASH.append(root)
+    try:
+        E.cmd_init("Tier zero", root, goal=LOOP_GOAL)
+        qa, _ = E.cmd_ask(root, "can x reach the optimum")
+        hb, _, _ = E.cmd_hypothesize(
+            root, "x = 0", parent=qa, rule="all", null=LOOP_NULL,
+            verifiables=["obj.score >= -0.5 on the frozen scorer"],
+            neutral=["obj.score <= 0 — the objective is never positive"],
+            fails_if=["x stays two or more steps away from 3",
+                      "the scorer adds a positive offset"],
+            discriminates=[True, False])
+        write(os.path.join(root, E.RESULTS_DIR, hb, E.METRICS_FILE),
+              json.dumps({"obj": {"score": {"value": -9.0}}}))
+        rel = _loop_write_plan(root, qa, hb)
+
+        def cc(text):
+            # `<absent>` rather than None: "the grammar refused this" and "the grammar is not
+            # written yet" are different answers, and half of these asserts want None.
+            return _auto_val(lambda: E.auto_check_comparison(text), "<absent>")
+
+        check("agrade: the grammar reads key, operator and number, and keeps the rest as prose",
+              cc("obj.value >= -0.5") == {"key": "obj.value", "op": ">=", "number": -0.5,
+                                          "rest": ""}
+              and cc("[outcome-neutral] eval.loss ≤ 0.85 on the held-out split (found: 0.8)")
+                  == {"key": "eval.loss", "op": "<=", "number": 0.85,
+                      "rest": "on the held-out split"})
+        check("agrade: the grammar refuses a missing space, prose, an empty key component and a number that is not finite",
+              all(cc(t) is None for t in
+                  ("obj.value>=-0.5", "the baseline reproduces", "obj..value <= 1",
+                   "obj.value <= nan", "obj.value <= inf", "obj.value <= -inf",
+                   "eval/loss <= 1", "eval\\loss <= 1", "eval#loss <= 1", "eval. <= 1",
+                   ".value <= 1", "obj.value <=", "obj.value", "", "   ")))
+        check("agrade: the operator vocabulary and the three aliases are the pinned ones",
+              _auto_val(lambda: E.AUTO_COMPARISON_OPS) == ("<=", "<", ">=", ">", "==", "!=")
+              and _auto_val(lambda: E.AUTO_OP_ALIASES) == {"≤": "<=", "≥": ">=", "≠": "!="})
+
+        # --------------------------------------------------------- the two new plan checks
+        prose = _loop_plan_text(qa, hb, verifiables=(
+            "- [ ] obj.score >= -0.5 on the frozen scorer\n"
+            "      fails-if:: x stays two or more steps away from 3\n"
+            "      discriminates:: true\n"
+            "- [ ] [outcome-neutral] the baseline reproduces\n"
+            "      fails-if:: the scorer adds a positive offset\n"))
+        alias = _loop_plan_text(qa, hb, verifiables=(
+            "- [ ] obj.score ≥ -0.5 on the frozen scorer\n"
+            "      fails-if:: x stays two or more steps away from 3\n"
+            "      discriminates:: true\n"
+            "- [ ] [outcome-neutral] obj.score ≤ 0 — the objective is never positive\n"
+            "      fails-if:: the scorer adds a positive offset\n"))
+        want5 = ("flight plan verifiable 2 is not a metric comparison: it must begin "
+                 "'<key.path> <op> <number>' with <op> one of <=, <, >=, >, ==, != "
+                 "(got 'the baseline reproduces')")
+
+        def slugs(text):
+            return _auto_val(lambda: {p["check"] for p in E.flight_plan_problems(
+                root, E.parse_flight_plan(text), rel)}, set())
+
+        check("agrade: a plan check that is not a metric comparison is refused under check-grammar, and ≤ ≥ ≠ read as <= >= !=",
+              _auto_ok(lambda: (
+                  want5 in _plan_msgs(root, prose, rel)
+                  and "check-grammar" in slugs(prose)
+                  and "check-grammar" not in slugs(alias)
+                  and not any("is not a metric comparison" in m
+                              for m in _plan_msgs(root, alias, rel))
+                  and E.auto_check_comparison("eval.loss ≤ 0.85 on x")["op"] == "<="
+                  and E.auto_check_comparison("eval.loss ≥ 0.85 on x")["op"] == ">="
+                  and E.auto_check_comparison("eval.loss ≠ 0.85 on x")["op"] == "!=")))
+        check("agrade: replicates must name a whole number of seeds, under field-type",
+              _auto_ok(lambda: (
+                  "flight plan field 'replicates' must name a whole number of seeds, 1 or "
+                  "more (got 'some seeds')"
+                  in _plan_msgs(root, _loop_plan_text(qa, hb, replicates="some seeds"), rel)
+                  and "field-type" in slugs(_loop_plan_text(qa, hb, replicates="some seeds"))
+                  and "field-type" in slugs(_loop_plan_text(qa, hb, replicates="0 seeds"))
+                  and "field-type" not in slugs(_loop_plan_text(qa, hb, replicates="2 seeds")))))
+        check("agrade: parallel_total and parallel_island must be one attempt or more, under field-type",
+              _auto_ok(lambda: (
+                  all(f"flight plan field '{f}' must be a whole number of attempts, 1 or more "
+                      f"(got '0')" in _plan_msgs(root, _loop_plan_text(qa, hb, **{f: "0"}), rel)
+                      and "field-type" in slugs(_loop_plan_text(qa, hb, **{f: "0"}))
+                      for f in ("parallel_total", "parallel_island"))
+                  # and the shape every plan in this suite already has stays clean
+                  and "field-type" not in slugs(_loop_plan_text(qa, hb))
+                  and _plan_msgs(root, _loop_plan_text(qa, hb, parallel_total="2",
+                                                       parallel_island="2"), rel) == [])))
+        check("agrade: the shipped flight-plan template leaves the comparison to the PI rather than hard-coding one direction",
+              _auto_ok(lambda: (
+                  "\n- [ ] <<verifiable>>\n"
+                  in read(os.path.join(HERE, "templates", "flight_plan.md"))
+                  and "<= <<bar>>" not in read(os.path.join(HERE, "templates",
+                                                            "flight_plan.md")))))
+        p = _loop_load_plan(root, qa)
+        check("agrade: load_flight_plan carries the driver's fields and every check's key, op and number",
+              _auto_ok(lambda: (
+                  p["replicates"] == 2 and p["steward"] is False and p["retries"] == 1
+                  and p["budget_attempts"] == 8 and p["budget_model_calls"] == 40
+                  and p["parallel_total"] == 1 and p["parallel_island"] == 1
+                  and p["stall_attempts"] == 2 and p["abort_invalid_runs"] == 2
+                  and p["agent"] == "python3 agent.py step" and p["run"] == "python3 train.py"
+                  and isinstance(p["budget_hours"], float)
+                  and [c["index"] for c in p["checks"]] == [1, 2]
+                  and [c["kind"] for c in p["checks"]] == [E.DEFAULT_KIND, E.NEUTRAL_KIND]
+                  and [c["key"] for c in p["checks"]] == ["obj.score", "obj.score"]
+                  and [c["op"] for c in p["checks"]] == [">=", "<="]
+                  and [c["number"] for c in p["checks"]] == [-0.5, 0.0]
+                  and p["checks"][0]["discriminates"] is True
+                  and p["checks"][0]["fails_if"] == "x stays two or more steps away from 3")))
+
+        # ------------------------------------------------------ the tick, and its found note
+        check("agrade: auto_tick is arithmetic over the metrics document, and n/a whenever it cannot be",
+              _auto_val(lambda: E.auto_tick({"obj": {"score": {"value": 0.0}}},
+                                            "obj.score >= -0.5", "m")) == ("x", "0.0")
+              and _auto_val(lambda: E.auto_tick({"obj": {"score": {"value": -9.0}}},
+                                                "obj.score >= -0.5", "m")) == (" ", "-9.0")
+              and _auto_val(lambda: E.auto_tick({"obj": {"other": 1.0}}, "obj.score >= -0.5",
+                                                "m"), ("?", ""))[0] == "-"
+              and _auto_val(lambda: E.auto_tick(None, "obj.score >= -0.5", "m"))
+                  == ("-", "n/a — no m")
+              and _auto_val(lambda: E.auto_tick({"obj": {"score": {"value": 0.0}}},
+                                                "the baseline reproduces", "m"))
+                  == ("-", "n/a — not a metric comparison"))
+
+        hv, _, _ = E.cmd_hypothesize(
+            root, "the tick fixture", parent=qa, rule="all", null=LOOP_NULL,
+            verifiables=["obj.score >= -0.5 on the frozen scorer"],
+            neutral=["obj.score <= 0 — the objective is never positive"],
+            fails_if=["x stays two or more steps away from 3",
+                      "the scorer adds a positive offset"],
+            discriminates=[True, False])
+        E.cmd_approve_null(root, hv)
+        E.cmd_test(root, hv, to="running")
+        before = read(node_path(root, hv))
+        t0 = _auto_val(lambda: E.cmd_auto_ticks(root, hv, {"obj": {"score": {"value": 0.0}}}))
+        a0 = read(node_path(root, hv))
+        d0 = _auto_val(lambda: E.lock_drift(E.Vault(root).get(hv)), "<absent>")
+        t1 = _auto_val(lambda: E.cmd_auto_ticks(root, hv, {"obj": {"score": {"value": -9.0}}}))
+        a1 = read(node_path(root, hv))
+        d1 = _auto_val(lambda: E.lock_drift(E.Vault(root).get(hv)), "<absent>")
+
+        def stamp(t):
+            return [l for l in t.splitlines() if l.startswith("updated:")]
+
+        check("agrade: obj.score >= -0.5 ticks [x] at 0.0 and [ ] at -9.0 with a found note and no lock drift",
+              _auto_ok(lambda: (
+                  t0 == [("x", "0.0"), ("x", "0.0")]
+                  and "- [x] obj.score >= -0.5 on the frozen scorer (found: 0.0)" in a0
+                  and ("- [x] [outcome-neutral] obj.score <= 0 — the objective is never "
+                       "positive (found: 0.0)") in a0
+                  and d0 is False
+                  and t1 == [(" ", "-9.0"), ("x", "-9.0")]
+                  and "- [ ] obj.score >= -0.5 on the frozen scorer (found: -9.0)" in a1
+                  and a1.count("(found:") == 2          # the note is replaced, never stacked
+                  and d1 is False
+                  # the continuation lines are not the driver's to touch
+                  and "\n      fails-if:: x stays two or more steps away from 3\n" in a1
+                  and "\n      discriminates:: true\n" in a1
+                  and "\n      fails-if:: the scorer adds a positive offset\n" in a1
+                  and stamp(a1) == stamp(before))))
+        check("agrade: ticking is idempotent, refuses a count that does not match, and applies to a hypothesis only",
+              _auto_ok(lambda: (
+                  E.cmd_auto_ticks(root, hv, {"obj": {"score": {"value": -9.0}}}) == t1
+                  and read(node_path(root, hv)) == a1
+                  and _auto_msg(lambda: E.auto_tick_body(E.Vault(root).get(hv)["body"],
+                                                         [("x", "0.0")]))
+                      == "auto ticks: 1 ticks for 2 verifiables"
+                  and _auto_msg(lambda: E.cmd_auto_ticks(root, qa, {}))
+                      == f"auto ticks apply to a hypothesis (got a 'question' for '{qa}')")))
+        check("agrade: findings name the objective, every check and the failure, with no backslash left in them",
+              _auto_val(lambda: E.auto_findings("obj.score", -9.0,
+                                                [("x", "-9.0"), (" ", "-9.0")]))
+                  == ("Autopilot close. Objective obj.score = -9.0. "
+                      "Check 1: met, found -9.0. Check 2: unmet, found -9.0.")
+              and _auto_val(lambda: E.auto_findings("obj.score", None, [("-", "n/a — no m")],
+                                                    failure="worker-exit: a\\b\n   c"))
+                  == ("Autopilot close. Objective obj.score = n/a. "
+                      "Check 1: n/a, found n/a — no m. Failure: worker-exit: a/b c."))
+        check("agrade: crossing the bar and improving on the best each read the direction",
+              _auto_val(lambda: (E.auto_crosses(-0.4, -0.5, "max"),
+                                 E.auto_crosses(-0.6, -0.5, "max"),
+                                 E.auto_crosses(None, -0.5, "max"),
+                                 E.auto_crosses(0.4, 0.5, "min"))) == (True, False, False, True)
+              and _auto_val(lambda: (E.auto_improves(0.0, None, "max"),
+                                     E.auto_improves(-1.0, -0.5, "max"),
+                                     E.auto_improves(-0.5, -0.5, "max"),
+                                     E.auto_improves(0.4, 0.5, "min"))) == (True, False, False,
+                                                                            True))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"agrade: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_approve():
+    """Spec 05 PRD 05.2 §1.4/§4.3 — `crux auto approve`, the PI's signature on a plan.
+
+    A run spends compute unattended against a bar nobody re-reads while it runs, so the bar has to
+    be signed once and provably unchanged afterwards. The signature is a hash of what was approved,
+    and the one region deliberately outside it is `## Guidance` — the PI is meant to keep talking to
+    the workers mid-run, and having that clear the approval would make the feature useless.
+    Everything else — a field, the goal, the bar itself — clears it."""
+    print("\n# autopilot — the plan's approval (spec 05, PRD 05.2)")
+    try:
+        A = _auto_mod()
+        repo, root, qa, isl, hb, rel = _loop_fixture(_approve=False)
+        p = _plan_path(root, qa) if root else None
+        r1 = _auto_val(lambda: E.cmd_auto_approve(root, rel), {})
+        t1 = read(p) if p and os.path.isfile(p) else ""
+        fm1 = _auto_val(lambda: E.parse_doc(t1)[0], {})
+        r2 = _auto_val(lambda: E.cmd_auto_approve(root, rel), {})
+        t2 = read(p) if p and os.path.isfile(p) else ""
+
+        def state(t):
+            return _auto_val(lambda: E.auto_approval(t), {}).get("state")
+
+        def variant(fn):
+            """The approval state after one edit to the approved plan, then put back."""
+            saved = read(p)
+            try:
+                fn()
+                return state(read(p))
+            finally:
+                write(p, saved)
+
+        guided = variant(lambda: _auto_val(
+            lambda: E.append_guidance(root, rel, "try smaller steps", "pi"))) if p else None
+        restamped = variant(lambda: write(p, re.sub(
+            r"^updated:.*$", "updated: 2027-02-02T00:00:00", read(p), count=1,
+            flags=re.M))) if p else None
+        refielded = variant(lambda: edit(p, "budget_attempts: 8",
+                                         "budget_attempts: 9")) if p else None
+        rebodied = variant(lambda: edit(p, LOOP_GOAL, LOOP_GOAL + " quickly")) if p else None
+        reordered = _auto_val(
+            lambda: E.flight_plan_hash("---\nmode: climb\ntype: flight-plan\n---\n\nbody\n"),
+            "<a>") == _auto_val(
+            lambda: E.flight_plan_hash("---\ntype: flight-plan\nmode: climb\n---\n\nbody\n"),
+            "<b>")
+        badrel = _auto_val(lambda: _loop_write_plan(root, qa, hb, name="bad.md", mode="drift"))
+        badplan = _auto_msg(lambda: E.cmd_auto_approve(root, badrel))
+        check("aapprove: auto approve stamps approved and approved_hash once, guidance keeps the approval, and any other edit clears it",
+              _auto_ok(lambda: (
+                  r1["already"] is False and r1["plan"] == rel
+                  and fm1.get("approved") == r1["approved"]
+                  # quoted on the way out, so an all-digit hash never becomes an int
+                  and isinstance(fm1.get("approved_hash"), str)
+                  and fm1["approved_hash"] == r1["approved_hash"] == E.flight_plan_hash(t1)
+                  and len(r1["approved_hash"]) == 16
+                  and state(t1) == "approved"
+                  and r2["already"] is True and r2["approved"] == r1["approved"] and t2 == t1
+                  and guided == "approved" and restamped == "approved"
+                  and refielded == "edited" and rebodied == "edited"
+                  and reordered is True
+                  and badplan.startswith(f"cannot approve {E.AUTO_DIR}/{qa}/bad.md: ")
+                  and state(read(p)) == "approved")))
+        check("aapprove: an unsigned plan reads unapproved, and approving refuses a plan that is not there",
+              _auto_ok(lambda: (
+                  E.auto_approval(_loop_plan_text(qa, hb))["state"] == "unapproved"
+                  and E.auto_approval(_loop_plan_text(qa, hb))["approved"] is None
+                  and E.auto_approval(_loop_plan_text(qa, hb))["approved_hash"] is None
+                  and _auto_msg(lambda: E.cmd_auto_approve(root, f"{E.AUTO_DIR}/{qa}/gone.md"))
+                      == f"no flight plan at {E.AUTO_DIR}/{qa}/gone.md")))
+
+        # ------------------------------------------ what `auto run` refuses to start, and why
+        ur, uroot, uqa, _, _, urel = _loop_fixture(_approve=False)
+        umsg = _auto_msg(lambda: A.auto_run(uroot, urel))
+        uclean = _auto_val(lambda: _loop_untouched(ur, uroot, uqa), False)
+        er, eroot, eqa, _, _, erel = _loop_fixture()
+        estamp = _auto_val(lambda: E.auto_approval(read(_plan_path(eroot, eqa)))["approved"])
+        if eroot:
+            edit(_plan_path(eroot, eqa), "bar:: -0.5", "bar:: -0.4")
+        emsg = _auto_msg(lambda: A.auto_run(eroot, erel))
+        eclean = _auto_val(lambda: _loop_untouched(er, eroot, eqa), False)
+        check("aapprove: auto run refuses an unapproved plan and a plan edited after approval, before any reservation",
+              umsg == (f"auto run: {urel} is not approved — the PI approves a flight plan "
+                       f"with crux auto approve {urel}")
+              and uclean
+              and emsg == (f"auto run: {erel} was edited after it was approved at {estamp}, "
+                           f"so the approval no longer stands — the PI re-approves it with "
+                           f"crux auto approve {erel}")
+              and eclean)
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aapprove: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_loop():
+    """Spec 05 PRD 05.2 §5 — one attempt, end to end, and everything a run writes down.
+
+    The driver is the one role that lives for the whole run and calls no model. What it may
+    conclude is bounded on every side: a worker that fails is retried and then closed
+    `invalid-run`, a worker that cheats — a frozen path, a shared root, a proposal outside the
+    schema — is not retried at all, and in neither case does a node ever read `refuted`. A
+    refutation is a claim about the world; a broken apparatus is a claim about nothing."""
+    print("\n# autopilot — the loop, one attempt at a time (spec 05, PRD 05.2)")
+    try:
+        A = _auto_mod()
+
+        # --------------------------------------- the search that works, watched at every event
+        repo, root, qa, isl, hb, rel = _loop_fixture(x0=0)
+        main0 = _git(repo, "rev-parse", "main") if repo else ""
+        head0 = _git(repo, "rev-parse", "HEAD") if repo else ""
+        sym0 = _git(repo, "symbolic-ref", "HEAD") if repo else ""
+        # Every copy is taken HERE, before the first run. A copy taken afterwards carries that
+        # run's state.json, ledger, reservations and refs, so `auto run` on it resumes or
+        # refuses — and refuses before it reaches the thing each check below is about.
+        lockfx = _loop_copy((repo, root, qa, isl, hb, rel))
+        killfx = _loop_copy((repo, root, qa, isl, hb, rel))
+        filefx = _loop_copy((repo, root, qa, isl, hb, rel))
+        restore, probe_bad = (lambda: None), []
+        unmark, skipped = (lambda: None), []
+        if root:
+            restore, probe_bad = _record_probe(A, root, qa)
+            unmark, skipped = _skip_first_materialize(A)
+        try:
+            ok = _loop_run("success", root, qa, rel)
+        finally:
+            restore()
+            unmark()
+        st = ok["state"] or {}
+        closed = st.get("closed") or []
+        msgs = _auto_val(lambda: E.cmd_validate(root), [])
+        res = _auto_val(lambda: A.reservations(root, qa), {})
+        counter = int(_auto_val(lambda: E.Vault(root).cfg.get("counter_h"), 0) or 0)
+
+        check("astate: state.json parses after every ledger event and carries exactly the pinned keys",
+              _auto_ok(lambda: (
+                  bool(E.AUTO_STATE_KEYS) and set(st) == set(E.AUTO_STATE_KEYS)
+                  and not [b for b in probe_bad if b.startswith("state:")]
+                  and st["events"] == len(ok["events"]) and st["events"] > 0
+                  and st["budget"]["attempts"]["used"] == len(closed)
+                  and st["in_flight"] == {}
+                  and set(st["stop"]) == {"reason", "axis", "detail", "attempt", "at"}
+                  and set(st["driver"]) == {"pid", "host"}
+                  and set(st["tasks"]) == {"run", "exceptions"}
+                  and set(st["budget"]) == {"attempts", "hours", "model_calls"}
+                  and bool(st["islands"])
+                  and all(set(r) == _ISLAND_KEYS for r in st["islands"].values())
+                  and set(st["best"]) == _BEST_KEYS
+                  and ok["returned"] == st)))
+        check("astate: ledger.jsonl is append-only and every event is in the pinned vocabulary",
+              _auto_ok(lambda: (
+                  E.AUTO_LEDGER_EVENTS == (
+                      "run-opened", "attempt-reserved", "worker-started", "worker-done",
+                      "worker-failed", "node-filed", "scored", "violation", "retry", "closed",
+                      "confirm", "island-best", "stall", "escalated", "abandoned", "resumed",
+                      "stop")
+                  and not [b for b in probe_bad if b.startswith("ledger:")]
+                  and bool(ok["events"]) and ok["raw"].endswith("\n")
+                  and all(e.get("event") in E.AUTO_LEDGER_EVENTS for e in ok["events"])
+                  and all("at" in e for e in ok["events"])
+                  and [e["event"] for e in ok["events"][:1]] == ["run-opened"]
+                  and [e["event"] for e in ok["events"][-1:]] == ["stop"]
+                  and _auto_msg(lambda: E.auto_ledger_line("not-an-event", {}))
+                      == "'not-an-event' is not an autopilot ledger event")))
+        check("arun: no question ever holds an unrun hypothesis during a tier-0 run, and validate reports no fan-out problem",
+              _auto_ok(lambda: (
+                  not [b for b in probe_bad if b.startswith("unrun:")]
+                  and bool(closed)
+                  and not any("unrun hypothes" in m or "none of them run" in m
+                              for _, m in msgs)
+                  and all(E.Vault(root).get(h).status != "idea" for h in closed))))
+        check("arun: main, HEAD and the working tree outside the vault and writable roots are unchanged after a full tier-0 search",
+              _auto_ok(lambda: (
+                  bool(closed)
+                  and _git(repo, "rev-parse", "main") == main0
+                  and _git(repo, "rev-parse", "HEAD") == head0
+                  and _git(repo, "symbolic-ref", "HEAD") == sym0 == "refs/heads/main"
+                  and _git(repo, "status", "--porcelain", "--", ".", ":(exclude)cruxvault",
+                           ":(exclude)work") == "")))
+        heads = _git(repo, "for-each-ref", "--format=%(refname)", "refs/heads") if repo else ""
+        bests = _ev(ok, "island-best")
+        check("arun: the island branch moves by compare-and-swap only when a supported attempt improves the island's best, and no other refs/heads write happens",
+              _auto_ok(lambda: (
+                  len(bests) == 1 and bests[0]["attempt"] == st["confirmed"]
+                  and set(bests[0]) >= {"attempt", "island", "branch", "from", "to", "score"}
+                  and bests[0]["branch"] == f"crux/auto/{qa}/island/{qa}"
+                  and bests[0]["from"] == st["base"]
+                  and _git(repo, "rev-parse",
+                           f"refs/crux/auto/{qa}/{bests[0]['attempt']}") == bests[0]["to"]
+                  and _git(repo, "rev-parse", f"crux/auto/{qa}/island/{qa}") == bests[0]["to"]
+                  and st["islands"][qa]["pointer"] == bests[0]["to"]
+                  and st["islands"][qa]["pointer"] == _git(
+                      repo, "rev-parse", f"refs/heads/crux/auto/{qa}/island/{qa}")
+                  and set(heads.split()) == {"refs/heads/main",
+                                             f"refs/heads/crux/auto/{qa}/run",
+                                             f"refs/heads/crux/auto/{qa}/island/{qa}"}
+                  and _git(repo, "rev-parse", f"crux/auto/{qa}/run") == st["base"])))
+        check("arun: the driver files each attempt at its reserved id through hypothesize, approve-null, test --to running and close",
+              _auto_ok(lambda: (
+                  bool(closed)
+                  and all(E.Vault(root).get(h)["fm"].get("null_approved") for h in closed)
+                  and all(E.Vault(root).get(h)["fm"].get("lock") for h in closed)
+                  and all(E.Vault(root).get(h)["fm"].get("lock_at") == "running"
+                          for h in closed)
+                  and all(E.Vault(root).get(h)["fm"].get("verdict") for h in closed)
+                  and all(E._null_text(E.Vault(root).get(h)).strip() == LOOP_NULL
+                          for h in closed)
+                  and all(res[h]["state"] == "materialized" for h in closed)
+                  and counter == max(E.natkey(h)[1] for h in res))))
+        check("arun: cmd_hypothesize files at a reserved id and refuses one never allocated, without moving the counter",
+              _auto_ok(lambda: (
+                  _auto_msg(lambda: E.cmd_hypothesize(root, "t", parent=qa, nid="h999"))
+                      == f"hypothesis id 'h999' was never allocated (counter_h is {counter})"
+                  and _auto_msg(lambda: E.cmd_hypothesize(root, "t", parent=qa, nid=hb))
+                      == f"hypothesis id '{hb}' is already in use"
+                  and _auto_msg(lambda: E.cmd_hypothesize(root, "t", parent=qa, nid="x1"))
+                      == "hypothesis id 'x1' is not a hypothesis id (h<number>)"
+                  and int(E.Vault(root).cfg.get("counter_h") or 0) == counter
+                  and counter > 0)))
+
+        check("arun: a reservation the filing step left unmarked is marked materialized when the attempt retires",
+              _auto_ok(lambda: (
+                  len(skipped) == 1 and skipped[0] in closed
+                  and bool(closed)
+                  and all(res[h]["state"] == "materialized" for h in closed))))
+
+        # ------------------------------------- the lock the driver has to take before it writes
+        lrepo, lroot, lqa, _, _, lrel = lockfx
+        lmsg, lclean = "", False
+        if lroot and lroot != root:
+            _auto_val(lambda: A.acquire_lock(lroot, "test"))
+            try:
+                lmsg = _auto_msg(lambda: A.auto_run(lroot, lrel, lock_wait=0.3))
+                lclean = _auto_val(lambda: _loop_untouched(lrepo, lroot, lqa), False)
+            finally:
+                _auto_val(lambda: A.release_lock(lroot))
+
+        # ------------------------- the way out of the loop that is NOT a stop: an exception
+        _, kroot, kqa, _, _, krel = killfx
+        kpid, kalive, kfree, kraised = [], True, False, False
+        if kroot:
+            korig = _auto_val(lambda: A._step_record)
+
+            def wreck(ctx, hid):
+                """A worker still in the driver's hands the moment the loop path blows up."""
+                p = A._spawn([sys.executable, "-c", "import time; time.sleep(120)"],
+                             kroot, dict(os.environ), os.path.join(kroot, "hold.log"))
+                ctx["procs"]["probe"] = p
+                kpid.append(p.pid)
+                raise RuntimeError("the loop path blew up")
+
+            if korig is not None:
+                A._step_record = wreck
+                try:
+                    A.auto_run(kroot, krel)
+                except RuntimeError:
+                    kraised = True
+                except Exception:                    # pragma: no cover - wave-1 guard
+                    kraised = False
+                finally:
+                    A._step_record = korig
+                kalive = _auto_val(lambda: A._pid_alive(kpid[0]), True) if kpid else True
+                if kalive and kpid:                  # never leak the child the fix should kill
+                    _auto_val(lambda: os.kill(kpid[0], 9))
+                kfree = _auto_val(lambda: _loop_lock_free(A, kroot), False)
+        check("arun: an error on the loop path kills every worker still running and leaves the vault lock free",
+              _auto_ok(lambda: kraised and len(kpid) == 1 and kalive is False and kfree))
+
+        # ------------------- a filing refusal on a node the engine has already written down
+        _, fnroot, fnqa, _, _, fnrel = filefx
+        fn, fired = {"state": None, "events": []}, []
+        if fnroot:
+            forig = _auto_val(lambda: E.cmd_approve_null)
+
+            def refuse(root_, hid_, *a, **k):
+                if not fired:
+                    fired.append(hid_)
+                    raise E.CruxError("approve-null refused on purpose")
+                return forig(root_, hid_, *a, **k)
+
+            if forig is not None:
+                E.cmd_approve_null = refuse
+                try:
+                    fn = _loop_run("filing-refusal", fnroot, fnqa, fnrel)
+                finally:
+                    E.cmd_approve_null = forig
+        fnclosed = (fn["state"] or {}).get("closed") or []
+        check("arun: a filing refusal on a node the engine already wrote closes it invalid-run rather than abandoning it",
+              _auto_ok(lambda: (
+                  len(fired) == 1 and fnclosed == fired
+                  and E.Vault(fnroot).get(fnclosed[0])["fm"]["verdict"] == "invalid-run"
+                  and len(_ev(fn, "closed")) == 1
+                  and _ev(fn, "node-filed") == [] and _ev(fn, "abandoned") == []
+                  and not [n for n in E.Vault(fnroot).nodes.values()
+                           if n.type == "idea" and n.status == "idea"]
+                  and _loop_stop(fn)["reason"] == "abort"
+                  and _loop_stop(fn)["detail"].startswith(
+                      f"the engine refused to file {fnclosed[0]}: "))))
+
+        # ---------------------------------------- two islands, two workers, one brief for each
+        erepo, eroot, eqa, eisl, ehb, erel = _loop_fixture(
+            x0=0, islands=2, mode="explore", parallel_total="2", parallel_island="1",
+            budget_attempts="4", stall_attempts="0")
+        unrun = _loop_copy((erepo, eroot, eqa, eisl, ehb, erel))
+        brief0 = _auto_val(lambda: E.auto_brief(eroot, ehb))
+        ex = _loop_run("explore", eroot, eqa, erel)
+        est = ex["state"] or {}
+        eclosed = est.get("closed") or []
+        eres = _auto_val(lambda: A.reservations(eroot, eqa), {})
+        filed = {e["attempt"]: e for e in _ev(ex, "node-filed")}
+        order = [e["event"] for e in ex["events"]
+                 if e["event"] in ("worker-started", "worker-done")]
+        meta = read(os.path.join(eroot, "META.md")) if eroot else ""
+        check("astate: a held vault lock refuses the driver's first write after the stated wait, and two attempts in flight leave META.md listing both",
+              _auto_ok(lambda: (
+                  "gave up after 0.3s" in lmsg and lmsg.startswith("auto lock ") and lclean
+                  and order[:2] == ["worker-started", "worker-started"]
+                  and len(eclosed) >= 2
+                  and all(f"`{h}`" in meta for h in eclosed)
+                  and E.refresh(eroot) is False)))
+        firsts = _auto_val(lambda: [min((h for h in eclosed if eres[h]["island"] == i),
+                                        key=E.natkey) for i in eisl], [])
+        check("arun: an Explore attempt whose parent sits under another question is filed under its island without builds_on, cut from the parent's commit",
+              _auto_ok(lambda: (
+                  len(eisl) == 2 and len(firsts) == 2
+                  and all(E.Vault(eroot).get(h).parent == eres[h]["island"] for h in eclosed)
+                  and all(eres[h]["parent"] == ehb for h in firsts)
+                  and all(E.node_builds_on(E.Vault(eroot).get(h)) is None for h in firsts)
+                  and all(filed[h]["parent"] == ehb and filed[h]["builds_on"] is None
+                          for h in firsts)
+                  and all(_git(erepo, "rev-parse", f"refs/crux/auto/{eqa}/{h}^")
+                          == est["base"] for h in firsts)
+                  and all(E.node_builds_on(E.Vault(eroot).get(h))
+                          == min((o for o in eclosed
+                                  if eres[o]["island"] == eres[h]["island"]), key=E.natkey)
+                          for h in eclosed if h not in firsts)
+                  # island None is still 05.0: the call succeeds, the island it picks is the
+                  # baseline's own question, and every slot that does not COUNT the run reads
+                  # exactly as it does on a copy of this vault that was never run at all.
+                  # (`budget.attempts.used` and `migration` are what a search is for.)
+                  and E.auto_brief(eroot, ehb)["island"]["id"] == eqa
+                  and _brief_fixed(E.auto_brief(eroot, ehb))
+                      == _brief_fixed(E.auto_brief(unrun[1], ehb)) == _brief_fixed(brief0)
+                  and set(E.auto_brief(eroot, ehb)) == set(brief0))))
+
+        # -------------------------------------- the worker that fails and the scorer that dies
+        _, xroot, xqa, _, _, xrel = _loop_fixture(x0=0, agent="python3 agent.py exit1",
+                                                  retries="1", abort_invalid_runs="2")
+        x = _loop_run("exit1", xroot, xqa, xrel)
+        xclosed = (x["state"] or {}).get("closed") or []
+        _, croot, cqa, _, chb, crel = _loop_fixture(x0=0, agent="python3 agent.py crashscore",
+                                                    retries="1", abort_invalid_runs="1")
+        c = _loop_run("crashscore", croot, cqa, crel)
+        cclosed = (c["state"] or {}).get("closed") or []
+        check("arun: a failing worker and a crashing scorer are each retried retries times, then close invalid-run, never refuted",
+              _auto_ok(lambda: (
+                  len(xclosed) == 2
+                  and len(_ev(x, "worker-started")) == 4        # two attempts, two tries each
+                  and [e["reason"] for e in _ev(x, "worker-failed")] == ["worker-exit"] * 4
+                  and [e["step"] for e in _ev(x, "retry")] == ["worker"] * 2
+                  and all(E.Vault(xroot).get(h)["fm"]["verdict"] == "invalid-run"
+                          for h in xclosed)
+                  and len(cclosed) == 1
+                  and len(_ev(c, "worker-started")) == 1
+                  and [e["step"] for e in _ev(c, "retry")] == ["scorer"]
+                  and [e["reason"] for e in _ev(c, "retry")] == ["scorer-exit"]
+                  and E.Vault(croot).get(cclosed[0])["fm"]["verdict"] == "invalid-run"
+                  and not any(E.Vault(r).get(h)["fm"]["verdict"] == "refuted"
+                              for r, ids in ((xroot, xclosed), (croot, cclosed))
+                              for h in ids))))
+        cn = _auto_val(lambda: E.Vault(croot).get(cclosed[0]), None)
+        check("arun: an attempt with no metrics file ticks every check [-] and closes invalid-run as derive_verdict_15 says",
+              _auto_ok(lambda: (
+                  not os.path.exists(os.path.join(croot, E.RESULTS_DIR, cclosed[0],
+                                                  E.METRICS_FILE))
+                  and [t for t, _ in E._verifiable_lines(cn["body"])] == ["-", "-"]
+                  and _ev(c, "scored") == []
+                  and cn["fm"]["verdict"] == E.derive_verdict_15(
+                      E.count_verifiables_by_kind(cn["body"])[E.DEFAULT_KIND],
+                      E.count_verifiables_by_kind(cn["body"])[E.NEUTRAL_KIND],
+                      *E.node_rule(cn))
+                  and cn["fm"]["verdict"] == "invalid-run"
+                  and "n/a" in E._section(cn["body"], "Findings"))))
+
+        # ------------------------------------------ the two ways a worker steps out of bounds
+        _, froot, fqa, _, _, frel = _loop_fixture(x0=0, agent="python3 agent.py frozen",
+                                                  abort_invalid_runs="1")
+        f = _loop_run("frozen", froot, fqa, frel)
+        _, shroot, shqa, _, _, shrel = _loop_fixture(x0=0, agent="python3 agent.py shared",
+                                                     abort_invalid_runs="1")
+        sh = _loop_run("shared", shroot, shqa, shrel)
+        fv, shv = _ev(f, "violation"), _ev(sh, "violation")
+        check("arun: a frozen-path commit and a shared-root write each close invalid-run unretried with one violation event naming the path",
+              _auto_ok(lambda: (
+                  E.AUTO_VIOLATION_KINDS == ("frozen", "manifest", "proposal")
+                  and len(fv) == 1 and fv[0]["kind"] == "frozen"
+                  and fv[0]["paths"] == ["score.py"] and "score.py" in fv[0]["detail"]
+                  and len(_ev(f, "worker-started")) == 1 and _ev(f, "retry") == []
+                  and len(shv) == 1 and shv[0]["kind"] == "manifest"
+                  and shv[0]["paths"] == ["work/shared/x"]
+                  and "work/shared/x" in shv[0]["detail"]
+                  and len(_ev(sh, "worker-started")) == 1 and _ev(sh, "retry") == []
+                  and all(E.Vault(r).get(h)["fm"]["verdict"] == "invalid-run"
+                          for r, run in ((froot, f), (shroot, sh))
+                          for h in (run["state"] or {}).get("closed") or [])
+                  and _loop_stop(f).get("reason") == _loop_stop(sh).get("reason") == "abort")))
+
+        # ------------------------------------------------- what a proposal is allowed to carry
+        _, gcroot, gcqa, _, _, gcrel = _loop_fixture(x0=0, agent="python3 agent.py longclaim",
+                                                     retries="1", abort_invalid_runs="1")
+        lg = _loop_run("longclaim", gcroot, gcqa, gcrel)
+        lgc = (lg["state"] or {}).get("closed") or []
+        check("arun: an over-cap claim is retried, then closes invalid-run, and no node carries a truncated claim",
+              _auto_ok(lambda: (
+                  [e["reason"] for e in _ev(lg, "worker-failed")] == ["claim-over-cap"] * 2
+                  and [e["step"] for e in _ev(lg, "retry")] == ["worker"]
+                  and len(lgc) == 1
+                  and E._section(E.Vault(gcroot).get(lgc[0])["body"],
+                                 "Idea / Hypothesis").strip()
+                      == E.AUTO_NO_CLAIM.format(hid=lgc[0], reason="claim-over-cap")
+                  and "word word" not in read(node_path(gcroot, lgc[0]))
+                  and len(E._prose_tokens(E.Vault(gcroot).get(lgc[0])["body"])) <= E.PROSE_CAP
+                  and E.Vault(gcroot).get(lgc[0])["fm"]["verdict"] == "invalid-run")))
+        _, kroot, kqa, _, _, krel = _loop_fixture(x0=0, agent="python3 agent.py extrakey",
+                                                  abort_invalid_runs="1")
+        k = _loop_run("extrakey", kroot, kqa, krel)
+        _, troot, tqa, _, _, trel = _loop_fixture(x0=0, agent="python3 agent.py taggedcontrol",
+                                                  abort_invalid_runs="1")
+        t = _loop_run("taggedcontrol", troot, tqa, trel)
+        _, groot, gqa, _, _, grel = _loop_fixture(x0=2, agent="python3 agent.py control",
+                                                  budget_attempts="1")
+        g = _loop_run("control", groot, gqa, grel)
+        gc = (g["state"] or {}).get("closed") or []
+        check("arun: a proposal key outside claim and controls, or a tagged control, closes invalid-run unretried; a good control is filed outcome-neutral",
+              _auto_ok(lambda: (
+                  all(len(_ev(r, "violation")) == 1
+                      and _ev(r, "violation")[0]["kind"] == "proposal"
+                      and _ev(r, "violation")[0]["paths"] == []
+                      and _ev(r, "retry") == []
+                      and len(_ev(r, "worker-started")) == 1
+                      for r in (k, t))
+                  and "claim, controls: verdict" in _ev(k, "violation")[0]["detail"]
+                  and "the driver tags every control outcome-neutral"
+                      in _ev(t, "violation")[0]["detail"]
+                  and all(E.Vault(rt).get(h)["fm"]["verdict"] == "invalid-run"
+                          for rt, run in ((kroot, k), (troot, t))
+                          for h in (run["state"] or {}).get("closed") or [])
+                  and len(gc) == 1
+                  and ("- [x] [outcome-neutral] obj.score <= 1 — the value stays at most one "
+                       "(found: ") in read(node_path(groot, gc[0]))
+                  and [i["kind"] for i in E._verifiables(E.Vault(groot).get(gc[0])["body"])]
+                      == [E.DEFAULT_KIND, E.NEUTRAL_KIND, E.NEUTRAL_KIND]
+                  and "the scorer drifts upward" in read(node_path(groot, gc[0])))))
+
+        # ------------------------------------------ the three plans a run will not open at all
+        sr, sroot, sqa, _, _, srel = _loop_fixture(x0=0, steward="true")
+        smsg = _auto_msg(lambda: A.auto_run(sroot, srel))
+        rr, rroot, rqa, _, _, rrel = _loop_fixture(x0=0, replicates="some seeds",
+                                                   _approve=False)
+        rmsg = _auto_msg(lambda: A.auto_run(rroot, rrel))
+        pr, proot, pqa, _, _, prel = _loop_fixture(x0=0, _approve=False, verifiables=(
+            "- [ ] obj.score >= -0.5 on the frozen scorer\n"
+            "      fails-if:: x stays two or more steps away from 3\n"
+            "      discriminates:: true\n"
+            "- [ ] [outcome-neutral] the baseline reproduces\n"
+            "      fails-if:: the scorer adds a positive offset\n"))
+        pmsg = _auto_msg(lambda: A.auto_run(proot, prel))
+        check("arun: auto run refuses steward: true, a replicates with no integer, and a plan auto check rejects, before any reservation",
+              _auto_ok(lambda: (
+                  smsg == (f"auto run: {srel} sets steward: true, and the steward arrives in "
+                           f"slice 05.3 — a run that ignored the switch would not be the run "
+                           f"that was signed")
+                  and rmsg == (f"auto run: {rrel} does not pass auto check: flight plan field "
+                               f"'replicates' must name a whole number of seeds, 1 or more "
+                               f"(got 'some seeds')")
+                  and pmsg.startswith(f"auto run: {prel} does not pass auto check: flight plan "
+                                      f"verifiable")
+                  and _loop_untouched(sr, sroot, sqa)
+                  and _loop_untouched(rr, rroot, rqa)
+                  and _loop_untouched(pr, proot, pqa))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"arun: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_resume():
+    """Spec 05 PRD 05.2 §6 — a run killed at any point, resumed from what is on disk.
+
+    The driver keeps no memory: everything it knows is a node, a ref, a metrics file, a
+    reservation or a ledger line, and resume is the function that reads those five and works out
+    what each half-finished attempt still needs. `CRUX_AUTO_CRASH_AT` kills the process at a named
+    phase, which is the only honest way to assert this — a resume tested by asking the driver
+    nicely to stop is a resume from a clean shutdown, and a clean shutdown is not the case that
+    ever happens at three in the morning."""
+    print("\n# autopilot — resume from on-disk evidence (spec 05, PRD 05.2)")
+    try:
+        A = _auto_mod()
+        built = _loop_fixture(x0=2)
+        control = _loop_copy(built)
+        base = _loop_run("resume-control", control[1], control[2], control[5])
+        phases = _auto_val(lambda: E.AUTO_PHASES, ())
+        rows = []
+        for ph in phases:
+            repo, root, qa, isl, hb, rel = _loop_copy(built)
+            row = {"phase": ph, "root": root, "repo": repo, "anchor": qa}
+            r = _auto_val(lambda: subprocess.run(
+                [sys.executable, os.path.join(HERE, "crux.py"), "auto", "run", rel, "--json"],
+                cwd=root, env=dict(os.environ, CRUX_AUTO_CRASH_AT=ph), capture_output=True,
+                encoding="utf-8", errors="replace", timeout=120))
+            row["rc"] = getattr(r, "returncode", 0)
+            mid = _auto_val(lambda: json.loads(read(_loop_state_path(root, qa))), {}) or {}
+            hit = [h for h, fl in (mid.get("in_flight") or {}).items()
+                   if fl.get("phase") == ph]
+            h = row["id"] = hit[0] if hit else None
+            plan = _loop_load_plan(root, qa)
+            res = _auto_val(lambda: A.reservations(root, qa), {}) or {}
+            wt = _auto_val(lambda: A.worktree_path(root, plan, h))
+            row["reserved"] = h in res
+            row["node"] = _auto_val(lambda: E.Vault(root).get(h)) is not None
+            row["wt"] = bool(wt) and os.path.isdir(wt)
+            row["wt_head"] = _auto_val(lambda: _git(wt, "rev-parse", "HEAD")) if row["wt"] \
+                else None
+            row["from"] = (mid.get("in_flight") or {}).get(h, {}).get("from")
+            row["ref"] = _auto_val(lambda: _git(repo, "rev-parse", "--verify", "--quiet",
+                                                f"refs/crux/auto/{qa}/{h}", check=False), "")
+            row["metrics"] = bool(h) and os.path.isfile(
+                os.path.join(root, E.RESULTS_DIR, h, E.METRICS_FILE))
+            row["verdict"] = _auto_val(
+                lambda: E.Vault(root).get(h)["fm"].get("verdict")) if row["node"] else None
+            row["after"] = _loop_run(f"resume-{ph}", root, qa, rel)
+            row["res_after"] = _auto_val(lambda: A.reservations(root, qa), {}) or {}
+            rows.append(row)
+
+        def verdicts(root, ids):
+            return [_auto_val(lambda h=h: E.Vault(root).get(h)["fm"].get("verdict"))
+                    for h in ids or []]
+
+        want = verdicts(control[1], (base["state"] or {}).get("closed") or [])
+        check("aresume: a run killed at each of the five phases resumes to the same closed set, no commit dropped, no id closed twice",
+              _auto_ok(lambda: (
+                  len(rows) == 5
+                  and phases == ("reserved", "drafted", "committed", "scored", "closed")
+                  and bool(want) and all(v == "supported" for v in want)
+                  and all(r["rc"] != 0 and r["id"] for r in rows)
+                  and all(_loop_stop(r["after"]).get("reason")
+                          == _loop_stop(base).get("reason") == "success" for r in rows)
+                  and all(verdicts(r["root"], (r["after"]["state"] or {}).get("closed"))
+                          == want for r in rows)
+                  and all(len(_ev(r["after"], "closed"))
+                          == len({e["attempt"] for e in _ev(r["after"], "closed")})
+                          for r in rows)
+                  and all(len(_ev(r["after"], "resumed")) == 1 for r in rows))))
+
+        by = {r["phase"]: r for r in rows}
+        check("aresume: resume records a commit with no ref, scores a ref with no metrics, closes metrics with no verdict, and abandons a bare reserved id for good",
+              _auto_ok(lambda: (
+                  # reserved: a bare id, no worktree, no node — abandoned, and never handed out
+                  by["reserved"]["reserved"] and not by["reserved"]["node"]
+                  and not by["reserved"]["wt"]
+                  and by["reserved"]["res_after"][by["reserved"]["id"]]["state"] == "abandoned"
+                  and _auto_val(lambda: E.Vault(by["reserved"]["root"])
+                                .get(by["reserved"]["id"])) is None
+                  and [e["reason"] for e in _ev(by["reserved"]["after"], "abandoned")]
+                      == ["resume"]
+                  and all(E.natkey(h) > E.natkey(by["reserved"]["id"])
+                          for h in (by["reserved"]["after"]["state"] or {}).get("closed") or [])
+                  # committed: a commit in the worktree and no ref yet — the ref is recorded
+                  and by["committed"]["wt_head"]
+                  and by["committed"]["wt_head"] != by["committed"]["from"]
+                  and by["committed"]["ref"] == ""
+                  and by["committed"]["id"]
+                      in ((by["committed"]["after"]["state"] or {}).get("closed") or [])
+                  and _git(by["committed"]["repo"], "rev-parse",
+                           f"refs/crux/auto/{by['committed']['anchor']}/"
+                           f"{by['committed']['id']}") == by["committed"]["wt_head"]
+                  # scored: a ref and a node, no metrics — the attempt is scored, then closed
+                  and by["scored"]["ref"] and by["scored"]["node"]
+                  and not by["scored"]["metrics"]
+                  and by["scored"]["id"]
+                      in ((by["scored"]["after"]["state"] or {}).get("closed") or [])
+                  and os.path.isfile(os.path.join(by["scored"]["root"], E.RESULTS_DIR,
+                                                  by["scored"]["id"], E.METRICS_FILE))
+                  # closed: metrics on disk and no verdict — closed exactly once
+                  and by["closed"]["metrics"] and not by["closed"]["verdict"]
+                  and _auto_val(lambda: E.Vault(by["closed"]["root"])
+                                .get(by["closed"]["id"])["fm"].get("verdict"))
+                  and len([e for e in _ev(by["closed"]["after"], "closed")
+                           if e["attempt"] == by["closed"]["id"]]) == 1)))
+
+        # ----------- the ref is the commit of record: an attempt already at one is not re-run
+        r4repo, r4root, r4qa, _, _, r4rel = _loop_copy(built)
+        r4, r4h, r4head, r4ref = {"state": None, "events": []}, None, "", ""
+        if r4root:
+            _auto_val(lambda: subprocess.run(
+                [sys.executable, os.path.join(HERE, "crux.py"), "auto", "run", r4rel, "--json"],
+                cwd=r4root, env=dict(os.environ, CRUX_AUTO_CRASH_AT="committed"),
+                capture_output=True, encoding="utf-8", errors="replace", timeout=120))
+            mid = _auto_val(lambda: json.loads(read(_loop_state_path(r4root, r4qa))), {}) or {}
+            hit = [h for h, fl in (mid.get("in_flight") or {}).items()
+                   if fl.get("phase") == "committed"]
+            r4h = hit[0] if hit else None
+            r4plan = _loop_load_plan(r4root, r4qa)
+            if r4h and r4plan:
+                # The kill is moved one step later by hand: past `record_attempt`, before the
+                # filing, with the worker's proposal gone. Now the ref names the commit and
+                # nothing else on disk does — the one window where a retry would leave the
+                # node describing a commit its own ref does not name.
+                r4head = _auto_val(lambda: _git(A.worktree_path(r4root, r4plan, r4h),
+                                                "rev-parse", "HEAD"), "")
+                _auto_val(lambda: A.record_attempt(r4root, r4plan, r4h))
+                pp = os.path.join(A.workspace_path(r4root, r4plan, r4h), A.PROPOSAL_NAME)
+                if os.path.isfile(pp):
+                    os.remove(pp)
+                r4 = _loop_run("resume-recorded", r4root, r4qa, r4rel, max_attempts=1)
+                r4ref = _auto_val(lambda: _git(r4repo, "rev-parse",
+                                               f"refs/crux/auto/{r4qa}/{r4h}"), "")
+        check("aresume: an attempt already recorded at its ref is never handed to a second worker, and closes on the commit the ref names",
+              _auto_ok(lambda: (
+                  bool(r4head) and r4ref == r4head
+                  and _ev(_since_resume(r4), "worker-started") == []
+                  and _ev(_since_resume(r4), "retry") == []
+                  and _ev(r4, "scored") == []
+                  and [e["reason"] for e in _ev(_since_resume(r4), "worker-failed")]
+                      == ["proposal-missing"]
+                  and ((r4["state"] or {}).get("closed") or []) == [r4h]
+                  and len(_ev(r4, "closed")) == 1
+                  and E.Vault(r4root).get(r4h)["fm"]["verdict"] == "invalid-run")))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aresume: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_stops():
+    """Spec 05 PRD 05.2 §1.7/§7 — the four ways a run ends, and only those four.
+
+    A run that spends compute unattended needs every exit written down before it starts:
+    `success` only after the winning commit re-scores at fresh seeds, `budget` per axis, `abort`
+    when the apparatus itself is broken, `stall` when the search has stopped learning.
+    Confirmation is the one that matters most — a single crossing of the bar is the result most
+    likely to be noise, which is exactly what this null says out loud."""
+    print("\n# autopilot — the four stops (spec 05, PRD 05.2)")
+    try:
+        A = _auto_mod()
+        repo, root, qa, isl, hb, rel = _loop_fixture(x0=0)
+        ok = _loop_run("success-stop", root, qa, rel)
+        st = ok["state"] or {}
+        w = (st.get("best") or {}).get("id")
+        conf = _ev(ok, "confirm")
+        _, mroot, mqa, _, _, mrel = _loop_fixture(
+            x0=2, agent="python3 agent.py control", budget_attempts="2",
+            scorer="python3 score.py --miss-confirm")
+        m = _loop_run("confirm-miss", mroot, mqa, mrel)
+        mconf = _ev(m, "confirm")
+        check("astop: success stops only after the winning commit re-scores at replicates new seeds, and a missed seed continues the run",
+              _auto_ok(lambda: (
+                  _loop_stop(ok)["reason"] == "success" and st["confirmed"] == w
+                  and _loop_stop(ok)["attempt"] == w and _loop_stop(ok)["axis"] is None
+                  and len(conf) == 1 and conf[0]["attempt"] == w
+                  and conf[0]["seeds"] == [1, 2] and conf[0]["passed"] is True
+                  and all(os.path.isfile(os.path.join(root, E.RESULTS_DIR, w, "confirm",
+                                                      str(s), E.METRICS_FILE))
+                          for s in (1, 2))
+                  and not os.path.exists(os.path.join(root, E.RESULTS_DIR, w, "confirm", "0"))
+                  # the winner's own seed-0 document, unchanged by the confirmation: the LAST
+                  # `scored` event is the winner's, it carries seed 0, and the file still holds
+                  # that value. A confirmation that wrote over it would be a run that could
+                  # never be re-read.
+                  and _ev(ok, "scored")[-1]["attempt"] == w
+                  and _ev(ok, "scored")[-1]["seed"] == 0
+                  and _ev(ok, "scored")[-1]["value"] == E.metrics_value(
+                      E.load_metrics(root, w), "obj.score", "the winner")
+                  and E.Vault(root).get(w)["fm"]["verdict"] == "supported"
+                  # a seed that misses is not a stop: the run keeps going to its budget
+                  and len(mconf) == 2 and all(e["passed"] is False for e in mconf)
+                  # and the seed-0 file is NOT the seed that missed: it still crosses the bar
+                  # that every confirmation seed failed to reach
+                  and all(E.auto_crosses(E.metrics_value(E.load_metrics(mroot, e["attempt"]),
+                                                         "obj.score", "the seed-0 document"),
+                                         -0.5, "max")
+                          and all(v is not None and not E.auto_crosses(v, -0.5, "max")
+                                  for v in e["values"])
+                          for e in mconf)
+                  and (m["state"] or {})["confirmed"] is None
+                  and _loop_stop(m)["reason"] == "budget"
+                  and _loop_stop(m)["axis"] == "attempts"
+                  and len(_ev(m, "island-best")) == 1)))
+
+        axes = {}
+        for name, field, axis in (("budget-attempts", "budget_attempts", "attempts"),
+                                  ("budget-hours", "budget_hours", "hours"),
+                                  ("budget-calls", "budget_model_calls", "model_calls")):
+            _, broot, bqa, _, _, brel = _loop_fixture(
+                x0=0, **{field: "0" if axis == "hours" else "1"})
+            axes[axis] = _loop_run(name, broot, bqa, brel)
+        check("astop: each budget axis stops its own fixture budget, naming the axis",
+              _auto_ok(lambda: (
+                  E.AUTO_BUDGET_AXES == ("attempts", "hours", "model_calls")
+                  and all(_loop_stop(axes[a])["reason"] == "budget"
+                          and _loop_stop(axes[a])["axis"] == a for a in E.AUTO_BUDGET_AXES)
+                  and len((axes["attempts"]["state"] or {})["closed"]) == 1
+                  and _ev(axes["hours"], "attempt-reserved") == []
+                  and len(_ev(axes["model_calls"], "worker-started")) == 1
+                  # each axis names ITSELF in the detail, in its own units — a stop the PI
+                  # reads in the morning has to say which budget ran out, not that one did
+                  and _loop_stop(axes["attempts"])["detail"] == "1 of 1 attempts closed"
+                  and _loop_stop(axes["model_calls"])["detail"]
+                      == "1 of 1 worker invocations used"
+                  and _loop_stop(axes["hours"])["detail"].endswith("driver hours used")
+                  and _loop_stop(axes["hours"])["detail"].startswith("0.0")
+                  and " of 0 " in _loop_stop(axes["hours"])["detail"]
+                  and all(" of " in _loop_stop(axes[a])["detail"]
+                          for a in E.AUTO_BUDGET_AXES))))
+
+        _, iroot, iqa, _, _, irel = _loop_fixture(x0=0, agent="python3 agent.py exit1",
+                                                  retries="1", abort_invalid_runs="2")
+        inv = _loop_run("abort-invalid", iroot, iqa, irel)
+        _, oroot, oqa, _, _, orel = _loop_fixture(x0=0,
+                                                  scorer="python3 score.py --fail-always")
+        opn = _loop_run("fail-open", oroot, oqa, orel)
+        ores = _auto_val(lambda: A.reservations(oroot, oqa), {})
+        check("astop: consecutive invalid runs, and a scorer failing at run open, each stop the run abort",
+              _auto_ok(lambda: (
+                  E.AUTO_STOP_REASONS == ("success", "budget", "abort", "stall")
+                  and _loop_stop(inv)["reason"] == "abort"
+                  and _loop_stop(inv)["axis"] is None
+                  and (inv["state"] or {})["consecutive_invalid"] == 2
+                  and _loop_stop(inv)["detail"]
+                      == "2 invalid runs in a row (abort_invalid_runs 2)"
+                  and (inv["state"] or {})["tasks"]["run"]
+                  and len((inv["state"] or {})["tasks"]["exceptions"]) == 3
+                  and E.AUTO_TASK_CATEGORY in E.task_categories(iroot)
+                  and _loop_stop(opn)["reason"] == "abort"
+                  and _loop_stop(opn)["detail"].startswith(
+                      "the scorer failed on the base commit at run open:")
+                  and _ev(opn, "attempt-reserved") == []
+                  and not ores
+                  and (opn["state"] or {})["closed"] == [])))
+
+        _, nroot, nqa, _, _, nrel = _loop_fixture(x0=0, agent="python3 agent.py still",
+                                                  stall_attempts="2", budget_attempts="8")
+        n = _loop_run("still", nroot, nqa, nrel)
+        nst = n["state"] or {}
+        check("astop: a stall escalates exactly once, and a second stall stops the run stall",
+              _auto_ok(lambda: (
+                  len(_ev(n, "stall")) == 2
+                  and [e["count"] for e in _ev(n, "stall")] == [1, 2]
+                  and [e["attempts"] for e in _ev(n, "stall")] == [2, 2]
+                  and len(_ev(n, "escalated")) == 1
+                  and _ev(n, "escalated")[0]["c_puct"] == E.AUTO_C_PUCT["explore"]
+                  and nst["c_puct"] == E.AUTO_C_PUCT["explore"]
+                  and nst["escalated"] is True and nst["stalls"] == 2
+                  and len(nst["closed"]) == 4
+                  and _loop_stop(n)["reason"] == "stall"
+                  and _loop_stop(n)["detail"]
+                      == "no improvement in 2 closed attempts, twice")))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"astop: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_leash():
+    """Spec 05 PRD 05.2 §12 — the one place the leash reads differently, and the proof that
+    nothing else moved.
+
+    Inside an approved run the driver performs four acts that are the PI's everywhere else. The
+    argument for that is narrow and has to stay narrow: what the PI signs is the bar, and in a run
+    the bar is signed once, in the flight plan. So the ruling is asserted as text in SKILL.md, and
+    the four leash bullets and the `close` row are asserted BYTE-identical — a slice that widened
+    the leash by rewording a bullet would pass every other check in this suite."""
+    print("\n# autopilot — the leash inside a run (spec 05, PRD 05.2)")
+    root = None
+    try:
+        skill = read(os.path.join(REPO, "skills", "crux", "SKILL.md"))
+        flat = " ".join(skill.split())
+        fourth = ("gate, draft the synthesis, then stop — `approve` is their signature, not "
+                  "yours.")
+        ruling = [
+            "**Inside an approved autopilot run** — the one place the leash reads differently "
+            "(spec 05 §12).",
+            "the driver performs four acts per attempt that are the PI's everywhere else: "
+            "`hypothesize` (at the id it reserved), `approve-null` (on the plan's null, "
+            "verbatim), `test --to running`, and `close`.",
+            "The plan's approval covers all four: each attempt closes on its derived verdict "
+            "with no per-attempt signature, because what the PI signs is the bar, and in a run "
+            "the bar is signed once, in the flight plan, and inherited by every attempt.",
+            "Outside an approved autopilot run, nothing changes.",
+            "Inside one, `answer`, `approve` on a synthesis, and merging into `main` stay the "
+            "PI's.",
+        ]
+        check("aleash: SKILL.md carries the autopilot ruling naming the four acts, and the close row and four leash bullets are byte-identical",
+              all(s in flat for s in ruling)
+              and LEASH_BULLETS in skill and CLOSE_ROW in skill
+              and flat.find(ruling[0]) > flat.find(fourth)
+              and flat.find(ruling[0]) < flat.find("## Setting up a vault (first run)")
+              and "| `auto status` | ○ |" in skill
+              and "| `auto approve` | ◆ |" in skill
+              and "| `auto run` | ◆ |" in skill
+              and "Never run this without the PI's yes" in skill
+              and "per-attempt signature" in flat)
+
+        # --------------------------------------- the hand path, byte for byte, still the same
+        base = os.path.realpath(tempfile.mkdtemp(prefix="crux_aleash_"))
+        _AUTO_TRASH.append(base)
+        root = os.path.join(base, "vault")
+        real, out = E.now, {}
+        try:
+            E.now = lambda: "2026-01-01T00:00:00"
+            E.cmd_init("Hand close", root, goal="g")
+            q, _ = E.cmd_ask(root, "does x reach 3")
+            h, _, _ = E.cmd_hypothesize(
+                root, "x = 3", parent=q, rule="all", null=LOOP_NULL,
+                verifiables=["obj.score >= -0.5 on the frozen scorer"],
+                neutral=["obj.score <= 0 — the objective is never positive"],
+                fails_if=["x stays two or more steps away from 3",
+                          "the scorer adds a positive offset"],
+                discriminates=[True, False])
+            E.cmd_approve_null(root, h)
+            E.cmd_test(root, h, to="running")
+            p, ticked = node_path(root, h), []
+            for line in read(p).split("\n"):
+                m = re.match(r"^(\s*- \[)(.)(\]\s*)(.*)$", line)
+                ticked.append(m.group(1) + "x" + m.group(3) + m.group(4).rstrip()
+                              + " (found: 0.0)" if m else line)
+            write(p, "\n".join(ticked))
+            out["verdict"] = E.cmd_close(root, h, findings="closed by hand")
+            out["text"] = read(node_path(root, h))
+        finally:
+            E.now = real
+        check("aleash: a hypothesis closed by hand is byte-identical to the pre-05.2 engine and writes no auto/ file",
+              out.get("verdict") == "supported"
+              and out.get("text") == HAND_CLOSE_GOLDEN
+              and not os.path.isdir(os.path.join(root, E.AUTO_DIR)))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aleash: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_loop_purity():
+    """Spec 05 PRD 05.2 §0 — the driver concludes nothing, and the engine still starts nothing.
+
+    Two properties, asserted two ways. The verdict is the engine's: `autopilot.py` may not contain
+    a verdict token it assigns, and every attempt a run closed has to carry exactly the verdict
+    `derive_verdict_15` gives for its own ticks — a driver that reached the same answer by its own
+    route would still be a driver with an opinion. And the 05.1 purity line holds after the loop
+    lands: the engine names no git command and starts no process, the driver imports stdlib and the
+    engine and nothing else, and `crux auto status` reads a run without loading the module that
+    can start one."""
+    print("\n# autopilot — the driver has no opinion (spec 05, PRD 05.2)")
+    tmp = None
+    try:
+        ap = os.path.join(HERE, "autopilot.py")
+        auto = "\n".join(l for l in read(ap).splitlines()
+                         if not l.lstrip().startswith("#")) if os.path.isfile(ap) else ""
+        eng = "\n".join(l for l in read(os.path.join(HERE, "engine.py")).splitlines()
+                        if not l.lstrip().startswith("#"))
+        blind = (r"""["']verdict["']\s*\]\s*=(?!=)""",
+                 r"""\bverdict\s*=(?!=)\s*["'](supported|refuted|inconclusive|invalid-run|partial)["']""",
+                 r"""["']verdict["']\s*:\s*["'](supported|refuted|inconclusive|invalid-run|partial)["']""",
+                 r"\bderive_verdict(_15)?\s*\(", r"\brender_doc\s*\(",
+                 r"\bwrite_if_changed\s*\(")
+        check("apure: autopilot.py assigns no verdict and every closed attempt's verdict equals derive_verdict_15 over its own node",
+              bool(auto)
+              and not any(re.search(p, auto) for p in blind)
+              and bool(re.search(r"\bcmd_close\s*\(", auto))
+              and set(_LOOP_RUNS) >= {"success", "still", "exit1", "crashscore", "frozen"}
+              and bool(_LOOP_CLOSED)
+              and all(v is not None and v == want for _, v, want in _LOOP_CLOSED))
+        allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal",
+                   "engine"}
+        imports = [m.group(1).split(".")[0] for m in
+                   re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
+        verbs = (r"""["'](checkout|commit|reset|merge|rebase|push|switch|stash|symbolic-ref|"""
+                 r"""cherry-pick)["']""")
+        check("apure: engine.py still starts no process and names no git; autopilot.py imports only stdlib (plus signal) and engine",
+              bool(auto)
+              and not re.search(r"^\s*(import|from)\s+(subprocess|threading|socket|urllib|"
+                                r"fcntl|multiprocessing|asyncio|signal)\b", eng, re.M)
+              and not re.search(r"\bos\.(system|popen|fork|exec\w*|spawn\w*|posix_spawn\w*)\s*\(",
+                                eng)
+              and not re.search(r"""["']git["']""", eng)
+              and not re.search(r"^\s*(import|from)\s+autopilot\b", eng, re.M)
+              and bool(imports) and all(x in allowed for x in imports)
+              and not re.search(verbs, auto)
+              and "shell=True" not in auto
+              and not re.search(r"^(import|from) autopilot",
+                                read(os.path.join(HERE, "crux.py")), re.M))
+        kills = re.findall(r"os\.killpg\([^\n]*?,\s*([\w.]+)\s*\)", auto)
+        check("apure: every process-group kill names the SIGKILL module constant, so a platform without one has no attribute to miss",
+              bool(auto) and len(kills) >= 2 and set(kills) == {"SIGKILL"}
+              and bool(re.search(r'^SIGKILL\s*=\s*getattr\(signal, "SIGKILL", 9\)',
+                                 auto, re.M)))
+
+        # ------------------------------------------------ the JSON surface of the three verbs
+        repo, root, qa, isl, hb, rel = _loop_fixture(x0=0, budget_attempts="1")
+        _, uroot, uqa, _, _, urel = _loop_fixture(x0=0, _approve=False)
+
+        def cli(*argv, **kw):
+            return _auto_val(lambda: subprocess.run(
+                [sys.executable, os.path.join(HERE, "crux.py")] + list(argv),
+                capture_output=True, cwd=kw.get("cwd") or root, encoding="utf-8",
+                errors="replace", timeout=180))
+
+        def j(r):
+            return _auto_val(lambda: json.loads(getattr(r, "stdout", "")), {})
+
+        capp = cli("auto", "approve", urel, "--json", cwd=uroot)
+        crun = cli("auto", "run", rel, "--json")
+        cs1 = cli("auto", "status", "--json")
+        cs2 = cli("auto", "status", qa, "--json")
+        cs3 = cli("auto", "status")
+
+        sys.path.insert(0, HERE)
+        import crux as C
+        spawned = []
+
+        def boom(*a, **k):
+            spawned.append(a)
+            raise AssertionError("process spawned")
+
+        patched = [(m, n) for m, n in ((subprocess, "Popen"), (subprocess, "run"),
+                                       (os, "system"), (os, "popen"), (os, "fork"),
+                                       (os, "posix_spawn"), (os, "posix_spawnp"),
+                                       (os, "spawnv"), (os, "spawnvp"), (os, "execv"),
+                                       (os, "execvp")) if hasattr(m, n)]
+        saved = [(m, n, getattr(m, n)) for m, n in patched]
+        cwd = os.getcwd()
+        before = _auto_val(lambda: _byte_map(root), {})
+        rc, out = None, ""
+        try:
+            for m, n, _ in saved:
+                setattr(m, n, boom)
+            if root:
+                os.chdir(root)
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+                    rc = C.main(["auto", "status", "--json"])
+            except SystemExit as e:
+                rc = e.code
+            except Exception as e:                           # pragma: no cover - wave-1 guard
+                rc = repr(e)
+            out = buf.getvalue()
+        finally:
+            for m, n, fn in saved:
+                setattr(m, n, fn)
+            os.chdir(cwd)
+        after = _auto_val(lambda: _byte_map(root), {})
+        check("acli: auto run, auto status and auto approve emit JSON under --json, and auto status starts no process and writes nothing",
+              _auto_ok(lambda: (
+                  capp.returncode == 0
+                  and set(j(capp)) == {"plan", "approved", "approved_hash", "already"}
+                  and crun.returncode == 0 and set(j(crun)) == set(E.AUTO_STATE_KEYS)
+                  and j(crun)["stop"]["reason"] == "budget"
+                  and cs1.returncode == 0 and cs2.returncode == 0
+                  and set(j(cs1)) == set(j(cs2)) == {"anchor", "state", "events", "last_event"}
+                  and j(cs1)["anchor"] == qa
+                  and j(cs1)["events"] == j(cs1)["state"]["events"]
+                  and j(cs1)["last_event"]["event"] == "stop"
+                  and cs3.returncode == 0
+                  and f"{E.AUTO_DIR}/{qa}/{E.AUTO_STATE_FILE}" in cs3.stdout
+                  and spawned == [] and rc == 0
+                  and _auto_val(lambda: json.loads(out), {}).get("anchor") == qa
+                  and bool(before) and before == after)))
+
+        # ------------------------------- a vault that never met autopilot, left exactly alone
+        tmp = tempfile.mkdtemp(prefix="crux_anoauto2_")
+        dst = os.path.join(tmp, "demo")
+        shutil.copytree(os.path.join(REPO, "skills", "crux", "examples", "demo_vault"), dst)
+        ns = cli("auto", "status", cwd=dst)
+        check("acli: auto status on a vault with no auto/ directory refuses and creates nothing",
+              _auto_ok(lambda: (
+                  ns.returncode == 1
+                  # the LAST line: `auto status` is a read-only verb and warns about engine
+                  # drift above its refusal exactly as every other read-only verb does
+                  and ns.stderr.strip().splitlines()[-1]
+                      == ("crux: auto status: no autopilot run in this vault "
+                          "(auto/<qid>/state.json)")
+                  and all("engine drift" in l for l in ns.stderr.strip().splitlines()[:-1])
+                  and not os.path.isdir(os.path.join(dst, E.AUTO_DIR)))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"apure: section ran without crashing ({e!r})", False)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+        _auto_sweep()
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
                  ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
                  ["brief", "--help"], ["glossary", "--help"], ["doctor", "--help"],
                  ["auto", "--help"], ["auto", "check", "--help"],
-                 ["auto", "promote", "--help"], ["auto", "refs", "--help"]):
+                 ["auto", "promote", "--help"], ["auto", "refs", "--help"],
+                 ["auto", "approve", "--help"], ["auto", "run", "--help"],
+                 ["auto", "status", "--help"]):
         r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
                            capture_output=True, text=True, encoding="utf-8")
         # `auto` is PRD 05.0's own verb: its check is named with the autopilot prefix the
@@ -10535,6 +12248,13 @@ def main():
     run_auto_scorer()
     run_auto_verbs()
     run_auto_purity()
+    run_auto_grammar()
+    run_auto_approve()
+    run_auto_loop()
+    run_auto_resume()
+    run_auto_stops()
+    run_auto_leash()
+    run_auto_loop_purity()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

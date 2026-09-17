@@ -343,14 +343,14 @@ def main(argv=None):
     s.add_argument("--settings", default=None,
                    help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
 
-    # autopilot (spec 05, PRD 05.0 + 05.1). `brief` and `guide` still touch nothing and no
-    # process; `check` now dry-runs the PI's scorer once (`--static` is what it used to do),
-    # `refs` lists a run's refs read-only, and `promote` cuts one branch at a recorded
-    # attempt. The loop that spawns workers is still 05.2.
+    # autopilot (spec 05, PRD 05.0 + 05.1 + 05.2). `brief`, `guide` and `status` touch nothing
+    # and no process; `check` dry-runs the PI's scorer once (`--static` is what it used to
+    # do), `refs` lists a run's refs read-only, `promote` cuts one branch at a recorded
+    # attempt, `approve` is the PI's signature on a plan, and `run` is the driver loop.
     ap = sub.add_parser("auto", aliases=["autopilot"],
-                        help="autopilot (spec 05): validate a flight plan and dry-run its "
-                             "scorer, print a worker's brief, append the PI's guidance, "
-                             "promote an attempt or list a run's refs")
+                        help="autopilot (spec 05): validate, approve and run a flight plan, "
+                             "read a run's state, print a worker's brief, append the PI's "
+                             "guidance, promote an attempt or list a run's refs")
     asub = ap.add_subparsers(dest="acmd", metavar="<sub-verb>")
 
     s = _jsonable(asub.add_parser("check", help="validate a flight plan and report every "
@@ -382,6 +382,22 @@ def main(argv=None):
     s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
     s.add_argument("--author", required=True, help="who the instruction came from")
     s.add_argument("text", help="the instruction, as one line")
+
+    s = _jsonable(asub.add_parser("approve", help="the PI's signature on a flight plan: stamp "
+                                                  "approved and a hash of what was approved"))
+    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+
+    s = _jsonable(asub.add_parser("run", help="run an approved flight plan unattended until "
+                                              "one of its four stops; resumes a run already "
+                                              "on disk"))
+    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+    s.add_argument("--max-attempts", dest="max_attempts", type=int, default=None,
+                   help="tighten budget_attempts for this invocation")
+
+    s = _jsonable(asub.add_parser("status", help="read a run's state.json — starts nothing, "
+                                                 "writes nothing"))
+    s.add_argument("qid", nargs="?", default=None,
+                   help="the anchor question; optional when the vault holds one autopilot run")
 
     s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
 
@@ -457,6 +473,10 @@ def _csv_arg(val):
     return [x.strip() for x in (val or "").split(",") if x.strip() and x.strip() != E.NO_BLOCKERS]
 
 
+DASH = "—"        # the em dash for an empty slot, named because an f-string expression
+                       # may not carry a backslash on the Pythons crux supports
+
+
 def _dispatch_auto(a):
     """`crux auto <sub-verb>` (spec 05, PRD 05.0 + 05.1). Every verb but `guide` resolves the
     vault read-only and never re-stamps it; `guide` is the one that writes, appending the PI's
@@ -467,9 +487,60 @@ def _dispatch_auto(a):
     that the module which CAN start one is not even loaded on their path."""
     t = getattr(a, "acmd", None)
     if not t:
-        print("crux: auto needs a sub-verb \u2014 check / brief / guide / promote / refs",
-              file=sys.stderr)
+        print("crux: auto needs a sub-verb \u2014 check / brief / guide / promote / refs / "
+              "approve / run / status", file=sys.stderr)
         return 1
+    if t == "approve":
+        res = E.cmd_auto_approve(_vault(), a.plan)
+        if a.json:
+            return _emit(res)
+        if res["already"]:
+            print(f"\u2713 flight plan already approved: {res['plan']}  ({res['approved']})")
+        else:
+            print(f"\u2713 flight plan approved: {res['plan']}  ({res['approved']}, "
+                  f"hash {res['approved_hash']})")
+        return 0
+    if t == "run":
+        root = _vault()
+        import autopilot
+        st = autopilot.auto_run(root, a.plan, max_attempts=a.max_attempts)
+        if a.json:
+            return _emit(st)
+        stop = st.get("stop") or {}
+        axis = f" ({stop.get('axis')})" if stop.get("axis") else ""
+        best = st.get("best") or {}
+        bid = best.get("id") or DASH
+        bscore = DASH if best.get("score") is None else best.get("score")
+        print(f"\u2713 auto run on {st.get('anchor')} stopped: {stop.get('reason')}{axis} "
+              f"\u2014 {len(st.get('closed') or [])} attempts closed, "
+              f"best {bid} = {bscore}")
+        return 0
+    if t == "status":
+        res = E.auto_status(_vault_ro(None), a.qid)
+        if a.json:
+            return _emit(res)
+        st, qid = res["state"], res["anchor"]
+        print(f"{E.AUTO_DIR}/{qid}/{E.AUTO_STATE_FILE}  (run {st.get('run')})")
+        print(f"mode {st.get('mode')} \u00b7 c_puct {st.get('c_puct')} \u00b7 escalated "
+              f"{'true' if st.get('escalated') else 'false'}")
+        flight = sorted(st.get("in_flight") or {}, key=E.natkey)
+        print("in flight: " + (", ".join(flight) if flight else DASH))
+        best = st.get("best") or {}
+        bid = best.get("id") or DASH
+        bscore = DASH if best.get("score") is None else best.get("score")
+        print(f"closed: {len(st.get('closed') or [])} \u00b7 best {bid} = {bscore}")
+        b = st.get("budget") or {}
+        at, hr, mc = b.get("attempts") or {}, b.get("hours") or {}, b.get("model_calls") or {}
+        print(f"budget: attempts {at.get('used')}/{at.get('total')} \u00b7 hours "
+              f"{float(hr.get('used') or 0):.3f}/{float(hr.get('total') or 0):g} \u00b7 "
+              f"model calls {mc.get('used')}/{mc.get('total')}")
+        stop = st.get("stop")
+        if stop:
+            axis = f" ({stop.get('axis')})" if stop.get("axis") else ""
+            print(f"stop: {stop.get('reason')}{axis} \u2014 {stop.get('detail')}")
+        else:
+            print("stop: running")
+        return 0
     if t == "check":
         root = _vault_ro(None)
         if getattr(a, "static", False):
