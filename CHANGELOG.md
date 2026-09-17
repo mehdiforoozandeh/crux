@@ -8,6 +8,46 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Autopilot: the git and workspace layer** ([PRD 05.1](docs/prd/05.1-git-and-workspace-layer.md),
+  spec 05, engine **3.3**, unchanged). The impure half of autopilot, and still not the loop:
+  every git, process and concurrency call an attempt needs, in a new module beside the engine.
+  The engine itself stays pure — it gains only arithmetic and parsing helpers, names no git
+  command, and starts no process. **No version bump and no migration**; nothing here changes
+  the vault format, and every 05.0 flight plan validates unchanged.
+  - **The lock and reserved ids** — one lock file per vault at `auto/.lock`, holding the pid,
+    host and operation of whoever has it, reclaimed once when its owner is gone or its file is
+    stale. Node ids are drawn from the engine's counter under that lock and recorded in
+    `auto/<qid>/reserved.json` before a node exists, so two attempts can never receive the same
+    id and a reserved id survives a crash. `crux validate` does not lint a reservation.
+  - **Refs, branches and worktrees** — a run starts at `refs/crux/auto/<qid>/base`; each attempt
+    is recorded as `refs/crux/auto/<qid>/<hid>`, a ref rather than a branch, and it outlives the
+    worktree it was made in. Branches are `crux/auto/<qid>/run` and
+    `crux/auto/<qid>/island/<island>`. Each attempt gets a detached worktree under
+    `<git common dir>/crux-auto/<qid>/<hid>`.
+  - **Workspace, frozen paths and the manifest** — an attempt writes in an id-named workspace
+    under the plan's first `writable:` root. The frozen-path diff reports a commit that touched
+    a declared frozen path (the vault's own path among them, when the vault is inside the
+    repository); the manifest records every file under the shared `writable:` roots and reports
+    what was added, removed or changed outside the attempt's own workspace. **Detected and
+    reported** — the `invalid-run` close is 05.2's. `retention: all | failed | none` governs the
+    workspace alone; the ref, node, metrics and manifest survive every setting.
+  - **The scorer contract** — the PI's `scorer:` command runs with no shell and exactly two
+    added environment variables, `CRUX_ATTEMPT` and `CRUX_WORKSPACE`. **stdout is one JSON
+    object**, written verbatim to `results/<hid>/metrics.json` by the driver and never by the
+    engine; stderr is free text kept only for an error message.
+  - **Verbs** — `crux auto check` now dry-runs that scorer once before any attempt starts and
+    names what failed (`repo`, `scorer-exit`, `scorer-timeout`, `scorer-output`,
+    `scorer-address`); **`crux auto check --static`** is 05.0's behaviour under a flag and starts
+    nothing. New: `crux auto promote <hid>` creates a branch at a recorded attempt without a
+    checkout or a merge, and `crux auto refs` lists a run's refs, branches and worktrees. Two
+    optional plan fields, `repo:` and `scorer_timeout:`.
+  - **This supersedes the "no git" line in the 05.0 entry below** — git is exactly what this
+    slice adds. Every other exclusion 05.0 listed still stands.
+  - **Not in this slice**, deliberately: no loop (no selection, retries, budget or resume), no
+    autopilot agents, no verdict closes, no `state.json` or `ledger.jsonl` write, no
+    `crux validate` change, no cockpit tab, no sandboxing, and no change to the leash.
+    **`main` is never written** by anything here.
+
 - **Autopilot: the flight plan and the brief** ([PRD 05.0](docs/prd/05.0-flight-plan-and-brief.md),
   spec 05, engine **3.2 → 3.3**). The pure, process-free contract every later autopilot slice
   executes. The version moves because the vault format gains one optional field; there is no

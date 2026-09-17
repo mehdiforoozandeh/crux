@@ -36,7 +36,7 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 | `ingest` | source, add-source | register a PI-curated `raw/` source into the literature wiki |
 | `serve` | gui, ui, cockpit | open the read-only browser cockpit over the vault (localhost, view-only) |
 | `validate` | lint, check | run all integrity checks (tree + wiki lint, plus economy warnings) |
-| `auto` | autopilot | flight plans — `auto check` lints one, `auto brief` assembles the next attempt's brief, `auto guide` appends the PI's guidance (see **Autopilot**) |
+| `auto` | autopilot | flight plans and runs — `auto check` lints one and dry-runs its scorer (`--static` lints only), `auto brief` assembles the next attempt's brief, `auto guide` appends the PI's guidance, `auto promote` branches a recorded attempt, `auto refs` lists a run's refs (see **Autopilot**) |
 
 Every verb except `init`, `serve` and `selftest` takes `--json`, so a caller reads a result
 instead of parsing prose. `crux status --json` is the whole snapshot, `crux status q3 --json`
@@ -151,6 +151,72 @@ the `frozen`/`writable` paths, the combination `rule`, …) followed by five sec
 
 **Nothing in 05.0 starts a process.** These verbs read the plan and the vault and stop; the
 git layer, the driver loop and the worker agents are later slices.
+
+## Autopilot (05.1) — the git and workspace layer
+
+05.1 adds the impure half: every git, process and concurrency call an attempt needs. It is
+still not the loop — nothing here selects an attempt, launches an agent or closes a verdict.
+The 05.0 line above now holds for `auto brief`, `auto guide`, `auto refs` and
+`auto check --static`; plain `auto check` starts exactly one process, the PI's own scorer.
+
+**Where a run lives.** All of it is git, and none of it is `main`.
+
+| thing | where it is |
+|-------|-------------|
+| the vault lock | `auto/.lock` — one per vault, carrying the holder's pid, host, time and operation |
+| reserved ids | `auto/<qid>/reserved.json` — every id handed out, with its island, parent and state |
+| where the run started | `refs/crux/auto/<qid>/base` |
+| one attempt | `refs/crux/auto/<qid>/<hid>` — a ref, never a branch |
+| the run's branch | `crux/auto/<qid>/run` |
+| one island | `crux/auto/<qid>/island/<island>` |
+| a promoted attempt | `crux/auto/<qid>/promoted/<hid>` |
+| an attempt's worktree | `<git common dir>/crux-auto/<qid>/<hid>`, detached |
+| an attempt's workspace | `<first writable root>/<hid>/` |
+| an attempt's manifest | `auto/<qid>/manifests/<hid>.json` |
+
+- **The lock** is one file for the whole vault, and it is what makes id reservation safe: two
+  attempts never receive the same node id. A lock whose pid is gone on this host, or whose file
+  is older than the stale window, is reclaimed once and then held by the reclaimer.
+- **An id is reserved before a node exists.** It comes from the engine's counter, under the
+  lock, so it can never be handed out twice; the record in `reserved.json` outlives a crash. A
+  reserved id that never became a node stays reserved, and `crux validate` does not lint it.
+- **Frozen paths** are the plan's `frozen:` entries plus the vault's own path, when the vault
+  sits inside the repository. A commit that touches one is **reported**, naming the path.
+- **The manifest** records every file under the declared `writable:` roots — path, size,
+  mtime — with the attempt's own workspace left out. Re-checking it after the run reports what
+  was added, removed or changed outside that workspace. Reported, not judged.
+- **Retention** is `retention:` in the plan, and it governs the workspace alone: `all` keeps
+  every one, `none` deletes every one, `failed` keeps a workspace whose attempt was refuted,
+  invalid or never closed and deletes a supported one. The attempt's ref, its node, its
+  `results/<hid>/metrics.json` and its manifest survive every setting, and no worktree is left
+  behind by any of them.
+
+**The scorer contract.** `scorer:` is the PI's own command. **Its stdout must be exactly one
+JSON object** — that object is written verbatim to `results/<hid>/metrics.json`, and the plan's
+`address::` has to resolve inside it to a number. stderr is free text and is read only for an
+error message. The command is started with no shell and with exactly two variables added to the
+environment it inherits: `CRUX_ATTEMPT` (the attempt's id) and `CRUX_WORKSPACE` (its workspace).
+
+- `crux auto check <plan>` lints the plan as 05.0 did, then dry-runs the scorer once against the
+  baseline, writing nothing. It names what failed: `repo` (no git repository encloses the vault
+  and the plan sets no `repo:`), `scorer-exit` (it could not start, or exited non-zero — the
+  message carries a bounded tail of its stderr), `scorer-timeout`, `scorer-output` (stdout was
+  not one JSON object) or `scorer-address` (the objective did not resolve to a number).
+  `--static` skips all of that and returns exactly what 05.0 returned.
+- `crux auto promote <hid> [--branch <name>]` creates a branch at a recorded attempt, defaulting
+  to `crux/auto/<qid>/promoted/<hid>`. No checkout, no merge. It refuses an unknown id, an
+  attempt with no recorded ref, and a branch name already taken.
+- `crux auto refs [<qid>]` lists the run's refs, its branches and its worktrees. Read-only — it
+  creates nothing, not even `auto/`.
+
+Two optional frontmatter fields arrive with the slice: **`repo:`** (where the repository is,
+for a vault that does not sit inside it) and **`scorer_timeout:`** (seconds, default 600). A
+plan carrying neither validates exactly as it did under 05.0.
+
+**What 05.1 does not do.** No loop — nothing selects, launches, retries, budgets or resumes. No
+agents. No verdict closes: a frozen-path or shared-root violation is reported, and the
+`invalid-run` close belongs to the next slice. No `state.json` and no `ledger.jsonl` write. No
+leash change, and no cockpit. **`main` is never written** by anything here.
 
 ## Engine version stamp
 

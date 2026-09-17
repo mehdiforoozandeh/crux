@@ -416,7 +416,7 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 - ☑ **05.0 — the flight plan and the brief.** Engine-only, pure, no processes: schema,
   `builds_on:`, validation, PUCT arithmetic, brief assembly with the six checks, the lint
   verb. Entirely testable in selftest without a model, a GPU or a network.
-- ☐ **05.1 — the git and workspace layer.** Worktrees, the reference namespace, id
+- ☑ **05.1 — the git and workspace layer.** Worktrees, the reference namespace, id
   reservation, the lock, workspaces, the manifest, retention, promote.
 - ☐ **05.2 — the driver loop.** Selection, the four stops, budget, retries, resume, the
   ledger, the state file. Tested end-to-end against a stub generator — tier 0.
@@ -432,8 +432,9 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 - [x] A flight plan that omits a required slot is **refused**, naming the slot.
 - [x] A flight plan whose objective does not come from a null-discriminating check is refused.
 - [ ] `crux auto check` fails when the scorer cannot run, when it prints no parseable number,
-      or when no agent command is reachable — before any attempt starts.
-- [ ] Two attempts never receive the same node id, under concurrency, asserted in selftest.
+      or when no agent command is reachable — before any attempt starts — the two scorer
+      halves are delivered by 05.1; the agent-command reachability third is 05.3's.
+- [x] Two attempts never receive the same node id, under concurrency, asserted in selftest.
 - [ ] An attempt that writes a frozen path closes `invalid-run`, never `refuted`.
 - [ ] An attempt that changes anything under a declared shared root outside its own workspace
       closes `invalid-run`.

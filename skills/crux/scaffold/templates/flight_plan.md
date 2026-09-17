@@ -13,9 +13,11 @@ parallel_island: 1
 retries: 2
 retention: failed
 scorer: python score.py
+scorer_timeout: 600
 run: python train.py
 frozen: score.py, data/
 writable: work/, results/
+repo:
 agent: claude -p "{brief}"
 agent_failover:
 steward: false

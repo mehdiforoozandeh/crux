@@ -323,7 +323,8 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `status` · `review` · `task review` · `validate` | ○ | none — act; what reaches the PI is the science, never the call |
 | `init` · `serve` | ○ | none — `serve` opens the read-only cockpit (launch playbook: the **crux-cockpit** skill) |
 | `task add` · `done` · `drop` · `list` · `show` · `categories` | ○ | none — and ordinary task bookkeeping is silent |
-| `auto check` · `auto brief` | ○ | none — both only read: one lints a flight plan, the other assembles a worker's brief, and neither starts anything |
+| `auto check` · `auto brief` | ○ | none — `auto brief` only reads, and so does the lint half of `auto check`; the rest of `auto check` starts **the PI's own scorer, once**, as a dry run that writes nothing. `auto check --static` is the lint alone and starts nothing |
+| `auto refs` | ○ | none — it lists what a run already made: its refs, its branches, its worktrees. Read-only, and it creates nothing |
 | `ask` · `hypothesize` · `pursue` | ◆ | it sets direction — propose the node, get a yes |
 | `test` | ◆ | `stage` is free; **going `running` spends compute and needs the PI's OK** |
 | `close` | ◆ | derives the verdict from your ticks — never tick a box the evidence does not support |
@@ -333,6 +334,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `task accept` | ◆ | **the PI accepts what an experiment concluded** — never run this on your own judgment |
 | `rd` | ◆ | the Requirements Document the 400-word cap displaces (see the **crux-rd** skill) |
 | `auto guide` | ◆ | it appends **the PI's own standing instruction** to a flight plan, stamped with the time and the author — their words, on their yes, and the section is append-only |
+| `auto promote` | ◆ | it writes **a branch into the PI's repository** at a recorded attempt — their repo, on their yes. It never checks out, never merges, and never touches `main` |
 | `ingest` | ○→◆ | registers a PI-curated `raw/` source (see the **crux-wiki** skill) |
 
 Every verb except `init`/`serve`/`selftest` takes **`--json`** — use it when you need to read

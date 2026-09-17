@@ -5655,6 +5655,16 @@ AUTO_C_PUCT          = {"climb": 0.0, "explore": 1.0}
 OBJECTIVE_DIRECTIONS = ("min", "max")
 AUTO_SECTIONS        = ("Goal", "Objective", "Null", "Verifiables", "Guidance")
 
+# 05.1. What a workspace is worth keeping once the attempt is over, and how long the PI's
+# scorer may run before the driver gives up on it. Both are READ by the driver, never acted on
+# here: the engine only says which values are legal, which is a question about the document.
+AUTO_RETENTIONS             = ("all", "failed", "none")
+AUTO_SCORER_TIMEOUT_DEFAULT = 600.0
+# Optional, and optional forever — a plan written before 05.1 is still a valid plan. `repo` is
+# deliberately NOT checked below: whether a path is a working tree is a question only a
+# process can answer, so the driver reports that one under its own slug.
+AUTO_OPTIONAL_FIELDS        = ("repo", "scorer_timeout")
+
 OBJECTIVE_LINE_RE = re.compile(r"^\s*(address|direction|bar)::\s*(.+?)\s*$")
 GUIDANCE_RE       = re.compile(r"^- \[(?P<at>[^\]]+)\] (?P<author>[^:]+): (?P<text>.+)$")
 
@@ -5816,11 +5826,28 @@ def flight_plan_problems(root, plan, path=None):
     if present("steward") and not isinstance(fm.get("steward"), bool):
         add("field-type", f"flight plan field 'steward' must be true or false "
                           f"(got '{fm.get('steward')}')")
+    # 2d (05.1). Optional — absent or empty means the default. Zero is refused with the rest:
+    # a scorer that must finish in no time is a run that fails at the first attempt.
+    if present("scorer_timeout"):
+        raw = fm.get("scorer_timeout")
+        try:
+            if float(raw) <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            add("field-type", f"flight plan field 'scorer_timeout' must be a positive number "
+                              f"(got '{raw}')")
 
     # 3. the mode
     mode = fm.get("mode")
     if present("mode") and mode not in AUTO_MODES:
         add("mode", f"flight plan mode must be one of {', '.join(AUTO_MODES)} (got '{mode}')")
+
+    # 3b (05.1). Retention decides what happens to a workspace that may hold sixty gigabytes
+    # of checkpoints, so a misspelling has to be refused where the plan is signed.
+    retention = fm.get("retention")
+    if present("retention") and retention not in AUTO_RETENTIONS:
+        add("retention", f"flight plan retention must be one of {', '.join(AUTO_RETENTIONS)} "
+                         f"(got '{retention}')")
 
     # 4. the combination rule — the same closed list spec 15 already honors
     rule = fm.get("rule")
@@ -6034,14 +6061,65 @@ def load_flight_plan(root, path):
     obj = plan.get("objective") or {}
     islands = _csv_field(fm.get("islands")) or [fm.get("anchor")]
     plan = dict(plan)
+    raw_repo = fm.get("repo")
+    raw_timeout = fm.get("scorer_timeout")
     plan.update({"path": rel, "anchor": fm.get("anchor"), "mode": fm.get("mode"),
                  "c_puct": AUTO_C_PUCT[fm.get("mode")], "baseline": fm.get("baseline"),
                  "islands": islands, "direction": obj.get("direction"),
                  "address": obj.get("address"), "bar": float(obj.get("bar")),
                  "rule": fm.get("rule"),
                  "rule_m": fm.get(RULE_M_FIELD) if isinstance(fm.get(RULE_M_FIELD), int)
-                           and not isinstance(fm.get(RULE_M_FIELD), bool) else None})
+                           and not isinstance(fm.get(RULE_M_FIELD), bool) else None,
+                 # 05.1, for the driver. Normalised HERE so the driver, the manifest and the
+                 # frozen diff cannot each spell `work/` a different way.
+                 "repo": str(raw_repo) if raw_repo not in (None, "") else None,
+                 "scorer_timeout": (float(raw_timeout) if raw_timeout not in (None, "")
+                                    else AUTO_SCORER_TIMEOUT_DEFAULT),
+                 "scorer": fm.get("scorer"),
+                 "retention": fm.get("retention"),
+                 "frozen": [_auto_norm_path(x) for x in _csv_field(fm.get("frozen"))],
+                 "writable": [_auto_norm_path(x) for x in _csv_field(fm.get("writable"))]})
     return plan
+
+
+def metrics_value(tree, keypath, where):
+    """One dotted key path through a parsed metrics document, as a float.
+
+    The same walk `resolve_address` does, minus the vault: the driver has the document in
+    hand — it just read it off the scorer's stdout — and there is no file to address. `where`
+    is what the caller wants the refusal to name, so one helper serves both the dry run
+    ("scorer output") and the recorded attempt."""
+    node = tree
+    for part in str(keypath).split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise AddressError("missing-key", f"{where}: key path '{keypath}' does not resolve")
+        node = node[part]
+    if not isinstance(node, dict) or "value" not in node:
+        raise AddressError("missing-value",
+                           f"{where}: not a metrics leaf (an object carrying 'value')")
+    raw = node["value"]
+    if isinstance(raw, bool):
+        raise AddressError("missing-value", f"{where}: value '{raw}' is not a number")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        raise AddressError("missing-value", f"{where}: value '{raw}' is not a number")
+
+
+def manifest_diff(before, after):
+    """`{added, removed, changed}` between two walks of the same roots.
+
+    Pure set arithmetic over `{path, size, mtime_ns}` entries, so the whole comparison can be
+    read and trusted without a filesystem. `changed` is size-or-mtime rather than a hash: the
+    question is whether an attempt touched a shared root at all, and hashing sixty gigabytes
+    to answer it would cost more than the run."""
+    b = {e["path"]: e for e in (before or [])}
+    a = {e["path"]: e for e in (after or [])}
+    changed = [p for p in b if p in a
+               and (b[p].get("size") != a[p].get("size")
+                    or b[p].get("mtime_ns") != a[p].get("mtime_ns"))]
+    return {"added": sorted(set(a) - set(b)), "removed": sorted(set(b) - set(a)),
+            "changed": sorted(changed)}
 
 
 def append_guidance(root, path, text, author):
