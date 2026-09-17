@@ -148,9 +148,11 @@ def _run(argv, cwd=None, env=None, timeout=None):
     try:
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        # Kill the whole session where the platform has one; Windows has no process groups
+        # in this sense (no getpgid/killpg), so the direct child is what gets killed there.
         try:
             os.killpg(os.getpgid(p.pid), SIGKILL)
-        except OSError:
+        except (OSError, AttributeError):
             p.kill()
         p.communicate()
         raise
