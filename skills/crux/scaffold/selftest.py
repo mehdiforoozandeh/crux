@@ -10253,7 +10253,7 @@ def run_auto_purity():
         ap = os.path.join(HERE, "autopilot.py")
         auto = read(ap) if os.path.isfile(ap) else ""
         allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
-                   "tempfile", "datetime", "contextlib", "errno", "stat", "engine"}
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "engine"}
         imports = [m.group(1).split(".")[0] for m in
                    re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
         cl = read(os.path.join(HERE, "crux.py")).splitlines()

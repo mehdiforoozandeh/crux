@@ -148,9 +148,11 @@ def _run(argv, cwd=None, env=None, timeout=None):
     try:
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        # Kill the whole session where the platform has one; Windows has no process groups
+        # in this sense (no getpgid/killpg), so the direct child is what gets killed there.
         try:
             os.killpg(os.getpgid(p.pid), SIGKILL)
-        except OSError:
+        except (OSError, AttributeError):
             p.kill()
         p.communicate()
         raise
@@ -247,16 +249,44 @@ def plan_repo(root, plan):
 # -------------------------------------------------------------------------------- the lock
 def _pid_alive(pid):
     """Whether this host still has that process. A PermissionError means it exists and belongs
-    to somebody else — which is very much alive."""
+    to somebody else — which is very much alive.
+
+    On Windows `os.kill(pid, 0)` is not a probe: signal 0 is CTRL_C_EVENT, and it is delivered
+    to every process on the console, this one included. The probe there is OpenProcess."""
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError, OverflowError):
+        return True
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
+    try:
+        os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    except (TypeError, ValueError, OverflowError, OSError):
+    except OSError:
         return True
     return True
+
+
+def _pid_alive_windows(pid):
+    """OpenProcess with query-only rights; an exit code other than STILL_ACTIVE is a dead pid.
+    Access denied means the process exists and is somebody else's — alive. Any other failure
+    to open is read as gone."""
+    import ctypes                                   # stdlib; loaded on Windows only
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE, ERROR_ACCESS_DENIED = 0x1000, 259, 5
+    handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
 
 
 def read_lock(root):
