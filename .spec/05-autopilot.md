@@ -413,7 +413,7 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 
 ## Work items — the PRD series
 
-- ◐ **05.0 — the flight plan and the brief.** Engine-only, pure, no processes: schema,
+- ☑ **05.0 — the flight plan and the brief.** Engine-only, pure, no processes: schema,
   `builds_on:`, validation, PUCT arithmetic, brief assembly with the six checks, the lint
   verb. Entirely testable in selftest without a model, a GPU or a network.
 - ☐ **05.1 — the git and workspace layer.** Worktrees, the reference namespace, id
@@ -429,8 +429,8 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 
 ## Acceptance criteria
 
-- [ ] A flight plan that omits a required slot is **refused**, naming the slot.
-- [ ] A flight plan whose objective does not come from a null-discriminating check is refused.
+- [x] A flight plan that omits a required slot is **refused**, naming the slot.
+- [x] A flight plan whose objective does not come from a null-discriminating check is refused.
 - [ ] `crux auto check` fails when the scorer cannot run, when it prints no parseable number,
       or when no agent command is reachable — before any attempt starts.
 - [ ] Two attempts never receive the same node id, under concurrency, asserted in selftest.
@@ -438,13 +438,13 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 - [ ] An attempt that changes anything under a declared shared root outside its own workspace
       closes `invalid-run`.
 - [ ] A crash closes `invalid-run` only after the configured retries are exhausted.
-- [ ] The assembled brief contains no string from the anchor's `## Problem Statement`.
-- [ ] Two briefs for the same vault state are byte-identical.
-- [ ] Every number in a brief resolves to a live vault address.
+- [x] The assembled brief contains no string from the anchor's `## Problem Statement`.
+- [x] Two briefs for the same vault state are byte-identical.
+- [x] Every number in a brief resolves to a live vault address.
 - [ ] A run killed at any point resumes with no attempt lost and no attempt repeated.
 - [ ] Success is declared only after a confirmation run at different seeds passes.
 - [ ] No verdict outside an autopilot run closes without a PI signature — the existing leash
       is unchanged elsewhere, asserted in selftest.
 - [ ] `main` is never written by the loop, asserted by a test that runs a full tier-0 search
       and diffs `main`.
-- [ ] An existing vault with no autopilot fields loads unchanged under the new engine version.
+- [x] An existing vault with no autopilot fields loads unchanged under the new engine version.

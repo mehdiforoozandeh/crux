@@ -6,6 +6,37 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Autopilot: the flight plan and the brief** ([PRD 05.0](docs/prd/05.0-flight-plan-and-brief.md),
+  spec 05, engine **3.2 → 3.3**). The pure, process-free contract every later autopilot slice
+  executes. The version moves because the vault format gains one optional field; there is no
+  migration, and a vault written before 3.3 loads unchanged.
+  - **The flight plan** — `auto/<qid>/plan.md`, an ordinary crux document: flat frontmatter
+    plus `## Goal`, `## Objective`, `## Null`, `## Verifiables`, `## Guidance`.
+    `## Verifiables` is byte-for-byte the node format and is read by the node parser, so a bar
+    written on a plan and the same bar written on a node cannot drift apart. `## Guidance` is
+    append-only — `crux auto guide` stamps each line with the time and the author and never
+    touches a line already there.
+  - **`builds_on:`** — the one new field, optional, on idea nodes: which attempt this one was
+    branched from. `crux hypothesize --builds-on <hid>` writes it; `crux validate` reports a
+    missing target, a target that is not a hypothesis, a target under another question, and a
+    cycle. A node without the field validates exactly as it did under 3.2.
+  - **Selection** — flat PUCT, ported with attribution from Google ERA's `futs.py`
+    (Apache-2.0): a rank score plus `c_puct · (1/N) · √(total visits) / (1 + visits)`. Climb
+    *is* `c_puct = 0`, so the greedy mode is one setting of the exploring mode rather than a
+    second code path. Pure arithmetic, and nothing outside the tests calls it in this slice.
+  - **The brief** — the engine assembles what a worker is shown, and six deterministic checks
+    hold it: every required slot filled; every over-budget section cut by a declared rule with
+    the cut stated in the brief; two assemblies byte-identical; no string from the anchor's
+    problem statement, and nothing from a sibling island but that island's best; every number
+    re-resolving to a live vault address; and `crux auto brief --lint` printing all of it.
+  - **Verbs** — `crux auto check`, `crux auto brief` and `crux auto guide`, each with `--json`.
+  - **Not in this slice**, deliberately: no process is started (no scorer run, no agent call,
+    no run command), no git, no loop, no autopilot agents, no cockpit tab, and no change to
+    the leash — the ruling that attempts close without a per-attempt signature belongs to 05.2,
+    where something can actually close an attempt.
+
 ## [0.7.0] - 2026-09-05
 
 ### Fixed
