@@ -128,6 +128,11 @@ def main(argv=None):
     s.add_argument("--replicates", default=None,
                    help="the declared n / replication plan (\"5 seeds x 3 folds\", "
                         "\"n = 12 per arm\")")
+    # lineage (spec 05): an attempt branched from another attempt is its SIBLING, under the
+    # same question. The field records the branch; the tree keeps tracking questions.
+    s.add_argument("--builds-on", dest="builds_on", default=None, metavar="HID",
+                   help="the attempt this one is branched from — a hypothesis under the same "
+                        "question. Recorded as a field, never as a tree edge.")
     s.add_argument("-n", "--neutral", action="append", default=[],
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
                         "pass whatever the hypothesis turns out to be. Its failure invalidates the "
@@ -338,6 +343,30 @@ def main(argv=None):
     s.add_argument("--settings", default=None,
                    help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
 
+    # autopilot (spec 05, PRD 05.0). Three verbs, all read-only or append-only: `check` and
+    # `brief` touch nothing, `guide` appends the PI's own words to one section of one file.
+    # The loop that spawns workers is 05.2 — nothing under `auto` starts a process.
+    ap = sub.add_parser("auto", aliases=["autopilot"],
+                        help="autopilot (spec 05): validate a flight plan, print a worker's "
+                             "brief, append the PI's guidance — nothing here starts a process")
+    asub = ap.add_subparsers(dest="acmd", metavar="<sub-verb>")
+
+    s = _jsonable(asub.add_parser("check", help="validate a flight plan and report every "
+                                                "problem it carries, not just the first"))
+    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+
+    s = _jsonable(asub.add_parser("brief", help="assemble the worker brief for the next "
+                                                "attempt built on a given attempt"))
+    s.add_argument("id", help="the parent attempt — the hypothesis a new attempt builds on")
+    s.add_argument("--lint", action="store_true",
+                   help="also run every brief check and exit non-zero on a failure")
+
+    s = _jsonable(asub.add_parser("guide", help="append one standing instruction from the PI "
+                                                "to a flight plan's ## Guidance (never edits)"))
+    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+    s.add_argument("--author", required=True, help="who the instruction came from")
+    s.add_argument("text", help="the instruction, as one line")
+
     s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
 
     s = sub.add_parser("selftest", help="run the engine's built-in test suite (no GPU/tokens; validates the install)")
@@ -410,6 +439,57 @@ def _voice_hook():
 def _csv_arg(val):
     """`--blocked-by t3,t4` -> ['t3','t4']; `None` (the literal the field requires) -> []."""
     return [x.strip() for x in (val or "").split(",") if x.strip() and x.strip() != E.NO_BLOCKERS]
+
+
+def _dispatch_auto(a):
+    """`crux auto <sub-verb>` (spec 05, PRD 05.0). `check` and `brief` resolve the vault
+    read-only — they never re-stamp it — and `guide` is the one that writes, appending the
+    PI's words to `## Guidance`."""
+    t = getattr(a, "acmd", None)
+    if not t:
+        print("crux: auto needs a sub-verb — check / brief / guide", file=sys.stderr)
+        return 1
+    if t == "check":
+        res = E.auto_check(_vault_ro(None), a.plan)
+        if a.json:
+            _emit(res)
+            return 0 if res["ok"] else 1
+        if res["ok"]:
+            print(f"\u2713 flight plan valid: {res['plan']}  "
+                  f"(anchor {res['anchor']}, mode {res['mode']})")
+            return 0
+        for p in res["problems"]:
+            print(f"\u2717 {p['check']}: {p['message']}")
+        return 1
+    if t == "brief":
+        root = _vault_ro(None)
+        if a.lint:
+            rep = E.auto_brief_lint(root, a.id)
+            if a.json:
+                _emit(rep)
+                return 0 if rep["ok"] else 1
+            if rep["text"]:
+                print(rep["text"])
+            print("\nauto brief checks:")
+            for ck in rep["checks"]:
+                print(f"  {'ok  ' if ck['ok'] else 'FAIL'} {ck['name']}  {ck['detail']}")
+            return 0 if rep["ok"] else 1
+        payload = E.auto_brief(root, a.id)
+        if a.json:
+            return _emit(payload)
+        print(E.auto_brief_text(payload))
+        return 0
+    if t == "guide":
+        root = _vault()
+        entry = E.append_guidance(root, a.plan, a.text, a.author)
+        path = a.plan if os.path.isabs(a.plan) else os.path.join(root, a.plan)
+        rel = E._rel(root, path)
+        n = len(E.parse_flight_plan(E.read(path))["guidance"])
+        if a.json:
+            return _emit({"plan": rel, "entry": entry, "entries": n})
+        print(f"\u2713 guidance appended to {rel}  ({n} entries)")
+        return 0
+    return 0
 
 
 def _dispatch_task(a):
@@ -555,7 +635,8 @@ def dispatch(a):
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
                                           a.fails_if, _pair_discriminates(sys.argv),
-                                          measurement=a.measurement, replicates=a.replicates)
+                                          measurement=a.measurement, replicates=a.replicates,
+                                          builds_on=a.builds_on)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title)
@@ -637,6 +718,8 @@ def dispatch(a):
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")
     elif c in ("task", "todo", "work"):
         return _dispatch_task(a)
+    elif c in ("auto", "autopilot"):
+        return _dispatch_auto(a)
     elif c in ("rd", "design", "requirements"):
         root = _vault()
         slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)

@@ -11,10 +11,10 @@ transitions, and regenerating META.md / EXPERIMENTS.md.
 
 Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 """
-import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex
+import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex, math
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.2"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -75,6 +75,17 @@ ENGINE_VERSION = "3.2"          # bumped when verdict/roll-up/view logic or vaul
                                 # and read-only: `voice_lint` + `CRUX_LEXICON` (the mirror
                                 # rule as code, consumed by the evals) and `gate_relation`
                                 # (the relevance gate, annotated onto `review --near`).
+                                # 3.3: autopilot 05.0 (spec 05) — the vault format gains ONE
+                                # optional frontmatter key on a hypothesis, `builds_on:`, the
+                                # lineage of an attempt branched from another attempt. It is
+                                # a field and not a tree edge on purpose: tree depth tracks
+                                # QUESTIONS, and a 140-attempt run would otherwise bury the
+                                # one question being asked under 140 levels of nothing.
+                                # Absence is permanently legal, so a pre-3.3 vault loads
+                                # byte-unchanged and there is nothing to migrate. Everything
+                                # else the slice adds is read-only or append-only and touches
+                                # no node: the flight plan document at auto/<qid>/plan.md,
+                                # flat PUCT selection, and the engine-assembled worker brief.
 CRUX_VERSION = "0.7.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
@@ -1576,6 +1587,12 @@ def validate(v):
             for gap in (neutral_gap(n), rule_gap(n), null_gap(n), scenario_gap(n)):
                 if gap:
                     problems.append((nid, gap))
+        # lineage (spec 05). Exactly one problem per node, and only when the field is
+        # written: its ABSENCE is the norm and must read as it always did.
+        if t == "idea" and node_builds_on(n):
+            g = builds_on_problem(v, n)
+            if g:
+                problems.append((nid, g))
         if t == "idea" and lock_drift(n):
             problems.append((nid, f"hypothesis '{nid}': DRIFT — the verifiables, their kinds "
                                   f"or the combination rule changed after the commitment was "
@@ -3768,7 +3785,7 @@ def cmd_ask(root, title, parent=None, body_text=""):
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
                     rule=None, rule_m=None, null=None, fails_if=None, discriminates=None,
-                    measurement=None, replicates=None):
+                    measurement=None, replicates=None, builds_on=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -3777,6 +3794,18 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
     p = v.get(parent)
     if p.type != "question":
         raise CruxError("a hypothesis must hang under a question (use `ask` first)")
+    # lineage (spec 05): checked BEFORE anything is written, so a bad target leaves no node
+    # behind to clean up. The rule is the whole reason the field is not a tree edge — an
+    # attempt branched from another attempt is a SIBLING of it, under the same question.
+    if builds_on:
+        b = v.nodes.get(builds_on)
+        if b is None:
+            raise CruxError(f"builds_on '{builds_on}' does not exist")
+        if b.type != "idea":
+            raise CruxError(f"builds_on '{builds_on}' is a '{b.type}', not a hypothesis")
+        if b.parent != parent:
+            raise CruxError(f"builds_on '{builds_on}' sits under '{b.parent}', not under "
+                            f"'{parent}'")
     warning = fanout_pressure(v, parent)
     nid = _new_id(v, "idea")
     fn = f"{nid}_{slugify(title)}.md"
@@ -3829,6 +3858,10 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
             fm[MEASUREMENT_FIELD] = measurement
         if replicates is not None:
             fm[REPLICATES_FIELD] = replicates
+        text = render_doc(fm, body)
+    if builds_on:
+        fm, body = parse_doc(text)
+        fm[BUILDS_ON_FIELD] = builds_on
         text = render_doc(fm, body)
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
@@ -5586,3 +5619,1017 @@ def deck_warnings(root):
                 for f in rep[bucket]:
                     out.append((f"deck:{rel}", f"deck '{rel}': {bucket} — {f['msg']}"))
     return out
+
+
+# ============================================================================= autopilot (spec 05)
+# PRD 05.0 — the flight plan and the brief. The PURE half of autopilot: everything here reads
+# the vault (and appends the PI's own words to one file), and nothing here starts a process,
+# touches git, or writes results/<hid>/metrics.json, state.json or ledger.jsonl. Those paths
+# are named as constants so 05.2 cannot invent a second spelling; this slice never writes
+# them.
+#
+# The design rule the whole section rests on: a plan is a crux DOCUMENT, so every parser it
+# needs already exists. `## Verifiables` is byte-for-byte the node format and goes through
+# `_verifiables` / `verifiable_scenarios` / `count_verifiables_by_kind` unchanged; the null
+# goes through `null_problem`; a metric address goes through `resolve_address`, the same
+# contract `deck --verify` proves against. Nothing below is a second parser.
+
+AUTO_DIR          = "auto"                       # auto/<qid>/…
+PLAN_FILE         = "plan.md"
+AUTO_STATE_FILE   = "state.json"                 # written by 05.2; the path is fixed HERE so
+AUTO_LEDGER_FILE  = "ledger.jsonl"               # the two slices cannot drift. Never written here.
+
+AUTO_REQUIRED_FIELDS = ("anchor", "mode", "baseline", "island_cap", "budget_attempts",
+                        "budget_hours", "budget_model_calls", "parallel_total",
+                        "parallel_island", "retries", "retention", "scorer", "run",
+                        "frozen", "writable", "agent", "steward", "steward_every",
+                        "stall_attempts", "abort_invalid_runs", "replicates", "rule")
+AUTO_INT_FIELDS      = ("island_cap", "budget_attempts", "budget_model_calls", "parallel_total",
+                        "parallel_island", "retries", "steward_every", "stall_attempts",
+                        "abort_invalid_runs")            # non-negative int
+AUTO_LIST_FIELDS     = ("islands", "frozen", "writable", "agent_failover")   # comma-separated
+AUTO_MODES           = ("climb", "explore")
+# D2: Climb IS c_puct = 0. There is no separate greedy code path to drift away from the
+# explore one — the two modes are one formula at two settings of one constant.
+AUTO_C_PUCT          = {"climb": 0.0, "explore": 1.0}
+OBJECTIVE_DIRECTIONS = ("min", "max")
+AUTO_SECTIONS        = ("Goal", "Objective", "Null", "Verifiables", "Guidance")
+
+OBJECTIVE_LINE_RE = re.compile(r"^\s*(address|direction|bar)::\s*(.+?)\s*$")
+GUIDANCE_RE       = re.compile(r"^- \[(?P<at>[^\]]+)\] (?P<author>[^:]+): (?P<text>.+)$")
+
+BUILDS_ON_FIELD = "builds_on"
+
+
+def flight_plan_path(root, qid):
+    """auto/<qid>/plan.md, absolute. One spelling of the convention, so a verb, a test and
+    05.2's loop cannot disagree about where a plan lives."""
+    return os.path.join(root, AUTO_DIR, qid, PLAN_FILE)
+
+
+def _auto_text(text):
+    """A plan section as content: HTML comments stripped, whitespace trimmed."""
+    return re.sub(r"<!--.*?-->", "", text or "", flags=re.S).strip()
+
+
+def node_builds_on(n):
+    """The attempt this one was branched from, or None."""
+    return _fm_text(n, BUILDS_ON_FIELD)
+
+
+def builds_on_problem(v, n):
+    """The `validate` message for a hypothesis' `builds_on:`, or None. Exactly one problem
+    per node: the four ways the field can lie are checked in order and the first wins, because
+    a node whose target does not exist has nothing left to say about cycles."""
+    target = node_builds_on(n)
+    if not target:
+        return None
+    b = v.nodes.get(target)
+    if b is None:
+        return f"hypothesis '{n.id}': {BUILDS_ON_FIELD} '{target}' does not exist"
+    if b.type != "idea":
+        return (f"hypothesis '{n.id}': {BUILDS_ON_FIELD} '{target}' is a '{b.type}', not a "
+                f"hypothesis")
+    if b.parent != n.parent:
+        return (f"hypothesis '{n.id}': {BUILDS_ON_FIELD} '{target}' sits under '{b.parent}', "
+                f"not under '{n.parent}'")
+    # the walk, until an id repeats. Reported only on the nodes that are ON the cycle: a node
+    # that merely POINTS INTO one is not itself lying about its own lineage.
+    path, seen, cur = [n.id], {n.id}, target
+    while True:
+        path.append(cur)
+        if cur in seen:
+            return (f"hypothesis '{n.id}': {BUILDS_ON_FIELD} cycle: " + " -> ".join(path)) \
+                   if cur == n.id else None
+        seen.add(cur)
+        nxt = v.nodes.get(cur)
+        if nxt is None or nxt.type != "idea":
+            return None
+        cur = node_builds_on(nxt)
+        if not cur:
+            return None
+
+
+# ----------------------------------------------------------------------------- the flight plan
+def parse_flight_plan(text):
+    """The plan document as data. TOTAL — garbage in, a dict out, never an exception: this is
+    what `auto check` calls on a file a human just hand-edited, and a traceback there tells
+    nobody which line was wrong."""
+    try:
+        fm, body = parse_doc(text or "")
+    except Exception:
+        fm, body = {}, (text or "")
+    heads = [l.rstrip() for l in body.splitlines() if l.startswith("## ")]
+    names = {h[3:].strip().lower() for h in heads}
+
+    objective = None
+    if "objective" in names:
+        objective = {"address": None, "direction": None, "bar": None}
+        for line in _section(body, "Objective").splitlines():
+            m = OBJECTIVE_LINE_RE.match(line)
+            if m:
+                objective[m.group(1)] = m.group(2).strip()
+
+    guidance, guidance_bad = [], []
+    if "guidance" in names:
+        ordinal = 0
+        for line in re.sub(r"<!--.*?-->", "", _section(body, "Guidance"), flags=re.S).splitlines():
+            if not line.strip() or _PLACEHOLDER.match(line):
+                continue
+            ordinal += 1
+            m = GUIDANCE_RE.match(line.rstrip())
+            if m:
+                guidance.append({"at": m.group("at"), "author": m.group("author").strip(),
+                                 "text": m.group("text").strip()})
+            else:
+                guidance_bad.append(ordinal)
+
+    return {"fm": fm, "body": body, "sections": heads,
+            "goal": _auto_text(_section(body, "Goal")),
+            "objective": objective,
+            "null": _auto_text(_section(body, "Null")) or None,
+            "verifiables": _verifiables(body),
+            "scenarios": verifiable_scenarios(body),
+            "guidance": guidance, "guidance_bad": guidance_bad}
+
+
+def _auto_subtree(v, qid):
+    """Every node id at or under `qid`, cycle-guarded, deterministic order."""
+    out, stack, seen = [], [qid], set()
+    while stack:
+        cur = stack.pop(0)
+        if cur in seen or cur not in v.nodes:
+            continue
+        seen.add(cur)
+        out.append(cur)
+        stack += list(v.children.get(cur, ()))
+    return out
+
+
+def _auto_norm_path(p):
+    """A frozen/writable entry as one comparable path: normalised, trailing slash gone."""
+    s = os.path.normpath(str(p).strip().replace("\\", "/")).replace(os.sep, "/")
+    return s.rstrip("/") or s
+
+
+def flight_plan_problems(root, plan, path=None):
+    """[{check, message}] — EVERY way this plan is wrong, in one pass, in a fixed order.
+
+    All of them, not the first: a plan is the document a PI signs before a run of 140
+    attempts, and handing back one problem at a time turns one review into six. Checks that
+    depend on an earlier value are SKIPPED when that value is missing or already reported, so
+    one mistake is reported once rather than cascading into four."""
+    out = []
+    def add(slug, msg):
+        out.append({"check": slug, "message": msg})
+
+    fm = plan.get("fm") or {}
+    body = plan.get("body") or ""
+    def present(name):
+        val = fm.get(name)
+        return not (val is None or val == "")
+
+    # 1. the required fields, in the declared order
+    for name in AUTO_REQUIRED_FIELDS:
+        if not present(name):
+            add("field", f"flight plan missing required field: {name}")
+
+    # 2. field types
+    ints_ok = {}
+    for name in AUTO_INT_FIELDS:
+        if not present(name):
+            continue
+        raw = fm.get(name)
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            add("field-type", f"flight plan field '{name}' must be a non-negative integer "
+                              f"(got '{raw}')")
+        else:
+            ints_ok[name] = raw
+    if present("budget_hours"):
+        raw = fm.get("budget_hours")
+        try:
+            if float(raw) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            add("field-type", f"flight plan field 'budget_hours' must be a non-negative "
+                              f"number (got '{raw}')")
+    if present("steward") and not isinstance(fm.get("steward"), bool):
+        add("field-type", f"flight plan field 'steward' must be true or false "
+                          f"(got '{fm.get('steward')}')")
+
+    # 3. the mode
+    mode = fm.get("mode")
+    if present("mode") and mode not in AUTO_MODES:
+        add("mode", f"flight plan mode must be one of {', '.join(AUTO_MODES)} (got '{mode}')")
+
+    # 4. the combination rule — the same closed list spec 15 already honors
+    rule = fm.get("rule")
+    rule_ok = False
+    if present("rule"):
+        if rule in RESERVED_RULES:
+            add("rule", f"flight plan rule '{rule}' is reserved, not implemented — see "
+                        f"spec 15. Use one of {', '.join(COMBINATION_RULES)}.")
+        elif rule not in COMBINATION_RULES:
+            add("rule", f"flight plan rule '{rule}' is not a combination rule. Use one of "
+                        f"{', '.join(COMBINATION_RULES)}.")
+        else:
+            rule_ok = True
+    if rule_ok and rule == "m-of-n":
+        n_claims = sum(count_verifiables_by_kind(body)[DEFAULT_KIND])
+        m = fm.get(RULE_M_FIELD)
+        # No `max(n_claims, 1)` floor: with zero claim-directed checks the range 1..0 is empty
+        # and NOTHING is a valid rule_m — which is the honest answer, and the message already
+        # says 1..0. The floor made the message and the test disagree.
+        if not isinstance(m, int) or isinstance(m, bool) or not (1 <= m <= n_claims):
+            add("rule", f"flight plan rule 'm-of-n' needs rule_m set to an integer in "
+                        f"1..{n_claims} (got {m!r})")
+
+    v = None
+    try:
+        v = Vault(root)
+    except Exception:
+        v = None
+
+    # 5. the anchor
+    anchor = fm.get("anchor") if present("anchor") else None
+    anchor_ok = False
+    subtree = set()
+    if anchor is not None and v is not None:
+        a = v.nodes.get(anchor)
+        if a is None:
+            add("anchor", f"flight plan anchor '{anchor}' does not exist")
+        elif a.type != "question":
+            add("anchor", f"flight plan anchor '{anchor}' is a '{a.type}', not a question")
+        else:
+            anchor_ok = True
+            subtree = set(_auto_subtree(v, anchor))
+    if anchor_ok and path:
+        rel = path if not os.path.isabs(path) else _rel(root, path)
+        rel = str(rel).replace(os.sep, "/")
+        m = re.fullmatch(re.escape(AUTO_DIR) + r"/([^/]+)/" + re.escape(PLAN_FILE), rel)
+        if m and m.group(1) != anchor:
+            add("anchor", f"flight plan at {rel} declares anchor '{anchor}'; the directory "
+                          f"and the anchor must agree")
+
+    # 6. the islands — sub-questions of the anchor the run may work in parallel
+    islands = _csv_field(fm.get("islands"))
+    if anchor_ok:
+        for q in islands:
+            nd = v.nodes.get(q)
+            if nd is None:
+                add("islands", f"flight plan island '{q}' does not exist")
+            elif nd.type != "question":
+                add("islands", f"flight plan island '{q}' is a '{nd.type}', not a question")
+            elif q not in subtree:
+                add("islands", f"flight plan island '{q}' is not under the anchor '{anchor}'")
+    if "island_cap" in ints_ok and len(islands) > ints_ok["island_cap"]:
+        add("islands", f"flight plan names {len(islands)} islands, over island_cap "
+                       f"{ints_ok['island_cap']}")
+
+    # 7. the baseline — the attempt every later score is read against
+    baseline = fm.get("baseline") if present("baseline") else None
+    baseline_ok = False
+    if baseline is not None and v is not None:
+        nd = v.nodes.get(baseline)
+        if nd is None:
+            add("baseline", f"flight plan baseline '{baseline}' does not exist")
+        elif nd.type != "idea":
+            add("baseline", f"flight plan baseline '{baseline}' is a '{nd.type}', not a "
+                            f"hypothesis")
+        elif anchor_ok and baseline not in subtree:
+            add("baseline", f"flight plan baseline '{baseline}' is not under the anchor "
+                            f"'{anchor}'")
+        elif load_metrics(root, baseline) is None:
+            add("baseline", f"flight plan baseline '{baseline}' has no "
+                            f"{RESULTS_DIR}/{baseline}/{METRICS_FILE}")
+        else:
+            baseline_ok = True
+
+    # 8. the sections
+    present_secs = {h[3:].strip().lower() for h in plan.get("sections", [])}
+    sec_ok = {}
+    for name in ("Goal", "Objective", "Null", "Verifiables"):
+        filled = name.lower() in present_secs and bool(_prose_tokens(_section(body, name)))
+        sec_ok[name] = filled
+        if not filled:
+            add("section", f"flight plan section '{name}' is missing or empty")
+    sec_ok["Guidance"] = "guidance" in present_secs
+    if not sec_ok["Guidance"]:
+        add("section", "flight plan section 'Guidance' is missing")
+
+    # 9. the null, through the gate spec 09 already owns
+    if sec_ok["Null"]:
+        g = null_problem(plan.get("null"), SCHEMA_GENERATION)
+        if g:
+            add("null", f"flight plan null: {g}")
+
+    # 10. the objective
+    objective = plan.get("objective") or {}
+    address = direction = None
+    bar_ok = False
+    if sec_ok["Objective"]:
+        for key in ("address", "direction", "bar"):
+            if not str(objective.get(key) or "").strip():
+                add("objective", f"flight plan objective is missing '{key}::'")
+        direction = objective.get("direction")
+        if direction is not None and direction not in OBJECTIVE_DIRECTIONS:
+            add("objective", f"flight plan objective direction must be min or max "
+                             f"(got '{direction}')")
+            direction = None
+        bar = objective.get("bar")
+        if bar is not None:
+            try:
+                float(bar)
+                bar_ok = True
+            except (TypeError, ValueError):
+                add("objective", f"flight plan objective bar must be a number (got '{bar}')")
+        raw_addr = objective.get("address")
+        if raw_addr is not None:
+            if (not raw_addr.strip() or "#" in raw_addr or "/" in raw_addr
+                    or re.search(r"\s", raw_addr)):
+                add("objective", f"flight plan objective address must be a dotted key path "
+                                 f"into {METRICS_FILE} (got '{raw_addr}')")
+            else:
+                address = raw_addr.strip()
+
+    # 11. and that address has to RESOLVE — the `deck --verify` contract, reused
+    if address and baseline_ok:
+        try:
+            # Resolving is not enough: the objective is compared and ranked, so a string at
+            # that key passes `auto check` and then kills selection at the first attempt.
+            leaf = resolve_address(root, f"{baseline}#{address}")
+            try:
+                float(leaf["value"])
+            except (TypeError, ValueError):
+                raise CruxError(f"value '{leaf['value']}' is not a number")
+        except CruxError as e:
+            add("objective-address", f"flight plan objective '{address}' does not resolve in "
+                                     f"{RESULTS_DIR}/{baseline}/{METRICS_FILE}: {e}")
+
+    # 12-14. the checks. The controls gate the run; the discriminating one carries the claim.
+    if sec_ok["Verifiables"]:
+        if count_verifiables_by_kind(body)[NEUTRAL_KIND] == (0, 0, 0):
+            add("control", "flight plan verifiables carry no outcome-neutral control")
+        gaps = [str(i + 1) for i, s in enumerate(plan.get("scenarios") or [])
+                if not (s.get("fails_if") or "").strip()]
+        if gaps:
+            add("scenario", f"flight plan verifiable(s) {', '.join(gaps)} have no failure "
+                            f"scenario")
+        if address:
+            tok = re.compile(r"(?<![\w.])" + re.escape(address) + r"(?![\w.])")
+            named = any(item["kind"] == DEFAULT_KIND and s.get("discriminates")
+                        and tok.search(item["text"] or "")
+                        for item, s in zip(plan.get("verifiables") or [],
+                                           plan.get("scenarios") or []))
+            if not named:
+                add("discriminates", f"flight plan objective '{address}' does not correspond "
+                                     f"to a discriminating check: no verifiable marked "
+                                     f"discriminates:: true names it")
+
+    # 15. frozen vs writable. A frozen path a worker may also write is not frozen.
+    if present("frozen") and present("writable"):
+        for f in _csv_field(fm.get("frozen")):
+            nf = _auto_norm_path(f)
+            for w in _csv_field(fm.get("writable")):
+                nw = _auto_norm_path(w)
+                if nf == nw or nf.startswith(nw + "/") or nw.startswith(nf + "/"):
+                    add("paths", f"flight plan frozen path '{nf}' overlaps writable root "
+                                 f"'{nw}'")
+
+    # 16. guidance is a log, and an unstamped line is not an entry
+    for ordinal in plan.get("guidance_bad") or []:
+        add("guidance", f"flight plan guidance entry {ordinal} is not stamped (expected "
+                        f"'- [<timestamp>] <author>: <text>')")
+    return out
+
+
+def auto_check(root, path):
+    """`{ok, plan, anchor, mode, problems}` for one flight plan. PURE READ: it does not
+    re-stamp .crux.yaml, does not refresh, and starts no process."""
+    p = path if os.path.isabs(path) else os.path.join(root, path)
+    rel = _rel(root, p)
+    if not os.path.isfile(p):
+        raise CruxError(f"no flight plan at {rel}")
+    plan = parse_flight_plan(read(p))
+    problems = flight_plan_problems(root, plan, rel)
+    fm = plan.get("fm") or {}
+    return {"ok": not problems, "plan": rel,
+            "anchor": fm.get("anchor") or None,
+            "mode": fm.get("mode") or None,
+            "problems": problems}
+
+
+def load_flight_plan(root, path):
+    """The plan, parsed and REFUSED on the first problem — for every caller that is about to
+    act on it rather than report on it. `auto_check` is the one that reports."""
+    p = path if os.path.isabs(path) else os.path.join(root, path)
+    rel = _rel(root, p)
+    if not os.path.isfile(p):
+        raise CruxError(f"no flight plan at {rel}")
+    plan = parse_flight_plan(read(p))
+    problems = flight_plan_problems(root, plan, rel)
+    if problems:
+        raise CruxError(problems[0]["message"])
+    fm = plan.get("fm") or {}
+    obj = plan.get("objective") or {}
+    islands = _csv_field(fm.get("islands")) or [fm.get("anchor")]
+    plan = dict(plan)
+    plan.update({"path": rel, "anchor": fm.get("anchor"), "mode": fm.get("mode"),
+                 "c_puct": AUTO_C_PUCT[fm.get("mode")], "baseline": fm.get("baseline"),
+                 "islands": islands, "direction": obj.get("direction"),
+                 "address": obj.get("address"), "bar": float(obj.get("bar")),
+                 "rule": fm.get("rule"),
+                 "rule_m": fm.get(RULE_M_FIELD) if isinstance(fm.get(RULE_M_FIELD), int)
+                           and not isinstance(fm.get(RULE_M_FIELD), bool) else None})
+    return plan
+
+
+def append_guidance(root, path, text, author):
+    """Append one stamped entry to `## Guidance`. APPEND-ONLY by construction, not by promise:
+    every byte from the file start through the `## Guidance` heading line is untouched, and
+    every entry already there survives verbatim. Returns the entry line."""
+    t = " ".join(str(text or "").split())
+    a = " ".join(str(author or "").split())
+    if not t:
+        raise CruxError("guidance text is empty")
+    if not a:
+        raise CruxError("guidance author is empty")
+    p = path if os.path.isabs(path) else os.path.join(root, path)
+    rel = _rel(root, p)
+    if not os.path.isfile(p):
+        raise CruxError(f"no flight plan at {rel}")
+    lines = read(p).split("\n")
+    start = next((i for i, l in enumerate(lines)
+                  if l.startswith("## ") and l[3:].strip().lower() == "guidance"), None)
+    if start is None:
+        raise CruxError("flight plan has no ## Guidance section to append to")
+    end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")),
+               len(lines))
+    seg = lines[start + 1:end]
+    content = [l for l in seg if l.strip()]
+    if content and all(_PLACEHOLDER.match(l) for l in content):
+        seg = [l for l in seg if not _PLACEHOLDER.match(l)]   # the template's own prompt
+    while seg and not seg[-1].strip():
+        seg.pop()
+    if not seg or seg[0].strip():
+        seg.insert(0, "")
+    entry = f"- [{now()}] {a}: {t}"
+    seg.append(entry)
+    write_if_changed(p, "\n".join(lines[:start + 1] + seg + [""] + lines[end:]))
+    return entry
+
+
+# ----------------------------------------------------------------------------- selection (PUCT)
+# Ported from google-research/era implementation/futs.py (Apache-2.0, commit eb56676…); the
+# arithmetic below is theirs verbatim — rank score + c_puct * (1/N) * sqrt(total visits) /
+# (1 + visits) — never imported, never vendored.
+#
+# The `1/N` prior is load-bearing and is why the port is written out rather than
+# approximated: with a constant prior the exploration term grows without bound as the
+# population does, and the search never settles on anything.
+def puct_rank(attempts, c_puct, direction="max", virtual=()):
+    """[{id, score, visits, rank_score, puct}] sorted by puct desc, ties by natural id.
+
+    Pure arithmetic over a list of dicts: no vault, no filesystem, no model — which is the
+    whole argument for selection living in the engine rather than in the loop that uses it.
+    The caller's list is never mutated; virtual visits are applied to a copy."""
+    rows = list(attempts or [])
+    if not rows:
+        raise CruxError("puct: no scored attempts to rank")
+    if direction not in OBJECTIVE_DIRECTIONS:
+        raise CruxError(f"puct: direction must be min or max (got '{direction}')")
+    visits = {r["id"]: int(r.get("visits") or 0) for r in rows}
+    parent = {r["id"]: r.get("builds_on") for r in rows}
+    # `backpropagate_visit`: an in-flight attempt is a visit to its parent and to every
+    # ancestor of it, so a lineage already being worked stops looking cheap.
+    for vid in (virtual or ()):
+        cur, walked = vid, set()
+        while cur in visits and cur not in walked:
+            walked.add(cur)
+            visits[cur] += 1
+            cur = parent.get(cur)
+    eff = {r["id"]: (float(r["score"]) if direction == "max" else -float(r["score"]))
+           for r in rows}
+    n = len(rows)
+    # Ties in effective score break so the LOWER natural id ranks HIGHER. The rank list runs
+    # worst-first, so equal scores sort by natkey DESCENDING: a newcomer that only MATCHES the
+    # incumbent never takes the selection from it, and "ties go to the lowest id" holds here
+    # and in the brief's `best` alike.
+    order = sorted(rows, key=lambda r: natkey(r["id"]), reverse=True)
+    order.sort(key=lambda r: eff[r["id"]])
+    rank = {r["id"]: (i / (n - 1) if n > 1 else 0.5) for i, r in enumerate(order)}
+    total = sum(visits.values())
+    prior = 1.0 / n
+    out = [{"id": r["id"], "score": float(r["score"]), "visits": visits[r["id"]],
+            "rank_score": rank[r["id"]],
+            "puct": rank[r["id"]] + c_puct * prior * math.sqrt(total) / (1 + visits[r["id"]])}
+           for r in rows]
+    out.sort(key=lambda d: (-d["puct"], natkey(d["id"])))
+    return out
+
+
+def puct_select(attempts, c_puct, direction="max", virtual=()):
+    """The id to build the next attempt on. `c_puct = 0` IS Climb — the highest-scoring
+    attempt, on every call, with no separate greedy branch to drift away from this one."""
+    return puct_rank(attempts, c_puct, direction=direction, virtual=virtual)[0]["id"]
+
+
+def auto_island_attempts(root, plan, island):
+    """The island's scored candidates: the baseline (always, wherever it sits) plus every
+    CLOSED attempt under the island. `[{id, score, builds_on, visits, verdict}]` by id.
+
+    `score` is None when the address does not resolve or the run was invalid — an invalid run
+    measured nothing, and ranking it would let a broken apparatus win."""
+    v = Vault(root)
+    address = plan.get("address")
+    base = plan.get("baseline")
+    ids = []
+    if base in v.nodes:
+        ids.append(base)
+    for cid in v.children.get(island, ()):
+        c = v.nodes[cid]
+        if c.type == "idea" and c.status == TERMINAL_IDEA and cid not in ids:
+            ids.append(cid)
+    ids.sort(key=natkey)
+
+    lineage = {nid: node_builds_on(nd) for nid, nd in v.nodes.items() if nd.type == "idea"}
+    def chain(nid):
+        out, cur, seen = [], lineage.get(nid), set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            out.append(cur)
+            cur = lineage.get(cur)
+        return out
+
+    rows = []
+    for nid in ids:
+        nd = v.nodes[nid]
+        verdict = nd["fm"].get("verdict") or None
+        score = None
+        if address and verdict != "invalid-run":
+            try:
+                score = float(resolve_address(root, f"{nid}#{address}")["value"])
+            except (CruxError, TypeError, ValueError):
+                score = None
+        bo = node_builds_on(nd)
+        # a report is a visit, whatever it concluded: the cost was paid either way
+        visits = (1 if bo else 0) + sum(1 for other in ids if other != nid
+                                        and nid in chain(other))
+        rows.append({"id": nid, "score": score, "builds_on": bo, "visits": visits,
+                     "verdict": verdict})
+    return rows
+
+
+def auto_select(root, path, island=None, virtual=()):
+    """The attempt a new one should build on, for one island of one flight plan."""
+    plan = load_flight_plan(root, path)
+    isl = island or plan["anchor"]
+    if isl != plan["anchor"] and isl not in plan["islands"]:
+        raise CruxError(f"auto select: '{isl}' is neither the anchor nor an island of the "
+                        f"flight plan")
+    rows = [r for r in auto_island_attempts(root, plan, isl) if r.get("score") is not None]
+    return puct_select(rows, plan["c_puct"], direction=plan["direction"], virtual=virtual)
+
+
+# ----------------------------------------------------------------------------- the worker brief
+# What a fresh worker is handed, and nothing else. The three ways a brief tells an agent which
+# answer to come back with are the anchor's own advocacy, another island's dead ends, and a
+# number that was true an hour ago — so the exclusions and the address re-resolution are part
+# of ASSEMBLY, not a linter run afterwards. A brief that fails a check is never produced.
+AUTO_BRIEF_SLOTS  = ("goal", "objective.address", "objective.direction", "objective.bar",
+                     "island.id", "island.title", "parent.id", "parent.claim", "parent.score",
+                     "best.id", "best.score", "null", "verifiables", "rule")
+AUTO_BRIEF_BUDGET = {"inspirations": 3, "refuted": 5, "guidance": 10, "findings_words": 80}
+AUTO_BRIEF_CHECKS = ("schema", "budget", "stable", "leakage", "addresses")
+AUTO_CUT_PREFIX   = "Cut to budget:"
+AUTO_NO_REFUTED       = "No refuted attempts on this island yet."
+AUTO_NO_INSPIRATIONS  = "No other supported attempts on this island yet."
+AUTO_NO_OTHER_ISLANDS = "No other islands."
+AUTO_NO_GUIDANCE      = "No guidance yet."
+
+
+def auto_plan_for(root, v, hid):
+    """(qid, plan path) of the nearest ancestor question of `hid` that carries a flight plan,
+    or (None, None). Nearest first: a sub-question's own plan governs its own island."""
+    n = v.nodes.get(hid)
+    if n is None:
+        return None, None
+    for m in reversed(ancestor_chain(v, n)):
+        if m.type == "question" and os.path.isfile(flight_plan_path(root, m.id)):
+            return m.id, flight_plan_path(root, m.id)
+    return None, None
+
+
+def auto_brief(root, hid):
+    """The brief for the next attempt built on `hid`. Byte-stable: no timestamps, every list
+    order defined, every number carried as the address it came from."""
+    v = Vault(root)
+    n = v.get(hid)
+    # The type check comes FIRST. Plan discovery walks ancestors and excludes the node itself,
+    # so a question that carries its own plan would otherwise be told no plan covers it —
+    # which is true of the walk and false of the vault, and says nothing about the real fault.
+    if n.type != "idea":
+        raise CruxError(f"auto brief is per-attempt (got a '{n.type}' for '{hid}')")
+    qid, ppath = auto_plan_for(root, v, hid)
+    if qid is None:
+        raise CruxError(f"no flight plan covers {hid}: none of its ancestor questions has "
+                        f"{AUTO_DIR}/<qid>/{PLAN_FILE}")
+    plan = load_flight_plan(root, ppath)
+    island = n.parent
+    if island != plan["anchor"] and island not in plan["islands"]:
+        raise CruxError(f"auto brief: '{hid}' sits under '{island}', which is neither the "
+                        f"anchor nor an island of the flight plan")
+
+    address, direction, base = plan["address"], plan["direction"], plan["baseline"]
+    anchor = plan["anchor"]
+    cut = []
+
+    def claim_of(nid):
+        return _section(v.nodes[nid]["body"], "Idea / Hypothesis")
+
+    def findings_of(nid):
+        return _deck_text(v.nodes[nid]["body"], "Findings")
+
+    def addr_of(nid):
+        return {"value": float(resolve_address(root, f"{nid}#{address}")["value"]),
+                "addr": f"{nid}#{address}"}
+
+    def trimmed(nid):
+        text = findings_of(nid)
+        toks = text.split()
+        cap = AUTO_BRIEF_BUDGET["findings_words"]
+        if len(toks) <= cap:
+            return text
+        cut.append(f"findings {nid}: kept {cap} of {len(toks)} words (leading words)")
+        return " ".join(toks[:cap]) + " …"
+
+    def extreme(rows):
+        """The best of `rows` by the plan's direction; ties to the lowest natural id."""
+        pool = [r for r in rows if r.get("score") is not None]
+        if not pool:
+            return None
+        return sorted(pool, key=lambda r: (r["score"] if direction == "min" else -r["score"],
+                                           natkey(r["id"])))[0]
+
+    cands = auto_island_attempts(root, plan, island)
+    best_row = extreme([c for c in cands if c["verdict"] == "supported" or c["id"] == base])
+    best_id = best_row["id"] if best_row else None
+
+    insp_rows = sorted([c for c in cands if c["verdict"] == "supported"
+                        and c["score"] is not None and c["id"] not in (hid, best_id)],
+                       key=lambda r: (r["score"] if direction == "min" else -r["score"],
+                                      natkey(r["id"])))
+    if len(insp_rows) > AUTO_BRIEF_BUDGET["inspirations"]:
+        cut.append(f"inspirations: kept {AUTO_BRIEF_BUDGET['inspirations']} of "
+                   f"{len(insp_rows)} (top by score)")
+        insp_rows = insp_rows[:AUTO_BRIEF_BUDGET["inspirations"]]
+
+    ref_ids = sorted([c for c in v.children.get(island, ())
+                      if v.nodes[c].type == "idea"
+                      and v.nodes[c]["fm"].get("verdict") == "refuted"],
+                     key=natkey, reverse=True)
+    if len(ref_ids) > AUTO_BRIEF_BUDGET["refuted"]:
+        cut.append(f"refuted: kept {AUTO_BRIEF_BUDGET['refuted']} of {len(ref_ids)} "
+                   f"(newest by id)")
+        ref_ids = ref_ids[:AUTO_BRIEF_BUDGET["refuted"]]
+
+    guidance = list(plan.get("guidance") or [])
+    if len(guidance) > AUTO_BRIEF_BUDGET["guidance"]:
+        cut.append(f"guidance: kept {AUTO_BRIEF_BUDGET['guidance']} of {len(guidance)} "
+                   f"(newest)")
+        guidance = guidance[-AUTO_BRIEF_BUDGET["guidance"]:]
+
+    def failed_checks(nid):
+        nd = v.nodes[nid]
+        out = []
+        for item, s in zip(_verifiables(nd["body"]), verifiable_scenarios(nd["body"])):
+            if item["kind"] == DEFAULT_KIND and item["state"] == "unmet":
+                out.append({"text": item["text"], "fails_if": s.get("fails_if")})
+        return out
+
+    def score_or_none(nid):
+        try:
+            return addr_of(nid)
+        except (CruxError, TypeError, ValueError):
+            return None
+
+    # every OTHER island contributes its BEST and nothing else. A worker that could read a
+    # sibling island's dead ends is being told which way to lean.
+    migration = []
+    for oi in plan["islands"]:
+        if oi == island or oi not in v.nodes:
+            continue
+        ocands = auto_island_attempts(root, plan, oi)
+        # An island nobody has worked yet has exactly one candidate — the shared baseline,
+        # which sits somewhere else. Reporting that as "its best" tells a worker the island
+        # has produced something when it has produced nothing.
+        if base not in v.children.get(oi, ()) and all(c["id"] == base for c in ocands):
+            continue
+        ob = extreme([c for c in ocands
+                      if c["verdict"] == "supported" or c["id"] == base])
+        if ob is None:
+            continue
+        migration.append({"island": {"id": oi, "title": v.nodes[oi].title},
+                          "best": {"id": ob["id"], "claim": claim_of(ob["id"]),
+                                   "score": score_or_none(ob["id"])}})
+
+    used = sum(1 for nd in v.nodes.values()
+               if nd.type == "idea" and any(m.id == anchor for m in ancestor_chain(v, nd)))
+    total = plan["fm"].get("budget_attempts")
+
+    payload = {
+        "engine_version": ENGINE_VERSION, "mode": "auto", "plan": plan["path"],
+        "anchor": {"id": anchor, "title": v.nodes[anchor].title},
+        "goal": plan.get("goal") or "",
+        "objective": {"address": address, "direction": direction, "bar": plan["bar"]},
+        "island": {"id": island, "title": v.nodes[island].title},
+        "parent": {"id": hid, "claim": claim_of(hid), "verdict": n["fm"].get("verdict") or None,
+                   "score": score_or_none(hid), "findings": trimmed(hid)},
+        "best": ({"id": best_id, "claim": claim_of(best_id), "score": score_or_none(best_id)}
+                 if best_id else None),
+        "inspirations": [{"id": r["id"], "claim": claim_of(r["id"]),
+                          "score": score_or_none(r["id"]), "findings": trimmed(r["id"])}
+                         for r in insp_rows],
+        "refuted": [{"id": r, "claim": claim_of(r), "score": score_or_none(r),
+                     "findings": trimmed(r), "failed_checks": failed_checks(r)}
+                    for r in ref_ids],
+        "migration": migration,
+        "null": plan.get("null") or "",
+        "verifiables": [{"text": item["text"], "kind": item["kind"],
+                         "fails_if": s.get("fails_if"), "discriminates": s.get("discriminates")}
+                        for item, s in zip(plan.get("verifiables") or [],
+                                           plan.get("scenarios") or [])],
+        "rule": plan.get("rule"), "rule_m": plan.get("rule_m"),
+        "guidance": guidance,
+        "budget": {"attempts": {"total": total, "used": used,
+                                "remaining": max((total or 0) - used, 0)}},
+        "cut": cut,
+    }
+
+    # check 1: the schema. A brief is never returned half-assembled — a missing slot means a
+    # worker would be told less than the contract says it gets, which is worse than a refusal.
+    for slot in AUTO_BRIEF_SLOTS:
+        val = payload
+        for part in slot.split("."):
+            val = val.get(part) if isinstance(val, dict) else None
+        if val is None or val == "" or val == [] or val == {}:
+            raise CruxError(f"auto brief: required slot '{slot}' is absent or empty")
+    return payload
+
+
+def auto_brief_verify(root, payload):
+    """Every {value, addr} pair in a brief, re-resolved against the vault. [] means the brief
+    still tells the truth. This is the `deck --verify` contract at brief scale: a stale
+    'current best' is the one lie in a brief no reader could ever catch."""
+    out = []
+    def walk(o):
+        if isinstance(o, dict):
+            if set(o) == {"value", "addr"}:
+                addr = o.get("addr")
+                try:
+                    live = float(resolve_address(root, addr)["value"])
+                except (CruxError, TypeError, ValueError) as e:
+                    out.append({"addr": addr, "value": o.get("value"), "live": None,
+                                "message": str(e)})
+                    return
+                if float(o.get("value")) != live:
+                    out.append({"addr": addr, "value": o.get("value"), "live": live,
+                                "message": f"{addr}: brief carries {o.get('value')}, "
+                                           f"vault has {live}"})
+                return
+            for x in o.values():
+                walk(x)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+    walk(payload)
+    return out
+
+
+def auto_brief_leaks(root, payload):
+    """The strings that must NOT be in this brief but are. Computed from the vault, never from
+    a list of sentinels: the anchor's advocacy, every attempt's private problem statement, and
+    everything a sibling island holds except the one line its best contributes."""
+    v = Vault(root)
+    blob = json.dumps(payload, ensure_ascii=False)
+    anchor = (payload.get("anchor") or {}).get("id")
+    island = (payload.get("island") or {}).get("id")
+    bests = {m["island"]["id"]: m["best"]["id"] for m in (payload.get("migration") or [])}
+    excluded = []
+
+    an = v.nodes.get(anchor)
+    if an is not None:
+        pre = an["body"].split(LEDGER_START)[0]
+        for h in ("Problem Statement", "Answer so far", "Protocol", "TL;DR", "ELI5"):
+            excluded.append((f"{anchor} ## {h}", _auto_text(_section(pre, h))))
+    for nid in _auto_subtree(v, anchor) if an is not None else ():
+        nd = v.nodes[nid]
+        if nd.type == "idea":
+            excluded.append((f"{nid} ## Problem Statement",
+                             _auto_text(_section(nd["body"], "Problem Statement"))))
+
+    try:
+        _p = load_flight_plan(root, payload.get("plan"))
+        islands, base = _p["islands"], _p["baseline"]
+    except CruxError:
+        islands, base = list(bests), None
+    for oi in islands:
+        if oi == island or oi not in v.nodes:
+            continue
+        ob = bests.get(oi)
+        for nid in _auto_subtree(v, oi):
+            if nid == oi or nid == base:
+                # The baseline is a candidate of EVERY island (§5) — the PI's own starting
+                # point, not one island's private product. When it happens to sit under
+                # another island, banning its prose would make a valid plan fail its own lint.
+                continue                      # the island's own id and title are the header
+            nd = v.nodes[nid]
+            heads = PROSE_SECTIONS.get(nd.type, ())
+            if nid == ob:
+                heads = ("Findings", "Problem Statement", "TL;DR", "ELI5",
+                         "Planned Intervention")
+            else:
+                excluded.append((f"{nid} title", nd.title))
+            pre = nd["body"].split(LEDGER_START)[0]
+            for h in heads:
+                excluded.append((f"{nid} ## {h}", _auto_text(_section(pre, h))))
+
+    out = []
+    for label, text in excluded:
+        t = (text or "").strip()
+        if not t or not _prose_tokens(t):
+            continue
+        if t in blob:
+            out.append(f"{label} reached the brief")
+    return out
+
+
+def auto_brief_lint(root, hid):
+    """Every brief check, in the declared order, as a report. The verb behind
+    `crux auto brief --lint`: the brief itself, then whether it can be trusted."""
+    names = list(AUTO_BRIEF_CHECKS)
+    try:
+        payload = auto_brief(root, hid)
+    except CruxError as e:
+        return {"ok": False, "id": hid, "brief": None, "text": "",
+                "checks": [{"name": names[0], "ok": False, "detail": str(e)}]
+                          + [{"name": nm, "ok": False, "detail": "not run"}
+                             for nm in names[1:]]}
+    text = auto_brief_text(payload)
+    checks = [{"name": "schema", "ok": True,
+               "detail": f"{len(AUTO_BRIEF_SLOTS)} slots filled"}]
+    cut = payload.get("cut") or []
+    checks.append({"name": "budget", "ok": True,
+                   "detail": "nothing cut" if not cut else "; ".join(cut)})
+
+    first = json.dumps(payload, sort_keys=True)
+    again = json.dumps(auto_brief(root, hid), sort_keys=True)
+    copied, copy_err = None, None
+    tmp = tempfile.mkdtemp(prefix="crux_auto_stable_")
+    try:
+        # Only what a brief reads: the vault marker and the root-level documents, plus the
+        # flight plans and the metrics its addresses resolve into. Copying the whole vault
+        # would drag raw/ and wiki/ through every lint for nothing.
+        for nm in sorted(os.listdir(root)):
+            src = os.path.join(root, nm)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(tmp, nm))
+            elif nm in (AUTO_DIR, RESULTS_DIR) and os.path.isdir(src):
+                shutil.copytree(src, os.path.join(tmp, nm))
+        copied = json.dumps(auto_brief(tmp, hid), sort_keys=True)
+    except Exception as e:
+        copy_err = f"{e.__class__.__name__}: {e}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # A copy that could not be made or could not be briefed FAILS the check. Treating it as a
+    # pass is the one outcome that makes a stability check worthless: it goes green exactly
+    # when it learned nothing.
+    stable = (again == first) and copied == first
+    if stable:
+        detail = "identical across two assemblies and a copy of the vault"
+    elif copy_err is not None:
+        detail = f"the vault copy could not be briefed ({copy_err})"
+    else:
+        detail = "the payload is not byte-stable"
+    checks.append({"name": "stable", "ok": stable, "detail": detail})
+
+    leaks = auto_brief_leaks(root, payload)
+    checks.append({"name": "leakage", "ok": not leaks,
+                   "detail": "nothing private reached the brief" if not leaks
+                             else "; ".join(leaks)})
+
+    reports = auto_brief_verify(root, payload)
+    n_addr = len(_auto_addr_pairs(payload))
+    checks.append({"name": "addresses", "ok": not reports,
+                   "detail": f"{n_addr} numbers re-resolved" if not reports
+                             else "; ".join(r["message"] for r in reports)})
+    return {"ok": all(c["ok"] for c in checks), "id": hid, "brief": payload, "text": text,
+            "checks": checks}
+
+
+def _auto_addr_pairs(payload):
+    """Every {value, addr} pair in a brief, in walk order."""
+    out = []
+    def walk(o):
+        if isinstance(o, dict):
+            if set(o) == {"value", "addr"}:
+                out.append(o)
+                return
+            for x in o.values():
+                walk(x)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+    walk(payload)
+    return out
+
+
+def auto_brief_text(payload):
+    """The brief as a worker reads it. Deterministic: same payload, same bytes, and every
+    empty case says so out loud rather than rendering a blank — 'no refuted attempts' is a
+    fact about the island, and a missing section reads as an omission."""
+    p = payload or {}
+    isl = p.get("island") or {}
+    obj = p.get("objective") or {}
+    best = p.get("best") or {}
+    bscore = best.get("score") or {}
+    par = p.get("parent") or {}
+    pscore = par.get("score") or {}
+    out = [f"# Autopilot brief — next attempt on {isl.get('id')}  ({p.get('plan')})", ""]
+
+    out += ["## Goal", "", p.get("goal") or "—", ""]
+    out += ["## Objective", "",
+            f"{obj.get('address')} · {obj.get('direction')} · bar {obj.get('bar')}",
+            f"current best: {best.get('id')} = {bscore.get('value')}  "
+            f"[{bscore.get('addr')}]", ""]
+    out += ["## Island", "", f"{isl.get('id')} — {isl.get('title')}", ""]
+    out += ["## Parent attempt", "",
+            f"{par.get('id')} — {par.get('claim')}",
+            f"score: {pscore.get('value')}  [{pscore.get('addr')}]",
+            f"verdict: {par.get('verdict') or '—'}",
+            f"findings: {par.get('findings') or '—'}", ""]
+
+    out += ["## Inspirations", ""]
+    insp = p.get("inspirations") or []
+    if not insp:
+        out.append(AUTO_NO_INSPIRATIONS)
+    for i in insp:
+        s = i.get("score") or {}
+        out.append(f"- {i.get('id')} — {i.get('claim')} · {s.get('value')}  [{s.get('addr')}]")
+        if i.get("findings"):
+            out.append(f"  {i['findings']}")
+    out.append("")
+
+    out += ["## Refuted attempts", ""]
+    ref = p.get("refuted") or []
+    if not ref:
+        out.append(AUTO_NO_REFUTED)
+    for r in ref:
+        s = r.get("score") or {}
+        val = s.get("value") if s else None
+        out.append(f"- {r.get('id')} — {r.get('claim')} · "
+                   f"{val if val is not None else '—'}")
+        for c in r.get("failed_checks") or []:
+            out.append(f"  failed: {c.get('text')} — fails-if: {c.get('fails_if') or '—'}")
+    out.append("")
+
+    out += ["## Other islands", ""]
+    mig = p.get("migration") or []
+    if not mig:
+        out.append(AUTO_NO_OTHER_ISLANDS)
+    for m in mig:
+        b = m.get("best") or {}
+        s = b.get("score") or {}
+        out.append(f"- {(m.get('island') or {}).get('id')} best: {b.get('id')} — "
+                   f"{b.get('claim')} · {s.get('value')}  [{s.get('addr')}]")
+    out.append("")
+
+    out += ["## Inherited bar", "", f"null: {p.get('null') or '—'}"]
+    rule_line = f"rule: {p.get('rule')}"
+    if p.get("rule_m") is not None:
+        rule_line += f" (m={p.get('rule_m')})"
+    out.append(rule_line)
+    for vf in p.get("verifiables") or []:
+        out.append(f"- [{vf.get('kind')}] {vf.get('text')}")
+        if vf.get("fails_if"):
+            out.append(f"      fails-if:: {vf['fails_if']}")
+        if vf.get("discriminates"):
+            out.append("      discriminates:: true")
+    out.append("")
+
+    out += ["## Guidance", ""]
+    guid = p.get("guidance") or []
+    if not guid:
+        out.append(AUTO_NO_GUIDANCE)
+    for g in guid:
+        out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
+    out.append("")
+
+    b = (p.get("budget") or {}).get("attempts") or {}
+    out += ["## Budget", "",
+            f"attempts: {b.get('used')} of {b.get('total')} used, "
+            f"{b.get('remaining')} remaining"]
+    cut = p.get("cut") or []
+    if cut:
+        out += ["", f"{AUTO_CUT_PREFIX} " + "; ".join(cut)]
+    return "\n".join(out).rstrip() + "\n"
