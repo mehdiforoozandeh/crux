@@ -3785,11 +3785,17 @@ def cmd_ask(root, title, parent=None, body_text=""):
 
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
                     rule=None, rule_m=None, null=None, fails_if=None, discriminates=None,
-                    measurement=None, replicates=None, builds_on=None):
+                    measurement=None, replicates=None, builds_on=None, nid=None, claim=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
-    number out loud and lets the PI decide."""
+    number out loud and lets the PI decide.
+
+    `nid` (05.2) files at an id that was ALREADY allocated — the one autopilot reserved under
+    the lock before any node existed — instead of allocating a second. The counter does not
+    move, because it already moved when the id was handed out. `claim` puts the whole claim in
+    `## Idea / Hypothesis` while the title stays the short form. Both absent is 05.1's
+    behaviour, byte for byte."""
     v = Vault(root)
     p = v.get(parent)
     if p.type != "question":
@@ -3806,8 +3812,20 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         if b.parent != parent:
             raise CruxError(f"builds_on '{builds_on}' sits under '{b.parent}', not under "
                             f"'{parent}'")
+    # the reserved id (05.2), checked BEFORE anything is written — an id refused after the
+    # counter moved would burn a hypothesis number for a node that never existed
+    if nid is not None:
+        if not re.fullmatch(r"h\d+", str(nid)):
+            raise CruxError(f"hypothesis id '{nid}' is not a hypothesis id (h<number>)")
+        if nid in v.nodes:
+            raise CruxError(f"hypothesis id '{nid}' is already in use")
+        allocated = int(v.cfg.get("counter_h") or 0)
+        if natkey(nid)[1] > allocated:
+            raise CruxError(f"hypothesis id '{nid}' was never allocated "
+                            f"(counter_h is {allocated})")
     warning = fanout_pressure(v, parent)
-    nid = _new_id(v, "idea")
+    if nid is None:
+        nid = _new_id(v, "idea")
     fn = f"{nid}_{slugify(title)}.md"
     text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
                 parent_basename=p.basename, problem=problem or "_(why this is worth testing)_",
@@ -3832,6 +3850,9 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
         text = text.replace(f"- [ ] {lead}",
                             f"- [ ] {lead}{_scen(0)}" + ("\n" + "\n".join(rest) if rest else ""))
+    if claim is not None:
+        text = text.replace(f"## Idea / Hypothesis\n\n{title}\n",
+                            f"## Idea / Hypothesis\n\n{claim.strip()}\n", 1)
     if null is not None:
         p = null_problem(null, SCHEMA_GENERATION)
         if p:
@@ -5665,6 +5686,41 @@ AUTO_SCORER_TIMEOUT_DEFAULT = 600.0
 # process can answer, so the driver reports that one under its own slug.
 AUTO_OPTIONAL_FIELDS        = ("repo", "scorer_timeout")
 
+# 05.2. The vocabulary the driver writes, and the arithmetic it is allowed to do — all of it
+# HERE, so the impure half cannot invent a second spelling of a phase, an event or a stop.
+# The engine still never writes state.json or ledger.jsonl; it only says what may go in them.
+AUTO_PHASES            = ("reserved", "drafted", "committed", "scored", "closed")
+AUTO_LEDGER_EVENTS     = ("run-opened", "attempt-reserved", "worker-started", "worker-done",
+                          "worker-failed", "node-filed", "scored", "violation", "retry",
+                          "closed", "confirm", "island-best", "stall", "escalated",
+                          "abandoned", "resumed", "stop")
+AUTO_STOP_REASONS      = ("success", "budget", "abort", "stall")
+AUTO_BUDGET_AXES       = ("attempts", "hours", "model_calls")
+# The whole grammar by which a machine may grade a check. `≤ ≥ ≠` are spellings, not extra
+# operators: the PI's prose and the 05.0 fixtures already use them, and a plan that reads
+# well to a human must not be refused for the shape of one glyph.
+AUTO_COMPARISON_OPS    = ("<=", "<", ">=", ">", "==", "!=")
+AUTO_OP_ALIASES        = {"≤": "<=", "≥": ">=", "≠": "!="}
+# What the approval hash does NOT cover: the stamp itself, and the `updated:` clock. The
+# `## Guidance` region is excluded inside `flight_plan_hash` for the same reason — the PI is
+# meant to keep talking to the workers mid-run, and having that clear the signature would
+# make the feature useless.
+AUTO_APPROVAL_UNHASHED = ("approved", "approved_hash", "updated")
+AUTO_PROPOSAL_KEYS     = ("claim", "controls")
+AUTO_CONTROL_KEYS      = ("fails_if", "text")
+AUTO_WORKER_RETRY_REASONS = ("worker-start", "worker-exit", "no-commit", "proposal-missing",
+                             "proposal-unparseable", "claim-missing", "claim-over-cap")
+AUTO_SCORER_RETRY_CHECKS  = ("scorer-exit", "scorer-timeout", "scorer-output")
+AUTO_VIOLATION_KINDS   = ("frozen", "manifest", "proposal")
+AUTO_TASK_CATEGORY     = "autopilot"
+AUTO_TITLE_WORDS       = 15
+AUTO_NO_CLAIM          = "Autopilot attempt {hid} left no usable claim ({reason})."
+AUTO_STATE_KEYS        = ("run", "anchor", "plan", "plan_hash", "opened", "updated", "driver",
+                          "mode", "c_puct", "escalated", "steward_requested", "base",
+                          "islands", "best", "budget", "in_flight", "closed",
+                          "consecutive_invalid", "stalls", "confirmed", "stop", "tasks",
+                          "events", "next_island")
+
 OBJECTIVE_LINE_RE = re.compile(r"^\s*(address|direction|bar)::\s*(.+?)\s*$")
 GUIDANCE_RE       = re.compile(r"^- \[(?P<at>[^\]]+)\] (?P<author>[^:]+): (?P<text>.+)$")
 
@@ -5782,6 +5838,39 @@ def _auto_norm_path(p):
     return s.rstrip("/") or s
 
 
+def auto_check_comparison(text):
+    """`{key, op, number, rest}` when a verifiable BEGINS with a metric comparison, else None.
+
+    Pure and total, and deliberately the smallest rule that can turn a number into a tick: the
+    check's own text carries the address, the operator and the threshold, so `_verifiables`,
+    `verifiable_scenarios` and the hash lock are all unchanged and no node written before this
+    release reads differently. Everything after the number is free prose.
+
+    None is not a failure here — it is "this line is not a comparison", which the plan lint
+    refuses before a run and the tick vector reads as `[-]`."""
+    _kind, t = verifiable_kind(str(text or ""))
+    t = _FOUND_RE.sub("", t).strip()
+    parts = t.split(None, 3)
+    if len(parts) < 3:
+        return None
+    key, op, num = parts[0], parts[1], parts[2]
+    rest = parts[3] if len(parts) == 4 else ""
+    op = AUTO_OP_ALIASES.get(op, op)
+    if op not in AUTO_COMPARISON_OPS:
+        return None
+    # 05.0's objective-address grammar, plus the operator glyphs: a key that could be read as
+    # `obj.value<=1` is refused rather than guessed at.
+    if re.search(r"[#/\\\s<>=!≤≥≠]", key) or any(c == "" for c in key.split(".")):
+        return None
+    try:
+        value = float(num)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return {"key": key, "op": op, "number": value, "rest": rest}
+
+
 def flight_plan_problems(root, plan, path=None):
     """[{check, message}] — EVERY way this plan is wrong, in one pass, in a fixed order.
 
@@ -5836,6 +5925,23 @@ def flight_plan_problems(root, plan, path=None):
         except (TypeError, ValueError):
             add("field-type", f"flight plan field 'scorer_timeout' must be a positive number "
                               f"(got '{raw}')")
+    # 2e (05.2). `replicates:` is prose everywhere else in crux ("3 seeds x 2 folds"), and the
+    # confirmation run needs an actual count of seeds out of it. The first integer in the
+    # string is that count, and a plan that carries none cannot declare success at all — so it
+    # is refused where the plan is signed rather than at the end of a night.
+    if present("replicates"):
+        raw = fm.get("replicates")
+        m = re.search(r"-?\d+", str(raw))
+        if m is None or int(m.group(0)) < 1:
+            add("field-type", f"flight plan field 'replicates' must name a whole number of "
+                              f"seeds, 1 or more (got '{raw}')")
+    # 2f (05.2). Zero passes the non-negative test above and then means "start no attempt and
+    # never start one" — a run that cannot begin, discovered only when the driver trips its own
+    # guard. One attempt at a time is the floor for both.
+    for name in ("parallel_total", "parallel_island"):
+        if name in ints_ok and ints_ok[name] < 1:
+            add("field-type", f"flight plan field '{name}' must be a whole number of attempts, "
+                              f"1 or more (got '{fm.get(name)}')")
 
     # 3. the mode
     mode = fm.get("mode")
@@ -6002,6 +6108,16 @@ def flight_plan_problems(root, plan, path=None):
         if gaps:
             add("scenario", f"flight plan verifiable(s) {', '.join(gaps)} have no failure "
                             f"scenario")
+        # 13b (05.2). In this slice the driver has no model, so every check it inherits has to
+        # be one it can evaluate from a metrics document. A prose check would make `supported`
+        # unreachable for the whole run — a fact worth learning before the compute is spent,
+        # not after. Prose checks return in 05.3, when `crux-close` proposes their ticks.
+        for i, item in enumerate(plan.get("verifiables") or [], 1):
+            if auto_check_comparison(item.get("text")) is None:
+                add("check-grammar",
+                    f"flight plan verifiable {i} is not a metric comparison: it must begin "
+                    f"'<key.path> <op> <number>' with <op> one of "
+                    f"{', '.join(AUTO_COMPARISON_OPS)} (got '{item.get('text')}')")
         if address:
             tok = re.compile(r"(?<![\w.])" + re.escape(address) + r"(?![\w.])")
             named = any(item["kind"] == DEFAULT_KIND and s.get("discriminates")
@@ -6079,6 +6195,29 @@ def load_flight_plan(root, path):
                  "retention": fm.get("retention"),
                  "frozen": [_auto_norm_path(x) for x in _csv_field(fm.get("frozen"))],
                  "writable": [_auto_norm_path(x) for x in _csv_field(fm.get("writable"))]})
+    # 05.2, for the driver. Every one of these passed `flight_plan_problems` above, so the
+    # coercions below cannot fail: the ints are non-negative ints, `steward` is a bool,
+    # `replicates` holds an integer of 1 or more, and every check is a comparison.
+    plan.update({"replicates": int(re.search(r"-?\d+", str(fm.get("replicates"))).group(0)),
+                 "steward": bool(fm.get("steward")),
+                 "agent": fm.get("agent"), "run": fm.get("run"),
+                 "budget_attempts": int(fm.get("budget_attempts")),
+                 "budget_hours": float(fm.get("budget_hours")),
+                 "budget_model_calls": int(fm.get("budget_model_calls")),
+                 "parallel_total": int(fm.get("parallel_total")),
+                 "parallel_island": int(fm.get("parallel_island")),
+                 "retries": int(fm.get("retries")),
+                 "stall_attempts": int(fm.get("stall_attempts")),
+                 "abort_invalid_runs": int(fm.get("abort_invalid_runs"))})
+    checks = []
+    for i, (item, s) in enumerate(zip(plan.get("verifiables") or [],
+                                      plan.get("scenarios") or []), 1):
+        c = auto_check_comparison(item["text"]) or {}
+        checks.append({"index": i, "kind": item["kind"], "text": item["text"],
+                       "fails_if": s.get("fails_if"),
+                       "discriminates": bool(s.get("discriminates")),
+                       "key": c.get("key"), "op": c.get("op"), "number": c.get("number")})
+    plan["checks"] = checks
     return plan
 
 
@@ -6120,6 +6259,397 @@ def manifest_diff(before, after):
                     or b[p].get("mtime_ns") != a[p].get("mtime_ns"))]
     return {"added": sorted(set(a) - set(b)), "removed": sorted(set(b) - set(a)),
             "changed": sorted(changed)}
+
+
+# ------------------------------------------------------------------- 05.2: ticks and findings
+# The one place a number becomes a tick. Total on purpose: true is `[x]`, false is `[ ]`, and
+# "the key does not resolve, or there is no metrics document at all" is `[-]` — which is the
+# whole crash path, because a `[-]` on an outcome-neutral check is already `invalid-run` under
+# `derive_verdict_15`. The driver asserts nothing; it supplies this vector and `cmd_close`
+# derives the verdict from it exactly as it does for a hand-closed node.
+def auto_tick(metrics, text, where):
+    """`(tick, found)` for one check against one metrics document. `tick` in "x", " ", "-"."""
+    c = auto_check_comparison(text)
+    if c is None:
+        return ("-", "n/a — not a metric comparison")
+    if metrics is None:
+        return ("-", f"n/a — no {where}")
+    try:
+        v = metrics_value(metrics, c["key"], where)
+    except AddressError as e:
+        return ("-", f"n/a — {e}")
+    n = c["number"]
+    ok = {"<=": v <= n, "<": v < n, ">=": v >= n, ">": v > n,
+          "==": v == n, "!=": v != n}[c["op"]]
+    return ("x" if ok else " ", repr(v))
+
+
+def auto_tick_body(body, ticks):
+    """`body` with the i-th checkbox under `## Verifiables` ticked and noted `(found: …)`.
+
+    Every other byte survives, continuation lines included: a `fails-if::` line is the
+    commitment, and the driver has no business reflowing it. An existing note is REPLACED
+    rather than appended to, so re-ticking is idempotent and `lock_material` — which already
+    strips `(found: …)` — sees no change either way."""
+    lines = body.split("\n")
+    pat = re.compile(r"^(\s*- \[)(.)(\]\s*)(.*)$")
+    hits, in_sec = [], False
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            in_sec = line[3:].strip().lower() == "verifiables"
+            continue
+        if in_sec and pat.match(line):
+            hits.append(i)
+    if len(ticks) != len(hits):
+        raise CruxError(f"auto ticks: {len(ticks)} ticks for {len(hits)} verifiables")
+    for (tick, found), i in zip(ticks, hits):
+        m = pat.match(lines[i])
+        lines[i] = (m.group(1) + tick + m.group(3)
+                    + _FOUND_RE.sub("", m.group(4)).rstrip() + f" (found: {found})")
+    return "\n".join(lines)
+
+
+def cmd_auto_ticks(root, hid, metrics):
+    """Write the tick vector into one hypothesis' `## Verifiables`. Returns the vector.
+
+    No `refresh` and no `updated:` bump: this is the evidence being recorded against a
+    pre-registered check, not an edit to the commitment, and spec 11 already treats the
+    `(found: …)` note as separable. `cmd_close` does the refreshing a moment later."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n.type != "idea":
+        raise CruxError(f"auto ticks apply to a hypothesis (got a '{n.type}' for '{hid}')")
+    where = f"{RESULTS_DIR}/{hid}/{METRICS_FILE}"
+    ticks = [auto_tick(metrics, text, where) for _c, text in _verifiable_lines(n["body"])]
+    write_if_changed(n["path"], render_doc(n["fm"], auto_tick_body(n["body"], ticks)))
+    return ticks
+
+
+def auto_findings(address, value, ticks, failure=None):
+    """The findings paragraph an autopilot close writes. A fixed template, so two runs of the
+    same attempt read the same; `crux-close`'s prose arrives in 05.3.
+
+    Backslashes become forward slashes because `cmd_close` substitutes findings with
+    `re.sub`, where `\\g` in the replacement is a group reference and a Windows path is a
+    traceback."""
+    parts = [f"Autopilot close. Objective {address} = "
+             f"{repr(value) if value is not None else 'n/a'}."]
+    for i, (tick, found) in enumerate(ticks, 1):
+        parts.append(f"Check {i}: {({'x': 'met', ' ': 'unmet', '-': 'n/a'})[tick]}, "
+                     f"found {found}.")
+    if failure:
+        parts.append(f"Failure: {' '.join(str(failure).split())[:200]}.")
+    return " ".join(parts).replace("\\", "/")
+
+
+def auto_crosses(value, bar, direction):
+    """Did this value cross the plan's bar, inclusive, by the plan's direction?"""
+    return value is not None and (value >= bar if direction == "max" else value <= bar)
+
+
+def auto_improves(value, best, direction):
+    """Is this value STRICTLY better than `best` (None meaning nothing to beat)? Strict, so an
+    attempt that only matches the incumbent never takes the pointer from it."""
+    return value is not None and (best is None
+                                  or (value > best if direction == "max" else value < best))
+
+
+# ------------------------------------------------------------------ 05.2: the plan's approval
+def flight_plan_hash(text):
+    """16 hex over what the PI actually signed: the frontmatter minus the approval stamp and
+    the `updated:` clock, plus the body with the CONTENT of `## Guidance` removed.
+
+    The Guidance exclusion is the whole design of the signature: `crux auto guide` is how the
+    PI keeps talking to workers while a run is going, and an approval that a guidance line
+    cleared would be an approval nobody could use."""
+    fm, body = parse_doc(text)
+    keep = {k: v for k, v in fm.items() if k not in AUTO_APPROVAL_UNHASHED}
+    lines = body.split("\n")
+    i = next((k for k, l in enumerate(lines)
+              if l.startswith("## ") and l[3:].strip().lower() == "guidance"), None)
+    if i is not None:
+        j = next((k for k in range(i + 1, len(lines)) if lines[k].startswith("## ")),
+                 len(lines))
+        lines = lines[:i + 1] + lines[j:]
+    material = json.dumps(keep, sort_keys=True, ensure_ascii=False) + "\x1e" + "\n".join(lines)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def auto_approval(text):
+    """`{state, approved, approved_hash, hash}` for a plan's signature. `state` is
+    `unapproved` (never signed), `approved` (signed, and the content still matches) or
+    `edited` (signed, then changed outside `## Guidance`)."""
+    fm = parse_doc(text)[0]
+    a = str(fm.get("approved") or "").strip() or None
+    h = str(fm.get("approved_hash") or "").strip() or None
+    cur = flight_plan_hash(text)
+    state = "unapproved" if (a is None or h is None) else \
+            ("approved" if h == cur else "edited")
+    return {"state": state, "approved": a, "approved_hash": h, "hash": cur}
+
+
+def cmd_auto_approve(root, path):
+    """The PI's signature on a flight plan: `approved:` and `approved_hash:`, written once.
+
+    Idempotent, the way `approve-null` is — the FIRST approval's timestamp is the record. The
+    hash is written quoted, because this engine's flat YAML turns an all-digit scalar into an
+    int and a hash of sixteen digits would lose its leading zeros on the way back in.
+
+    Deliberately NOT a `flight_plan_problems` check: every plan written before this release is
+    unapproved, and making that a problem would change every pinned problem list for a fact
+    that is not a defect of the document."""
+    p = path if os.path.isabs(path) else os.path.join(root, path)
+    rel = _rel(root, p)
+    if not os.path.isfile(p):
+        raise CruxError(f"no flight plan at {rel}")
+    text = read(p)
+    problems = flight_plan_problems(root, parse_flight_plan(text), rel)
+    if problems:
+        raise CruxError(f"cannot approve {rel}: {problems[0]['message']}")
+    ap = auto_approval(text)
+    if ap["state"] == "approved":
+        return {"plan": rel, "approved": ap["approved"],
+                "approved_hash": ap["approved_hash"], "already": True}
+    stamp, h = now(), ap["hash"]
+    m = re.match(r"^---\n(.*?)\n---\n?", text, re.S)
+    if m is None:
+        raise CruxError(f"cannot approve {rel}: the plan has no frontmatter to stamp")
+    rows = [l for l in m.group(1).split("\n")
+            if l.partition(":")[0].strip() not in ("approved", "approved_hash")]
+    rows += [f"approved: {stamp}", f'approved_hash: "{h}"']
+    write_if_changed(p, "---\n" + "\n".join(rows) + "\n---\n" + text[m.end():])
+    return {"plan": rel, "approved": stamp, "approved_hash": h, "already": False}
+
+
+# --------------------------------------------------------- 05.2: the proposal a worker leaves
+def auto_proposal(raw, plan):
+    """A worker's `proposal.json`, validated against a CLOSED schema: `claim`, and optional
+    `controls` of `{text, fails_if}`.
+
+    `retry` is the whole judgment here. A missing, unparseable or over-cap proposal is the
+    machine's failure and is retried; a key outside the schema, or a control carrying its own
+    `[kind]` tag, is the worker's ACT — the same agent would simply repeat it at cost — and is
+    refused once. There is no field in which a worker can express a claim-directed check, so
+    D17 holds by construction rather than by instruction."""
+    def out(retry, reason, detail, claim=None):
+        return {"ok": False, "retry": retry, "reason": reason, "detail": detail,
+                "claim": claim, "controls": []}
+
+    if raw is None:
+        return out(True, "proposal-missing",
+                   "the worker left no proposal.json in its workspace")
+    try:
+        obj = json.loads(raw)
+    except ValueError as e:
+        return out(True, "proposal-unparseable", f"proposal.json is not one JSON object ({e})")
+    if not isinstance(obj, dict):
+        return out(True, "proposal-unparseable",
+                   f"proposal.json is not one JSON object (got {type(obj).__name__})")
+
+    raw_claim = obj.get("claim")
+    claim = (raw_claim.strip()
+             if isinstance(raw_claim, str) and raw_claim.strip()
+             and len(_prose_tokens(raw_claim)) <= PROSE_CAP else None)
+
+    extra = set(obj) - set(AUTO_PROPOSAL_KEYS)
+    if extra:
+        return out(False, "proposal", f"proposal.json carries keys outside "
+                                      f"{', '.join(AUTO_PROPOSAL_KEYS)}: "
+                                      f"{', '.join(sorted(extra))}", claim)
+    controls = obj.get("controls", [])
+    if not isinstance(controls, list):
+        return out(False, "proposal", "proposal.json controls is not a list", claim)
+    seen = {" ".join(str(c.get("fails_if") or "").lower().split())
+            for c in (plan.get("checks") or [])}
+    seen.discard("")
+    clean = []
+    for i, c in enumerate(controls, 1):
+        if (not isinstance(c, dict) or set(c) != set(AUTO_CONTROL_KEYS)
+                or not all(isinstance(c.get(k), str) and c.get(k).strip()
+                           for k in AUTO_CONTROL_KEYS)):
+            return out(False, "proposal", f"control {i} must be an object with exactly text "
+                                          f"and fails_if, both non-empty strings", claim)
+        tag = _KIND_TAG_RE.match(c["text"])
+        if tag:
+            return out(False, "proposal", f"control {i} carries its own [{tag.group(1)}] tag; "
+                                          f"the driver tags every control "
+                                          f"{NEUTRAL_KIND}", claim)
+        if auto_check_comparison(c["text"]) is None:
+            return out(False, "proposal", f"control {i} is not a metric comparison: "
+                                          f"{c['text'].strip()}", claim)
+        norm = " ".join(c["fails_if"].lower().split())
+        if norm in seen:
+            return out(False, "proposal", f"control {i} repeats an existing failure scenario: "
+                                          f"{c['fails_if'].strip()}", claim)
+        seen.add(norm)
+        clean.append({"text": c["text"].strip(), "fails_if": c["fails_if"].strip()})
+
+    if not isinstance(raw_claim, str) or not raw_claim.strip():
+        return out(True, "claim-missing", "proposal.json carries no claim", claim)
+    n = len(_prose_tokens(raw_claim))
+    if n > PROSE_CAP:
+        return out(True, "claim-over-cap",
+                   f"the claim runs to {n} words, over the {PROSE_CAP}-word cap", claim)
+    return {"ok": True, "retry": False, "reason": None, "detail": None,
+            "claim": raw_claim.strip(), "controls": clean}
+
+
+def auto_claim_title(claim):
+    """A node title from a claim: its first sentence, capped at AUTO_TITLE_WORDS words."""
+    s = " ".join(str(claim).split())
+    m = re.search(r"[.!?](\s|$)", s)
+    first = s[:m.start() + 1] if m else s
+    return " ".join(first.split()[:AUTO_TITLE_WORDS]) or "untitled attempt"
+
+
+def auto_node_spec(plan, claim, controls):
+    """Everything `cmd_hypothesize` needs to file one attempt: the plan's checks verbatim, in
+    plan order, then the worker's own controls tagged outcome-neutral by the DRIVER.
+
+    `fails_if` and `discriminates` are positional over (claims…, plan controls…, proposal
+    controls…) — the same order the lines are written in, which is the order the lock hashes
+    them in. A proposal control never discriminates: it is an apparatus check, and the claim
+    is the plan's."""
+    checks = list(plan.get("checks") or [])
+    claims = [c for c in checks if c["kind"] == DEFAULT_KIND]
+    plan_controls = [c for c in checks if c["kind"] == NEUTRAL_KIND]
+    extra = list(controls or [])
+    return {"title": auto_claim_title(claim), "claim": claim,
+            "verifiables": [c["text"] for c in claims],
+            "neutral": [c["text"] for c in plan_controls] + [c["text"] for c in extra],
+            "fails_if": [c["fails_if"] or "" for c in claims + plan_controls]
+                        + [c["fails_if"] for c in extra],
+            "discriminates": [bool(c["discriminates"]) for c in claims + plan_controls]
+                             + [False for _c in extra],
+            "rule": plan.get("rule"), "rule_m": plan.get("rule_m"), "null": plan.get("null")}
+
+
+# ----------------------------------------------------- 05.2: the run's state, stops and ledger
+def auto_new_state(plan, run_id, at, pid, host, baseline_score, max_attempts=None):
+    """The `state.json` a run opens with. Exactly `AUTO_STATE_KEYS`, always — the file is
+    rewritten whole after every event, and a reader (the cockpit, 05.4) must never meet a
+    shape that depends on how far the run got."""
+    anchor = plan["anchor"]
+    total = plan["budget_attempts"] if max_attempts is None \
+        else min(plan["budget_attempts"], int(max_attempts))
+    return {
+        "run": run_id, "anchor": anchor, "plan": plan["path"], "plan_hash": None,
+        "opened": at, "updated": at, "driver": {"pid": pid, "host": host},
+        "mode": plan["mode"], "c_puct": plan["c_puct"], "escalated": False,
+        "steward_requested": False, "base": None,
+        "islands": {i: {"branch": f"crux/auto/{anchor}/island/{i}", "pointer": None,
+                        "best": plan["baseline"], "best_score": baseline_score,
+                        "seen_score": baseline_score, "stall": 0}
+                    for i in plan["islands"]},
+        "best": {"id": None, "score": None},
+        "budget": {"attempts": {"used": 0, "total": total},
+                   "hours": {"used": 0.0, "total": plan["budget_hours"]},
+                   "model_calls": {"used": 0, "total": plan["budget_model_calls"]}},
+        "in_flight": {}, "closed": [], "consecutive_invalid": 0, "stalls": 0,
+        "confirmed": None, "stop": None, "tasks": {"run": None, "exceptions": []},
+        "events": 0, "next_island": 0,
+    }
+
+
+def auto_stop(state, plan):
+    """The stop that applies right now, or None. Four reasons, in this order, and no fifth:
+    spec 11 rejects a `converged` stop, and the loop is not entitled to the opinion."""
+    b = state["budget"]
+    if state["confirmed"]:
+        h = state["confirmed"]
+        return {"reason": "success", "axis": None, "attempt": h,
+                "detail": f"{h} closed supported, crossed the bar and passed confirmation at "
+                          f"{plan['replicates']} seeds"}
+    k = plan["abort_invalid_runs"]
+    if k > 0 and state["consecutive_invalid"] >= k:
+        return {"reason": "abort", "axis": None, "attempt": None,
+                "detail": f"{state['consecutive_invalid']} invalid runs in a row "
+                          f"(abort_invalid_runs {k})"}
+    if state["stalls"] >= 2:
+        return {"reason": "stall", "axis": None, "attempt": None,
+                "detail": f"no improvement in {plan['stall_attempts']} closed attempts, twice"}
+    if len(state["closed"]) >= b["attempts"]["total"]:
+        return {"reason": "budget", "axis": "attempts", "attempt": None,
+                "detail": f"{b['attempts']['used']} of {b['attempts']['total']} attempts "
+                          f"closed"}
+    if b["hours"]["used"] >= b["hours"]["total"]:
+        return {"reason": "budget", "axis": "hours", "attempt": None,
+                "detail": f"{b['hours']['used']:.4f} of {b['hours']['total']:g} driver hours "
+                          f"used"}
+    if b["model_calls"]["used"] >= b["model_calls"]["total"]:
+        return {"reason": "budget", "axis": "model_calls", "attempt": None,
+                "detail": f"{b['model_calls']['used']} of {b['model_calls']['total']} worker "
+                          f"invocations used"}
+    return None
+
+
+def auto_ledger_line(event, fields, at=None):
+    """One `ledger.jsonl` line, without its newline. The event vocabulary is closed HERE, so
+    a driver that invented a name refuses to write it rather than writing a log nobody can
+    fold."""
+    if event not in AUTO_LEDGER_EVENTS:
+        raise CruxError(f"'{event}' is not an autopilot ledger event")
+    obj = dict(fields or {})
+    obj["at"] = at or now()
+    obj["event"] = event
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def auto_manifest_violations(diff, workspace_root, ids):
+    """The shared-root paths an attempt touched that belong to NO attempt of this run.
+
+    Every path under `<writable>/<some reserved id>/` is somebody's workspace and is therefore
+    fine; anything else is a write into ground two attempts share, which is the one thing a
+    parallel run cannot allow."""
+    r = _auto_norm_path(workspace_root)
+    owned = tuple(ids or ())
+    out = set()
+    for p in (list((diff or {}).get("added") or []) + list((diff or {}).get("removed") or [])
+              + list((diff or {}).get("changed") or [])):
+        if any(p == f"{r}/{h}" or p.startswith(f"{r}/{h}/") for h in owned):
+            continue
+        out.add(p)
+    return sorted(out)
+
+
+def auto_status(root, qid=None):
+    """`{anchor, state, events, last_event}` for one run. A PURE READ: no lock, no process,
+    and it creates nothing — not even `auto/` — so a vault that never met autopilot reads
+    exactly as it did."""
+    d = os.path.join(root, AUTO_DIR)
+    if qid is None:
+        ids = []
+        if os.path.isdir(d):
+            ids = sorted([x for x in os.listdir(d)
+                          if os.path.isfile(os.path.join(d, x, AUTO_STATE_FILE))], key=natkey)
+        if not ids:
+            raise CruxError(f"auto status: no autopilot run in this vault "
+                            f"({AUTO_DIR}/<qid>/{AUTO_STATE_FILE})")
+        if len(ids) > 1:
+            raise CruxError(f"auto status: several runs ({', '.join(ids)}); name the anchor")
+        qid = ids[0]
+    p = os.path.join(d, qid, AUTO_STATE_FILE)
+    if not os.path.isfile(p):
+        raise CruxError(f"auto status: no autopilot run on {qid} "
+                        f"({AUTO_DIR}/{qid}/{AUTO_STATE_FILE} does not exist)")
+    try:
+        state = json.loads(read(p))
+    except ValueError as e:
+        raise CruxError(f"{AUTO_DIR}/{qid}/{AUTO_STATE_FILE} is damaged: {e}")
+    events, last = 0, None
+    lp = os.path.join(d, qid, AUTO_LEDGER_FILE)
+    if os.path.isfile(lp):
+        for line in read(lp).splitlines():
+            # a torn tail is its own unparseable line; a reader skips it rather than
+            # refusing to report the run it belongs to
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(o, dict):
+                events += 1
+                last = o
+    return {"anchor": qid, "state": state, "events": events, "last_event": last}
 
 
 def append_guidance(root, path, text, author):
@@ -6298,9 +6828,14 @@ def auto_plan_for(root, v, hid):
     return None, None
 
 
-def auto_brief(root, hid):
+def auto_brief(root, hid, island=None):
     """The brief for the next attempt built on `hid`. Byte-stable: no timestamps, every list
-    order defined, every number carried as the address it came from."""
+    order defined, every number carried as the address it came from.
+
+    `island` (05.2) names the island the NEW attempt will sit under, which is not always the
+    parent's question: the first attempt on an Explore island builds on the baseline, and the
+    baseline sits under the anchor. Absent, the island is the parent's own question exactly as
+    in 05.0, and the payload is unchanged."""
     v = Vault(root)
     n = v.get(hid)
     # The type check comes FIRST. Plan discovery walks ancestors and excludes the node itself,
@@ -6313,10 +6848,18 @@ def auto_brief(root, hid):
         raise CruxError(f"no flight plan covers {hid}: none of its ancestor questions has "
                         f"{AUTO_DIR}/<qid>/{PLAN_FILE}")
     plan = load_flight_plan(root, ppath)
-    island = n.parent
-    if island != plan["anchor"] and island not in plan["islands"]:
-        raise CruxError(f"auto brief: '{hid}' sits under '{island}', which is neither the "
-                        f"anchor nor an island of the flight plan")
+    if island is None:
+        island = n.parent
+        if island != plan["anchor"] and island not in plan["islands"]:
+            raise CruxError(f"auto brief: '{hid}' sits under '{island}', which is neither the "
+                            f"anchor nor an island of the flight plan")
+    else:
+        if island != plan["anchor"] and island not in plan["islands"]:
+            raise CruxError(f"auto brief: '{island}' is neither the anchor nor an island of "
+                            f"the flight plan")
+        if hid != plan["baseline"] and n.parent != island:
+            raise CruxError(f"auto brief: '{hid}' is neither the baseline nor an attempt "
+                            f"under '{island}'")
 
     address, direction, base = plan["address"], plan["direction"], plan["baseline"]
     anchor = plan["anchor"]

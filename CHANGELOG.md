@@ -8,6 +8,51 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Autopilot: the driver loop** ([PRD 05.2](docs/prd/05.2-driver-loop.md), spec 05, engine **3.3**,
+  unchanged). The loop itself: `crux auto run` drives an approved flight plan unattended until one
+  of four stops, and resumes a run it finds on disk rather than opening a second one over the same
+  refs and reserved ids. **No version bump and no migration** — nothing here changes the vault
+  format or the verdict, roll-up or view logic, which supersedes 05.1's forecast that the bump would
+  land in this slice; every 05.0 and 05.1 flight plan validates unchanged.
+  - **Three verbs.** **`crux auto approve <plan>`** is the PI's signature on a flight plan: it
+    stamps `approved:` and a hash of what was approved, and the hash covers every byte but the
+    `## Guidance` section, so `auto guide` leaves an approval standing and any other edit clears it.
+    **`crux auto run <plan> [--max-attempts N]`** is the loop, and there is no `--resume` — the
+    alternative to resuming is a second run over one run's ids. **`crux auto status [<qid>]`**
+    renders the run's state file and starts nothing.
+  - **The leash ruling (PI, 2026-09-16).** Inside an approved run the driver performs, per attempt,
+    four acts that are the PI's everywhere else: `hypothesize` at the reserved id, `approve-null`,
+    `test --to running` and `close`. The plan's approval covers all four, so an attempt closes on
+    its derived verdict with no per-attempt signature. `skills/crux/SKILL.md` carries the ruling;
+    the four leash bullets and the `close` row stay byte-unchanged, and outside an approved run
+    nothing about the leash changes.
+  - **Ticks come from the metrics.** A verifiable whose text begins `<key.path> <op> <number>` is
+    graded from the attempt's metrics, with `≤ ≥ ≠` read as `<= >= !=`; true ticks `[x]`, false
+    `[ ]`, and an address that does not resolve — or no metrics document at all — ticks `[-]`. The
+    driver supplies ticks and never a verdict: the verdict rule and the close path are untouched.
+    Every check in a plan must now be a metric comparison, refused by `auto check` under the new
+    problem slug `check-grammar`. Three fields the loop cannot run without are refused there too,
+    under the existing slug `field-type`: `replicates:` that names no whole number of seeds, and
+    `parallel_total:` or `parallel_island:` below one attempt.
+  - **State, ledger and resume.** `auto/<qid>/state.json` is rewritten whole after every event and
+    `auto/<qid>/ledger.jsonl` appends one JSON object per line from a closed vocabulary of seventeen
+    events, both under 05.1's vault lock. An attempt sits in one of five phases, each leaving
+    durable evidence on disk, and resume reconciles the state file against that evidence rather than
+    trusting it: no attempt whose worker produced a commit is dropped, and no id is closed twice.
+  - **Four stops.** `success` (declared only after a confirmation re-scores the winning commit at
+    `replicates` fresh seeds), `budget` (attempts, driver hours or model calls, naming the axis),
+    `abort` (invalid runs in a row, or a scorer failing on the base commit at run open) and `stall`
+    (no improvement on an island, which escalates once and then ends the run). Exactly one task per
+    run is filed at the stop, under the category `autopilot`.
+  - **Vault writes stay uncommitted (PI, 2026-09-16).** The loop makes no commit on any branch, and
+    the run branch receives no commits in this slice; the island branches move only by
+    compare-and-swap, when a supported attempt improves an island's best. **`main` is never
+    written**, checked out or merged.
+  - **Not in this slice.** No agents — the `agent:` command is run as written, once per try, with a
+    stub standing in for it. No steward (`steward: true` is refused) and no new islands. No cockpit
+    and no setup skill. No prose checks, and no report link under `## Artifacts`, so `validate`'s
+    existing "files but no report" problem fires on attempt nodes. `crux auto check`'s output is
+    unchanged.
 - **Autopilot: the git and workspace layer** ([PRD 05.1](docs/prd/05.1-git-and-workspace-layer.md),
   spec 05, engine **3.3**, unchanged). The impure half of autopilot, and still not the loop:
   every git, process and concurrency call an attempt needs, in a new module beside the engine.

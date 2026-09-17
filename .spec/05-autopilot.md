@@ -418,8 +418,10 @@ informs the tree, and a project's own findings never flow back. Autopilot change
   verb. Entirely testable in selftest without a model, a GPU or a network.
 - ☑ **05.1 — the git and workspace layer.** Worktrees, the reference namespace, id
   reservation, the lock, workspaces, the manifest, retention, promote.
-- ☐ **05.2 — the driver loop.** Selection, the four stops, budget, retries, resume, the
-  ledger, the state file. Tested end-to-end against a stub generator — tier 0.
+- ☑ **05.2 — the driver loop.** Selection, the four stops, budget, retries, resume, the
+  ledger, the state file. Tested end-to-end against a stub generator — tier 0. Vault writes
+  stay uncommitted and the run branch receives no commits in 05.2 (PI, 2026-09-16);
+  `crux auto approve` is the PI's signature on the plan.
 - ☐ **05.3 — the agents.** `crux-auto-worker` and `crux-auto-steward`; the agent command
   template and failover; `crux-close` wired in unchanged; eval fixtures.
 - ☐ **05.4 — the cockpit tab.** Endpoint, two views, the live mark on the tree.
@@ -435,17 +437,17 @@ informs the tree, and a project's own findings never flow back. Autopilot change
       or when no agent command is reachable — before any attempt starts — the two scorer
       halves are delivered by 05.1; the agent-command reachability third is 05.3's.
 - [x] Two attempts never receive the same node id, under concurrency, asserted in selftest.
-- [ ] An attempt that writes a frozen path closes `invalid-run`, never `refuted`.
-- [ ] An attempt that changes anything under a declared shared root outside its own workspace
+- [x] An attempt that writes a frozen path closes `invalid-run`, never `refuted`.
+- [x] An attempt that changes anything under a declared shared root outside its own workspace
       closes `invalid-run`.
-- [ ] A crash closes `invalid-run` only after the configured retries are exhausted.
+- [x] A crash closes `invalid-run` only after the configured retries are exhausted.
 - [x] The assembled brief contains no string from the anchor's `## Problem Statement`.
 - [x] Two briefs for the same vault state are byte-identical.
 - [x] Every number in a brief resolves to a live vault address.
-- [ ] A run killed at any point resumes with no attempt lost and no attempt repeated.
-- [ ] Success is declared only after a confirmation run at different seeds passes.
-- [ ] No verdict outside an autopilot run closes without a PI signature — the existing leash
+- [x] A run killed at any point resumes with no attempt lost and no attempt repeated.
+- [x] Success is declared only after a confirmation run at different seeds passes.
+- [x] No verdict outside an autopilot run closes without a PI signature — the existing leash
       is unchanged elsewhere, asserted in selftest.
-- [ ] `main` is never written by the loop, asserted by a test that runs a full tier-0 search
+- [x] `main` is never written by the loop, asserted by a test that runs a full tier-0 search
       and diffs `main`.
 - [x] An existing vault with no autopilot fields loads unchanged under the new engine version.

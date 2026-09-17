@@ -36,7 +36,7 @@ The tree lives in each node's `Parent:: [[…]]` wikilink (so the Obsidian graph
 | `ingest` | source, add-source | register a PI-curated `raw/` source into the literature wiki |
 | `serve` | gui, ui, cockpit | open the read-only browser cockpit over the vault (localhost, view-only) |
 | `validate` | lint, check | run all integrity checks (tree + wiki lint, plus economy warnings) |
-| `auto` | autopilot | flight plans and runs — `auto check` lints one and dry-runs its scorer (`--static` lints only), `auto brief` assembles the next attempt's brief, `auto guide` appends the PI's guidance, `auto promote` branches a recorded attempt, `auto refs` lists a run's refs (see **Autopilot**) |
+| `auto` | autopilot | flight plans and runs — `auto check` lints one and dry-runs its scorer (`--static` lints only), `auto approve` is the PI's signature on a plan, `auto run` drives an approved plan unattended, `auto status` reads a run's state, `auto brief` assembles the next attempt's brief, `auto guide` appends the PI's guidance, `auto promote` branches a recorded attempt, `auto refs` lists a run's refs (see **Autopilot**) |
 
 Every verb except `init`, `serve` and `selftest` takes `--json`, so a caller reads a result
 instead of parsing prose. `crux status --json` is the whole snapshot, `crux status q3 --json`
@@ -217,6 +217,146 @@ plan carrying neither validates exactly as it did under 05.0.
 agents. No verdict closes: a frozen-path or shared-root violation is reported, and the
 `invalid-run` close belongs to the next slice. No `state.json` and no `ledger.jsonl` write. No
 leash change, and no cockpit. **`main` is never written** by anything here.
+
+## Autopilot (05.2) — the driver loop
+
+05.2 adds the loop: `crux auto run` drives an approved flight plan unattended until one of four
+stops, and resumes a run it finds on disk. It writes the vault, and it writes it **uncommitted** —
+the loop makes no commit on any branch, and `main` is never written.
+
+**Approval is a hash, not a flag.** `crux auto approve <plan>` stamps `approved:` and
+`approved_hash:` into the plan's frontmatter — the PI's signature on the plan, and an agent never
+runs it without their yes. The hash covers the whole plan **except** the content of `## Guidance`
+and the fields `approved`, `approved_hash` and `updated`, so `crux auto guide` leaves an approval
+standing and any other edit clears it. Approving twice is idempotent: the first timestamp is the
+record. Approval is not a `crux auto check` problem, so every 05.0 and 05.1 plan lints as before.
+
+**`crux auto run <plan> [--max-attempts N]`** refuses — before it writes a byte, reserves an id or
+creates a ref — a plan `auto check` reports a problem on, a plan setting `steward: true`, a plan
+that is not approved, a plan edited after its approval, a run that has already stopped, and a run
+whose driver is still alive. There is no `--resume`: a vault that already holds
+`auto/<qid>/state.json` reconciles and continues. `--max-attempts` only tightens `budget_attempts`.
+
+**`crux auto status [<qid>]`** renders `state.json` and stops there — it starts no process, takes
+no lock and creates nothing, not even `auto/`.
+
+**One attempt.** The driver picks a parent by PUCT, reserves the id, cuts a worktree at the
+parent's commit, and runs the plan's `agent:` command once per try: no shell, `{brief}` replaced in
+any argument, nothing on its stdin, and seven variables added to the environment — `CRUX_ATTEMPT`,
+`CRUX_WORKSPACE`, `CRUX_WORKTREE`, `CRUX_BRIEF`, `CRUX_PROPOSAL`, `CRUX_SEED` and `CRUX_RUN` (the
+plan's run command, which the worker invokes and the driver never does). The worker returns a
+commit in its worktree and a JSON object at `CRUX_PROPOSAL`, in the workspace rather than the
+worktree, so it cannot land in the commit. Its schema is closed:
+
+```
+{"claim": "<the prose that becomes the node's ## Idea / Hypothesis>",
+ "controls": [{"text": "<a metric comparison>", "fails_if": "<the world where it fails>"}]}
+```
+
+`controls` is optional, and the driver tags every entry `[outcome-neutral]` itself — there is no
+field in which a worker can express a claim-directed check.
+
+**The four acts.** The driver, never the worker, writes the vault, and it files each attempt at its
+reserved id through four engine acts the plan's approval covers: `hypothesize` (the plan's null,
+combination rule and checks copied verbatim, the claim as `## Idea / Hypothesis`, the title its
+first sentence capped at 15 words), `approve-null`, `test --to running`, and `close`. The verdict
+comes from the unchanged verdict rule; the driver supplies ticks and never a verdict token.
+`skills/crux/SKILL.md` carries the ruling that puts these four inside the plan's signature.
+
+**Ticks come from the metrics.** A verifiable whose text begins `<key.path> <op> <number>` — after
+its `[kind]` tag and any `(found: …)` note are set aside — is graded from the attempt's metrics.
+`<op>` is one of `<=` `<` `>=` `>` `==` `!=`, with `≤` `≥` `≠` accepted as spellings of `<=` `>=`
+`!=`. True ticks `[x]`, false `[ ]`, and an address that does not resolve — or no metrics document
+at all — ticks `[-]`, which on an outcome-neutral check already derives `invalid-run`. A ticked
+line gains the existing `(found: <value>)` note, which the hash lock already excludes from the
+commitment, so neither tick nor note raises drift. In this slice **every check in a plan must be a
+metric comparison**: `auto check` refuses the rest under a new problem slug `check-grammar`, before
+any compute is spent.
+
+**What a run leaves on disk.** `auto/<qid>/state.json` is rewritten whole after every event,
+through a temporary file and one rename, so it is never half a document; `auto/<qid>/ledger.jsonl`
+is one JSON object per line, appended and never rewritten. Both are written only under 05.1's vault
+lock, in the same critical section as the write they describe, so `META.md` can never be torn by
+two attempts finishing at once. The ledger's event vocabulary is a closed list of seventeen, and
+the driver refuses to write any other: `run-opened`, `attempt-reserved`, `worker-started`,
+`worker-done`, `worker-failed`, `node-filed`, `scored`, `violation`, `retry`, `closed`, `confirm`,
+`island-best`, `stall`, `escalated`, `abandoned`, `resumed`, `stop`.
+
+**Five phases, and resume trusts the disk.** An attempt is in exactly one phase, recorded before
+the work it names, and each phase leaves durable evidence:
+
+| phase | the evidence on disk |
+|-------|----------------------|
+| `reserved` | an entry in `auto/<qid>/reserved.json` |
+| `drafted` | a worktree exists for the id |
+| `committed` | `refs/crux/auto/<qid>/<hid>` resolves and the node is in the vault |
+| `scored` | `results/<hid>/metrics.json` exists |
+| `closed` | the node carries a verdict and retention has run |
+
+Resume reconciles `state.json` against those five facts rather than trusting it, because the kill
+may have landed between the fact and the write: a worktree with a commit and no ref is recorded and
+carries on, a ref with no metrics is scored, metrics with no verdict are ticked and closed, a
+verdict whose later steps did not finish has them finished — never a second close — and a reserved
+id with no worktree, or a worktree with no commit, is set `abandoned` and never handed out again. A
+worker still alive from the killed driver is waited for first. `CRUX_AUTO_CRASH_AT=<phase>` makes
+the driver kill itself the instant that phase is first recorded; it exists for the test suite, and
+it has no use in a real run.
+
+**The four stops.**
+
+- **`success`** — an attempt closed `supported`, its objective crossed the bar by the plan's
+  direction, and a confirmation passed. The confirmation re-scores **the same commit** at
+  `replicates` seeds, `CRUX_SEED=1..N`, none of them the attempt's own seed `0`, writing under
+  `results/<hid>/confirm/<seed>/metrics.json` so the attempt's own `metrics.json` stays the
+  byte-exact object the scorer printed. A seed that misses does not touch the verdict: the
+  confirmation failed, and the run continues.
+- **`budget`** — `budget_attempts` attempts closed, `budget_hours` of the driver's own wall clock
+  (summed across resumes, so a night spent dead is not charged), or `budget_model_calls` worker
+  invocations. Any one axis ends the run, and the axis is named.
+- **`abort`** — `abort_invalid_runs` attempts closing `invalid-run` in a row, or the scorer failing
+  on the base commit at run open, which is checked in a throwaway worktree before any id is
+  reserved.
+- **`stall`** — no improvement of an island's best score over `stall_attempts` closed attempts. It
+  escalates **once** per run: Climb raises the effective `c_puct` to the Explore value, recorded in
+  `state.json` so selection stays reproducible from the file, and Explore sets `steward_requested`
+  for a later slice to act on. A second stall ends the run.
+
+**The island-best pointer.** An attempt that closes `supported` and strictly improves its island's
+best score (the baseline's score to begin with) moves `crux/auto/<qid>/island/<i>` to its commit by
+compare-and-swap. Those pointers, 05.1's `open_run` branch creation and `auto promote` are the only
+`refs/heads/` writes the driver makes.
+
+**What is retried, and what is not.** `retries:` covers the failures that are the machine's: a
+worker that cannot start, exits non-zero, produces no commit, or leaves a missing or unparseable
+proposal or no claim; a claim over the 400-word prose cap; and a scorer that exits non-zero, times
+out or prints no JSON object. Each retry re-runs the same step in the same worktree, is logged, and
+counts a model call when it re-runs the worker; exhausted, the attempt closes `invalid-run` with a
+deterministic finding naming the failure. Three failures are **never** retried, being the worker's
+act rather than the machine's: a commit touching a frozen path, a change under a declared shared
+root outside every attempt workspace, and a proposal carrying a key outside `{claim, controls}` or
+a malformed control (not a `{text, fails_if}` object, its own `[kind]` tag, not a metric
+comparison, or a repeated failure scenario). Each of the three closes `invalid-run` at once. An
+over-cap claim is refused rather than truncated, because a truncated claim files a node whose claim
+is not what the attempt tested. A scorer whose output parses but whose objective does not resolve
+is not retried either — the document exists, and the ticks decide.
+
+**One task per run.** At the stop the driver files one task naming the run's best closed attempt
+and its derived verdict, then marks it done with that node as the output, so it lands in
+`crux task review` beside the merge decision the PI makes in the morning. A run that closed no
+attempt files an ordinary done task instead. An `abort` stop, and any attempt that exhausted its
+retries, each file one open task, which puts the exception in the frontier. Every task the driver
+files carries the category `autopilot`, which it declares the ordinary way when the vault does not
+already list it.
+
+**What 05.2 does not do.** No agents: the `agent:` command is run as a subprocess exactly as
+written, once per try, and a stub script stands in for it. No steward — `steward: true` is refused
+— and no new islands. No cockpit, and no setup skill. No prose checks, and no new verdict path.
+**No commits**: vault writes stay uncommitted in the checkout that holds the vault, the run branch
+receives no commits, and `main` is never written, checked out or merged. No report link — the
+driver writes `results/<hid>/metrics.json` but links no report under `## Artifacts`, so `validate`'s
+existing "files but no report" problem fires on attempt nodes, as it already does on the 05.0 and
+05.1 fixtures. `crux auto check`'s own output is unchanged; the approval state is read by
+`auto run` and `auto status`.
 
 ## Engine version stamp
 
