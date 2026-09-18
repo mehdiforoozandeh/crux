@@ -5427,9 +5427,16 @@ AG_ROSTER_052 = ("crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
 
 # `crux doctor` warnings that are facts about the MACHINE the suite runs on, not about the
 # repository: `cmd_doctor` reads `~/.claude/settings.json` for the chat-time voice lint, and
-# that warning is in `origin/main`'s engine, so it predates this slice. PRD-1's "no new
-# warning" is about warnings 05.3 could cause, and this is not one.
-AG_DOCTOR_PRE_WARNS = ("voice-hook",)
+# `~/.claude/skills` for the install, and both warnings are in `origin/main`'s engine, so they
+# predate this slice. PRD-1's "no new warning" is about warnings 05.3 could cause, and neither
+# of these is one.
+#
+# `skills` is here because a machine with no `~/.claude/` at all — every CI runner — warns it,
+# while a developer machine with crux installed does not. The suite's own
+# `doctor: no crux in any skills dir WARNS — a bare clone is a supported install` pins that as
+# intended behaviour, so a bare machine warning it is the engine working, not 05.3 regressing.
+# Listing only `voice-hook` made this criterion pass here and fail on all nine CI jobs.
+AG_DOCTOR_PRE_WARNS = ("voice-hook", "skills")
 
 
 def run_agent_roster():
@@ -8230,14 +8237,24 @@ AUTO_PLAN_GOAL = "the held-out loss can be driven below 0.85 without touching th
 
 def _plan_fm(anchor, baseline, islands):
     """§2's frontmatter, in the template's order. Flat `key: value`, multi-valued fields as
-    one comma-separated scalar — exactly `task_categories` in .crux.yaml."""
+    one comma-separated scalar — exactly `task_categories` in .crux.yaml.
+
+    `agent:` is `python3 "{brief}"` and not the template's `claude -p "{brief}"` on purpose.
+    05.3's non-static `auto check` PROBES every command in the list, so a fixture that names
+    `claude` passes only on a machine that has `claude` installed — the suite was green here
+    and red on all nine CI jobs for exactly that reason. `python3` is the one interpreter
+    every machine that can run this suite is running it on, and the probe reduces the command
+    to `python3 --version`, which exits 0 well inside `agent_probe_timeout`. The fixtures that
+    are ABOUT the probe, the walk and the cooldown keep their own commands — `aprobe:`,
+    `aagent:`, `acool:` and the unreachable-binary ones are testing this machinery, not
+    standing beside it."""
     return [("type", "flight-plan"), ("anchor", anchor), ("mode", "climb"),
             ("baseline", baseline), ("islands", islands), ("island_cap", "3"),
             ("budget_attempts", "40"), ("budget_hours", "8"), ("budget_model_calls", "400"),
             ("parallel_total", "1"), ("parallel_island", "1"), ("retries", "2"),
             ("retention", "failed"), ("scorer", "python score.py"), ("run", "python train.py"),
             ("frozen", "score.py, data/"), ("writable", "work/, results/"),
-            ("agent", 'claude -p "{brief}"'), ("agent_failover", ""), ("steward", "false"),
+            ("agent", 'python3 "{brief}"'), ("agent_failover", ""), ("steward", "false"),
             ("steward_every", "10"), ("stall_attempts", "8"), ("abort_invalid_runs", "3"),
             ("replicates", "3 seeds"), ("rule", "all"), ("rule_m", ""),
             ("created", "2026-09-16T00:00:00"), ("updated", "2026-09-16T00:00:00")]
