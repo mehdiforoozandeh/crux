@@ -422,8 +422,10 @@ informs the tree, and a project's own findings never flow back. Autopilot change
   ledger, the state file. Tested end-to-end against a stub generator — tier 0. Vault writes
   stay uncommitted and the run branch receives no commits in 05.2 (PI, 2026-09-16);
   `crux auto approve` is the PI's signature on the plan.
-- ☐ **05.3 — the agents.** `crux-auto-worker` and `crux-auto-steward`; the agent command
-  template and failover; `crux-close` wired in unchanged; eval fixtures.
+- ☑ **05.3 — the agents.** `crux-auto-worker` and `crux-auto-steward`; the agent command
+  list and failover, with a rate-limit cooldown and a reachability probe; `crux-close` wired
+  in unchanged behind `closer:`; the report under `## Artifacts`; the steward, and the fifth
+  act the PI ruled in (2026-09-17); eval fixtures `worker-01` and `steward-01`.
 - ☐ **05.4 — the cockpit tab.** Endpoint, two views, the live mark on the tree.
 - ☐ **05.5 — the setup skill.** The conversation that produces a flight plan, calling
   `crux-null`, `crux-verifiables` and `crux-design`.
@@ -433,9 +435,10 @@ informs the tree, and a project's own findings never flow back. Autopilot change
 
 - [x] A flight plan that omits a required slot is **refused**, naming the slot.
 - [x] A flight plan whose objective does not come from a null-discriminating check is refused.
-- [ ] `crux auto check` fails when the scorer cannot run, when it prints no parseable number,
+- [x] `crux auto check` fails when the scorer cannot run, when it prints no parseable number,
       or when no agent command is reachable — before any attempt starts — the two scorer
-      halves are delivered by 05.1; the agent-command reachability third is 05.3's.
+      halves were delivered by 05.1 and the agent-command reachability third by 05.3, so all
+      three clauses are delivered.
 - [x] Two attempts never receive the same node id, under concurrency, asserted in selftest.
 - [x] An attempt that writes a frozen path closes `invalid-run`, never `refuted`.
 - [x] An attempt that changes anything under a declared shared root outside its own workspace

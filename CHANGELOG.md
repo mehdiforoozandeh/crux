@@ -8,6 +8,55 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Autopilot: the agents** ([PRD 05.3](docs/prd/05.3-agents.md), spec 05, engine **3.3**,
+  unchanged). Real agents on the loop 05.2 built. **No version bump and no migration** — nothing
+  here changes the vault format or the verdict, roll-up or view logic, and every 05.0, 05.1 and
+  05.2 flight plan validates, runs and closes exactly as before.
+  - **Two agent definitions join the roster**, which `crux doctor` now counts at twelve:
+    `crux-auto-worker` (draft one attempt — change the program, run it, claim what changed and
+    why) and `crux-auto-steward` (is this search stuck, and is there an angle nobody has tried?).
+    Both carry an empty toolbelt: neither runs a crux verb and neither writes the vault. Two eval
+    fixtures ship with them, `worker-01` and `steward-01`, both proxies with a row each in spec
+    10's register and an engine-graded hard half.
+  - **One command list.** `agent:` and `agent_failover:` are now one ordered list that a single
+    try walks once. `{brief}` and `{agent}` substitute in any argv element (`{agent}` first, so a
+    brief is never re-scanned), and `CRUX_AGENT` joins the worker's environment as its eighth
+    variable, naming the role the command is invoked for. A command that cannot start logs
+    `failover` and the walk moves on, charging **neither a retry nor a model call**; only when
+    every command fails to start does the run stop `abort`, naming each command and its reason.
+  - **A rate limit cools one command, and the driver waits.** A failed try whose `worker.log` tail
+    matches one of seven closed patterns puts that command on cooldown for `agent_cooldown:`
+    seconds — absolute wall-clock in `state.json`, so it survives a kill and a resume — and the
+    try re-runs on the next command that is not cooling. When every command is cooling the driver
+    waits rather than aborting, re-evaluating the four stops on every poll. A try that succeeded
+    is never cooled, however its log reads.
+  - **Reachability is probed, for free.** `crux auto check` gains an `agents` block with one row
+    per command carrying the probe argv it ran, and `auto run` probes once at run open, before it
+    reserves an id. The probe drops placeholder-bearing elements and appends `agent_probe:`
+    (default `--version`) under `agent_probe_timeout:` seconds, so it sends no prompt and spends
+    no model call. Two problem slugs: `agent-command` (static — a command that does not parse or
+    is empty, reported by `auto check --static`, which starts nothing) and `agent-reach`, which
+    fires only when no command is reachable.
+  - **`crux-close` wired in, byte-unchanged, behind `closer:`** (default false). The engine
+    assembles a close brief as an **addition** to what that agent already emits, and the closer's
+    ticks are merged onto the engine's: a graded tick stands verbatim, an agreeing proposal is
+    ignored, and a tick contradicting a graded comparison refuses the whole proposal unretried.
+    Only a failure to start is retried; every other closer failure closes the attempt on the
+    engine's own vector with the template findings, and never `invalid-run` for that reason alone.
+  - **Every attempt links `results/<hid>/report.md`** under `## Artifacts`, with or without a
+    closer, so `validate`'s "files but no report" problem stops firing on attempt nodes.
+  - **The steward, and the fifth act (PI, 2026-09-17).** `steward: true` is accepted. In Explore
+    only, the steward runs on `steward_requested` and otherwise every `steward_every` closed
+    attempts, never twice in one window; it reads a brief carrying the island table, the budget
+    and the ledger tail, and never the anchor's problem statement, any diff or any findings prose.
+    Its two-key proposal may record standing guidance — rendered in every later worker brief in
+    its own labelled section, never written into the PI's `## Guidance` — or open one new island
+    under the anchor up to `island_cap`. A steward never stops a run. Opening an island is the
+    fifth act the PI ruled inside a plan's approval, and `skills/crux/SKILL.md` carries the
+    ruling; the four leash bullets and the `close` row stay byte-unchanged.
+  - **Four new optional plan fields**, defaults in parentheses: `closer:` (false),
+    `agent_cooldown:` (1800 seconds), `agent_probe:` (`--version`), `agent_probe_timeout:`
+    (20 seconds).
 - **Autopilot: the driver loop** ([PRD 05.2](docs/prd/05.2-driver-loop.md), spec 05, engine **3.3**,
   unchanged). The loop itself: `crux auto run` drives an approved flight plan unattended until one
   of four stops, and resumes a run it finds on disk rather than opening a second one over the same

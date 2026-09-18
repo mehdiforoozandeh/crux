@@ -358,6 +358,116 @@ existing "files but no report" problem fires on attempt nodes, as it already doe
 05.1 fixtures. `crux auto check`'s own output is unchanged; the approval state is read by
 `auto run` and `auto status`.
 
+## Autopilot (05.3) — the agents
+
+05.3 puts real agents on the loop 05.2 built. Two definitions join the roster —
+`agents/crux-auto-worker/AGENT.md` (draft one attempt: change the program, run it, claim what
+changed and why) and `agents/crux-auto-steward/AGENT.md` (is this search stuck, and is there an
+angle nobody has tried?). Both have an empty toolbelt: neither runs a crux verb, and neither
+writes the vault. No stamp moves — the engine stays at 3.3, and there is no migration.
+
+**One command list, walked once per try.** `agent:` and `agent_failover:` are no longer two
+separate settings; together they are one **ordered list** of commands, `agent:` first. A try
+walks the list once and stops at the first command that starts. `{brief}` and `{agent}` are
+substituted in any argv element — `{agent}` first, so a brief containing the text `{agent}` is
+never re-scanned — and the worker's environment gains an eighth variable, `CRUX_AGENT`, naming
+the role the command is being invoked for (`crux-auto-worker`, `crux-close`,
+`crux-auto-steward`). One command, one dispatcher, three roles.
+
+**A command that cannot start is a `failover`, not a failure.** It is logged as `failover`, the
+walk moves to the next command, and it charges **neither a retry nor a model call** — nothing
+was spent, and charging for a launcher that is not installed would burn a signed budget on a
+typo. Only when *every* command in the list fails to start does the run stop `abort`, naming
+each command and its reason.
+
+**A rate limit is read off the log tail, and it cools one command.** When a failed try's
+`worker.log` tail matches one of seven patterns (`5-hour limit`, `usage limit`, `rate limit`,
+`limit reached`, `too many requests`, `reset at`, `please try again later` — read
+case-insensitively), that command goes on **cooldown** for `agent_cooldown:` seconds and the
+try re-runs on the next command that is not cooling. The cooldown is absolute wall-clock,
+recorded in `state.json`, so it survives a kill and a resume. When every command is cooling the
+driver **waits** rather than aborting, re-evaluating the four stops on every poll — so a
+cooldown that outlasts `budget_hours` stops the run on `budget`, which is the honest reason. A
+try that *succeeded* is never cooled, however its log reads: the pattern is a diagnosis of a
+failure, not a scan for a phrase.
+
+**Reachability is probed, and the probe costs nothing.** `crux auto check` gains an `agents`
+block with one row per command, each carrying the probe argv it actually ran, and `crux auto
+run` runs the same probe once at run open — before it reserves an id. The probe is the command
+with placeholder-bearing elements dropped and `agent_probe:` appended (default `--version`),
+run with a timeout of `agent_probe_timeout:` seconds: it sends no prompt and spends no model
+call. Two problem slugs come with it. `agent-command` is static — a command that does not parse
+or is empty — and `auto check --static` reports it while starting nothing at all.
+`agent-reach` is not static, and fires only when **no** command is reachable; one unreachable
+entry beside a reachable one is a working list, not a problem.
+
+**`crux-close` wired in, byte-unchanged, behind `closer:`.** The plan field defaults to false
+(05.5 makes it the default in practice). With it on, the engine assembles a **close brief** and
+the driver invokes the same command list with `CRUX_AGENT=crux-close`, after scoring and before
+the close. The brief is an **addition** to what `crux-close` already emits — it suppresses
+nothing in that agent's own output and asks for one JSON object beside it, with keys `ticks`,
+`findings` and `report`. The closer's ticks are **merged** onto the engine's: where the scorer
+graded a check from a number, the engine's tick stands verbatim and an agreeing proposal is
+ignored; where it could not, the closer's tick fills the gap. A proposed tick that
+**contradicts** a graded comparison refuses the whole proposal, unretried — a closer arguing
+with arithmetic is not a closer to retry. Only a failure to *start* is retried. Every other
+closer failure closes the attempt on the engine's own vector with the template findings, and
+**never `invalid-run` for that reason alone**: the run was fine, the reader was not. Turning
+`closer:` on is also what lets a prose check validate, since a check no number can grade now
+has something that can read it.
+
+**Every attempt links a report.** The driver writes `results/<hid>/report.md` — from the
+closer's text when there is one, otherwise from a deterministic template — and links it under
+the node's `## Artifacts`, with or without a closer. `validate`'s "files but no report" problem
+therefore stops firing on attempt nodes.
+
+**The steward.** `steward: true` is accepted now. In Explore, and only with the switch on, the
+steward runs when a stall escalation sets `steward_requested` and otherwise every
+`steward_every` closed attempts — never two at once, and never twice inside one window. On a
+Climb plan the switch is legal and the steward simply never runs, because a run may be moved
+from Climb to Explore mid-flight. It costs one model call, like a worker try. It sees a brief
+the engine assembles from the run's own record: the goal, the objective, the island table (each
+island's title, best score, stall counter and attempt count), the budget on every axis, the
+guidance in force, and the tail of the ledger. What it never sees is the anchor's
+`## Problem Statement`, any attempt's diff or code, and any findings prose — it judges the
+search, not the claims. Its proposal schema is two keys, `guidance` and `island`, at most one of
+each:
+
+```
+{"guidance": "<standing text for every later worker>",
+ "island": {"title": "<at most 15 words>", "problem": "<the new sub-question's statement>"}}
+```
+
+Guidance is recorded in `state.json`, attributed to `crux-auto-steward` and stamped, and every
+later worker brief carries it in **its own labelled section**, separate from the PI's — so a
+worker always knows who said what. The plan's `## Guidance` is never written: `auto guide` is
+the PI's verb and the plan document stays theirs. An island proposal files one sub-question
+under the anchor and cuts its branch at the run's base, exactly as `open_run` cuts the plan's
+islands; it is refused once the run holds `island_cap` islands, and the plan's `islands:`
+frontmatter is never edited, because that field is hashed. Anything else is unreachable by
+construction: two keys, so there is no field in which an objective, a bar, a check, a null, a
+budget or a merge can be expressed. A proposal outside the schema, a steward that cannot start,
+and a steward that returns nothing are each logged and the run carries on — **a steward never
+stops a run**, because a run that dies for want of advice is worse than a run without it.
+
+**The fifth act.** 05.2's ruling in `skills/crux/SKILL.md` named four acts the plan's approval
+covers per attempt. Opening an island is a fifth, and it is not per attempt. The PI ruled it
+**in** at this slice's sign-off, and `SKILL.md` says so: the objective, bar and checks are
+frozen, so a new island is another angle on a fixed target, up to the `island_cap` the PI
+signed in the plan.
+
+**Four new optional plan fields**, with their defaults: `closer: false`,
+`agent_cooldown: 1800` (seconds), `agent_probe: --version`, `agent_probe_timeout: 20`
+(seconds). A 05.2 plan that sets none of them lints, runs and closes exactly as before.
+
+**What 05.3 does not do.** No cockpit tab — the `agents` and `steward` keys are in `state.json`
+for 05.4 to read, and nothing renders them in a browser yet. No setup skill: a flight plan is
+still written by hand or by the PI's own conversation, not by 05.5's. No validation on real
+problems — tier 0 is stubs in `selftest`, and tiers 1 to 3 are 05.6's. And still **no commits**:
+vault writes stay uncommitted, the run branch receives no commits, and `main` is never written,
+checked out or merged. The one new ref write in the whole slice is the `git branch` that cuts a
+steward island's branch at the run's base.
+
 ## Engine version stamp
 
 `init` records `engine_version` in `.crux.yaml`. On every run against an existing vault,

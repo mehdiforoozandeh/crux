@@ -5419,6 +5419,26 @@ def run_migrate():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# The roster as it stood before 05.3, so the criterion can say the list grew by exactly two
+# rather than merely that it now holds twelve names.
+AG_ROSTER_052 = ("crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
+                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
+                 "crux-situate", "crux-design")
+
+# `crux doctor` warnings that are facts about the MACHINE the suite runs on, not about the
+# repository: `cmd_doctor` reads `~/.claude/settings.json` for the chat-time voice lint, and
+# `~/.claude/skills` for the install, and both warnings are in `origin/main`'s engine, so they
+# predate this slice. PRD-1's "no new warning" is about warnings 05.3 could cause, and neither
+# of these is one.
+#
+# `skills` is here because a machine with no `~/.claude/` at all — every CI runner — warns it,
+# while a developer machine with crux installed does not. The suite's own
+# `doctor: no crux in any skills dir WARNS — a bare clone is a supported install` pins that as
+# intended behaviour, so a bare machine warning it is the engine working, not 05.3 regressing.
+# Listing only `voice-hook` made this criterion pass here and fail on all nine CI jobs.
+AG_DOCTOR_PRE_WARNS = ("voice-hook", "skills")
+
+
 def run_agent_roster():
     """Spec 09 PRD 09.4 — the agent-definition convention and the roster.
 
@@ -5435,9 +5455,11 @@ def run_agent_roster():
     # AMENDED by spec 13, not replaced: 09.4's assert exists to stop a roster that describes
     # agents nobody shipped and a directory of agents nobody described. 13 is the first spec
     # to add to the directory, so the list grows and `.spec/09`'s roster grows with it.
-    expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
-                "crux-close", "crux-audit", "crux-tests", "crux-glossary",
-                "crux-situate", "crux-design"]
+    # AMENDED AGAIN by spec 05 (PRD 05.3): autopilot is the second spec to add to the
+    # directory. The worker and the steward are roster agents like any other — they carry the
+    # same five fields, the same dirname rule and the same `no-version-pin` property — so the
+    # list grows by two and every per-definition property is computed for them too.
+    expected = list(AG_ROSTER_052) + ["crux-auto-worker", "crux-auto-steward"]
 
     # The definition-derived properties live in `evals.roster_properties` (spec 10, PRD 10.2),
     # so that ONE source of truth is both printed here and broken on purpose by the mutation
@@ -5473,6 +5495,95 @@ def run_agent_roster():
     # definition that named an engine version would have to be revised on every bump, which
     # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
     check(*P["no-version-pin"])
+
+    # ---------------------------------------------------- spec 05 PRD 05.3 §A — the two agents
+    # The roster grew, so three things have to be true at once: the directory holds twelve
+    # definitions, `crux doctor` counts twelve and says nothing new, and the four definitions
+    # 05.3 REUSES are byte-identical. The last is the one worth the trouble: `crux-close` is
+    # wired into the driver in this slice, and the whole claim of PRD §F is that it is wired in
+    # UNCHANGED — an agent quietly reworded to suit the driver would pass every other check
+    # here while turning a reused reviewer into a driver-shaped one.
+    ag_links = tempfile.mkdtemp(prefix="crux_ag53_")
+    try:
+        on_disk = sorted(d for d in os.listdir(adir)
+                         if os.path.isfile(os.path.join(adir, d, "AGENT.md")))
+        for n in on_disk:
+            os.symlink(os.path.join(adir, n, "AGENT.md"), os.path.join(ag_links, n + ".md"))
+        doc = _auto_val(lambda: E.cmd_doctor(root=None, skills_dirs=None,
+                                             agents_dir=ag_links), {})
+        check("agents: the two autopilot agent definitions join the roster and doctor counts twelve with no new warning",
+              _auto_ok(lambda: (
+                  sorted(defs) == sorted(expected) and len(expected) == 12
+                  and "crux-auto-worker" in defs and "crux-auto-steward" in defs
+                  and on_disk == sorted(expected)
+                  and _level(doc, "agents") == "ok"
+                  and _check(doc, "agents")["detail"].startswith("12 crux-*.md in ")
+                  # the roster grew by exactly these two and nothing else
+                  and sorted(set(expected) - set(AG_ROSTER_052))
+                      == ["crux-auto-steward", "crux-auto-worker"]
+                  and len(AG_ROSTER_052) == 10
+                  # NO NEW warning. `voice-hook` is not one: `cmd_doctor` reads
+                  # `~/.claude/settings.json`, so that warning is a fact about the machine the
+                  # suite runs on, it is in origin/main's engine, and it predates this slice
+                  # entirely. What this slice owns is that no warning is attributable to it.
+                  and [c["name"] for c in doc["checks"] if c["level"] == "warn"
+                       and c["name"] not in AG_DOCTOR_PRE_WARNS] == []
+                  and not [c for c in doc["checks"] if c["level"] != "ok"
+                           and ("crux-auto-worker" in json.dumps(c)
+                                or "crux-auto-steward" in json.dumps(c))]
+                  and [c["name"] for c in doc["checks"] if c["level"] == "error"] == [])))
+    finally:
+        shutil.rmtree(ag_links, ignore_errors=True)
+
+    # PRD-2. The instruction and the validator cannot be allowed to drift: the body a model
+    # reads has to print the SAME key list the engine refuses outside of. Two renderings are
+    # legal — a JSON object in a fenced block, or the keys as backticked tokens — and both are
+    # asserted as set EQUALITY against the engine constant, so a body that forgot `controls`
+    # and a body that invited `verdict` are each caught.
+    _SCHEMA_WORDS = {"claim", "controls", "fails_if", "text", "guidance", "island", "title",
+                     "problem", "ticks", "findings", "report", "verdict", "value", "score"}
+
+    def _prints_schema(name, top, nested):
+        body = defs.get(name, ({}, ""))[1] or ""      # load_definitions gives (frontmatter, body)
+        want_top, want_nested = set(top or ()), set(nested or ())
+        if not body or not want_top:
+            return False
+        blocks = re.findall(r"```[a-zA-Z0-9]*\n(.*?)```", body, re.S)
+        for b in blocks:
+            obj = _auto_val(lambda t=b: json.loads(t))
+            if not isinstance(obj, dict) or set(obj) != want_top:
+                continue
+            for v in obj.values():                  # the nested object, wherever it is written
+                if isinstance(v, list) and v:
+                    v = v[0]
+                if isinstance(v, dict) and set(v) == want_nested:
+                    return True
+        ticked = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", body)) & _SCHEMA_WORDS
+        return ticked == (want_top | want_nested)
+
+    check("agents: each autopilot agent body names the closed proposal schema the engine validator reads",
+          _auto_ok(lambda: (
+              _prints_schema("crux-auto-worker", E.AUTO_PROPOSAL_KEYS, E.AUTO_CONTROL_KEYS)
+              and _prints_schema("crux-auto-steward", E.AUTO_STEWARD_KEYS, E.AUTO_ISLAND_KEYS)
+              and set(E.AUTO_PROPOSAL_KEYS) == {"claim", "controls"}
+              and set(E.AUTO_CONTROL_KEYS) == {"fails_if", "text"}
+              and set(E.AUTO_STEWARD_KEYS) == {"guidance", "island"}
+              and set(E.AUTO_ISLAND_KEYS) == {"title", "problem"})))
+
+    # PRD-3. The shas were read off disk at the base commit of this slice. A literal here is
+    # the point: `git diff --stat` proves nothing to a reader six months from now, and these
+    # four files are the ones the slice is most tempted to edit.
+    REUSED_SHA = {
+        "crux-close": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
+        "crux-null": "26f1c5ee36bb6a2fbcdaa438d1c524017ab512c0b1a547200b19665cc07507d6",
+        "crux-verifiables": "307daa3e363358ea26b3a037596345fb0b2e6cc55219c862bd999fb18c0f7d2a",
+        "crux-design": "01a9d2d7bb4f92e21aac04800a3f6edfc99b914b027458fd49fa2b6d3c9a5584"}
+    drifted = sorted(
+        n for n, want in REUSED_SHA.items()
+        if _auto_val(lambda p=os.path.join(adir, n, "AGENT.md"):
+                     hashlib.sha256(open(p, "rb").read()).hexdigest()) != want)
+    check(f"agents: crux-close, crux-null, crux-verifiables and crux-design are byte-identical by sha (drifted: {drifted})",
+          not drifted)
 
 
 def _situate_vault():
@@ -7237,10 +7348,14 @@ def run_proxy_register():
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     spec = read(os.path.join(repo, ".spec", "10-agent-evals.md"))
 
-    proxies = ("verifiables-01", "critic-01", "migrate-01", "tests-01", "glossary-01", "design-01")
+    # GROWN by spec 05 (PRD 05.3): the tuple is eight, and the check NAME says eight. A name
+    # that still said "six" while the tuple held eight would be a false statement printed by a
+    # passing check — the one kind of green line nobody re-reads.
+    proxies = ("verifiables-01", "critic-01", "migrate-01", "tests-01", "glossary-01",
+               "design-01", "worker-01", "steward-01")
     certs = {c["fixture"]: c for c in V.certify_all()}
     bad = [n for n in proxies if not certs.get(n, {}).get("ok")]
-    check(f"evals: the six proxy fixtures certify (failed: {bad})", not bad)
+    check(f"evals: the eight proxy fixtures certify (failed: {bad})", not bad)
 
     roster = sorted(os.listdir(os.path.join(repo, "agents")))
     covered = {V.load_manifest(n)["agent"] for n in V.fixture_names()}
@@ -7248,7 +7363,7 @@ def run_proxy_register():
     # grades the orchestrating skill, which is not a roster agent and never will be.
     check(f"evals: every agent in the roster has a fixture "
           f"(uncovered: {sorted(set(roster) - covered)})",
-          set(roster) <= covered and len(roster) == 10)
+          set(roster) <= covered and len(roster) == 12)
     check(f"evals: and a fixture outside the roster grades a definition that exists "
           f"({sorted(covered - set(roster))})",
           all(os.path.isfile(os.path.join(repo, "skills", a, "SKILL.md"))
@@ -8122,14 +8237,24 @@ AUTO_PLAN_GOAL = "the held-out loss can be driven below 0.85 without touching th
 
 def _plan_fm(anchor, baseline, islands):
     """§2's frontmatter, in the template's order. Flat `key: value`, multi-valued fields as
-    one comma-separated scalar — exactly `task_categories` in .crux.yaml."""
+    one comma-separated scalar — exactly `task_categories` in .crux.yaml.
+
+    `agent:` is `python3 "{brief}"` and not the template's `claude -p "{brief}"` on purpose.
+    05.3's non-static `auto check` PROBES every command in the list, so a fixture that names
+    `claude` passes only on a machine that has `claude` installed — the suite was green here
+    and red on all nine CI jobs for exactly that reason. `python3` is the one interpreter
+    every machine that can run this suite is running it on, and the probe reduces the command
+    to `python3 --version`, which exits 0 well inside `agent_probe_timeout`. The fixtures that
+    are ABOUT the probe, the walk and the cooldown keep their own commands — `aprobe:`,
+    `aagent:`, `acool:` and the unreachable-binary ones are testing this machinery, not
+    standing beside it."""
     return [("type", "flight-plan"), ("anchor", anchor), ("mode", "climb"),
             ("baseline", baseline), ("islands", islands), ("island_cap", "3"),
             ("budget_attempts", "40"), ("budget_hours", "8"), ("budget_model_calls", "400"),
             ("parallel_total", "1"), ("parallel_island", "1"), ("retries", "2"),
             ("retention", "failed"), ("scorer", "python score.py"), ("run", "python train.py"),
             ("frozen", "score.py, data/"), ("writable", "work/, results/"),
-            ("agent", 'claude -p "{brief}"'), ("agent_failover", ""), ("steward", "false"),
+            ("agent", 'python3 "{brief}"'), ("agent_failover", ""), ("steward", "false"),
             ("steward_every", "10"), ("stall_attempts", "8"), ("abort_invalid_runs", "3"),
             ("replicates", "3 seeds"), ("rule", "all"), ("rule_m", ""),
             ("created", "2026-09-16T00:00:00"), ("updated", "2026-09-16T00:00:00")]
@@ -9246,7 +9371,8 @@ def run_auto_cli():
 # exercises did not exist when these asserts were written, which is the point: a test that has
 # read the implementation asserts what the code does, not what was asked for.
 GIT_ID = ["-c", "user.name=crux-selftest", "-c", "user.email=selftest@crux.invalid",
-          "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.excludesFile="]
+          "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.excludesFile=",
+          "-c", "init.defaultBranch=main"]
 
 
 def _git(cwd, *args, check=True):
@@ -9334,7 +9460,7 @@ def _auto_repo(scorer="python3 score.py", extra=(), retention="failed", islands=
     repo = os.path.realpath(tempfile.mkdtemp(prefix="crux_arepo_"))
     _AUTO_TRASH.append(repo)                     # registered BEFORE anything can raise
     _git(repo, "init", "-q")
-    _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    _loop_name_main(repo)
     for name, text in SCORERS:
         write(os.path.join(repo, name), text)
     write(os.path.join(repo, "train.py"), "print('train')\n")
@@ -9480,7 +9606,12 @@ def run_auto_reserve():
                                       encoding="utf-8", errors="replace") for _ in range(4)]
             # Bounded: the thing under test is a lock, and the way a lock fails is by never
             # letting go. Without the timeout that failure hangs the suite instead of failing it.
-            outs = [p.communicate(timeout=30) for p in procs]
+            # The bound has to sit OUTSIDE the mechanism it guards: a child that cannot take
+            # the lock refuses on its own after A.LOCK_WAIT, so a deadline shorter than that
+            # reports "the lock never let go" on a runner that was merely slow. It costs
+            # nothing on a run that passes — nobody waits on a process that has already
+            # exited.
+            outs = [p.communicate(timeout=2 * A.LOCK_WAIT) for p in procs]
             st["rcs"] = [p.returncode for p in procs]
             st["ids"] = [l.strip() for out, _ in outs for l in out.splitlines() if l.strip()]
             st["after"] = _counter(root)
@@ -10468,6 +10599,22 @@ LOOP_PLAN = dict(mode="climb", island_cap="3", budget_attempts="8", budget_hours
                  replicates="2 seeds", rule="all")
 
 
+def _loop_name_main(repo):
+    """Make sure the fixture repository is on `main`, spending a subprocess only if it is not.
+
+    `init.defaultBranch=main` is pinned in GIT_ID, so a git new enough to honour it has already
+    named the branch and `.git/HEAD` — a file read, not a process — says so. The explicit
+    `symbolic-ref` stays for a git that ignores the setting, because a machine whose git names
+    the branch `master` is not the subject of any test here."""
+    head = os.path.join(repo, ".git", "HEAD")
+    try:
+        named = read(head).strip() == "ref: refs/heads/main"
+    except (IOError, OSError):
+        named = False
+    if not named:
+        _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+
+
 def _loop_rmtree(path):
     """`shutil.rmtree` that survives a git object directory.
 
@@ -10483,14 +10630,24 @@ def _loop_rmtree(path):
     shutil.rmtree(path, onerror=retry)
 
 
+# The four 05.3 fields the 05.0 template never carried. `_plan_text` builds its frontmatter from
+# `_plan_fm`'s rows and silently DROPS any `**fm` key that list lacks, so `closer=`,
+# `agent_cooldown=`, `agent_probe=` and `agent_probe_timeout=` never reached a plan on disk.
+# They travel as `extra` rows instead, and only when a caller names one — so a plan that mentions
+# none of them is byte-identical to the 05.2 text.
+_LOOP_EXTRA_FIELDS = ("closer", "agent_cooldown", "agent_probe", "agent_probe_timeout")
+
+
 def _loop_plan_text(qa, hb, isl=(), verifiables=None, **plan):
     """The tier-zero flight plan as text, for the checks that want a plan and no repository."""
     fields = dict(LOOP_PLAN)
     fields.update(plan)
+    extra = [("scorer_timeout", "20")]
+    extra += [(k, fields.pop(k)) for k in _LOOP_EXTRA_FIELDS if k in fields]
     return _plan_text(qa, hb, islands=", ".join(isl), goal=LOOP_GOAL, address="obj.score",
                       direction="max", bar="-0.5", null=LOOP_NULL,
                       verifiables=LOOP_VERIFIABLES if verifiables is None else verifiables,
-                      extra=(("scorer_timeout", "20"),), **fields)
+                      extra=tuple(extra), **fields)
 
 
 def _loop_write_plan(root, qa, hb, name="plan.md", **kw):
@@ -10519,10 +10676,14 @@ def _loop_repo(x0=0, islands=0, **plan):
     built with the code it is testing proves nothing."""
     approve = plan.pop("_approve", True)
     verifiables = plan.pop("verifiables", None)
+    # `_files` is written into the repository BEFORE the one commit this builder makes, so a
+    # caller that needs its own programs committed does not have to add a second add/commit
+    # pair. Two git subprocesses per fixture, across every fixture in the suite, is real wall.
+    extra_files = plan.pop("_files", None) or {}
     repo = os.path.realpath(tempfile.mkdtemp(prefix="crux_aloop_"))
     _AUTO_TRASH.append(repo)                     # registered BEFORE anything can raise
     _git(repo, "init", "-q")
-    _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    _loop_name_main(repo)
     write(os.path.join(repo, "score.py"), LOOP_SCORE_PY)
     write(os.path.join(repo, "agent.py"), LOOP_AGENT_PY)
     write(os.path.join(repo, "train.py"), "print('train')\n")
@@ -10551,6 +10712,8 @@ def _loop_repo(x0=0, islands=0, **plan):
     rel = _loop_write_plan(root, qa, hb, isl=isl, verifiables=verifiables, **plan)
     if approve:
         E.cmd_auto_approve(root, rel)
+    for name, text in extra_files.items():
+        write(os.path.join(repo, name), text)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "initial")
     return repo, root, qa, isl, hb, rel
@@ -10696,6 +10859,18 @@ _BRIEF_MOVES = ("budget", "migration")
 
 def _brief_fixed(payload):
     return {k: v for k, v in (payload or {}).items() if k not in _BRIEF_MOVES}
+
+
+# The same, plus what a finished RUN changes by definition. A 05.3 compat check compares a run's
+# brief against the same call on a byte copy the driver never touched, so the island's best
+# attempt, the refuted list and the inspirations drawn out of them necessarily differ — moving
+# them is the whole purpose of the search. 05.2's own `island=None` check compares two briefs
+# that agree on all three, so it keeps the narrower list above and loses nothing.
+_BRIEF_RUN_MOVES = _BRIEF_MOVES + ("best", "refuted", "inspirations")
+
+
+def _brief_fixed_run(payload):
+    return {k: v for k, v in (payload or {}).items() if k not in _BRIEF_RUN_MOVES}
 
 
 def _skip_first_materialize(A):
@@ -11144,11 +11319,17 @@ def run_auto_loop():
                   and ok["returned"] == st)))
         check("astate: ledger.jsonl is append-only and every event is in the pinned vocabulary",
               _auto_ok(lambda: (
+                  # EXTENDED IN PLACE by 05.3 (PRD-12): the seventeen 05.2 names keep their
+                  # order, and the slice's four are appended. A vocabulary pinned as a literal
+                  # is the only way a driver that invented an event gets caught — `_record`
+                  # itself refuses an unpinned name, so the literal is what proves the
+                  # constant grew on purpose rather than to fit whatever the driver emitted.
                   E.AUTO_LEDGER_EVENTS == (
                       "run-opened", "attempt-reserved", "worker-started", "worker-done",
                       "worker-failed", "node-filed", "scored", "violation", "retry", "closed",
                       "confirm", "island-best", "stall", "escalated", "abandoned", "resumed",
-                      "stop")
+                      "stop",
+                      "failover", "cooldown", "closer", "steward")
                   and not [b for b in probe_bad if b.startswith("ledger:")]
                   and bool(ok["events"]) and ok["raw"].endswith("\n")
                   and all(e.get("event") in E.AUTO_LEDGER_EVENTS for e in ok["events"])
@@ -11447,9 +11628,11 @@ def run_auto_loop():
                       == [E.DEFAULT_KIND, E.NEUTRAL_KIND, E.NEUTRAL_KIND]
                   and "the scorer drifts upward" in read(node_path(groot, gc[0])))))
 
-        # ------------------------------------------ the three plans a run will not open at all
-        sr, sroot, sqa, _, _, srel = _loop_fixture(x0=0, steward="true")
-        smsg = _auto_msg(lambda: A.auto_run(sroot, srel))
+        # -------------------------------------------- the two plans a run will not open at all
+        # REWRITTEN by 05.3 (PRD-26): this check bundled THREE refusals under one name, and
+        # 05.3 ships the steward, so `steward: true` is now accepted rather than refused. The
+        # name loses that clause and the assertion loses its fixture; the acceptance half is
+        # asserted in `run_auto_steward` instead. The other two refusals keep every byte.
         rr, rroot, rqa, _, _, rrel = _loop_fixture(x0=0, replicates="some seeds",
                                                    _approve=False)
         rmsg = _auto_msg(lambda: A.auto_run(rroot, rrel))
@@ -11460,17 +11643,13 @@ def run_auto_loop():
             "- [ ] [outcome-neutral] the baseline reproduces\n"
             "      fails-if:: the scorer adds a positive offset\n"))
         pmsg = _auto_msg(lambda: A.auto_run(proot, prel))
-        check("arun: auto run refuses steward: true, a replicates with no integer, and a plan auto check rejects, before any reservation",
+        check("arun: auto run refuses a replicates with no integer and a plan auto check rejects, before any reservation",
               _auto_ok(lambda: (
-                  smsg == (f"auto run: {srel} sets steward: true, and the steward arrives in "
-                           f"slice 05.3 — a run that ignored the switch would not be the run "
-                           f"that was signed")
-                  and rmsg == (f"auto run: {rrel} does not pass auto check: flight plan field "
-                               f"'replicates' must name a whole number of seeds, 1 or more "
-                               f"(got 'some seeds')")
+                  rmsg == (f"auto run: {rrel} does not pass auto check: flight plan field "
+                           f"'replicates' must name a whole number of seeds, 1 or more "
+                           f"(got 'some seeds')")
                   and pmsg.startswith(f"auto run: {prel} does not pass auto check: flight plan "
                                       f"verifiable")
-                  and _loop_untouched(sr, sroot, sqa)
                   and _loop_untouched(rr, rroot, rqa)
                   and _loop_untouched(pr, proot, pqa))))
     except Exception as e:                                   # pragma: no cover - wave-1 guard
@@ -11700,8 +11879,11 @@ def run_auto_stops():
                   # each axis names ITSELF in the detail, in its own units — a stop the PI
                   # reads in the morning has to say which budget ran out, not that one did
                   and _loop_stop(axes["attempts"])["detail"] == "1 of 1 attempts closed"
+                  # 05.3 (PRD-6): the axis now counts three roles — the worker, the closer and
+                  # the steward — so "worker invocations" would be a false statement in a line
+                  # the PI reads in the morning. Only this literal moves.
                   and _loop_stop(axes["model_calls"])["detail"]
-                      == "1 of 1 worker invocations used"
+                      == "1 of 1 model calls used"
                   and _loop_stop(axes["hours"])["detail"].endswith("driver hours used")
                   and _loop_stop(axes["hours"])["detail"].startswith("0.0")
                   and " of 0 " in _loop_stop(axes["hours"])["detail"]
@@ -11795,6 +11977,37 @@ def run_auto_leash():
               and "| `auto run` | ◆ |" in skill
               and "Never run this without the PI's yes" in skill
               and "per-attempt signature" in flat)
+
+        # ---------------------------------------- spec 05 PRD 05.3 §H — the fifth act, ruled in
+        # The PI ruled the fifth act IN at sign-off, so the leash widens for the first time
+        # since 05.2 — and a leash that widens is the one edit in this repo that must be read
+        # sentence by sentence rather than diffed. The 05.2 anchor sentences are asserted
+        # present AND IN ORDER with the new one between them, because the paragraph is
+        # soft-wrapped in the file: the edit re-wraps it, so byte-identity holds
+        # sentence-for-sentence, never line-for-line. The four bullets and the `close` row are
+        # asserted byte-identical in the ordinary way, since nothing re-wraps them.
+        fifth = [
+            "In Explore, the approval also covers a fifth act that is not per attempt: `ask` "
+            "— opening one new island (a sub-question under the anchor) when the steward "
+            "proposes it, up to the plan's `island_cap`, which the PI signed.",
+            "It is safe for the reason spec 05 D14 gives: the objective, bar and checks are "
+            "frozen, so a new island is another angle on a fixed target.",
+        ]
+        order = [flat.find(s) for s in ruling[:3] + fifth + ruling[3:]]
+        check("aleash: SKILL.md carries the fifth act sentence for sentence, and the four bullets and the close row are byte-identical",
+              all(s in flat for s in ruling) and all(s in flat for s in fifth)
+              and all(i >= 0 for i in order) and order == sorted(order)
+              and LEASH_BULLETS in skill and CLOSE_ROW in skill
+              and flat.find(fifth[0]) > flat.find(fourth)
+              and flat.find(fifth[-1]) < flat.find("## Setting up a vault (first run)")
+              # the probe joins the ○ row rather than becoming a verb of its own: it starts a
+              # process, so the row that promises `auto check` starts only the PI's scorer had
+              # to say so or stop being true
+              and "| `auto check` · `auto brief` | ○ |" in skill
+              and "`agent_probe`" in skill
+              and "probes each agent command once" in flat
+              and "sends no prompt and spends no model call" in flat
+              and "`auto check --static` is the lint alone and starts nothing" in flat)
 
         # --------------------------------------- the hand path, byte for byte, still the same
         base = os.path.realpath(tempfile.mkdtemp(prefix="crux_aleash_"))
@@ -11983,6 +12196,1785 @@ def run_auto_loop_purity():
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
         _auto_sweep()
+
+
+# ===========================================================================================
+# spec 05 PRD 05.3 — the agents. Written BLIND, against the PRD and the interface contract,
+# before any of it existed. Every fixture here is a tier-zero repository plus ONE stub agent
+# committed under several names: the command list is shared by all three roles, so the only
+# honest way to make one role unable to start is to give the list a filename that exists for
+# some roles and not for others.
+# ===========================================================================================
+
+# The one stub. It reads `CRUX_AGENT` to learn which role the driver is invoking and REFUSES a
+# role the engine does not name — a driver that forgot the variable fails loudly here instead
+# of quietly running a worker where a closer was meant. Its three mode arguments are positional
+# (worker, closer, steward) so one `agent:` field configures all three roles at once.
+AG_STUB_PY = '''import json, os, subprocess, sys
+GIT = ["git", "-c", "user.name=crux-stub", "-c", "user.email=stub@crux.invalid",
+       "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+argv = sys.argv[1:]
+if "--version" in argv:                 # the probe: no prompt, no CRUX_* variable, exit 0
+    sys.stdout.write("crux stub agent 1.0\\n")
+    sys.exit(0)
+role = os.environ.get("CRUX_AGENT") or ""
+LIMIT = "You have reached your 5-hour limit\\n"
+
+
+def arg(i, d):
+    return argv[i] if len(argv) > i else d
+
+
+def brief_has(*words):
+    with open(os.environ["CRUX_BRIEF"], encoding="utf-8") as f:
+        t = f.read()
+    return all(w in t for w in words)
+
+
+def put(obj):
+    with open(os.environ["CRUX_PROPOSAL"], "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+
+
+def put_raw(b):                         # bytes a model wrote, not text the harness encoded
+    with open(os.environ["CRUX_PROPOSAL"], "wb") as f:
+        f.write(b)
+
+
+if role == "crux-auto-worker":
+    mode = arg(0, "step")
+    if not brief_has("## Objective"):
+        sys.exit(7)
+    if mode in ("limited", "limitedok"):
+        sys.stderr.write(LIMIT)
+        if mode == "limited":
+            sys.exit(1)
+    if mode == "boom":                  # fails, and says NOTHING about any rate limit
+        sys.stderr.write("Traceback (most recent call last): a short unrelated failure\\n")
+        sys.exit(3)
+    with open("params.json", encoding="utf-8") as f:
+        x = json.load(f)["x"]
+    if mode != "still":
+        x = x + (1 if x < 3 else (-1 if x > 3 else 0))
+    with open("params.json", "w", encoding="utf-8") as f:
+        json.dump({"x": x}, f)
+    subprocess.run(GIT + ["commit", "-a", "-q", "--allow-empty", "-m",
+                          "attempt " + os.environ["CRUX_ATTEMPT"]], check=True)
+    put({"claim": "x = %s" % x})
+    sys.exit(0)
+
+if role == "crux-close":
+    mode = arg(1, "valid")
+    if not brief_has("## Checks", "## Results", "## Attempt"):
+        sys.exit(7)
+    if not os.path.isdir(os.environ.get("CRUX_RESULTS") or ""):
+        sys.exit(8)
+    if mode == "silent":
+        sys.exit(0)
+    if mode == "limited":
+        sys.stderr.write(LIMIT)
+        sys.exit(1)
+    if mode == "bytes":                 # one byte that is not valid UTF-8
+        put_raw(b'{"ticks": {"2": "x"}, "findings": "the caf\\xe9 control reproduced", '
+                b'"report": "# r"}')
+        sys.exit(0)
+    prop = {"ticks": {"1": "x", "2": "x"},
+            "findings": "the change moved the objective to the bar, and the baseline re-ran "
+                        "to the same number, so the control held",
+            "report": "# the closer's report\\n\\nthe closer wrote this line\\n"}
+    if mode == "malformed":
+        prop["verdict"] = "supported"
+    if mode == "contradicting":
+        prop["ticks"] = {"1": " ", "2": "x"}
+    put(prop)
+    sys.exit(0)
+
+if role == "crux-auto-steward":
+    mode = arg(2, "guidance")
+    if not brief_has("## Islands", "## Budget", "## Ledger"):
+        sys.exit(7)
+    n = os.path.basename(os.environ["CRUX_WORKSPACE"].rstrip("/\\\\"))
+    if mode == "alternate":                    # bad schema first, then nothing at all
+        mode = "badkey" if n == "1" else "silent"
+    if mode == "silent":
+        sys.exit(0)
+    if mode == "bytes":                 # one byte that is not valid UTF-8
+        put_raw(b'{"guidance": "prefer caf\\xe9 one-step moves near the bar"}')
+        sys.exit(0)
+    prop = {}
+    if mode in ("guidance", "badkey"):
+        prop["guidance"] = ("prefer one-step moves once the objective is within a step of "
+                            "the bar")
+    if mode == "badkey":
+        prop["verdict"] = "supported"
+    if mode == "island":
+        prop["island"] = {
+            "title": "a cheaper surrogate for the frozen objective",
+            "problem": "the scorer dominates the cost of every attempt, so a surrogate that "
+                       "ranks candidates the same way would let the search take more steps "
+                       "for the same budget"}
+    put(prop)
+    sys.exit(0)
+
+sys.stderr.write("CRUX_AGENT is %r\\n" % role)
+sys.exit(9)
+'''
+
+# One prose control, so the plan carries a check no number can grade. This is the plan 05.2
+# refuses under `check-grammar` and 05.3 accepts when — and only when — a closer is on.
+AG_PROSE_VERIFIABLES = ("- [ ] obj.score >= -0.5 on the frozen scorer\n"
+                        "      fails-if:: x stays two or more steps away from 3\n"
+                        "      discriminates:: true\n"
+                        "- [ ] [outcome-neutral] the baseline reproduces\n"
+                        "      fails-if:: the scorer adds a positive offset\n")
+
+# `dispatch.py` is the name a command list uses for every role, and `probe.py` is the same
+# program under the name the probe criteria read. A role that cannot START is not made so by a
+# missing file — `python3 <missing>.py` starts — but by `_ag_no_start`.
+AG_ALL_STUBS = ("dispatch.py", "probe.py")
+AG_STUB_ARGS = "step valid guidance"          # worker, closer, steward — all three positional
+
+# A command that CANNOT START is one whose argv[0] is not a program on this machine. `python3
+# no_such.py` is not one of those: `python3` exists, so the child starts and exits 2, and §3.1
+# says the exit code is not read.
+AG_NO_SUCH_BINARY = "no_such_agent_binary"
+
+# Two commands the PROBE can start and the WORKER cannot. §3.3's abort has exactly one live
+# path: `auto_probe_argv` and `auto_agent_argv` share argv[0], so a command the run-open probe
+# cannot start aborts the run under §3.9 first, with no walk and no failover at all. Something
+# about the world therefore has to differ between the probe and the spawn.
+#
+# That difference cannot be a PATH. On POSIX a relative argv[0] resolves against the child's
+# `cwd=`, so a script in the repository's working tree — which an attempt worktree, cut from a
+# commit, does not carry — starts for the probe and not for the worker. On Windows it does not:
+# `cwd=` is only where the child STARTS, and CreateProcess looks the program up against the
+# CALLING process's current directory and PATH. The same relative name therefore fails for both
+# there, the probe included, and the run aborts under §3.9 — the very path this fixture exists
+# to avoid.
+#
+# The difference that holds on every platform is TIME. Both programs are real, on PATH and
+# genuinely startable when the run-open probe runs them, and gone by the time the walk asks for
+# one — a provider CLI uninstalled, or a mount dropped, between run open and the first attempt.
+# `_ag_gone_bin` removes them the moment the real `probe_agents` returns; §0 promises that name
+# is resolved by module-global at call time for exactly this kind of seam. One mechanism, one
+# code path, POSIX and Windows alike.
+AG_GONE = (("crux_gone_a.bat", "crux_gone_b.bat") if os.name == "nt"
+           else ("crux_gone_a.sh", "crux_gone_b.sh"))
+AG_GONE_BODY = "@echo off\r\nexit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
+
+
+def _ag_gone_bin():
+    """Put `AG_GONE` on PATH as two real programs. Returns (restore, remove).
+
+    A bare name, not a path: `shlex.split` is POSIX everywhere, so a Windows absolute path in
+    a flight plan would lose its backslashes on the way to argv. A directory prepended to
+    `os.environ["PATH"]` is found by `execvp` on POSIX and by CreateProcess on Windows —
+    `os.environ` writes reach the real process environment block on both — and the probe
+    inherits it, because `probe_agents` spawns with `env=None`."""
+    d = os.path.realpath(tempfile.mkdtemp(prefix="crux_agbin_"))
+    _AUTO_TRASH.append(d)
+    for name in AG_GONE:
+        p = os.path.join(d, name)
+        write(p, AG_GONE_BODY)
+        os.chmod(p, 0o755)      # a no-op on Windows, where the .bat extension is what counts
+    old = os.environ.get("PATH", "")
+    os.environ["PATH"] = d + os.pathsep + old
+
+    def remove():
+        for name in AG_GONE:
+            try:
+                os.unlink(os.path.join(d, name))
+            except OSError:                                  # pragma: no cover - wave-1 guard
+                pass
+
+    def restore():
+        os.environ["PATH"] = old
+
+    return restore, remove
+
+
+def _ag_fixture(stubs=AG_ALL_STUBS, **kw):
+    """A tier-zero fixture with the stub agent COMMITTED under each name in `stubs`.
+
+    Committed, not merely written: the worker runs in a git worktree cut from the base commit,
+    so a file that only the repository's working tree carries does not exist where the worker
+    runs. The closer and the steward run in the repository itself and would not have noticed —
+    which is exactly the kind of difference a fixture must not hide."""
+    return _loop_fixture(_files={n: AG_STUB_PY for n in stubs}, **kw)
+
+
+def _ag_spawns(A):
+    """Watch `_spawn`, so every child the driver starts is recorded with its argv and its whole
+    environment. Returns (restore, records).
+
+    §0 promises `_spawn` is resolved by module-global name at call time for exactly this
+    reason. The alternative — having the stub write its environment down — cannot see a role
+    that never started, which is half of what this slice is about."""
+    seen = []
+    orig = _auto_val(lambda: A._spawn)
+    if orig is None:                                         # pragma: no cover - wave-1 guard
+        return (lambda: None), seen
+
+    def rec(argv, cwd, env, log_path, *a, **k):
+        seen.append({"argv": list(argv), "env": dict(env or {}), "cwd": cwd})
+        return orig(argv, cwd, env, log_path, *a, **k)
+
+    A._spawn = rec
+
+    def restore():
+        A._spawn = orig
+    return restore, seen
+
+
+def _ag_no_start(A, role):
+    """Make every spawn for ONE role fail the way the kernel does when argv[0] is not a program.
+
+    No command string can do this. `auto_probe_argv` and `auto_agent_argv` share argv[0], so a
+    command the closer or the steward cannot start is one the run-open probe cannot start
+    either, and §3.9 aborts the whole run before any agent walks — a different criterion. §0
+    makes `_spawn` replaceable by module-global name for exactly this injection, and everything
+    downstream of it — the walk, the failover, the retry, the give-up — is the driver's own."""
+    orig = _auto_val(lambda: A._spawn)
+    if orig is None:                                         # pragma: no cover - wave-1 guard
+        return lambda: None
+
+    def rec(argv, cwd, env, log_path, *a, **k):
+        if (env or {}).get("CRUX_AGENT") == role:
+            raise OSError(2, "No such file or directory")
+        return orig(argv, cwd, env, log_path, *a, **k)
+
+    A._spawn = rec
+
+    def restore():
+        A._spawn = orig
+    return restore
+
+
+def _ag_role(seen, role):
+    """Every recorded spawn whose `CRUX_AGENT` names one role, in the order it was started."""
+    return [s for s in seen if s["env"].get("CRUX_AGENT") == role]
+
+
+def _ag_env_names(rec):
+    """The `CRUX_*` names the DRIVER put in a child's environment — added, or given a value of
+    its own.
+
+    Every child env is built from `dict(os.environ)`, and this suite's own process carries
+    `CRUX_NO_UPDATE_CHECK` (set in `main()`), so a bare `startswith("CRUX_")` reports a
+    harness variable as if the driver had set it. Comparing each value against the suite's own
+    environment is what makes this a statement about the driver and not about the machine."""
+    return sorted(k for k, v in (rec or {}).get("env", {}).items()
+                  if k.startswith("CRUX_") and os.environ.get(k) != v)
+
+
+def _ag_derived(root, hid):
+    """`derive_verdict_15` over one closed node's OWN ticks — the engine's truth table applied
+    to the file, never the verdict the driver wrote into it. The driver supplies ticks and
+    never a verdict, and this is the only way to say so about a merged tick vector."""
+    n = E.Vault(root).get(hid)
+    by = E.count_verifiables_by_kind(n["body"])
+    return E.derive_verdict_15(by[E.DEFAULT_KIND], by[E.NEUTRAL_KIND], *E.node_rule(n))
+
+
+def _ag_ticked(root, hid, text):
+    """The one `- [t] … (found: …)` line of a closed node whose verifiable text contains
+    `text`, or "" — so a test can say which tick a check carries and where it came from."""
+    for line in read(node_path(root, hid)).splitlines():
+        if text in line and re.match(r"^\s*- \[.\]", line):
+            return line.strip()
+    return ""
+
+
+def run_auto_agents():
+    """Spec 05 PRD 05.3 §B/§C — one command list, walked once per try.
+
+    `agent:` and `agent_failover:` stop being two fields and become one ordered list, and the
+    unit of a try stops being a command. That distinction is the whole feature: a command that
+    never became a process cannot have spent a token and cannot have produced a wrong answer,
+    so walking past it charges neither a model call nor a retry. Charge it either way and a
+    machine with a misspelled failover burns its retry budget on typing."""
+    print("\n# autopilot — the command list and the walk (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # ------------------------------------------------ the list, the argv, the eight names
+        cl = _auto_val(lambda: E.auto_command_list(
+            {"agent": "a one", "agent_failover": ["b two", "c three"]}), [])
+        cl1 = _auto_val(lambda: E.auto_command_list({"agent": "a one", "agent_failover": []}), [])
+        cl0 = _auto_val(lambda: E.auto_command_list({"agent": "a one"}), [])
+        sub = _auto_val(lambda: E.auto_agent_argv(
+            'claude -p --agent {agent} "{brief}"', "crux-close", "read this"), [])
+        # `{agent}` substitutes BEFORE `{brief}`, so a brief that happens to contain the token
+        # is not re-scanned. The brief is text a model wrote; treating it as a template is how
+        # an agent talks the driver into running a different agent.
+        order = _auto_val(lambda: E.auto_agent_argv(
+            "run {brief}", "crux-auto-worker", "mind the {agent} token"), [])
+        empty = _auto_val(lambda: E.auto_agent_argv("", "crux-auto-worker", "b"), None)
+        raised = []
+        try:
+            E.auto_agent_argv('python3 "unclosed', "crux-auto-worker", "b")
+        except ValueError:
+            raised.append("ValueError")
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            raised.append(repr(e))
+
+        # One fixture, all three roles, every child's environment recorded. `budget_attempts=2`
+        # so the steward's window can close between two attempts and still be inside budget.
+        tr = _ag_fixture(x0=0, mode="explore", closer="true", steward="true",
+                         steward_every="1", budget_attempts="2", retention="all",
+                         agent="python3 dispatch.py " + AG_STUB_ARGS,
+                         verifiables=AG_PROSE_VERIFIABLES)
+        trestore, trseen = (lambda: None), []
+        if tr[0]:
+            trestore, trseen = _ag_spawns(A)
+        try:
+            three = _loop_run("three-roles", tr[1], tr[2], tr[5])
+        finally:
+            trestore()
+        wk = _ag_role(trseen, "crux-auto-worker")
+        cw, sw = _ag_role(trseen, "crux-close"), _ag_role(trseen, "crux-auto-steward")
+
+        check("aagent: the command list is agent then agent_failover, {brief} and {agent} substitute anywhere, and the seven worker variables are byte-identical",
+              _auto_ok(lambda: (
+                  E.AUTO_AGENTS == ("crux-auto-worker", "crux-close", "crux-auto-steward")
+                  and cl == ["a one", "b two", "c three"]
+                  and cl1 == ["a one"] and cl0 == ["a one"]
+                  and sub == ["claude", "-p", "--agent", "crux-close", "read this"]
+                  and order == ["run", "mind the {agent} token"]
+                  and empty == []
+                  and raised == ["ValueError"]
+                  # 05.2's seven, byte-identical in NAME, plus exactly one more
+                  and _ag_env_names(wk[0]) == ["CRUX_AGENT", "CRUX_ATTEMPT", "CRUX_BRIEF",
+                                               "CRUX_PROPOSAL", "CRUX_RUN", "CRUX_SEED",
+                                               "CRUX_WORKSPACE", "CRUX_WORKTREE"]
+                  and wk[0]["env"]["CRUX_AGENT"] == "crux-auto-worker"
+                  and wk[0]["env"]["CRUX_SEED"] == "0"
+                  and wk[0]["env"]["CRUX_RUN"] == "python3 train.py"
+                  and wk[0]["env"]["CRUX_ATTEMPT"] in (three["state"] or {}).get("closed", [])
+                  and wk[0]["env"]["CRUX_BRIEF"]
+                      == os.path.join(wk[0]["env"]["CRUX_WORKSPACE"], A.BRIEF_NAME)
+                  and os.path.realpath(wk[0]["cwd"])
+                      == os.path.realpath(wk[0]["env"]["CRUX_WORKTREE"]))))
+
+        # ------------------------------------- the first command cannot start, the second can
+        # `python3 no_such_agent.py` STARTS — `python3` exists, and §3.1 says a command that
+        # started is reachable whatever it then exits with. A command that cannot start is one
+        # whose argv[0] is not a program on this machine.
+        fs = _ag_fixture(x0=0, budget_attempts="1",
+                         agent=AG_NO_SUCH_BINARY + " step",
+                         agent_failover="python3 dispatch.py " + AG_STUB_ARGS)
+        start = _loop_run("failover-start", fs[1], fs[2], fs[5])
+        fo = _ev(start, "failover")
+        sst = start["state"] or {}
+        check("aagent: a first command that cannot start runs the next one, logging one failover, and the attempt closes on the second command's commit",
+              _auto_ok(lambda: (
+                  bool(sst.get("closed"))
+                  and len(fo) == len(_ev(start, "worker-started"))
+                  and all(set(e) >= {"at", "event", "role", "command", "reason", "detail",
+                                     "next"} for e in fo)
+                  and all(e["role"] == "crux-auto-worker" for e in fo)
+                  and all(e["command"] == AG_NO_SUCH_BINARY + " step" for e in fo)
+                  and all(e["reason"] == "start" for e in fo)
+                  and all(e["next"] == "python3 dispatch.py " + AG_STUB_ARGS for e in fo)
+                  and all("worker cannot start" in e["detail"] for e in fo)
+                  and all(AG_NO_SUCH_BINARY in e["detail"] for e in fo)
+                  and _ev(start, "retry") == []
+                  and all(E.Vault(fs[1]).get(h)["fm"].get("verdict")
+                          for h in sst["closed"]))))
+
+        # the charging rule, on the fixture that ran all three roles
+        calls = _ag_fixture(x0=0, budget_model_calls="1",
+                            agent="python3 dispatch.py " + AG_STUB_ARGS)
+        cax = _loop_run("calls-axis", calls[1], calls[2], calls[5])
+        check("aagent: a failover charges no model call and no retry, a spawned try charges both, a closer and a steward charge one each, and the axis detail reads model calls used",
+              _auto_ok(lambda: (
+                  # a walk past a command that never became a process costs nothing
+                  bool(fo) and _ev(start, "retry") == []
+                  and sst["budget"]["model_calls"]["used"]
+                      == len(_ev(start, "worker-started"))
+                  # one charge per child actually spawned, across all three roles
+                  and len(wk) >= 1 and len(cw) >= 1 and len(sw) >= 1
+                  and len(cw) == len(wk)
+                  and (three["state"] or {})["budget"]["model_calls"]["used"]
+                      == len(wk) + len(cw) + len(sw)
+                  and len(_ev(three, "closer")) == len(cw)
+                  and len(_ev(three, "steward")) == len(sw)
+                  and _loop_stop(cax)["reason"] == "budget"
+                  and _loop_stop(cax)["axis"] == "model_calls"
+                  # the literal lives once, in `astop:`; here it is DERIVED from the axis name
+                  # so the foreman's one-literal grep stays true of this file
+                  and _loop_stop(cax)["detail"]
+                      == "1 of 1 %s used" % E.AUTO_BUDGET_AXES[2].replace("_", " "))))
+
+        # ------------------------------------------------ every command in the list is broken
+        # Both commands are real programs on PATH when the run-open probe runs them, and gone
+        # when the walk tries to spawn one — see `AG_GONE` for why the asymmetry has to be time
+        # rather than a path. The run therefore opens for the REAL reason (§3.9 saw a reachable
+        # command) and the walk fails for the real reason (§3.3 could start nothing).
+        fa = _ag_fixture(x0=0, abort_invalid_runs="1", agent_probe_timeout="2",
+                         agent=AG_GONE[0] + " step",
+                         agent_failover=AG_GONE[1] + " step")
+        ag_restore, ag_remove = _ag_gone_bin()
+        porig = _auto_val(lambda: A.probe_agents)
+        if porig is not None:
+            def _pgone(root, plan, repo=None, _o=porig, _rm=ag_remove):
+                rows = _o(root, plan, repo)
+                _rm()          # the agent CLI is gone by the time the first walk asks for it
+                return rows
+            A.probe_agents = _pgone
+        try:
+            allbad = _loop_run("failover-all", fa[1], fa[2], fa[5])
+        finally:
+            if porig is not None:
+                A.probe_agents = porig
+            ag_restore()
+        afo, ab = _ev(allbad, "failover"), _ev(allbad, "abandoned")
+        check("aagent: every command failing to start stops the run abort, naming each command and its reason",
+              _auto_ok(lambda: (
+                  len(afo) == 2
+                  and [e["command"] for e in afo] == [AG_GONE[0] + " step",
+                                                      AG_GONE[1] + " step"]
+                  and [e["next"] for e in afo] == [AG_GONE[1] + " step", None]
+                  and _loop_stop(allbad)["reason"] == "abort"
+                  and _loop_stop(allbad)["axis"] is None
+                  and _loop_stop(allbad)["detail"].startswith(
+                      "every agent command failed to start: ")
+                  and all(c + " step" in _loop_stop(allbad)["detail"]
+                          for c in AG_GONE)
+                  # a list that cannot start is not a worker that failed: no node is filed,
+                  # nothing is retried, and the in-flight attempt is abandoned by the stop
+                  and _ev(allbad, "node-filed") == []
+                  and _ev(allbad, "retry") == []
+                  and (allbad["state"] or {})["closed"] == []
+                  and len(ab) == 1 and ab[0]["reason"] == "stop")))
+
+        # ----------------------------------------- PRD-33: a 05.2 plan, untouched, still runs
+        # The unrun COPY is the control, not a capture taken before the run: `auto_brief`'s
+        # payload legitimately moves as a search progresses (`budget.attempts.used`, and every
+        # other island's `migration` row), so the only honest comparison is the same call on a
+        # fixture the driver never touched.
+        cf = _loop_fixture(x0=0)
+        ccopy = _loop_copy(cf)
+        compat = _loop_run("compat", cf[1], cf[2], cf[5])
+        cst = compat["state"] or {}
+        pl = _loop_load_plan(cf[1], cf[2]) or {}
+        b_run = _auto_val(lambda: E.auto_brief(cf[1], cf[4]))
+        b_unrun = _auto_val(lambda: E.auto_brief(ccopy[1], ccopy[4]))
+        check("arun: a 05.2 flight plan with no closer, no cooldown and no probe validates, runs and closes exactly as before",
+              _auto_ok(lambda: (
+                  # the four new fields default without being written down anywhere
+                  pl["closer"] is False
+                  and pl["agent_failover"] == []
+                  and pl["agent_cooldown"] == E.AUTO_COOLDOWN_DEFAULT
+                  and pl["agent_probe"] == E.AUTO_PROBE_DEFAULT
+                  and pl["agent_probe_timeout"] == E.AUTO_PROBE_TIMEOUT_DEFAULT
+                  and _plan_msgs(cf[1], _loop_plan_text(cf[2], cf[4]), cf[5]) == []
+                  # and the run is a 05.2 run: nothing new in the ledger, nothing new on disk
+                  and bool(cst.get("closed"))
+                  and _loop_stop(compat)["reason"] in E.AUTO_STOP_REASONS
+                  and _ev(compat, "failover") == [] and _ev(compat, "cooldown") == []
+                  and _ev(compat, "closer") == [] and _ev(compat, "steward") == []
+                  and cst["agents"] == {}
+                  and cst["steward"] == {"guidance": [], "invocations": 0, "islands": [],
+                                         "last_closed": 0}
+                  and all(E.Vault(cf[1]).get(h)["fm"].get("verdict")
+                          == _ag_derived(cf[1], h) for h in cst["closed"])
+                  # `auto_brief(root, hid)` with no island is byte-identical to 05.2's
+                  and b_run is not None and b_unrun is not None
+                  and b_run["island"]["id"] == cf[2]
+                  and b_run["steward"] == [] and b_unrun["steward"] == []
+                  and set(b_run) == set(b_unrun)
+                  and _brief_fixed_run(b_run) == _brief_fixed_run(b_unrun))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aagent: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_cooldown():
+    """Spec 05 PRD 05.3 §C — a rate limit is a wait, not a failure.
+
+    The distinction the driver has to get right is between an agent that is broken and an agent
+    that is merely out of quota for the next hour. A broken agent should be walked past; a
+    limited one should be come back to, and the run should still be there when it is. So the
+    read is on a FAILED try's log only — an agent that mentions a rate limit in a transcript it
+    then commits over must not be able to move the driver — and the wait re-evaluates the stop
+    on every poll, so a night lost entirely to limits ends on the budget rather than hanging."""
+    print("\n# autopilot — the rate-limit cooldown (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # ----------------------------------------------------- the pattern read, on its own
+        lim = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "You have reached your 5-hour limit", "5hour limit", "Usage Limit exceeded",
+            "resets at 3pm", "Please try again later.")]
+        neg = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>")
+               for t in ("limit", "", None)]
+        check("acool: the rate-limit read is the era skill's seven patterns, case-insensitive, and total",
+              _auto_ok(lambda: (
+                  len(E.AUTO_RATE_LIMIT_PATTERNS) == 7
+                  and E.AUTO_RATE_LIMIT_PATTERNS == (
+                      r"5-?hour limit", r"usage limit", r"rate limit", r"limit reached",
+                      r"too many requests", r"reset[s]? at", r"please try again later")
+                  and lim == [True] * 5 and neg == [False] * 3
+                  and E.AUTO_COOLDOWN_DEFAULT == 1800.0)))
+
+        # --------------------------------- a failed try whose tail matches: cool, then walk on
+        cf = _ag_fixture(x0=0, retries="1", agent_cooldown="0.2", budget_attempts="1",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py " + AG_STUB_ARGS)
+        fail = _loop_run("cool-fail", cf[1], cf[2], cf[5])
+        cool, fo = _ev(fail, "cooldown"), _ev(fail, "failover")
+        fst = fail["state"] or {}
+        head = "python3 dispatch.py limited valid guidance"
+        check("acool: a failed try whose log tail matches a rate-limit pattern cools that command and re-runs the try on the next, with cooldown then failover",
+              _auto_ok(lambda: (
+                  len(cool) == 1 and cool[0]["command"] == head
+                  and cool[0]["role"] == "crux-auto-worker"
+                  and set(cool[0]) >= {"at", "event", "role", "command", "until", "seconds",
+                                       "detail"}
+                  and float(cool[0]["seconds"]) == 0.2
+                  and "rate-limit pattern" in cool[0]["detail"]
+                  and cool[0]["until"] == fst["agents"][head]["cooling_until"]
+                  and fst["agents"][head]["hits"] == 1
+                  # the order is the whole point: the cooldown is written, and only then does
+                  # the retry walk past the command it just put to sleep
+                  and [e["event"] for e in fail["events"]
+                       if e["event"] in ("cooldown", "failover")][:2]
+                      == ["cooldown", "failover"]
+                  and len(fo) == 1 and fo[0]["command"] == head
+                  # a command walked past because it is cooling is a failover of its own kind,
+                  # so the two lines read as one story rather than as two unrelated events
+                  and fo[0]["reason"] == "cooldown"
+                  and fo[0]["next"] == "python3 dispatch.py " + AG_STUB_ARGS
+                  and "cooling until" in fo[0]["detail"]
+                  and len(_ev(fail, "retry")) == 1
+                  and bool(fst.get("closed")))))
+
+        # ------------------------------------------ the negative case: a SUCCESSFUL try's log
+        ok = _ag_fixture(x0=0, budget_attempts="1", agent_cooldown="0.2",
+                         agent="python3 dispatch.py limitedok valid guidance")
+        good = _loop_run("cool-ok", ok[1], ok[2], ok[5])
+        gst = good["state"] or {}
+        check("acool: a successful try whose log carries the same pattern closes normally, with no cooldown and no failover",
+              _auto_ok(lambda: (
+                  _ev(good, "cooldown") == [] and _ev(good, "failover") == []
+                  and gst["agents"] == {}
+                  and len(gst["closed"]) == 1
+                  and _ev(good, "retry") == []
+                  and E.Vault(ok[1]).get(gst["closed"][0])["fm"].get("verdict")
+                      not in (None, "", "invalid-run"))))
+
+        # ------------------------------- after the window lapses, the head of the list is back
+        lp = _ag_fixture(x0=0, budget_attempts="2", retries="1", agent_cooldown="0.2",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py " + AG_STUB_ARGS)
+        lapse = _loop_run("cool-lapse", lp[1], lp[2], lp[5])
+        starts = _ev(lapse, "worker-started")
+        # the cooldown is absolute wall-clock in state.json, so it has to survive the process
+        kf = _ag_fixture(x0=0, budget_attempts="1", retries="1", agent_cooldown="600",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py " + AG_STUB_ARGS)
+        killed = _loop_run("cool-kill", kf[1], kf[2], kf[5])
+        kst = killed["state"] or {}
+        reread = _auto_val(lambda: json.loads(read(_loop_state_path(kf[1], kf[2]))), {})
+        check("acool: after a cooldown lapses the next try starts at the head of the list, and a cooldown survives a kill and resume",
+              _auto_ok(lambda: (
+                  # every try walks the list from the top, so the preferred command comes back
+                  # by itself the moment its window lapses — there is no probe schedule
+                  len(starts) >= 2
+                  and len(_ev(lapse, "cooldown")) >= 1
+                  and len((lapse["state"] or {})["closed"]) >= 1
+                  # the stamp is absolute and on disk, so a second reader agrees with the first
+                  and reread.get("agents") == kst["agents"]
+                  and all(isinstance(r.get("cooling_until"), str)
+                          and len(r["cooling_until"]) >= 19
+                          and r["cooling_until"] > "2026-"
+                          for r in kst["agents"].values())
+                  and bool(kst["agents"]))))
+
+        # ------------------------------------------- every command cooling: wait, never abort
+        # `abort_invalid_runs` is lifted clear of the way: LOOP_PLAN's 2 aborts the run on two
+        # failed tries BEFORE the driver ever has to wait, so the criterion would pass on a
+        # driver that never waited at all.
+        #
+        # `retries` is 1 so that the walk which finds everything cooling is the RETRY's — the
+        # gap between `_cool` and that walk is three ledger appends and nothing else. With
+        # `retries=0` the next walk is the next attempt's, a git worktree and a whole teardown
+        # later, and on a slow runner the window has lapsed before anyone looks: the driver
+        # then never waits and the criterion fails for a reason that is about the machine
+        # rather than about the driver. `budget_attempts` is 1 because one attempt now spends
+        # both tries, and the closed attempt is what ends the run.
+        wt = _ag_fixture(x0=0, retries="1", budget_hours="1", budget_attempts="1",
+                         abort_invalid_runs="9", agent_cooldown="1",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py limited valid guidance")
+        # A spy on the wait itself: `cooldown >= 1` and `reason != abort` hold on a driver that
+        # walked past both commands and never waited, so neither is evidence of a wait.
+        waits = []
+        worig = _auto_val(lambda: A._wait_for_cooldown)
+        if worig is not None:
+            def _wrec(ctx, commands, _o=worig):
+                waits.append(list(commands))
+                return _o(ctx, commands)
+            A._wait_for_cooldown = _wrec
+        try:
+            wait = _loop_run("cool-wait", wt[1], wt[2], wt[5])
+        finally:
+            if worig is not None:
+                A._wait_for_cooldown = worig
+        bt = _ag_fixture(x0=0, retries="0", budget_hours="0", agent_cooldown="600",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py limited valid guidance")
+        bud = _loop_run("cool-budget", bt[1], bt[2], bt[5])
+        check("acool: every command cooling makes the driver wait rather than abort, and a cooldown outlasting budget_hours stops budget",
+              _auto_ok(lambda: (
+                  # a rolling limit is the interruption this feature exists to survive, so the
+                  # driver waits; the ONLY way out of the wait is a stop it re-evaluates
+                  len(_ev(wait, "cooldown")) >= 1
+                  # the wait was ENTERED, over the whole list, and the walk then recorded the
+                  # command it stepped past because that command was cooling
+                  and len(waits) >= 1
+                  and all(len(c) == 2 for c in waits)
+                  and _loop_stop(wait)["reason"] != "abort"
+                  and _loop_stop(wait)["reason"] in E.AUTO_STOP_REASONS
+                  and _loop_stop(bud)["reason"] == "budget"
+                  and _loop_stop(bud)["axis"] == "hours"
+                  and _loop_stop(bud)["detail"].endswith("driver hours used")
+                  and _loop_lock_free(A, wt[1]))))
+
+        # ------------------- the tail a cooldown reads is the one THIS try wrote, and no more
+        lt = os.path.realpath(tempfile.mkdtemp(prefix="crux_ltail_"))
+        _AUTO_TRASH.append(lt)
+        with open(os.path.join(lt, A.WORKER_LOG), "wb") as f:
+            f.write(b"You have reached your 5-hour limit\n")
+        loff = os.path.getsize(os.path.join(lt, A.WORKER_LOG))
+        with open(os.path.join(lt, A.WORKER_LOG), "ab") as f:
+            f.write(b"Traceback: a short unrelated failure\n")
+        whole = _auto_val(lambda: A._log_tail(lt), "")
+        mine = _auto_val(lambda: A._log_tail(lt, since=loff), "")
+        # try 1 is rate-limited on the head command and cools it; the retry walks past it and
+        # runs the OTHER command, which fails for a reason of its own — a short one, well
+        # inside the window try 1 left behind in the same appended log
+        sl = _ag_fixture(x0=0, retries="1", agent_cooldown="600", budget_attempts="1",
+                         abort_invalid_runs="9",
+                         agent="python3 dispatch.py limited valid guidance",
+                         agent_failover="python3 dispatch.py boom valid guidance")
+        stale = _loop_run("cool-stale-tail", sl[1], sl[2], sl[5])
+        sast = (stale["state"] or {}).get("agents") or {}
+        check("acool: a cooldown reads only the output of the try that failed, so an earlier try's limit never cools a later command",
+              _auto_ok(lambda: (
+                  "5-hour limit" in whole and "unrelated failure" in whole
+                  and "5-hour limit" not in mine and "unrelated failure" in mine
+                  and E.auto_rate_limited(whole) and not E.auto_rate_limited(mine)
+                  # the healthy failover command is NOT asleep on evidence that belongs to
+                  # the command before it
+                  and list(sast) == ["python3 dispatch.py limited valid guidance"]
+                  and "python3 dispatch.py boom valid guidance" not in sast
+                  and len(_ev(stale, "cooldown")) == 1
+                  and len(_ev(stale, "worker-started")) == 2)))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"acool: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_probe():
+    """Spec 05 PRD 05.3 §D — is the agent even there, asked before anything is spent.
+
+    A misspelled agent command is the cheapest possible failure to find and the most expensive
+    one to find late: found at run open it costs nothing, found after the first reservation it
+    has burned a hypothesis number that can never be handed out again. So `auto check` probes
+    each command once with a prompt-free argument, and `auto run` does the same before it
+    reserves any id. Two slugs, because the two faults are different in kind: a command that
+    does not parse is a static fact about the plan text, and a command that will not start is
+    a fact about this machine right now."""
+    print("\n# autopilot — the agent probe (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # ------------------------------------------- the argv rule, as its five pinned rows
+        rows = (('claude -p --agent {agent} "{brief}"', ["claude", "-p", "--version"]),
+                ('claude -p "{brief}"', ["claude", "-p", "--version"]),
+                ("python3 agent.py step", ["python3", "agent.py", "step", "--version"]),
+                ("claude -p --agent {agent} --file {brief}", ["claude", "-p", "--version"]),
+                ("", ["--version"]))
+        got = [_auto_val(lambda c=c: E.auto_probe_argv(c, "--version"), "<absent>")
+               for c, _w in rows]
+        for i, (c, want) in enumerate(rows):
+            check(f"aprobe: the probe argv of {c!r} under --version is {want}",
+                  got[i] == want)
+        check("aprobe: the probe defaults are --version and twenty seconds, and an unparseable command propagates ValueError",
+              _auto_ok(lambda: (
+                  E.AUTO_PROBE_DEFAULT == "--version"
+                  and E.AUTO_PROBE_TIMEOUT_DEFAULT == 20.0
+                  and _auto_val(lambda: E.auto_probe_argv('a "unclosed', "--version"),
+                                "<raised>") == "<raised>")))
+
+        # ---------------------------------------- one row per command, with the argv it ran
+        # `'one two'` is one argv element holding a space, so the same fixture serves the
+        # row's CONTENT here and the row's QUOTING below
+        PROBE_CMD = "python3 probe.py 'one two' valid guidance"
+        pf = _ag_fixture(x0=0, budget_attempts="1", agent_probe_timeout="2",
+                         agent=PROBE_CMD)
+        pres = _auto_val(lambda: A.auto_check(pf[1], pf[5]), {})
+        prestore, pseen = (lambda: None), []
+        if pf[0]:
+            prestore, pseen = _ag_spawns(A)
+        try:
+            prun = _loop_run("probe", pf[1], pf[2], pf[5])
+        finally:
+            prestore()
+        check("aprobe: auto check reports one agents row per command with the probe argv it ran, spends no model call, and drops placeholder-bearing elements",
+              _auto_ok(lambda: (
+                  len(pres["agents"]) == 1
+                  and set(pres["agents"][0]) == {"command", "probe", "reachable", "seconds",
+                                                 "detail"}
+                  and pres["agents"][0]["command"] == PROBE_CMD
+                  and pres["agents"][0]["probe"] == ["python3", "probe.py", "one two",
+                                                     "valid", "guidance", "--version"]
+                  and pres["agents"][0]["reachable"] is True
+                  and isinstance(pres["agents"][0]["seconds"], float)
+                  and pres["agents"][0]["seconds"] >= 0
+                  and pres["agents"][0]["detail"] == "exited 0"
+                  and pres["ok"] is True
+                  and [p["check"] for p in pres["problems"]] == []
+                  # the probe sends no prompt, so it is not a model call and not a worker: the
+                  # run's own accounting is untouched by having been probed
+                  and len(_ev(prun, "worker-started")) == len(_ag_role(pseen,
+                                                                       "crux-auto-worker"))
+                  and (prun["state"] or {})["budget"]["model_calls"]["used"]
+                      == len(_ev(prun, "worker-started")))))
+
+        # ------------------------------- one unreachable beside a reachable one is no problem
+        mx = _ag_fixture(x0=0, agent_probe_timeout="2", agent=AG_NO_SUCH_BINARY + " step",
+                         agent_failover="python3 probe.py " + AG_STUB_ARGS)
+        mres = _auto_val(lambda: A.auto_check(mx[1], mx[5]), {})
+        nn = _ag_fixture(x0=0, agent_probe_timeout="2", agent=AG_NO_SUCH_BINARY + " step",
+                         agent_failover=AG_NO_SUCH_BINARY + "2 step")
+        nres = _auto_val(lambda: A.auto_check(nn[1], nn[5]), {})
+        check("aprobe: agent-reach fires only when no command is reachable, and one unreachable entry beside a reachable one is no problem",
+              _auto_ok(lambda: (
+                  len(mres["agents"]) == 2
+                  and [r["reachable"] for r in mres["agents"]] == [False, True]
+                  and mres["agents"][0]["seconds"] is None
+                  and "cannot start" in mres["agents"][0]["detail"]
+                  and "agent-reach" not in [p["check"] for p in mres["problems"]]
+                  and mres["ok"] is True
+                  # a failover list exists precisely so one dead entry is survivable; only a
+                  # list with no live entry in it is a fault
+                  and [p["check"] for p in nres["problems"]] == ["agent-reach"]
+                  and nres["ok"] is False
+                  and nres["problems"][0]["message"].startswith(
+                      "no agent command in the flight plan is reachable: ")
+                  and all(c in nres["problems"][0]["message"]
+                          for c in (AG_NO_SUCH_BINARY + " step",
+                                    AG_NO_SUCH_BINARY + "2 step")))))
+
+        # ------------------------------------- a command that cannot parse is a STATIC fault
+        sf = _ag_fixture(x0=0, _approve=False, agent='python3 "unclosed')
+        bmsgs = [m for m in _plan_msgs(
+            sf[1], _loop_plan_text(sf[2], sf[4], agent='python3 "unclosed'), sf[5])
+            if "agent command" in m]
+        empty_msgs = _plan_msgs(sf[1], _loop_plan_text(sf[2], sf[4], agent="   "), sf[5])
+        spawn, sres = [], {}
+        saved = _auto_val(lambda: A._run)
+        try:
+            if saved is not None:
+                def rec(argv, *a, **k):
+                    spawn.append(list(argv))
+                    return saved(argv, *a, **k)
+                A._run = rec
+            sres = _auto_val(lambda: A.auto_check(sf[1], sf[5], static=True), {})
+        finally:
+            if saved is not None:
+                A._run = saved
+        check("aprobe: a command that does not parse or is empty is refused under agent-command by auto check --static, which starts nothing and keeps the pinned key set",
+              _auto_ok(lambda: (
+                  len(bmsgs) == 1
+                  and bmsgs[0].startswith('flight plan agent command 1 does not parse under '
+                                          'shlex: python3 "unclosed (')
+                  and bmsgs[0].endswith(")")
+                  and "flight plan agent command 1 is empty" in empty_msgs
+                  and "agent-command" in [p["check"] for p in sres["problems"]]
+                  and sres["ok"] is False
+                  # --static is the lint alone: the key set is the 05.1 one, `agents` is NOT
+                  # in it, and nothing was started
+                  and set(sres) == {"ok", "plan", "anchor", "mode", "problems"}
+                  and spawn == [])))
+
+        # ------------------------------------------ and the same probe again, at run open
+        op = _ag_fixture(x0=0, agent_probe_timeout="2", agent=AG_NO_SUCH_BINARY + " step")
+        opn = _loop_run("probe-open", op[1], op[2], op[5])
+        ores = _auto_val(lambda: A.reservations(op[1], op[2]), {})
+        check("aprobe: auto run probes the list at run open and stops abort before reserving any id when nothing is reachable",
+              _auto_ok(lambda: (
+                  _loop_stop(opn)["reason"] == "abort"
+                  and _loop_stop(opn)["axis"] is None
+                  and _loop_stop(opn)["attempt"] is None
+                  and _loop_stop(opn)["detail"].startswith(
+                      "no agent command is reachable: ")
+                  and AG_NO_SUCH_BINARY + " step" in _loop_stop(opn)["detail"]
+                  and _ev(opn, "attempt-reserved") == []
+                  and _ev(opn, "worker-started") == []
+                  and not ores
+                  and (opn["state"] or {})["closed"] == []
+                  and (opn["state"] or {})["budget"]["model_calls"]["used"] == 0)))
+
+        # ------------------------------ the row the PI reads has to be pasteable as a command
+        # in process, with the vault as cwd: the text path is crux.py's, and a second
+        # interpreter start would buy nothing this criterion needs
+        qout, qbuf, qcwd = "", io.StringIO(), os.getcwd()
+        if pf[0]:
+            import crux as C
+            try:
+                os.chdir(pf[1])
+                with contextlib.redirect_stdout(qbuf):
+                    _auto_val(lambda: C.main(["auto", "check", pf[5]]))
+            finally:
+                os.chdir(qcwd)
+            qout = qbuf.getvalue()
+        check("aprobe: the agents row prints its probe argv shlex-joined, so an element holding a space is quoted",
+              _auto_ok(lambda: (
+                  "agent reachable:" in qout
+                  # space-joined, the line reads as five arguments where four were run
+                  and "'one two'" in qout
+                  and ("probe: python3 probe.py 'one two' valid guidance --version"
+                       in qout))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aprobe: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+AG_LEAK = ("the anchor's own prose, which argues for the claim and which no brief the engine "
+           "assembles may ever quote")
+AG_LEAK_PS = ("ANCHOR-PROBLEM-STATEMENT-LIVES-HERE. The PI believes this angle is the answer "
+              "and this anchor exists to prove it.")
+
+
+def _ag_plant_leak(root, qid):
+    """Plant BOTH advocacy markers in the anchor, and say whether both landed.
+
+    The PRD says the brief carries no string from the anchor's `## Problem Statement`. A
+    question node has no such section — `PROSE_SECTIONS["question"]` is ELI5 / TL;DR /
+    Question / Answer so far — so the advocacy prose a PI actually writes lands in
+    `## Answer so far`. The 05.0 brief tests settle this the other way and greener: they
+    INJECT a `## Problem Statement` section into the anchor, and the leak check reads that
+    heading whatever the node's prose schema is. Both markers are planted, so a brief that
+    quoted either would be caught — a brief that quotes the argument FOR a claim has told the
+    reader what to conclude, and a reader told what to conclude is not a check on anything."""
+    p = node_path(root, qid)
+    edit(p, "_(interpretation — written by the PI/agent; auto-flagged stale when new "
+            "evidence lands)_", AG_LEAK)
+    t = read(p)
+    if E.LEDGER_START in t and AG_LEAK_PS not in t:
+        write(p, t.replace(E.LEDGER_START,
+                           f"## Problem Statement\n\n{AG_LEAK_PS}\n\n" + E.LEDGER_START, 1))
+    t = read(p)
+    return AG_LEAK in t and AG_LEAK_PS in t and "## Problem Statement" in t
+
+
+def run_auto_closer():
+    """Spec 05 PRD 05.3 §E–§G — `crux-close` wired in, byte-unchanged, behind one switch.
+
+    The reason this is opt-in and the reason it is safe are the same reason: the closer reads
+    prose and proposes ticks, so it can say something the scorer's number cannot — and must
+    never be able to say something the scorer's number contradicts. So the engine grades first,
+    the closer fills only what the engine left `[-]`, and a proposed tick that disagrees with a
+    graded comparison refuses the whole proposal rather than half of it. A reporter whose
+    answer is its own act is not retried; only a failure to START is."""
+    print("\n# autopilot — the closer (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # -------------------------------------------- closer: true is what lifts check-grammar
+        # `closer="true"` on the FIXTURE's own plan, or the file on disk carries a prose
+        # check with no closer, `load_flight_plan` refuses it under check-grammar, and every
+        # branch below reads an empty plan dict.
+        gf = _ag_fixture(x0=2, _approve=False, closer="true",
+                         verifiables=AG_PROSE_VERIFIABLES)
+        off = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4],
+                                                verifiables=AG_PROSE_VERIFIABLES), gf[5])
+        on = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4], closer="true",
+                                               verifiables=AG_PROSE_VERIFIABLES), gf[5])
+        plain = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4]), gf[5])
+        plain_on = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4], closer="true"), gf[5])
+        bad_bool = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4], closer="maybe"), gf[5])
+        bad_cool = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4], closer="true",
+                                                     agent_cooldown="soon"), gf[5])
+        bad_pto = _plan_msgs(gf[1], _loop_plan_text(gf[2], gf[4], closer="true",
+                                                    agent_probe_timeout="0"), gf[5])
+        check("acloser: closer true lets a prose check validate, and without it check-grammar refuses it exactly as in 05.2",
+              _auto_ok(lambda: (
+                  any("the baseline reproduces" in m for m in off)
+                  and on == []
+                  # a plan with NO prose check has the same problem list either way, which is
+                  # what makes every shipped fixture's list byte-identical to 05.2's
+                  and plain == [] and plain_on == []
+                  and bad_bool == ["flight plan field 'closer' must be true or false "
+                                   "(got 'maybe')"]
+                  and bad_cool == ["flight plan field 'agent_cooldown' must be a non-negative "
+                                   "number of seconds (got 'soon')"]
+                  and bad_pto == ["flight plan field 'agent_probe_timeout' must be a positive "
+                                  "number of seconds (got '0')"])))
+
+        # ------------------------------------------------------- the proposal, branch by branch
+        cplan = _loop_load_plan(gf[1], gf[2]) or {}
+        eng = [("x", "-1e-06"), ("-", "the check names no number the scorer printed")]
+
+        def _cp(raw, tk=None):
+            return _auto_val(lambda: E.auto_close_proposal(raw, cplan, tk or eng), {})
+
+        long_findings = " ".join(["word"] * (E.AUTO_CLOSE_FINDINGS_WORDS + 1))
+        valid = {"ticks": {"2": "x"}, "findings": "the control held", "report": "# r\n"}
+        branches = (
+            ("no file at all is closer-missing", None, None, "closer-missing",
+             "the closer left no close.json in its workspace"),
+            ("a JSON array is closer-unparseable", "[1, 2]", None, "closer-unparseable",
+             "close.json is not one JSON object (got list)"),
+            ("a key outside the schema is closer-schema", json.dumps(
+                dict(valid, verdict="supported")), None, "closer-schema",
+             "close.json carries keys outside ticks, findings, report: verdict"),
+            ("ticks that are not an object is closer-schema", json.dumps(
+                dict(valid, ticks=["x"])), None, "closer-schema",
+             "close.json ticks is not an object keyed by check index"),
+            ("a tick key naming no check is closer-schema", json.dumps(
+                dict(valid, ticks={"0": "x"})), None, "closer-schema",
+             "close.json ticks name no check: 0"),
+            ("a tick outside the alphabet is closer-schema", json.dumps(
+                dict(valid, ticks={"2": "y"})), None, "closer-schema",
+             "close.json tick for check 2 is not one of 'x', ' ', '-' (got 'y')"),
+            ("no findings is closer-schema", json.dumps(
+                {"ticks": {"2": "x"}, "findings": "   ", "report": "# r\n"}), None,
+             "closer-schema", "close.json carries no findings"),
+            ("findings over the prose cap is closer-findings", json.dumps(
+                dict(valid, findings=long_findings)), None, "closer-findings",
+             f"the findings run to {E.AUTO_CLOSE_FINDINGS_WORDS + 1} words, over the "
+             f"{E.AUTO_CLOSE_FINDINGS_WORDS}-word cap"),
+            ("no report is closer-schema", json.dumps(
+                {"ticks": {"2": "x"}, "findings": "held", "report": ""}), None,
+             "closer-schema", "close.json carries no report"),
+            ("a tick contradicting a graded comparison is closer-contradiction", json.dumps(
+                dict(valid, ticks={"1": " ", "2": "x"})), None, "closer-contradiction",
+             "close.json ticks check 1 ' ' where the scorer's number grades it 'x' "
+             "(found: -1e-06)"),
+        )
+        for label, raw, tk, reason, msg in branches:
+            r = _cp(raw, tk)
+            check(f"acloser: {label}",
+                  r.get("ok") is False and r.get("reason") == reason
+                  and r.get("detail") == msg and r.get("ticks") == {}
+                  and r.get("findings") is None and r.get("report") is None)
+        unparse = _cp("{not json")
+        cap = _auto_val(lambda: E.AUTO_REPORT_BYTES, 0)
+        big = _cp(json.dumps(dict(valid, report="r" * (cap + 50) if cap else "r")))
+        okp = _cp(json.dumps(valid))
+        check("acloser: a close proposal that is not one JSON object is refused closer-unparseable, and a valid one truncates its report rather than refusing it",
+              _auto_ok(lambda: (
+                  unparse["ok"] is False and unparse["reason"] == "closer-unparseable"
+                  and unparse["detail"].startswith("close.json is not one JSON object (")
+                  and unparse["detail"].endswith(")")
+                  and okp["ok"] is True and okp["reason"] is None
+                  and okp["ticks"] == {2: "x"} and okp["findings"] == "the control held"
+                  and okp["report"] == "# r"
+                  # §G caps the report in bytes; a report that ran long is a long report, not a
+                  # broken proposal, so it is cut rather than thrown away
+                  and big["ok"] is True
+                  and len(big["report"]) == E.AUTO_REPORT_BYTES
+                  and E.AUTO_CLOSE_KEYS == ("ticks", "findings", "report")
+                  and E.AUTO_TICK_ALPHABET == ("x", " ", "-")
+                  and E.AUTO_REPORT_FILE == "report.md")))
+
+        m_fill = _auto_val(lambda: E.auto_merge_ticks(eng, {2: "x"}))
+        m_agree = _auto_val(lambda: E.auto_merge_ticks(eng, {1: "x", 2: " "}))
+        m_none = _auto_val(lambda: E.auto_merge_ticks(eng, {}))
+        check("acloser: the merge fills only what the engine left ungraded, and an engine tick stands verbatim",
+              _auto_ok(lambda: (
+                  m_fill == [("x", "-1e-06"), ("x", "graded by crux-close")]
+                  # an AGREEING proposal is ignored, not applied: the found string still says
+                  # where the tick came from, and it came from the scorer's number
+                  and m_agree == [("x", "-1e-06"), (" ", "graded by crux-close")]
+                  and m_none == eng
+                  and len(m_fill) == len(eng))))
+
+        # ------------------------------------------------- one run, with a working closer
+        vf = _ag_fixture(x0=2, closer="true", budget_attempts="1", retention="all",
+                         verifiables=AG_PROSE_VERIFIABLES,
+                         agent="python3 dispatch.py " + AG_STUB_ARGS)
+        leaked = _auto_val(lambda: _ag_plant_leak(vf[1], vf[2]), False)
+        vplan0 = _auto_val(lambda: read(os.path.join(vf[1], vf[5])), "")
+        vrestore, vseen = (lambda: None), []
+        if vf[0]:
+            vrestore, vseen = _ag_spawns(A)
+        try:
+            good = _loop_run("closer-valid", vf[1], vf[2], vf[5])
+        finally:
+            vrestore()
+        gst = good["state"] or {}
+        gclosed = (gst.get("closed") or [""])[0]
+        gev = [e["event"] for e in good["events"]]
+        cspawn = (_ag_role(vseen, "crux-close") or [{}])[0]
+        vplan = _loop_load_plan(vf[1], vf[2]) or {}
+        # `cmd_auto_ticks` both computes AND WRITES. Asking it for the engine's own vector —
+        # which is what a close brief is built over — therefore overwrites the MERGED vector
+        # the run just landed, and the criterion below asserts on exactly that vector. So the
+        # node is captured first and restored after: the probe must not erase its own subject.
+        gnode0 = _auto_val(lambda: read(node_path(vf[1], gclosed)), "")
+        gticks = _auto_val(lambda: E.cmd_auto_ticks(
+            vf[1], gclosed, json.loads(read(os.path.join(
+                vf[1], E.RESULTS_DIR, gclosed, E.METRICS_FILE)))), [])
+        if gnode0:
+            write(node_path(vf[1], gclosed), gnode0)
+        brief = _auto_val(lambda: E.auto_close_brief(vf[1], gclosed, vplan, gticks), {})
+        brief2 = _auto_val(lambda: E.auto_close_brief(vf[1], gclosed, vplan, gticks), {})
+        btext = _auto_val(lambda: E.auto_close_brief_text(brief), "")
+        btext2 = _auto_val(lambda: E.auto_close_brief_text(brief2), "")
+
+        check("acloser: the closer runs after scoring and before cmd_close through the same command list, with CRUX_AGENT, CRUX_RESULTS and CRUX_PROPOSAL set, charged one model call",
+              _auto_ok(lambda: (
+                  len(_ag_role(vseen, "crux-close")) == 1
+                  and gev.index("scored") < gev.index("closer") < gev.index("closed")
+                  # the SAME list, so the same command string the worker ran
+                  and cspawn["argv"][:2] == _ag_role(vseen, "crux-auto-worker")[0]["argv"][:2]
+                  and _ag_env_names(cspawn) == ["CRUX_AGENT", "CRUX_ATTEMPT", "CRUX_BRIEF",
+                                                "CRUX_PROPOSAL", "CRUX_RESULTS",
+                                                "CRUX_WORKSPACE"]
+                  and cspawn["env"]["CRUX_AGENT"] == "crux-close"
+                  and cspawn["env"]["CRUX_ATTEMPT"] == gclosed
+                  and os.path.realpath(cspawn["env"]["CRUX_RESULTS"])
+                      == os.path.realpath(os.path.join(vf[1], E.RESULTS_DIR, gclosed))
+                  and cspawn["env"]["CRUX_PROPOSAL"].endswith("close.json")
+                  and cspawn["env"]["CRUX_BRIEF"].endswith("close-brief.md")
+                  # the closer's cwd is the REPOSITORY, never a worktree that resume may have
+                  # already removed
+                  and os.path.realpath(cspawn["cwd"]) == os.path.realpath(vf[0])
+                  and gst["budget"]["model_calls"]["used"] == 2
+                  and len(_ev(good, "closer")) == 1
+                  and _ev(good, "closer")[0]["ok"] is True
+                  and _ev(good, "closer")[0]["reason"] is None
+                  and set(_ev(good, "closer")[0]) >= {"at", "event", "attempt", "ok",
+                                                      "reason", "detail"})))
+
+        check("acloser: the close brief is byte-identical over unchanged run state and carries no string from the anchor's problem statement",
+              _auto_ok(lambda: (
+                  bool(btext) and btext == btext2 and brief == brief2
+                  and leaked
+                  and AG_LEAK not in btext and AG_LEAK not in json.dumps(brief)
+                  and AG_LEAK_PS not in btext and AG_LEAK_PS not in json.dumps(brief)
+                  and brief["mode"] == "close"
+                  and brief["engine_version"] == E.ENGINE_VERSION
+                  and brief["attempt"]["id"] == gclosed
+                  and brief["results"] == f"{E.RESULTS_DIR}/{gclosed}/"
+                  and not os.path.isabs(brief["results"])
+                  # amendment (T): the findings paragraph lands in the NODE, where
+                  # `prose_words` sums every prose section against ONE PROSE_CAP budget, so a
+                  # findings cap of PROSE_CAP would put every closed attempt over cap
+                  and brief["schema"] == {"keys": list(E.AUTO_CLOSE_KEYS),
+                                          "ticks": list(E.AUTO_TICK_ALPHABET),
+                                          "findings_words": E.AUTO_CLOSE_FINDINGS_WORDS,
+                                          "report_bytes": E.AUTO_REPORT_BYTES}
+                  and E.AUTO_CLOSE_FINDINGS_WORDS == E.AUTO_BRIEF_BUDGET["findings_words"]
+                  and E.AUTO_CLOSE_FINDINGS_WORDS < E.PROSE_CAP
+                  and [c["graded"] for c in brief["checks"]] == [True, False]
+                  and _auto_msg(lambda: E.auto_close_brief(vf[1], vf[2], vplan, gticks))
+                      == f"auto close brief is per-attempt (got a 'question' for '{vf[2]}')"
+                  and _auto_msg(lambda: E.auto_close_brief(vf[1], gclosed, vplan, gticks[:1]))
+                      == f"auto close brief: 1 ticks for {len(vplan['checks'])} checks")))
+
+        check("acloser: the close brief instructs the JSON write as an addition to crux-close's table, suppressing nothing, and that agent is byte-identical",
+              _auto_ok(lambda: (
+                  "and also write that same proposal as one JSON object" in btext
+                  # the closer is a REUSED agent: the brief may add an output, never replace
+                  # the one the agent's own definition promises
+                  and re.search(r"do not (print|show|output)|instead of (printing|the table)"
+                                r"|skip the table|no table", btext, re.I) is None
+                  and "## Output" in btext and "## Checks" in btext and "## Results" in btext
+                  and str(E.AUTO_CLOSE_FINDINGS_WORDS) in btext
+                  and str(E.AUTO_REPORT_BYTES) in btext
+                  and "There is no verdict field: the verdict is derived." in btext
+                  and hashlib.sha256(read(os.path.join(
+                      REPO, "agents", "crux-close", "AGENT.md")).encode("utf-8")).hexdigest()
+                      == "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d")))
+
+        check("acloser: a valid close proposal ticks the prose checks while the engine's comparison ticks stand, and the verdict equals derive_verdict_15 over the merged vector",
+              _auto_ok(lambda: (
+                  len(gst["closed"]) == 1
+                  and "(found: graded by crux-close)"
+                      in _ag_ticked(vf[1], gclosed, "the baseline reproduces")
+                  and _ag_ticked(vf[1], gclosed, "the baseline reproduces").startswith("- [x]")
+                  # the engine's own comparison keeps ITS found string — the number, not the
+                  # agent — even though the proposal agreed with it
+                  and "graded by crux-close"
+                      not in _ag_ticked(vf[1], gclosed, "obj.score >= -0.5")
+                  and _ag_ticked(vf[1], gclosed, "obj.score >= -0.5").startswith("- [x]")
+                  and E.Vault(vf[1]).get(gclosed)["fm"]["verdict"]
+                      == _ag_derived(vf[1], gclosed)
+                  and E.Vault(vf[1]).get(gclosed)["fm"]["verdict"] == "supported"
+                  # the closer's findings REPLACED the engine's fixed template, rather
+                  # than being appended beside it
+                  and "Autopilot close. Objective"
+                      not in read(node_path(vf[1], gclosed))
+                  and "the baseline re-ran to the same number"
+                      in read(node_path(vf[1], gclosed))
+                  # and the whole node still fits the one prose budget it has (amendment T)
+                  and E.prose_words(E.Vault(vf[1]).get(gclosed)["body"], "idea")
+                      <= E.PROSE_CAP)))
+
+        # --------------------------------- the three ways a closer's answer is its own fault
+        cf = _ag_fixture(x0=2, closer="true", budget_attempts="1",
+                         agent="python3 dispatch.py step contradicting guidance")
+        contra = _loop_run("closer-contradict", cf[1], cf[2], cf[5])
+        mf = _ag_fixture(x0=2, closer="true", budget_attempts="1",
+                         agent="python3 dispatch.py step malformed guidance")
+        mal = _loop_run("closer-malformed", mf[1], mf[2], mf[5])
+        # the closer alone cannot start. `python3 stub_{agent}.py` would not do it — `python3`
+        # exists, so the child STARTS and exits 2, which is `closer-exit`, not `closer-start`.
+        # The one role's spawn is failed at the kernel boundary instead.
+        nf = _ag_fixture(x0=2, closer="true", retries="2", budget_attempts="1",
+                         agent="python3 dispatch.py " + AG_STUB_ARGS)
+        nrestore = _ag_no_start(A, "crux-close") if nf[0] else (lambda: None)
+        try:
+            nostart = _loop_run("closer-nostart", nf[1], nf[2], nf[5])
+        finally:
+            nrestore()
+        cret = [e for e in _ev(contra, "retry") if e.get("step") == "closer"]
+        nret = [e for e in _ev(nostart, "retry") if e.get("step") == "closer"]
+
+        check("acloser: a proposed tick contradicting a graded comparison refuses the proposal unretried, and an agreeing one is ignored",
+              _auto_ok(lambda: (
+                  len(_ev(contra, "closer")) == 1
+                  and _ev(contra, "closer")[0]["ok"] is False
+                  and _ev(contra, "closer")[0]["reason"] == "closer-contradiction"
+                  and "where the scorer's number grades it"
+                      in _ev(contra, "closer")[0]["detail"]
+                  and cret == []
+                  # refused WHOLE: the agreeing tick in the same file is not applied either
+                  and "graded by crux-close" not in read(
+                      node_path(contra["root"], (contra["state"] or {})["closed"][0]))
+                  and m_agree[0] == eng[0])))
+
+        check("acloser: a malformed close proposal is refused unretried, and a closer that cannot start is retried and then gives up",
+              _auto_ok(lambda: (
+                  len(_ev(mal, "closer")) == 1
+                  and _ev(mal, "closer")[0]["reason"] == "closer-schema"
+                  and [e for e in _ev(mal, "retry") if e.get("step") == "closer"] == []
+                  # only a failure to START is retried, under the plan's own `retries`
+                  and len(nret) == 2
+                  and [e["reason"] for e in nret] == ["closer-start", "closer-start"]
+                  and len(_ev(nostart, "closer")) == 1
+                  and _ev(nostart, "closer")[0]["reason"] == "closer-start"
+                  and _ev(nostart, "closer")[0]["detail"].startswith(
+                      "every agent command failed to start: ")
+                  and len(_ev(nostart, "failover")) >= 1
+                  and bool((nostart["state"] or {})["closed"]))))
+
+        check("acloser: every closer failure closes the attempt on the engine's vector with the template findings, never invalid-run for that reason alone",
+              _auto_ok(lambda: all(
+                  len((r["state"] or {})["closed"]) == 1
+                  and (r["state"] or {})["consecutive_invalid"] == 0
+                  and _ev(r, "violation") == []
+                  and E.Vault(r["root"]).get((r["state"] or {})["closed"][0])["fm"]["verdict"]
+                      == _ag_derived(r["root"], (r["state"] or {})["closed"][0])
+                  and E.Vault(r["root"]).get((r["state"] or {})["closed"][0])["fm"]["verdict"]
+                      != "invalid-run"
+                  and "graded by crux-close" not in read(
+                      node_path(r["root"], (r["state"] or {})["closed"][0]))
+                  # the findings are the engine's fixed template, never the words of a
+                  # proposal the engine refused
+                  and "the baseline re-ran to the same number" not in read(
+                      node_path(r["root"], (r["state"] or {})["closed"][0]))
+                  and E._section(E.Vault(r["root"]).get(
+                      (r["state"] or {})["closed"][0])["body"], "Findings").strip() != ""
+                  for r in (contra, mal, nostart))))
+
+        # `cmd_auto_ticks` grew one optional keyword and nothing else: the merged vector has to
+        # reach the node, and the driver may not be the second writer of a node file.
+        tf = gf                 # any tier-zero baseline serves, and gf is already built
+        tm = {"obj": {"score": {"value": -0.25}}}
+        t_auto = _auto_val(lambda: E.cmd_auto_ticks(tf[1], tf[4], tm), "<absent>")
+        t_none = _auto_val(lambda: E.cmd_auto_ticks(tf[1], tf[4], tm, ticks=None), "<absent>")
+        t_given = _auto_val(lambda: E.cmd_auto_ticks(
+            tf[1], tf[4], tm, ticks=[("x", "handed in"), ("x", "handed in")]), "<absent>")
+        check("acloser: cmd_auto_ticks with ticks=None is byte-identical to 05.2, and a vector handed in is written without recomputation",
+              _auto_ok(lambda: (
+                  t_auto == t_none and t_auto != "<absent>"
+                  and t_given == [("x", "handed in"), ("x", "handed in")]
+                  and "(found: handed in)" in read(node_path(tf[1], tf[4]))
+                  and _auto_msg(lambda: E.cmd_auto_ticks(
+                      tf[1], tf[4], tm, ticks=[("x", "one only")]))
+                      != "")))
+
+        # ------------- the close brief is INSIDE the failure contract, not in front of it
+        # `auto_close_brief` refuses a tick vector that does not match the plan's checks. The
+        # property `_closer_try` states is absolute — in every failure case the attempt closes
+        # on the engine's own vector — so a refusal here has to be a closer failure, never an
+        # exception unwinding the close and taking the run with it.
+        cctx = {"root": vf[1], "plan": vplan, "state": (good["state"] or {}), "qid": vf[2],
+                "repo": vf[0], "procs": {}, "lock_wait": 0.5, "t0": time.monotonic()}
+        shortticks = gticks[:1] if len(gticks) > 1 else [("-", "n/a")] * 9
+        badbrief = _auto_val(lambda: A._closer_try(cctx, gclosed, shortticks), {})
+        check("acloser: a close brief that cannot be assembled is a closer failure, never an exception out of the close",
+              _auto_ok(lambda: (
+                  badbrief.get("ok") is False
+                  and badbrief.get("reason") == "closer-brief"
+                  and "could not be assembled" in (badbrief.get("detail") or "")
+                  and badbrief.get("ticks") == {}
+                  and badbrief.get("findings") is None and badbrief.get("report") is None
+                  # and nothing was started for it
+                  and cctx["procs"] == {})))
+
+        # ------------- one byte of a child's output that is not UTF-8 must not end the run
+        bd = os.path.realpath(tempfile.mkdtemp(prefix="crux_bytes_"))
+        _AUTO_TRASH.append(bd)
+        bp = os.path.join(bd, "close.json")
+        with open(bp, "wb") as f:
+            f.write(b'{"ticks": {}, "findings": "caf\xe9", "report": "r"}')
+        soft = _auto_val(lambda: A._agent_file(bp), None)
+        hard = "did not raise"
+        try:
+            E.read(bp)
+        except ValueError as e:                # UnicodeDecodeError IS a ValueError
+            hard = type(e).__name__
+        except Exception as e:                 # pragma: no cover - wave-1 guard
+            hard = repr(e)
+        # both roles at once: the closer and the steward each write a proposal holding one
+        # byte that is not valid UTF-8, and the run has to finish anyway
+        yf = _ag_fixture(x0=0, mode="explore", closer="true", steward="true",
+                         steward_every="1", budget_attempts="2", retention="all",
+                         verifiables=AG_PROSE_VERIFIABLES,
+                         agent="python3 dispatch.py step bytes bytes")
+        ybytes = _loop_run("agent-bytes", yf[1], yf[2], yf[5])
+        yst = ybytes["state"] or {}
+        check("acloser: a proposal holding a byte that is not UTF-8 is read with replacement, so neither the closer nor the steward can end the run",
+              _auto_ok(lambda: (
+                  # the engine's own reader is strict, which is exactly why the driver may
+                  # not use it on anything a model wrote
+                  hard == "UnicodeDecodeError"
+                  and isinstance(soft, str) and "\ufffd" in soft
+                  and A._agent_file(os.path.join(bd, "no-such-file.json")) is None
+                  # the run reached its own stop, with both roles logged and attempts closed
+                  and ybytes["error"] == ""
+                  and bool(yst.get("closed"))
+                  and (yst.get("stop") or {}).get("reason") in E.AUTO_STOP_REASONS
+                  and len(_ev(ybytes, "closer")) >= 1
+                  and len(_ev(ybytes, "steward")) >= 1)))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"acloser: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_steward():
+    """Spec 05 PRD 05.3 §H — the fifth act, and the one agent that advises rather than acts.
+
+    The steward is the only role whose output is not per attempt, which is why the PI had to
+    rule its fifth act in by hand at sign-off. Everything about it is built so that it cannot
+    cost a run: it never writes the vault except through `ask`, never edits the plan the PI
+    signed, never stops a run, and a steward that cannot start, says nothing, or says something
+    outside its two-key schema is logged and walked past. Advice a run can die for want of is
+    worse than no advice."""
+    print("\n# autopilot — the steward (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # ------------------------------------------------------- the proposal, branch by branch
+        sp = {"islands": {"q2": {}, "q3": {}}}
+        p3, p2 = {"island_cap": 3}, {"island_cap": 2}
+
+        def _sp(raw, plan=None, state=None):
+            return _auto_val(lambda: E.auto_steward_proposal(raw, plan or p3, state or sp), {})
+
+        isl = {"title": "a cheaper surrogate", "problem": "the scorer dominates the cost"}
+        over_t = " ".join(["word"] * (E.AUTO_TITLE_WORDS + 1))
+        over_p = " ".join(["word"] * (E.PROSE_CAP + 1))
+        sbranches = (
+            ("no file at all is steward-missing", None, p3,
+             "steward-missing", "the steward left no proposal.json in its workspace"),
+            ("a JSON array is steward-unparseable", "[1]", p3,
+             "steward-unparseable", "proposal.json is not one JSON object (got list)"),
+            ("a key outside the schema is steward-schema", json.dumps(
+                {"guidance": "go slower", "verdict": "supported"}), p3, "steward-schema",
+             "proposal.json carries keys outside guidance, island: verdict"),
+            ("an empty object is steward-empty", "{}", p3,
+             "steward-empty", "proposal.json proposes neither guidance nor an island"),
+            ("blank guidance is steward-schema", json.dumps({"guidance": "   "}), p3,
+             "steward-schema", "proposal.json guidance is not a non-empty string"),
+            ("guidance over the prose cap is steward-schema", json.dumps(
+                {"guidance": over_p}), p3, "steward-schema",
+             f"the guidance runs to {E.PROSE_CAP + 1} words, over the {E.PROSE_CAP}-word cap"),
+            ("an island of the wrong shape is steward-schema", json.dumps(
+                {"island": {"title": "t"}}), p3, "steward-schema",
+             "proposal.json island must be an object with exactly title and problem, both "
+             "non-empty strings"),
+            ("an island title over its cap is steward-schema", json.dumps(
+                {"island": dict(isl, title=over_t)}), p3, "steward-schema",
+             f"the island title runs to {E.AUTO_TITLE_WORDS + 1} words, over the "
+             f"{E.AUTO_TITLE_WORDS}-word cap"),
+            ("an island problem over the prose cap is steward-schema", json.dumps(
+                {"island": dict(isl, problem=over_p)}), p3, "steward-schema",
+             f"the island problem statement runs to {E.PROSE_CAP + 1} words, over the "
+             f"{E.PROSE_CAP}-word cap"),
+            ("an island at island_cap is steward-cap", json.dumps({"island": isl}), p2,
+             "steward-cap", "the run already holds 2 islands, at island_cap 2"),
+        )
+        for label, raw, plan, reason, msg in sbranches:
+            r = _sp(raw, plan)
+            check(f"asteward: {label}",
+                  r.get("ok") is False and r.get("reason") == reason
+                  and r.get("detail") == msg
+                  and r.get("guidance") is None and r.get("island") is None)
+        sok = _sp(json.dumps({"guidance": "prefer  one-step\nmoves", "island": isl}))
+        check("asteward: a proposal inside the schema normalizes its whitespace and carries only the two keys",
+              _auto_ok(lambda: (
+                  sok["ok"] is True and sok["reason"] is None
+                  and sok["guidance"] == "prefer one-step moves"
+                  and sok["island"] == {"title": "a cheaper surrogate",
+                                        "problem": "the scorer dominates the cost"}
+                  and E.AUTO_STEWARD_KEYS == ("guidance", "island")
+                  and E.AUTO_ISLAND_KEYS == ("title", "problem")
+                  and E.AUTO_NO_STEWARD == "No steward guidance yet."
+                  and E.AUTO_BRIEF_BUDGET["steward"] == 10
+                  and E.AUTO_BRIEF_BUDGET["ledger"] == 40
+                  and len(E.AUTO_BRIEF_SLOTS) == 14
+                  and len(E.AUTO_BRIEF_CHECKS) == 5)))
+
+        # -------------------------- the switch is legal on a Climb plan, and simply never fires
+        cl = _ag_fixture(x0=0, mode="climb", steward="true", steward_every="1",
+                         budget_attempts="1", agent="python3 dispatch.py " + AG_STUB_ARGS)
+        climb = _loop_run("steward-climb", cl[1], cl[2], cl[5])
+        cst = climb["state"] or {}
+        check("asteward: auto run accepts steward true, and a Climb plan with the switch on completes with no steward invocation and no steward event",
+              _auto_ok(lambda: (
+                  climb["error"] == ""
+                  and bool(cst.get("closed"))
+                  and _loop_stop(climb)["reason"] in E.AUTO_STOP_REASONS
+                  # a run may be moved from Climb to Explore mid-flight, so the switch being
+                  # on is not a mistake to refuse — it is advice nobody asked for yet
+                  and _ev(climb, "steward") == []
+                  and cst["steward"]["invocations"] == 0
+                  and cst["steward"]["guidance"] == []
+                  and cst["steward"]["islands"] == []
+                  and not os.path.isdir(os.path.join(cl[1], E.AUTO_DIR, cl[2], "steward")))))
+
+        # ---------------------------------------------- when it runs, in Explore, and how often
+        ef = _ag_fixture(x0=0, mode="explore", islands=2, steward="true", steward_every="2",
+                         stall_attempts="2", budget_attempts="6", retention="all",
+                         agent="python3 dispatch.py still guidance guidance")
+        eleak = _auto_val(lambda: _ag_plant_leak(ef[1], ef[2]), False)
+        erestore, eseen = (lambda: None), []
+        if ef[0]:
+            erestore, eseen = _ag_spawns(A)
+        try:
+            exp = _loop_run("steward-explore", ef[1], ef[2], ef[5])
+        finally:
+            erestore()
+        est = exp["state"] or {}
+        sev = _ev(exp, "steward")
+        sdir = os.path.join(ef[1] or "", E.AUTO_DIR, ef[2] or "", "steward")
+        check("asteward: in Explore the steward runs on steward_requested and otherwise every steward_every closed attempts, never twice in one window and never two at once",
+              _auto_ok(lambda: (
+                  len(sev) >= 1
+                  and len(sev) == est["steward"]["invocations"]
+                  and len(sev) == len(_ag_role(eseen, "crux-auto-steward"))
+                  # the workspaces are numbered 1..n with no gaps and no collision, which is
+                  # what "never two at once" looks like on disk: two live stewards would both
+                  # be invocation n
+                  and sorted(os.listdir(sdir), key=lambda s: int(s)) == [
+                      str(i) for i in range(1, est["steward"]["invocations"] + 1)]
+                  # the window closes whether the steward ran or not, so it can never fire
+                  # twice for the same batch of closed attempts
+                  and est["steward"]["last_closed"] <= len(est["closed"])
+                  and len(est["closed"]) - est["steward"]["last_closed"] < 2
+                  and est["steward_requested"] is False
+                  and len(_ev(exp, "escalated")) >= 1
+                  and A.PROC_STEWARD == "steward"
+                  and A.PROC_CLOSE == "{hid}:close")))
+
+        eplan = _loop_load_plan(ef[1], ef[2]) or {}
+        sb = _auto_val(lambda: E.auto_steward_brief(ef[1], eplan, est, exp["events"]))
+        sb2 = _auto_val(lambda: E.auto_steward_brief(ef[1], eplan, est, exp["events"]))
+        stext = _auto_val(lambda: E.auto_steward_brief_text(sb), "")
+        stext2 = _auto_val(lambda: E.auto_steward_brief_text(sb2), "")
+        check("asteward: the steward brief is byte-stable over unchanged run state and carries no problem statement and no attempt diff",
+              _auto_ok(lambda: (
+                  bool(stext) and stext == stext2 and sb == sb2
+                  and eleak
+                  and AG_LEAK not in stext and AG_LEAK not in json.dumps(sb)
+                  and AG_LEAK_PS not in stext and AG_LEAK_PS not in json.dumps(sb)
+                  and sb["mode"] == "steward"
+                  and sb["anchor"]["id"] == ef[2]
+                  and sb["island_cap"] == eplan["island_cap"]
+                  and sb["islands_open"] == len(est["islands"])
+                  and sb["schema"] == {"keys": list(E.AUTO_STEWARD_KEYS),
+                                       "island": list(E.AUTO_ISLAND_KEYS),
+                                       "title_words": E.AUTO_TITLE_WORDS,
+                                       "problem_words": E.PROSE_CAP}
+                  # every score is carried as the address it came from, and NOTHING else is
+                  # read from a node body — no findings prose, no diff, no code
+                  and all(r["best"]["score"] is None
+                          or set(r["best"]["score"]) == {"value", "addr"}
+                          for r in sb["islands"])
+                  and "diff --git" not in stext and "params.json" not in stext
+                  and len(sb["ledger"]) <= E.AUTO_BRIEF_BUDGET["ledger"]
+                  and all(s in stext for s in ("## Goal", "## Objective", "## Islands",
+                                               "## Budget", "## The PI's guidance",
+                                               "## Earlier steward guidance", "## Ledger",
+                                               "## Output"))
+                  and E.auto_brief_verify(ef[1], sb) == []
+                  and _auto_msg(lambda: E.auto_steward_brief(
+                      ef[1], dict(eplan, island_cap=None), est, exp["events"]))
+                      == "auto steward brief: required slot 'island_cap' is absent or empty")))
+
+        # --------------------------- guidance: recorded in state, rendered in every later brief
+        gf = _ag_fixture(x0=0, mode="explore", steward="true", steward_every="1",
+                         budget_attempts="3", retention="all",
+                         agent="python3 dispatch.py still valid guidance")
+        gplan0 = _auto_val(lambda: read(os.path.join(gf[1], gf[5])), "")
+        # The steward's success path records NO event until the steward exits, so the window
+        # bookkeeping and the model call charged at the spawn would live in memory alone: a
+        # kill between the two re-opens the same window on resume and pays for it twice.
+        gtrace = []
+        gsave, gspawn = _auto_val(lambda: A._save_state), _auto_val(lambda: A._spawn)
+        grec = _auto_val(lambda: A._record)
+        if None not in (gsave, gspawn, grec):
+            def _gsv(ctx, _o=gsave):
+                gtrace.append("save")
+                return _o(ctx)
+
+            def _grc(ctx, event, fields, work=None, _o=grec):
+                gtrace.append("record:" + str(event))
+                return _o(ctx, event, fields, work=work)
+
+            def _gsp(argv, cwd, env, log_path, *aa, _o=gspawn, **kk):
+                if (env or {}).get("CRUX_AGENT") == "crux-auto-steward":
+                    gtrace.append("steward-spawn")
+                return _o(argv, cwd, env, log_path, *aa, **kk)
+            A._save_state, A._spawn, A._record = _gsv, _gsp, _grc
+        try:
+            gr = _loop_run("steward-guidance", gf[1], gf[2], gf[5])
+        finally:
+            if None not in (gsave, gspawn, grec):
+                A._save_state, A._spawn, A._record = gsave, gspawn, grec
+        gst = gr["state"] or {}
+        gplan = _loop_load_plan(gf[1], gf[2]) or {}
+        briefs = []
+        for h in (gst.get("closed") or []):
+            p = _auto_val(lambda hh=h: os.path.join(
+                A.workspace_path(gf[1], gplan, hh), A.BRIEF_NAME))
+            if p and os.path.isfile(p):
+                briefs.append(read(p))
+        WORDS = "prefer one-step moves once the objective is within a step of the bar"
+        check("asteward: a guidance proposal is recorded in state.json, appears in every later brief in its own labelled section, and leaves the plan byte-unchanged",
+              _auto_ok(lambda: (
+                  bool(gst["steward"]["guidance"])
+                  and all(set(g) == {"at", "author", "text"}
+                          for g in gst["steward"]["guidance"])
+                  and all(g["author"] == "crux-auto-steward"
+                          for g in gst["steward"]["guidance"])
+                  and gst["steward"]["guidance"][0]["text"] == WORDS
+                  and any(e["ok"] is True and e["guidance"] == WORDS
+                          for e in _ev(gr, "steward"))
+                  # its OWN labelled section, attributed and stamped: a worker has to be able
+                  # to see who said what, because the PI's guidance and an agent's advice are
+                  # not the same kind of instruction
+                  and len(briefs) >= 2
+                  and any("## Steward guidance" in b and WORDS in b
+                          and "crux-auto-steward" in b for b in briefs)
+                  and briefs[0].index("## Steward guidance") > briefs[0].index("## Guidance")
+                  # `auto guide` is the PI's verb: the plan document stays theirs alone
+                  and read(os.path.join(gf[1], gf[5])) == gplan0
+                  and E.auto_approval(gplan0)["state"] == "approved")))
+
+        # ---------------------------- and the three ways it fails without costing the run a thing
+        bf = _ag_fixture(x0=0, mode="explore", steward="true", steward_every="1",
+                         budget_attempts="3",
+                         agent="python3 dispatch.py still valid alternate")
+        bad = _loop_run("steward-bad", bf[1], bf[2], bf[5])
+        # `python3 stub_{agent}.py` would not do it: `python3` exists, so the steward
+        # STARTS and exits 2. The one role's spawn is failed at the kernel boundary.
+        nf = _ag_fixture(x0=0, mode="explore", steward="true", steward_every="1",
+                         budget_attempts="3",
+                         agent="python3 dispatch.py still valid guidance")
+        nrest = _ag_no_start(A, "crux-auto-steward") if nf[0] else (lambda: None)
+        try:
+            nos = _loop_run("steward-nostart", nf[1], nf[2], nf[5])
+        finally:
+            nrest()
+        ctl = _ag_fixture(x0=0, mode="explore", steward="false", budget_attempts="3",
+                          agent="python3 dispatch.py still valid guidance")
+        control = _loop_run("steward-control", ctl[1], ctl[2], ctl[5])
+        reasons = sorted({e["reason"] for e in _ev(bad, "steward") + _ev(nos, "steward")
+                          if not e["ok"]})
+        check("asteward: a proposal outside the schema, a steward that cannot start and a steward that returns nothing are each logged and the run continues",
+              _auto_ok(lambda: (
+                  len(_ev(bad, "steward")) >= 2
+                  and all(e["ok"] is False and e["guidance"] is None and e["island"] is None
+                          for e in _ev(bad, "steward"))
+                  and reasons == ["steward-missing", "steward-schema", "steward-start"]
+                  and all(e["detail"] for e in _ev(bad, "steward") + _ev(nos, "steward"))
+                  # a run that dies for want of advice is worse than a run without it
+                  and len((bad["state"] or {})["closed"])
+                      == len((control["state"] or {})["closed"])
+                  and len((nos["state"] or {})["closed"])
+                      == len((control["state"] or {})["closed"])
+                  and _loop_stop(bad)["reason"] == _loop_stop(control)["reason"]
+                  and _loop_stop(nos)["reason"] == _loop_stop(control)["reason"]
+                  and (bad["state"] or {})["stop"]["reason"] != "abort")))
+
+        # ------------------------------------------------------------- the fifth act, exercised
+        # two plan islands plus the steward's third: `budget_attempts="4"` stops the run
+        # before the round-robin ever reaches the new one, so the brief that names it is
+        # never written and the criterion tests nothing.
+        isf = _ag_fixture(x0=0, mode="explore", islands=2, steward="true", steward_every="1",
+                          island_cap="3", budget_attempts="5", stall_attempts="20",
+                          retention="all",
+                          agent="python3 dispatch.py still valid island")
+        iplan0 = _auto_val(lambda: read(os.path.join(isf[1], isf[5])), "")
+        island = _loop_run("steward-island", isf[1], isf[2], isf[5])
+        ist = island["state"] or {}
+        iplan = _loop_load_plan(isf[1], isf[2]) or {}
+        opened = (ist.get("steward") or {}).get("islands") or []
+        qi = opened[0] if opened else ""
+        ibriefs = [read(p) for p in (
+            _auto_val(lambda: [os.path.join(A.workspace_path(isf[1], iplan, h), A.BRIEF_NAME)
+                               for h in ist["closed"]], []) or []) if os.path.isfile(p)]
+        check("asteward: an island proposal is refused at island_cap and below it files a sub-question, cuts its branch at base, joins the round-robin and gets an attempt whose brief names it",
+              _auto_ok(lambda: (
+                  len(opened) == 1
+                  and E.Vault(isf[1]).get(qi).type == "question"
+                  and E.Vault(isf[1]).get(qi).parent == isf[2]
+                  and list(ist["islands"])[-1] == qi
+                  and ist["islands"][qi]["branch"] == A.island_branch(isf[2], qi)
+                  # cut at `base`, exactly as `open_run` cuts the plan's own islands
+                  and _git(isf[0], "rev-parse", A.island_branch(isf[2], qi)) == ist["base"]
+                  and ist["islands"][qi]["pointer"] == ist["base"]
+                  and set(ist["islands"][qi]) == _ISLAND_KEYS
+                  and len([e for e in _ev(island, "steward")
+                           if e["ok"] and e["island"] == qi]) == 1
+                  # it joins the round-robin, so a later attempt's brief is written FOR it
+                  and any(qi in b for b in ibriefs)
+                  # the plan's `islands:` field is hashed, so writing it would clear the PI's
+                  # signature mid-run — the island lives in state.json instead
+                  and read(os.path.join(isf[1], isf[5])) == iplan0
+                  and qi not in iplan["islands"]
+                  and E.auto_approval(iplan0)["state"] == "approved"
+                  # and the very brief that island needs is one 05.2 refused
+                  and _auto_val(lambda: E.auto_brief(
+                      isf[1], isf[4], island=qi,
+                      islands=list(ist["islands"])))["island"]["id"] == qi
+                  and _auto_msg(lambda: E.auto_brief(isf[1], isf[4], island=qi))
+                      == (f"auto brief: '{qi}' is neither the anchor nor an island of the "
+                          f"flight plan"))))
+
+        check("asteward: the window and the charge reach state.json at the spawn, not at the next event",
+              _auto_ok(lambda: (
+                  "steward-spawn" in gtrace
+                  # the VERY next thing the driver does — before any further ledger event —
+                  # is write the state, so a kill in between cannot re-open the window
+                  and gtrace[gtrace.index("steward-spawn") + 1] == "save"
+                  and any(t.startswith("record:") for t in gtrace))))
+
+        # ---------------- a steward that comes due while every command is cooling waits a pass
+        # `_wait_for_cooldown` polls WITHOUT dispatching exits, so a steward that entered it
+        # would hold the whole loop for up to `agent_cooldown` while finished workers sat
+        # unclosed. For the worker walk that wait is unavoidable; for advice it is pure loss.
+        scmds = _auto_val(lambda: E.auto_command_list(gplan), [])
+        soon = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() + 5))
+        sctx = {"root": gf[1], "plan": gplan, "state": json.loads(json.dumps(gst)),
+                "qid": gf[2], "repo": gf[0], "procs": {}, "lock_wait": 0.5,
+                "t0": time.monotonic()}
+        sctx["state"]["agents"] = {c: {"cooling_until": soon, "hits": 1} for c in scmds}
+        sinv = ((sctx["state"].get("steward") or {}).get("invocations") or 0)
+        t_cool = time.monotonic()
+        _auto_val(lambda: A._steward_try(sctx))
+        t_cool = time.monotonic() - t_cool
+        check("asteward: a steward that comes due while every command is cooling is skipped rather than held in the cooldown wait",
+              _auto_ok(lambda: (
+                  bool(scmds)
+                  and all(A._cooling(sctx, c) for c in scmds)
+                  and t_cool < 2.0
+                  and sctx.get("steward_proc") is None
+                  and sctx["procs"] == {}
+                  # untouched, so it simply comes due again on the next pass
+                  and ((sctx["state"].get("steward") or {}).get("invocations") or 0) == sinv
+                  and not os.path.isdir(os.path.join(gf[1], E.AUTO_DIR, gf[2],
+                                                     A.STEWARD_DIR, str(sinv + 1))))))
+
+        # ---------------------------- and a git that refuses the island branch is logged, not
+        # allowed to unwind the record and leave an orphan question under the anchor
+        iws = os.path.realpath(tempfile.mkdtemp(prefix="crux_stwd_"))
+        _AUTO_TRASH.append(iws)
+        write(os.path.join(iws, A.STEWARD_PROPOSAL_NAME), json.dumps(
+            {"island": {"title": "a branch that cannot be cut",
+                        "problem": "the island act has to survive a git that refuses"}}))
+        # room under the cap, or the proposal is refused before the git is ever reached
+        ictx = {"root": isf[1], "plan": dict(iplan, island_cap=9),
+                "state": json.loads(json.dumps(ist)),
+                "qid": isf[2], "repo": isf[0], "procs": {}, "lock_wait": 0.5,
+                "t0": time.monotonic(), "steward_proc": None, "steward_ws": iws,
+                "steward_command": "python3 dispatch.py still valid island"}
+        iorig, iraised = _auto_val(lambda: A._git), ""
+        if iorig is not None:
+            def _gbad(cwd, *aa, _o=iorig, **kk):
+                if aa and aa[0] == "branch":
+                    raise E.CruxError(f"git branch failed in {cwd}: a refusing git")
+                return _o(cwd, *aa, **kk)
+            A._git = _gbad
+        try:
+            A._steward_apply(ictx)
+        except Exception as e:                               # pragma: no cover - the defect
+            iraised = repr(e)
+        finally:
+            if iorig is not None:
+                A._git = iorig
+        ilast = _auto_val(lambda: json.loads(
+            read(_loop_ledger_path(isf[1], isf[2])).strip().splitlines()[-1]), {})
+        check("asteward: a git that refuses the island branch is logged and the run carries on, rather than unwinding the record",
+              _auto_ok(lambda: (
+                  iraised == ""
+                  and ilast.get("event") == "steward"
+                  and ilast.get("ok") is False
+                  and ilast.get("reason") == "steward-island"
+                  and "could not be cut" in (ilast.get("detail") or "")
+                  and ilast.get("island") is None
+                  # no half-open island: the state the driver carries on with has exactly the
+                  # islands it had before
+                  and list(ictx["state"]["islands"]) == list(ist["islands"]))))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"asteward: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_report():
+    """Spec 05 PRD 05.3 §G — every attempt leaves a report, and the node links it.
+
+    `crux validate` already complains when a hypothesis has files under `results/` and no
+    report linked under `## Artifacts`. Before this slice an autopilot run produced exactly
+    that shape for every attempt it closed, so a clean vault and a finished run were mutually
+    exclusive. The fix is the report, written before `cmd_close` runs and linked in the same
+    lock hold — a link written afterwards is a second writer of a node the engine just
+    finished with."""
+    print("\n# autopilot — the run report (spec 05, PRD 05.3)")
+    try:
+        A = _auto_mod()
+
+        # ------------------------------------------------- the fixed template, byte for byte
+        rplan = {"address": "obj.score", "direction": "max", "bar": -0.5}
+        tk = [("x", "-0.25"), (" ", "0.5"), ("-", "no number")]
+        want = ("# Attempt h9\n"
+                "\n"
+                "Objective obj.score = -0.25 (direction max, bar -0.5).\n"
+                "\n"
+                "## Checks\n"
+                "\n"
+                "- [x] check 1: met, found -0.25.\n"
+                "- [ ] check 2: unmet, found 0.5.\n"
+                "- [-] check 3: n/a, found no number.\n")
+        got = _auto_val(lambda: E.auto_report_text(rplan, "h9", -0.25, tk), "")
+        na = _auto_val(lambda: E.auto_report_text(rplan, "h9", None, tk), "")
+        fail = _auto_val(lambda: E.auto_report_text(rplan, "h9", -0.25, tk,
+                                                    failure="the worker\n exited   1"), "")
+        check("areport: the no-closer report is a fixed template, byte for byte, and speaks the failure when there was one",
+              _auto_ok(lambda: (
+                  got == want
+                  and "Objective obj.score = n/a (direction max, bar -0.5)." in na
+                  and "## Failure" not in got
+                  and fail == want.rstrip("\n") + "\n\n## Failure\n\nthe worker exited 1.\n"
+                  and E.AUTO_REPORT_BYTES == 20000)))
+
+        # -------------------------------------------------- one run each way, and the link
+        onf = _ag_fixture(x0=2, closer="true", budget_attempts="1",
+                          agent="python3 dispatch.py " + AG_STUB_ARGS)
+        on = _loop_run("report-on", onf[1], onf[2], onf[5])
+        off = _ag_fixture(x0=2, budget_attempts="1",
+                          agent="python3 dispatch.py " + AG_STUB_ARGS)
+        offr = _loop_run("report-off", off[1], off[2], off[5])
+
+        def _linked(run, root):
+            closed = (run["state"] or {}).get("closed") or []
+            if not closed:
+                return False
+            for h in closed:
+                arts = E.parse_artifacts(E.Vault(root).get(h)["body"])
+                rel = f"{E.RESULTS_DIR}/{h}/{E.AUTO_REPORT_FILE}"
+                if not [a for a in arts if a["path"] == rel and a["kind"] == "report"]:
+                    return False
+                if not os.path.isfile(os.path.join(root, rel)):
+                    return False
+                if os.path.getsize(os.path.join(root, rel)) > E.AUTO_REPORT_BYTES:
+                    return False
+            return True
+
+        msgs_on = _auto_val(lambda: E.cmd_validate(onf[1]), [])
+        msgs_off = _auto_val(lambda: E.cmd_validate(off[1]), [])
+
+        def _missing(msgs, run):
+            """`no report is linked` on an attempt THIS RUN closed.
+
+            Every tier-zero fixture also carries a baseline closed BY HAND, with metrics under
+            `results/` and no report — deliberately, because a fixture built with the code
+            under test proves nothing. PRD-25 is about the attempts the driver closed, so the
+            baseline's own standing problem is not this criterion's to answer."""
+            closed = set((run["state"] or {}).get("closed") or [])
+            return [m for nid, m in msgs
+                    if "no report is linked" in m and nid in closed]
+        check("areport: every attempt node links results/<hid>/report.md under Artifacts with and without a closer, and validate reports no missing-report problem",
+              _auto_ok(lambda: (
+                  _linked(on, onf[1]) and _linked(offr, off[1])
+                  and _missing(msgs_on, on) == []
+                  and _missing(msgs_off, offr) == []
+                  # and the run did close attempts, so the two lines above are not vacuous
+                  and bool((on["state"] or {}).get("closed"))
+                  and bool((offr["state"] or {}).get("closed"))
+                  # with a closer the report is the closer's words; without one it is the
+                  # engine's template — either way the file is there and the node points at it
+                  and "the closer wrote this line" in read(os.path.join(
+                      onf[1], E.RESULTS_DIR, (on["state"] or {})["closed"][0],
+                      E.AUTO_REPORT_FILE))
+                  and read(os.path.join(
+                      off[1], E.RESULTS_DIR, (offr["state"] or {})["closed"][0],
+                      E.AUTO_REPORT_FILE)).startswith("# Attempt "))))
+
+        # the link is idempotent and touches nothing else on the node — a resume runs
+        # `_step_close` again, so linking twice has to be a no-op rather than two bullets
+        h1 = ((offr["state"] or {}).get("closed") or [""])[0]
+        rel1 = _auto_val(lambda: f"{E.RESULTS_DIR}/{h1}/{E.AUTO_REPORT_FILE}",
+                         f"{E.RESULTS_DIR}/{h1}/report.md")
+        before = _auto_val(lambda: read(node_path(off[1], h1)), "")
+        line1 = _auto_val(lambda: E.auto_link_report(off[1], h1, rel1), "")
+        again = _auto_val(lambda: read(node_path(off[1], h1)), "")
+        drift = _auto_val(lambda: E.lock_drift(E.Vault(off[1]).get(h1)), "<absent>")
+        noart = _auto_val(lambda: _ag_strip_artifacts(off[1], off[4]), False)
+        check("areport: linking the same report twice rewrites nothing, leaves the lock undrifted, and refuses a node that cannot hold a link",
+              _auto_ok(lambda: (
+                  bool(line1) and line1 == f"- [Report]({rel1})"
+                  and before == again and before != ""
+                  and not drift
+                  and _auto_msg(lambda: E.auto_link_report(off[1], off[2], rel1))
+                      == f"auto link report applies to a hypothesis (got a 'question' "
+                         f"for '{off[2]}')"
+                  and noart
+                  and _auto_msg(lambda: E.auto_link_report(off[1], off[4], rel1))
+                      == f"{off[4]} has no ## Artifacts section to link into")))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"areport: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def _ag_strip_artifacts(root, hid):
+    """Remove a node's whole `## Artifacts` section, and say whether it is gone.
+
+    The refusal for a node with nowhere to link is otherwise untestable: every node the engine
+    writes carries the section, so the only witness is one a test took it away from."""
+    p = node_path(root, hid)
+    t = read(p)
+    t = re.sub(r"\n## Artifacts\n.*?(?=\n## |\n<!-- crux:ledger:start -->|\Z)", "\n", t,
+               flags=re.S)
+    write(p, t)
+    return "## Artifacts" not in read(p)
 
 
 def run_cli_help():
@@ -12255,6 +14247,12 @@ def main():
     run_auto_stops()
     run_auto_leash()
     run_auto_loop_purity()
+    run_auto_agents()
+    run_auto_cooldown()
+    run_auto_probe()
+    run_auto_closer()
+    run_auto_steward()
+    run_auto_report()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
