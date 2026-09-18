@@ -12339,8 +12339,14 @@ AG_NO_SUCH_BINARY = "no_such_agent_binary"
 # attempt worktree is cut from a commit — so the same relative argv[0] resolves for one and not
 # for the other. This is the only shape that reaches §3.3's abort, because `auto_probe_argv` and
 # `auto_agent_argv` share argv[0] and §3.9 otherwise aborts the run first.
-AG_UNCOMMITTED = ("./uncommitted_a.sh", "./uncommitted_b.sh")
-AG_UNCOMMITTED_SH = "#!/bin/sh\nexit 0\n"
+# Windows has no shebang: CreateProcess cannot run a `.sh`, so there the PROBE fails too and
+# the run aborts under §3.9 before the walk — the very path this fixture exists to avoid. A
+# `.bat` is executable by CreateProcess, and Windows searches the current directory, so the
+# `./` POSIX needs (a bare name is not on PATH there) is dropped. `os.name == "nt"` is the
+# idiom autopilot.py already uses.
+AG_UNCOMMITTED = (("uncommitted_a.bat", "uncommitted_b.bat") if os.name == "nt"
+                  else ("./uncommitted_a.sh", "./uncommitted_b.sh"))
+AG_UNCOMMITTED_SH = "@echo off\r\nexit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
 
 
 def _ag_uncommitted(repo):
@@ -12350,7 +12356,7 @@ def _ag_uncommitted(repo):
             return
         p = os.path.join(repo, name.lstrip("./"))
         write(p, AG_UNCOMMITTED_SH)
-        os.chmod(p, 0o755)
+        os.chmod(p, 0o755)      # a no-op on Windows, where the .bat extension is what counts
 
 
 def _ag_fixture(stubs=AG_ALL_STUBS, **kw):
