@@ -1437,10 +1437,13 @@ def run_webui():
     shutil.rmtree(root, ignore_errors=True)
 
     # -- pure-read at the browser layer: the cockpit only ever GETs (the snapshot poll, the
-    #    lazy wiki-page route, and the artifact/report file route — each relaxation
-    #    pre-registered in a PRD), never mutates the vault (no fetch method override).
-    check("webui: app.js is pure-read (three GETs: snapshot + wiki page + file, no write verbs)",
-          app_js.count("fetch(") == 3 and 'fetch("snapshot.json"' in app_js
+    #    lazy wiki-page route, the artifact/report file route, and 05.4's /auto.json run
+    #    reader — each relaxation pre-registered in a PRD), never mutates the vault (no fetch
+    #    method override). The COUNT is the load-bearing half: it is what makes "no undeclared
+    #    route was added" checkable, so a new reader must come here and be named before it ships.
+    check("webui: app.js is pure-read (four GETs: snapshot + auto + wiki page + file, no write verbs)",
+          app_js.count("fetch(") == 4 and 'fetch("snapshot.json"' in app_js
+          and 'fetch("auto.json"' in app_js
           and "/wiki/" in app_js and "/file/" in app_js and "method:" not in app_js)
 
     # ---------------------------------------------------------------- v0.5 cockpit contract
@@ -4708,8 +4711,8 @@ def run_task_gui():
     html = read(os.path.join(HERE, "webui", "index.html"))
     css = read(os.path.join(HERE, "webui", "style.css"))
     tabs = re.findall(r'data-tab="([a-z]+)"', html)
-    check("ui: the tab list is tree, wiki and the taskhub — RD merged in, not beside",
-          set(tabs) == {"tree", "wiki", "tasks"})
+    check("ui: the tab list is tree, wiki, the taskhub and autopilot — RD merged in, not beside",
+          set(tabs) == {"tree", "wiki", "tasks", "auto"})
     check("ui: the taskhub tab is NAMED Taskhub",
           ">Taskhub<" in html)
     check("ui: the cockpit knows the taskhub is inert when absent",
@@ -13977,6 +13980,764 @@ def _ag_strip_artifacts(root, hid):
     return "## Artifacts" not in read(p)
 
 
+# --------------------------------------------------------------------------- 05.4, the cockpit
+# Spec 05 §15, PRD 05.4 — the Autopilot tab's BACKEND: `engine.auto_cockpit`,
+# `engine.auto_portfolio`, the six constants, the `/auto.json` route and the snapshot-isolation
+# guarantees.
+#
+# Written from the PRD's acceptance criteria and the interface contract ALONE, before any of it
+# existed — the same rule the 05.x sections above were written under, and for the same reason: a
+# test written from the code passes for the code that exists rather than for the thing that was
+# asked for. Every assertion that names an interface the engine may not carry yet goes through
+# `_auto_ok` / `_auto_val` / `_auto_msg`, so an absent name costs exactly its own check and never
+# the section.
+AUTO_RUN_KEYS_PINNED = ("anchor", "run", "plan", "mode", "opened", "updated", "liveness",
+                        "objective", "stop", "budget", "islands", "best", "in_flight",
+                        "agents", "steward", "attempts", "portfolio", "events", "event_count")
+AUTO_ATTEMPT_KEYS_PINNED = ("id", "attempt_no", "island", "parent", "builds_on", "title",
+                            "score", "seed", "verdict", "phase", "at")
+# serve.py gains a route and a cache triple and NO import. Both top-level import lines are pinned
+# WHOLE rather than by module set: the stdlib-only check in run_serve reads a set of module names,
+# and a new name smuggled in beside an existing one on the same line would pass a set test.
+# (The plan's criterion spells this `grep -c '^import ' serve.py` -> 1; the file in fact carries
+# two such lines, `import engine` being the second, so the pin is the pair.)
+SERVE_IMPORT_LINES = ("import os, sys, json, socket, shutil, socketserver, threading, "
+                      "webbrowser, http.server, urllib.parse, hashlib",
+                      "import engine")
+SNAPSHOT_TOP_KEYS = {"engine_version", "crux_version", "update", "limits", "project", "nodes",
+                     "tree", "queue", "wiki", "rd", "tasks"}
+
+
+def _walk_list(root):
+    """Every path under root, posix-spelled and sorted — the listing half of "creates nothing".
+
+    `_dir_bytes` compares file CONTENT, so an empty directory appearing (`auto/` itself, the one
+    thing the PRD names) would slip past it unseen. Paths are normalised with `os.sep` rather
+    than compared against a literal `/`, because this runs on the Windows job too."""
+    out = []
+    for dp, dns, fns in os.walk(root):
+        rel = os.path.relpath(dp, root).replace(os.sep, "/")
+        pre = "" if rel == "." else rel + "/"
+        for n in list(dns) + list(fns):
+            out.append(pre + n)
+    return sorted(out)
+
+
+def _pf_rows(scores, chain=False, verdicts=None):
+    """`len(scores)` synthetic attempt rows for `auto_portfolio` — ids `h1`…, `builds_on`
+    linking each to the one before it when `chain`, and `verdict` overridable by id.
+
+    Deliberately NOT built from a vault: §1.2's function takes plain dicts, so a fixture that
+    needed a tree would be testing something the contract does not say."""
+    rows = []
+    for i, s in enumerate(scores):
+        hid = "h%d" % (i + 1)
+        rows.append({"id": hid, "score": s,
+                     "builds_on": ("h%d" % i) if (chain and i) else None,
+                     "verdict": (verdicts or {}).get(hid, "supported")})
+    return rows
+
+
+def _pf_ids(rows, direction, k=None):
+    """The ids `auto_portfolio` selects, or None when it is absent or raises — so a missing
+    interface reads as one failed criterion rather than as a dead section."""
+    def call():
+        out = E.auto_portfolio(rows, direction) if k is None \
+            else E.auto_portfolio(rows, direction, k)
+        return [r["id"] for r in out]
+    return _auto_val(call, None)
+
+
+def _run1(payload):
+    """The single run of an `/auto.json` payload, or `{}`."""
+    runs = (payload or {}).get("runs") or []
+    return runs[0] if runs and isinstance(runs[0], dict) else {}
+
+
+def run_auto_cockpit():
+    """Spec 05 PRD 05.4 §A/§B/§E/§G/§I-0 — the cockpit's own read of a run, written blind.
+
+    Three things are asserted here that nothing else in the suite can assert. First, that the
+    endpoint never reaches the tree: `auto_cockpit` is called with `engine.Vault`,
+    `engine.resolve_address` and `engine.auto_island_attempts` each monkeypatched to raise, and
+    the payload must still come back complete. That is a proof rather than a promise — a later
+    change that reaches for the tree fails it by construction. Second, that the two readers of a
+    run agree: every field the ledger-derived rows share with `auto_island_attempts`, which
+    walks the TREE for the same vault, must be equal, or the tab and the CLI would tell a PI two
+    different stories about one run. Third, that a write under `auto/` cannot move the snapshot
+    cache's key — the defect that is live on main today, where a running loop rewrites
+    `state.json` inside every event and rebuilds the whole tree on every 1 Hz poll.
+
+    The fixture is built with `cmd_init` / `cmd_ask` / `_auto_attempt` and three files written
+    by hand. No `_loop_fixture`, no `_auto_repo`, no git and no subprocess: a real tier-0 search
+    would cost seconds this suite does not have, and none of it would make an assertion here any
+    stronger."""
+    print("\n# autopilot — the cockpit's own read (spec 05, PRD 05.4)")
+    import threading, urllib.request, urllib.error, builtins
+    root = tempfile.mkdtemp(prefix="crux_cockpit_")
+    try:
+        # ----------------------------------------------------- §1.1, the constants, pinned flat
+        check("autogui: AUTO_COCKPIT_RUN_KEYS is §1.1's nineteen names, in that order",
+              _auto_val(lambda: tuple(E.AUTO_COCKPIT_RUN_KEYS)) == AUTO_RUN_KEYS_PINNED)
+        check("autogui: AUTO_COCKPIT_ATTEMPT_KEYS is §1.1's eleven names, in that order",
+              _auto_val(lambda: tuple(E.AUTO_COCKPIT_ATTEMPT_KEYS)) == AUTO_ATTEMPT_KEYS_PINNED)
+        check("autogui: the cockpit's numbers are named constants and the rule is one printable line",
+              _auto_val(lambda: (E.AUTO_LIVE_SECONDS, E.AUTO_EVENTS_TAIL, E.AUTO_EVENTS_MAX,
+                                 E.AUTO_PORTFOLIO_K, tuple(E.AUTO_LIVENESS)))
+              == (120.0, 200, 2000, 5, ("running", "stale", "stopped"))
+              and _auto_ok(lambda: isinstance(E.AUTO_PORTFOLIO_RULE, str)
+                           and E.AUTO_PORTFOLIO_RULE.strip() != ""
+                           and "\n" not in E.AUTO_PORTFOLIO_RULE))
+
+        # --------------------------------------- §1.2, auto_portfolio — every worked case, flat
+        # ERA returns top-k DIVERSE deliberately. A chain is the case the rule exists for: five
+        # scored attempts, but only one idea, so the honest answer is one row and not five.
+        check("autogui: auto_portfolio on a chain of five returns exactly the best one, either direction",
+              _pf_ids(_pf_rows([5, 4, 3, 2, 1], chain=True), "min") == ["h5"]
+              and _pf_ids(_pf_rows([1, 2, 3, 4, 5], chain=True), "max") == ["h5"])
+        check("autogui: auto_portfolio on five unrelated returns five, ranked by direction",
+              _pf_ids(_pf_rows([1, 2, 3, 4, 5]), "max") == ["h5", "h4", "h3", "h2", "h1"]
+              and _pf_ids(_pf_rows([1, 2, 3, 4, 5]), "min") == ["h1", "h2", "h3", "h4", "h5"])
+        check("autogui: an invalid-run never enters the portfolio and a None score never outranks a real one",
+              _pf_ids(_pf_rows([1, 2, 3, 4, 99], verdicts={"h5": "invalid-run"}), "max")
+              == ["h4", "h3", "h2", "h1"]
+              and _pf_ids(_pf_rows([1, 2, 3, 4, None]), "max") == ["h4", "h3", "h2", "h1"])
+        check("autogui: auto_portfolio stops at k — seven unrelated gives five, and k=0 gives none",
+              _pf_ids(_pf_rows([1, 2, 3, 4, 5, 6, 7]), "max")
+              == ["h7", "h6", "h5", "h4", "h3"]
+              and _pf_ids(_pf_rows([1, 2, 3]), "max", 0) == [])
+        # lineage is built from EVERY row, not only the candidates — a chain through an excluded
+        # attempt still links its two ends, or a dropped middle would smuggle a duplicate idea in
+        check("autogui: lineage links through an excluded attempt, so a chain cannot smuggle in a duplicate",
+              _pf_ids([{"id": "h1", "score": 1, "builds_on": None, "verdict": "supported"},
+                       {"id": "h2", "score": 9, "builds_on": "h1", "verdict": "invalid-run"},
+                       {"id": "h3", "score": 3, "builds_on": "h2", "verdict": "supported"}],
+                      "max") == ["h3"])
+        check("autogui: auto_portfolio is total — a malformed row is dropped, never raised on",
+              _pf_ids([{"id": "h1", "score": "not a number", "builds_on": None,
+                        "verdict": "supported"},
+                       {"score": 3.0, "builds_on": None, "verdict": "supported"},
+                       {"id": "h3"},
+                       {"id": "h4", "score": 2.0, "builds_on": "h4", "verdict": "supported"}],
+                      "max") == ["h4"])
+
+        # -------------------------------------------------------------- the fixture: one vault
+        shutil.rmtree(root); os.makedirs(root)
+        E.cmd_init("Cockpit", root, goal="drive the held-out loss below the bar")
+        qa, _ = E.cmd_ask(root, "the anchor question")
+        qi, _ = E.cmd_ask(root, "island one", parent=qa)
+        hb = _auto_attempt(root, qa, "the baseline attempt", score=0.90)
+        ha = _auto_attempt(root, qi, "first idea", score=0.80)
+        hc = _auto_attempt(root, qi, "second idea", score=0.70, builds_on=ha)
+        hx = _auto_attempt(root, qi, "a broken apparatus", verdict="invalid-run", builds_on=ha)
+
+        # §C — a vault that never met autopilot reads exactly as it did, and the read creates
+        # nothing, not even `auto/` itself
+        was_bytes, was_walk = _dir_bytes(root), _walk_list(root)
+        empty = _auto_val(lambda: E.auto_cockpit(root), None)
+        check("autogui: a vault with no auto/ reads {active: False, runs: []} and creates nothing",
+              empty == {"active": False, "runs": []}
+              and _dir_bytes(root) == was_bytes and _walk_list(root) == was_walk)
+
+        T0 = "2026-01-01T00:00:00"
+        rel = "auto/" + qa + "/plan.md"
+        ppath = os.path.join(root, "auto", qa, "plan.md")
+        spath = os.path.join(root, "auto", qa, E.AUTO_STATE_FILE)
+        lpath = os.path.join(root, "auto", qa, E.AUTO_LEDGER_FILE)
+        write(ppath, _plan_text(qa, hb, islands=qi))
+        # written out of natkey order on purpose: the payload has to sort, not echo the file
+        flight = collections.OrderedDict()
+        flight["h10"] = {"island": qi, "parent": qi, "from": "0" * 40, "phase": "drafted",
+                         "worker_tries": 1, "scorer_tries": 0, "pid": 4242, "failure": None,
+                         "started": T0}
+        flight["h9"] = {"island": qi, "parent": qi, "from": "0" * 40, "phase": "committed",
+                        "worker_tries": 2, "scorer_tries": 1, "pid": 4243, "failure": None,
+                        "started": T0}
+        st = {"run": "r1", "anchor": qa, "plan": rel, "plan_hash": "0" * 64, "opened": T0,
+              "updated": T0, "driver": {"pid": 1, "host": "box"}, "mode": "explore",
+              "c_puct": 1.4, "escalated": False, "steward_requested": False, "base": "0" * 40,
+              "islands": {qi: {"branch": "crux/auto/i1", "pointer": "0" * 40, "best": hc,
+                               "best_score": 0.70, "seen_score": True, "stall": 0}},
+              "best": {"id": hc, "score": 0.70},
+              "budget": {"attempts": {"used": 3, "total": 140},
+                         "hours": {"used": 0.25, "total": 8},
+                         "model_calls": {"used": 12, "total": 500}},
+              "in_flight": flight, "closed": [ha, hc, hx], "consecutive_invalid": 0,
+              "stalls": {}, "confirmed": [], "stop": None, "tasks": [], "events": 14,
+              "next_island": 2,
+              "agents": {"crux-auto-worker": {"cooldown_until": None, "failures": 0}},
+              "steward": {"guidance": [], "invocations": 0, "islands": [], "last_closed": 0}}
+        evs = [("attempt-reserved", {"attempt": ha, "island": qi, "parent": qi}),
+               ("node-filed", {"attempt": ha, "island": qi, "parent": qi, "builds_on": None,
+                               "title": "first idea"}),
+               ("scored", {"attempt": ha, "seed": 0, "value": 0.80}),
+               ("closed", {"attempt": ha, "verdict": "supported", "value": 0.80,
+                           "island": qi, "task": None}),
+               ("attempt-reserved", {"attempt": hc, "island": qi, "parent": qi}),
+               ("node-filed", {"attempt": hc, "island": qi, "parent": qi, "builds_on": ha,
+                               "title": "second idea"}),
+               ("scored", {"attempt": hc, "seed": 1, "value": 0.70}),
+               ("closed", {"attempt": hc, "verdict": "supported", "value": 0.70,
+                           "island": qi, "task": None}),
+               ("attempt-reserved", {"attempt": hx, "island": qi, "parent": qi}),
+               ("node-filed", {"attempt": hx, "island": qi, "parent": qi, "builds_on": ha,
+                               "title": "a broken apparatus"}),
+               ("closed", {"attempt": hx, "verdict": "invalid-run", "value": None,
+                           "island": qi, "task": None}),
+               ("attempt-reserved", {"attempt": "h9", "island": qi, "parent": qi}),
+               ("node-filed", {"attempt": "h9", "island": qi, "parent": qi, "builds_on": hc,
+                               "title": "in flight now"}),
+               ("attempt-reserved", {"attempt": "h11", "island": qi, "parent": qi})]
+        ledger = "\n".join(E.auto_ledger_line(n, f, "2026-01-01T00:00:%02d" % i)
+                           for i, (n, f) in enumerate(evs)) + "\n"
+        write(lpath, ledger)
+        write(spath, json.dumps(st))
+
+        pay = _auto_val(lambda: E.auto_cockpit(root), {})
+        r0 = _run1(pay)
+        rows = r0.get("attempts") or []
+        byid = dict((r.get("id"), r) for r in rows if isinstance(r, dict))
+
+        # ------------------------------------------------ §1.3, the frozen per-run payload shape
+        check("autogui: the run keys are exactly AUTO_COCKPIT_RUN_KEYS",
+              set(pay or {}) == {"active", "runs"} and (pay or {}).get("active") is True
+              and len((pay or {}).get("runs") or []) == 1
+              and tuple(r0.keys()) == AUTO_RUN_KEYS_PINNED)
+        check("autogui: every attempt row carries exactly AUTO_COCKPIT_ATTEMPT_KEYS, in that order",
+              len(rows) == 5
+              and all(tuple(r.keys()) == AUTO_ATTEMPT_KEYS_PINNED for r in rows))
+        check("autogui: stop, budget, islands, best, agents and steward reach the view verbatim",
+              all(r0.get(k) == st[k] for k in ("stop", "budget", "islands", "best", "agents",
+                                               "steward"))
+              and (r0.get("anchor"), r0.get("run"), r0.get("plan"), r0.get("mode"),
+                   r0.get("opened"), r0.get("updated"))
+              == (qa, st["run"], st["plan"], st["mode"], T0, T0)
+              # §1.8 — ids only, ranked by the objective, lineage-deduped: hc beats ha on `min`
+              # and ha is hc's ancestor, so the honest portfolio of this run is one row
+              and r0.get("portfolio") == [hc])
+
+        # --------------------------- §A, the purity proof: the endpoint never reaches the tree
+        def _blind(name):
+            """`auto_cockpit`'s payload with `engine.<name>` replaced by a raiser, restored in a
+            finally — the proof that a later change reaching for the tree fails by construction."""
+            real = getattr(E, name, None)
+            def boom(*a, **kw):
+                raise AssertionError("auto_cockpit reached engine." + name)
+            setattr(E, name, boom)
+            try:
+                return _auto_val(lambda: E.auto_cockpit(root), None)
+            finally:
+                if real is None:
+                    delattr(E, name)
+                else:
+                    setattr(E, name, real)
+
+        def _complete(p):
+            run = _run1(p)
+            return bool((p or {}).get("active") is True
+                        and tuple(run.keys()) == AUTO_RUN_KEYS_PINNED
+                        and len(run.get("attempts") or []) == 5
+                        and run.get("event_count") == 14)
+
+        check("autogui: auto_cockpit works with engine.Vault monkeypatched to raise",
+              _complete(_blind("Vault")))
+        check("autogui: auto_cockpit works with engine.resolve_address monkeypatched to raise",
+              _complete(_blind("resolve_address")))
+        check("autogui: auto_cockpit works with engine.auto_island_attempts monkeypatched to raise",
+              _complete(_blind("auto_island_attempts")))
+
+        # ------------------- the two readers of one run agree (the ledger view vs the tree view)
+        lp = _auto_val(lambda: E.load_flight_plan(root, rel), {}) or {}
+        ia = dict((r["id"], r) for r in
+                  (_auto_val(lambda: E.auto_island_attempts(root, lp, qi), []) or []))
+        titles = _auto_val(lambda: dict((n, E.Vault(root).get(n).title) for n in (ha, hc, hx)),
+                           {})
+        shared = [n for n in (ha, hc, hx) if n in ia and n in byid]
+        check("autogui: the ledger-derived rows and auto_island_attempts agree on every id both know",
+              len(shared) == 3
+              and all(byid[n]["score"] == ia[n]["score"]
+                      and byid[n]["builds_on"] == ia[n]["builds_on"]
+                      and byid[n]["verdict"] == ia[n]["verdict"]
+                      and byid[n]["island"] == qi
+                      and byid[n]["title"] == titles.get(n) for n in shared))
+
+        # ------------------------------------------------------------- §1.7, the ledger fold
+        check("autogui: attempt_no is the 1-based ordinal in state['closed'] and the row order follows it",
+              [byid.get(n, {}).get("attempt_no") for n in (ha, hc, hx, "h9", "h11")]
+              == [1, 2, 3, None, None]
+              and [r.get("id") for r in rows] == [ha, hc, hx, "h9", "h11"])
+        check("autogui: phase is the in-flight entry's when in flight, the folded one otherwise",
+              byid.get("h9", {}).get("phase") == "committed"          # the driver's live truth
+              and byid.get("h11", {}).get("phase") == "reserved"      # reserved, never filed
+              and [byid.get(n, {}).get("phase") for n in (ha, hc, hx)] == ["closed"] * 3)
+        check("autogui: a later event overwrites an earlier field and `at` is the last one seen",
+              byid.get(ha, {}).get("seed") == 0 and byid.get(hc, {}).get("seed") == 1
+              # `closed` carried no value for the invalid run, so no score is invented for it
+              and byid.get(hx, {}).get("score") is None
+              and byid.get(ha, {}).get("at") == "2026-01-01T00:00:03"
+              and byid.get("h11", {}).get("at") == "2026-01-01T00:00:13")
+        check("autogui: in_flight is a list of the state entries plus id, in natkey order",
+              r0.get("in_flight") == [dict(flight["h9"], id="h9"),
+                                      dict(flight["h10"], id="h10")])
+
+        # ------------------------------------------------------- §1.9, the tail and the count
+        evrows = r0.get("events") or []
+        p1, p0 = (_auto_val(lambda: E.auto_cockpit(root, events=1), {}),
+                  _auto_val(lambda: E.auto_cockpit(root, events=0), {}))
+        check("autogui: the ledger tail is newest-first and event_count is the true total",
+              r0.get("event_count") == 14 and len(evrows) == 14
+              and evrows[0].get("at") == "2026-01-01T00:00:13"
+              and evrows[-1].get("at") == T0
+              and evrows[0].get("event") == "attempt-reserved")
+        check("autogui: events=1 carries the newest alone and events=0 none — the count stays true",
+              len(_run1(p1).get("events") or []) == 1
+              and _run1(p1).get("event_count") == 14
+              and _run1(p0).get("events") == [] and _run1(p0).get("event_count") == 14)
+
+        # ---------------------------------------------------------------------- damaged input
+        write(lpath, ledger + '{"event": "closed", "at"\n' + json.dumps(["not", "a", "dict"])
+              + "\n")
+        torn = _run1(_auto_val(lambda: E.auto_cockpit(root), {}))
+        write(lpath, ledger)
+        write(spath, "{ this is not json at all")
+        check("autogui: a torn or non-dict ledger line is skipped, and a damaged state.json refuses by name",
+              torn.get("event_count") == 14 and len(torn.get("attempts") or []) == 5
+              and _auto_msg(lambda: E.auto_cockpit(root)).startswith(
+                  "%s/%s/%s is damaged: " % (E.AUTO_DIR, qa, E.AUTO_STATE_FILE)))
+
+        # ------------------------------------- §I-0, liveness — three states and no heartbeat.
+        # `at=` stands in for "now", so nothing here moves a clock or sleeps.
+        def _liveness(state, at):
+            write(spath, json.dumps(state))
+            return _run1(_auto_val(lambda: E.auto_cockpit(root, at=at), {})).get("liveness")
+
+        # Both sides sit ONE SECOND off the 120 s boundary rather than minutes away from it.
+        # `updated` is T0, so 00:01:59 is an age of 119 s and 00:02:01 is 121 s: an
+        # implementation carrying any other threshold — a hardcoded 600, a stray 60 — fails one
+        # of the two. The rule is pinned here outright, not only by the constant's own check.
+        check("autogui: liveness reads running while updated is inside AUTO_LIVE_SECONDS",
+              _liveness(st, "2026-01-01T00:01:59") == "running")
+        check("autogui: liveness reads stale once updated is older than AUTO_LIVE_SECONDS",
+              _liveness(st, "2026-01-01T00:02:01") == "stale")
+        check("autogui: liveness reads stopped — a set stop wins over a fresh updated",
+              _liveness(dict(st, stop={"reason": "budget", "axis": "attempts", "attempt": hc,
+                                       "detail": "3 of 140 attempts closed", "at": T0}),
+                        "2026-01-01T00:00:01") == "stopped")
+        check("autogui: liveness on an unparseable updated is stale and never running",
+              _liveness(dict(st, updated="some time on Tuesday"),
+                        "2026-01-01T00:00:01") == "stale")
+        write(spath, json.dumps(st))
+
+        # ------------------------------------------ §1.5, the objective — the plan.md read only
+        check("autogui: objective carries the plan's address and direction, and bar as a float",
+              _run1(_auto_val(lambda: E.auto_cockpit(root), {})).get("objective")
+              == {"address": "eval.loss", "direction": "min", "bar": 0.85})
+        plan_text = read(ppath)
+        os.remove(ppath)
+        noplan = _run1(_auto_val(lambda: E.auto_cockpit(root), {}))
+        write(ppath, plan_text)
+        check("autogui: a missing plan.md leaves objective all-None and is never fatal",
+              noplan.get("objective") == {"address": None, "direction": None, "bar": None}
+              and tuple(noplan.keys()) == AUTO_RUN_KEYS_PINNED)
+
+        # ------------------------------------------------------------------- §2, the endpoint
+        try:
+            import serve as S
+        except Exception as e:                               # pragma: no cover - wave-1 guard
+            check("autogui: serve.py imports cleanly (got %r)" % (e,), False)
+            S = None
+        if S is not None:
+            src_lines = read(os.path.join(HERE, "serve.py")).splitlines()
+            check("autogui: serve.py's import lines are byte-identical — the route adds no name",
+                  tuple(ln for ln in src_lines if re.match(r"(?:import|from)\s", ln))
+                  == SERVE_IMPORT_LINES)
+
+            free = S.find_free_port("127.0.0.1", 9140)
+            httpd = S.make_server(root, port=free)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = "http://127.0.0.1:%d" % free
+
+            def get(path, etag=None):
+                """(status, body, ETag) — an HTTP error surfaces as its status, never a raise."""
+                req = urllib.request.Request(
+                    base + path, headers={"If-None-Match": etag} if etag else {})
+                try:
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        return r.status, r.read(), r.headers.get("ETag") or ""
+                except urllib.error.HTTPError as he:
+                    body = b""
+                    try:
+                        body = he.read() or b""
+                    except Exception:
+                        pass
+                    return he.code, body, he.headers.get("ETag") or ""
+                except Exception:
+                    return -1, b"", ""
+
+            vault_before, walk_before = _dir_bytes(root), _walk_list(root)
+            try:
+                s1, b1, e1 = get("/auto.json")
+                s2, b2, _ = get("/auto.json", e1)
+                check("autogui: /auto.json is 200 with an ETag, and a matching If-None-Match is 304 with no body",
+                      s1 == 200 and bool(e1)
+                      and _auto_val(lambda: json.loads(b1.decode("utf-8")), {}).get("active")
+                      is True and s2 == 304 and b2 == b"")
+                write(lpath, ledger + E.auto_ledger_line(
+                    "stop", {"reason": "budget", "axis": "attempts"},
+                    "2026-01-01T00:00:14") + "\n")
+                # push the mtime forward, as the vault_stat_key checks below already do. The
+                # cache key is (max mtime, entry count); two writes milliseconds apart share a
+                # tick on a coarse-resolution filesystem, and the entry count does not move on
+                # an append — so without this the ETag legitimately would not change and the
+                # check would flake on CI rather than on this laptop.
+                os.utime(lpath, (time.time() + 100000,) * 2)
+                s3, b3, e3 = get("/auto.json")
+                write(lpath, ledger)
+                check("autogui: a ledger append moves the /auto.json ETag",
+                      s3 == 200 and bool(e3) and e3 != e1
+                      and _run1(_auto_val(lambda: json.loads(b3.decode("utf-8")), {}))
+                      .get("event_count") == 15)
+
+                s4, b4, _ = get("/auto.json?events=1")
+                one = _run1(_auto_val(lambda: json.loads(b4.decode("utf-8")), {}))
+                check("autogui: /auto.json?events=1 carries one event and the run's true total",
+                      s4 == 200 and len(one.get("events") or []) == 1
+                      and one.get("event_count") == 14)
+                s5, b5, _ = get("/auto.json?events=abc")
+                bad = _run1(_auto_val(lambda: json.loads(b5.decode("utf-8")), {}))
+                check("autogui: /auto.json?events=abc is 200 and treated as absent, never an error",
+                      s5 == 200 and len(bad.get("events") or []) == 14)
+
+                # the whole reason this endpoint is not part of /snapshot.json: a run rewrites
+                # state.json inside every event, so its payload gets its own cache or the tab
+                # pays the rebuild the snapshot cache exists to avoid
+                real_cockpit = getattr(S.engine, "auto_cockpit", None)
+                calls = []
+                if real_cockpit is not None:
+                    def counting(*a, **kw):
+                        calls.append(1)
+                        return real_cockpit(*a, **kw)
+                    S.engine.auto_cockpit = counting
+                try:
+                    polls = [get("/auto.json") for _ in range(3)]
+                finally:
+                    if real_cockpit is not None:
+                        S.engine.auto_cockpit = real_cockpit
+                check("autogui: 3 polls on an unchanged run rebuild the payload at most once",
+                      real_cockpit is not None
+                      and all(s == 200 for s, _, _ in polls) and len(calls) <= 1)
+
+                # §A — no path segment, no id, no traversal surface: the route enumerates
+                # `auto/` itself, so nothing from the request ever reaches the filesystem
+                opened = []
+                real_open = builtins.open
+                def spy(f, *a, **kw):
+                    if isinstance(f, (str, bytes, os.PathLike)):
+                        try:
+                            opened.append(os.path.abspath(os.fsdecode(f)))
+                        except Exception:
+                            pass
+                    return real_open(f, *a, **kw)
+                builtins.open = spy
+                try:
+                    s6, _, _ = get("/auto.json?events=2000")
+                finally:
+                    builtins.open = real_open
+                absroot = os.path.abspath(root)
+                allowed = os.path.join(absroot, E.AUTO_DIR) + os.sep
+                inside = [p for p in opened if p.startswith(absroot + os.sep)]
+                check("autogui: the route opens no file outside auto/<qid>/",
+                      s6 == 200 and bool(inside)
+                      and all(p.startswith(allowed) for p in inside))
+                check("autogui: pure read — the vault is byte-identical after every /auto.json call",
+                      s6 == 200 and _dir_bytes(root) == vault_before
+                      and _walk_list(root) == walk_before)
+            finally:
+                httpd.shutdown(); httpd.server_close()
+
+            # --------------------------------- §B, the snapshot stays out of it, both directions
+            check("autogui: engine.snapshot's top-level key set is still exactly the eleven names",
+                  set(_auto_val(lambda: E.snapshot(root), {}) or {}) == SNAPSHOT_TOP_KEYS)
+            snap_before = json.dumps(_auto_val(lambda: E.snapshot(root), {}), sort_keys=True)
+            key_before = _auto_val(lambda: S.vault_stat_key(root))
+            # append AND push the mtime forward, so a key that walks `auto/` at all must move —
+            # the same-size same-tick blind spot the docstring documents cannot hide this
+            with open(lpath, "a", encoding="utf-8", newline="") as f:
+                f.write(E.auto_ledger_line("stall", {"island": qi}, T0) + "\n")
+            future = time.time() + 100000
+            os.utime(lpath, (future, future))
+            check("autogui: a ledger append does not move serve.vault_stat_key",
+                  key_before is not None
+                  and _auto_val(lambda: S.vault_stat_key(root)) == key_before)
+            check("autogui: engine.snapshot is byte-identical across a pure write under auto/",
+                  json.dumps(_auto_val(lambda: E.snapshot(root), {}), sort_keys=True)
+                  == snap_before and snap_before != "{}")
+            os.utime(node_path(root, ha), (future, future))
+            check("autogui: touching a node file does move serve.vault_stat_key",
+                  _auto_val(lambda: S.vault_stat_key(root)) != key_before)
+            write(lpath, ledger)
+
+        # ------------------------- several runs, and the tail's defaults on a ledger long enough
+        # to show them. A 2,100-line ledger is the only fixture here that is not tiny, and it is
+        # the only way the 200 / 2000 clamp is observable at all.
+        qb = "q9"
+        long_ledger = "".join(
+            E.auto_ledger_line("scored", {"attempt": "h%d" % i, "seed": 0, "value": i / 100.0},
+                               T0) + "\n" for i in range(2100))
+        write(os.path.join(root, "auto", qb, E.AUTO_LEDGER_FILE), long_ledger)
+        write(os.path.join(root, "auto", qb, E.AUTO_STATE_FILE),
+              json.dumps(dict(st, anchor=qb, run="r2", closed=[], in_flight={})))
+        multi = _auto_val(lambda: E.auto_cockpit(root), {})
+        anchors = [r.get("anchor") for r in (multi or {}).get("runs") or []]
+        check("autogui: several runs are all listed, in natkey order, and active stays True",
+              (multi or {}).get("active") is True
+              and anchors == sorted([qa, qb], key=E.natkey))
+        long_run = [r for r in ((multi or {}).get("runs") or []) if r.get("anchor") == qb]
+        big = _auto_val(lambda: E.auto_cockpit(root, events=99999), {})
+        fallback = _auto_val(lambda: E.auto_cockpit(root, events="abc"), {})
+        big_run = [r for r in ((big or {}).get("runs") or []) if r.get("anchor") == qb]
+        fb_run = [r for r in ((fallback or {}).get("runs") or []) if r.get("anchor") == qb]
+        check("autogui: the tail defaults to AUTO_EVENTS_TAIL, clamps at AUTO_EVENTS_MAX, and falls back on garbage",
+              len(long_run) == 1 and len(long_run[0].get("events") or []) == 200
+              and long_run[0].get("event_count") == 2100
+              and len(big_run) == 1 and len(big_run[0].get("events") or []) == 2000
+              and len(fb_run) == 1 and len(fb_run[0].get("events") or []) == 200)
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check("autogui: section ran without crashing (%r)" % (e,), False)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run_auto_gui():
+    """Spec 05 PRD 05.4 §C/§D/§E/§G/§H/§I — the cockpit tab's frontend, written blind.
+
+    Every assertion here is a STATIC READ of `index.html`, `style.css` and `app.js`, the shape
+    `run_task_gui` already uses for the Taskhub: the three files are read as text and asserted
+    about as text. No server, no browser, no DOM. That is the only kind of frontend check this
+    suite can afford, and the only kind that can be written — as these were — before a line of
+    the implementation exists.
+
+    The precision is the whole judgment. A check that pinned whitespace would cost a round-trip
+    on the first reformat; a check that grepped the whole file for a bare identifier would pass
+    for a comment that merely mentions it. So a name is asserted inside the body of the function
+    that must carry it, a literal the contract spells byte-for-byte is compared byte-for-byte,
+    and every negative ("never calls renderTree") is asserted over a sliced region rather than
+    over the file.
+
+    Two of these are not about the new tab at all. `nodeSVG`'s running class and
+    `treeSignatures`' cosmetic key are pinned to the exact text they carry on `origin/main`,
+    because §I's whole argument is that the per-node mark ALREADY EXISTS and this slice adds the
+    run-level explanation rather than a second mark that would disagree with it; and
+    `NOT_RENDERED` is pinned because a new per-node snapshot field would have to pass through
+    it, which §I explicitly rejects."""
+    print("\n# autopilot — the cockpit tab's frontend (spec 05, PRD 05.4)")
+    ui = _auto_val(lambda: read(os.path.join(HERE, "webui", "app.js")), "")
+    html = _auto_val(lambda: read(os.path.join(HERE, "webui", "index.html")), "")
+    css = _auto_val(lambda: read(os.path.join(HERE, "webui", "style.css")), "")
+
+    # `read` opens with encoding="utf-8" and universal newlines, so the CRLF a Windows checkout
+    # may carry is already "\n" here and every pinned literal below is safe on all eight jobs.
+    def region(start_re):
+        """`app.js` from the first match of `start_re` to the next TOP-LEVEL declaration — "" when
+        there is no match, so a wave-3 name costs exactly the checks that read it and never the
+        section. Everything inside a function or a listener is indented, so a column-0 `function`
+        / `const` / `$(` / `document.` / `window.` is a reliable closing boundary."""
+        m = re.search(start_re, ui, re.M)
+        if not m:
+            return ""
+        rest = ui[m.start():]
+        nxt = re.search(r"\n(?:async function |function |const |let |\$\(|document\.|window\.)",
+                        rest[1:])
+        return rest[:nxt.start() + 1] if nxt else rest
+
+    def fn(name):
+        """The source of top-level `function name(…)`, or of `const name = …` if it is written
+        that way instead. The contract (§5) spells every one of these names."""
+        return region(r"^(?:async )?function %s\b|^const %s\s*=" % (re.escape(name),
+                                                                   re.escape(name)))
+
+    try:
+        # ------------------------------------------------------ §3, the markup index.html gains
+        tabs = re.findall(r'data-tab="([a-z]+)"', html)
+        check("autogui: index.html carries a fourth tab, auto, named Autopilot, last in the nav",
+              tabs == ["tree", "wiki", "tasks", "auto"] and ">Autopilot<" in html)
+        check("autogui: the Autopilot pane copies the Taskhub's structure — rail, rail body, body, chip",
+              all(('id="%s"' % i) in html for i in
+                  ("auto-pane", "auto-rail", "auto-rail-body", "auto-body", "run-chip")))
+        # the opt-back-in every earlier pane had to learn for itself: #wiki-pane, the old
+        # #rd-pane and #tasks-pane each shipped leaking into other tabs before it was added
+        check("autogui: the Autopilot pane and the run chip opt back in to [hidden]",
+              "#auto-pane[hidden]" in css and 'id="auto-pane" hidden' in html
+              and "#run-chip[hidden]" in css
+              and re.search(r'id="run-chip"[^>]*\shidden', html) is not None)
+        # §0's stdlib-only rule binds the frontend too: motion.js is the only vendored file and
+        # nothing joins it, inline or by src
+        srcs = re.findall(r'<script src="([^"]+)"', html)
+        check("autogui: index.html loads no new script and references no new vendor file",
+              srcs == ["vendor/motion.js", "app.js"] and html.count("<script") == 3)
+
+        # ------------------------------------------------- §4, the class surface style.css gains
+        check("autogui: style.css carries the six island colours, the run chip and the anchor ring",
+              all(("--au-i%d" % i) in css for i in range(6))
+              and "#run-chip" in css and ".node.run-anchor" in css)
+
+        # ------------------------------------------------------- §5.1, the constants and §5.2 poll
+        check("autogui: AUTO_VIEWS is byte-exactly §5.1's literal, so the rail and the PRD cannot drift",
+              'const AUTO_VIEWS = [["live", "Live"], ["results", "Results"]];' in ui)
+        tail_m = re.search(r"AUTO_EVENTS_TAIL\s*=\s*(\d+)", ui)
+        max_m = re.search(r"AUTO_EVENTS_MAX\s*=\s*(\d+)", ui)
+        check("autogui: app.js's ledger tail and cap are the engine's own AUTO_EVENTS_TAIL / AUTO_EVENTS_MAX",
+              tail_m is not None and max_m is not None
+              and int(tail_m.group(1)) == _auto_val(lambda: E.AUTO_EVENTS_TAIL) == 200
+              and int(max_m.group(1)) == _auto_val(lambda: E.AUTO_EVENTS_MAX) == 2000)
+        # the panel prints the rule verbatim, and the rule is the engine's — one sentence living
+        # in two files is the exact shape that drifts, so both are pinned to the §1.1 literal
+        rule_pinned = ("Ranked by the objective, then taken greedily — a candidate in the same "
+                       "lineage as one already taken is skipped.")
+        rule = _auto_val(lambda: E.AUTO_PORTFOLIO_RULE, "")
+        check("autogui: the portfolio panel prints engine.AUTO_PORTFOLIO_RULE's text verbatim",
+              rule == rule_pinned and rule in ui)
+        pa = fn("pollAuto")
+        # a network error leaves the last payload in place; #offline belongs to the snapshot poll
+        # and a second writer would make the badge disagree with itself
+        check("autogui: pollAuto is an ETag'd 1 s poll that never touches the offline badge",
+              bool(pa) and "auto.json" in pa and "If-None-Match" in pa
+              and re.search(r"setTimeout\(pollAuto,\s*1000\)", pa) is not None
+              and "offline" not in pa)
+
+        # --------------------------------------------------------------- §C / §5.4, the tab wiring
+        ut, stb = fn("updateTabs"), fn("setTab")
+        check("autogui: the Autopilot tab hides when inactive, falls back to Tree, and setTab hides its pane",
+              '[data-tab="auto"]' in ut and 'state.tab === "auto"' in ut
+              and 'want === "auto"' in ut and '$("auto-pane").hidden' in stb)
+
+        # ------------------------------------------------------------ §D / §5.5, the rail and clicks
+        tabs_listener = region(r'^\$\("tabs"\)\.addEventListener')
+        pane_listener = region(r'^\$\("auto-pane"\)\.addEventListener')
+        # the Taskhub's own repair note records what the other choice costs: its rail was wired
+        # to #tabs while the buttons render inside the pane, so no click ever arrived
+        check("autogui: the Autopilot rail is wired to the pane, not the tab bar",
+              bool(tabs_listener) and bool(pane_listener) and "data-au-view" not in tabs_listener)
+        check("autogui: the view and the selected run persist under crux-auto-view and crux-auto-run",
+              all(re.search(r'%sItem\("crux-auto-%s"' % (verb, key), ui) is not None
+                  for verb in ("get", "set") for key in ("view", "run")))
+        # §H: the detail pane is outside every tab pane, so selecting a node needs no tab switch —
+        # and a render that re-entered the tree renderer from a click would be the loop §I warns of
+        check("autogui: clicking an attempt row selects the node and does nothing else",
+              "data-au-node" in pane_listener and "selectNode(" in pane_listener
+              and "renderTree(" not in pane_listener and "setTab(" not in pane_listener)
+        check("autogui: Show more re-requests with ?events= and stops at AUTO_EVENTS_MAX",
+              "data-au-more" in pane_listener and "AUTO_EVENTS_MAX" in pane_listener
+              and "?events=" in ui and ".au-more" in css)
+
+        # ------------------------------------------------ §I / §5.6, the run mark's missing half
+        urm, lr, rt = fn("updateRunMark"), fn("liveRun"), fn("renderTree")
+        check("autogui: updateRunMark draws both marks from liveRun and never calls renderTree",
+              bool(urm) and "liveRun()" in urm and '$("run-chip").hidden' in urm
+              and "run-anchor" in urm and "renderTree(" not in urm and '"running"' in lr)
+        # the anchor's run state is in NEITHER treeSignatures key, so a structural render would
+        # drop the ring unless the mark is re-applied at the tail of renderTree as well
+        check("autogui: the run mark is refreshed from renderTree's tail and from the poll",
+              "updateRunMark()" in rt and "updateRunMark()" in pa)
+        # copied from origin/main, not from this worktree, so the pin records the PRE-SLICE truth:
+        # §I rejects a second per-node mark outright, and these two lines are where one would land
+        node_running_pin = ('  const wrap = "node" + (n.status === "running" ? " running" : "") +\n'
+                            '    (dimmed ? " dim" : "") + (matches ? " hit" : "");\n')
+        cosmap_pin = ('    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + (n.drift ? "D" : "") + "|"\n'
+                      '                 + vs.map((v) => v.state).join(",");\n')
+        check("autogui: nodeSVG's running class and treeSignatures' cosmetic key are byte-identical to origin/main",
+              ui.count(node_running_pin) == 1 and ui.count(cosmap_pin) == 1)
+        # and the other half of the same rejection: no new per-node SNAPSHOT field, which would
+        # have to be declared here to pass run_webui's field-coverage guard
+        sel = _auto_val(lambda: read(os.path.join(HERE, "selftest.py")), "")
+        nr = re.search(r"\n    NOT_RENDERED = \{(.*?)\n    \}", sel, re.S)
+        check("autogui: NOT_RENDERED is unchanged — this slice adds no per-node snapshot field",
+              nr is not None and set(re.findall(r'"([a-z_]+)"', nr.group(1)))
+              == {"id", "type", "parent", "tally", "schema", "words"})
+
+        # -------------------------------------------- §I-0 / §E / §5.8, Live and the two banners
+        live = fn("autoLiveHTML")
+        # a stopped run is still a run worth reading: the banner is added ABOVE the history, the
+        # panels are built in the same function, and nothing reassigns the view behind the reader
+        check("autogui: a stopped run prints its reason and detail and still renders the history",
+              bool(live) and "au-stop" in live and ".reason" in live and ".detail" in live
+              and "autoChartSVG(" in live and "au-ledger" in live
+              and "state.auto.view =" not in live and ".au-stop" in css)
+        # there is no heartbeat, so `stale` may say only that nothing has been written since
+        check("autogui: a stale run names the last write and never claims the driver died",
+              "au-stale" in live and ".updated" in live and ".au-stale" in css
+              and "no driver write since" in ui
+              and re.search(r"driver (?:died|is dead|has died|crashed)", ui, re.I) is None)
+        # the meters borrow auto_stop's own wording (engine.py's budget branches), so the tab and
+        # the stop reason can never tell a PI two different stories about the same budget
+        check("autogui: the budget meters use auto_stop's own words, so the tab and the stop agree",
+              "au-meter" in live and "attempts closed" in live and "driver hours used" in live
+              and "model calls used" in live and "toFixed(4)" in live)
+        # §4 pinned the three meter class names but not the fill's inner structure, and the
+        # markup and the stylesheet drifted apart inside that gap: style.css draws a full-width
+        # grey track (`.au-meter-fill`) with an accent child (`.au-meter-fill > span`), so the
+        # percentage belongs on the SPAN. On the track it draws a shrinking grey bar instead —
+        # nothing at 0%, full-width grey at 100% — which says the opposite of how much is spent.
+        # The two adjacent template literals are joined first so this reads the rendered shape
+        # rather than the line break the source happens to carry.
+        # The negative forbids a STYLE on the track rather than any attribute at all, so a later
+        # aria/role addition to the same element is still free.
+        joined = re.sub(r"`\s*\+\s*`", "", live)
+        check("autogui: the budget meter's percentage rides a child span, not the track itself",
+              bool(live)
+              and re.search(r'class="au-meter-fill"[^>]*>\s*<span[^>]*\bstyle="[^"]*width:',
+                            joined) is not None
+              and re.search(r'class="au-meter-fill"[^>]*\bstyle=', joined) is None
+              and re.search(r"\.au-meter-fill\s*>\s*span[^{]*\{[^}]*background:", css) is not None)
+
+        # --------------------------------------------------- §E1 / §5.9, the hand-drawn plot
+        chart = fn("autoChartSVG")
+        check("autogui: the chart is hand-drawn SVG — no library, and an invalid run is a hollow mark",
+              bool(chart) and "<svg" in chart
+              and all(c in chart for c in ("ac-series", "ac-dot", "ac-bar", "ac-step"))
+              and re.search(r"d3\.|chart\.js|plotly|echarts|highcharts|apexcharts", ui,
+                            re.I) is None
+              and re.search(r"\.ac-dot\.invalid[^{]*\{[^}]*fill:\s*none", css) is not None)
+
+        # ------------------------------------------------------- §G / §H / §5.10, Results
+        res = fn("autoResultsHTML")
+        # §H: a reserved attempt has an id but no node, so there is nothing for the detail reader
+        # to open — the row is rendered plainly and carries no id for the click handler to find
+        i = ui.find("au-row dead")
+        dead = ui[i:ui.find(">", i) + 1] if i >= 0 else ""
+        check("autogui: a reserved-only attempt row is a div with no data-au-node",
+              bool(dead) and "<div" in ui[max(0, i - 40):i] and "data-au-node" not in dead
+              and ".au-row.dead" in css)
+        check("autogui: Results shows the lineage forest, the portfolio and the single best apart",
+              bool(res) and "au-tree" in res and "au-port" in res and "au-best" in res
+              and "portfolio" in res
+              and all(c in css for c in (".au-tree", ".au-port", ".au-best")))
+        # §H again, from the other side: a row is clickable only when its id is in the SNAPSHOT,
+        # which /auto.json knows nothing about — and the two endpoints race at boot. So the
+        # no-op key has to carry a term derived from `state.snap`, or a STOPPED run, whose
+        # `updated`, `liveness` and `event_count` never move again, keeps the dead rows it
+        # painted before the snapshot landed for as long as the reader looks at it. The term
+        # must be DERIVED and not the payload: the whole snapshot in the key would rebuild the
+        # pane on every unrelated vault edit at 1 Hz, which is the scroll reset the key exists
+        # to prevent.
+        # Written to accept either spelling of a correct fix — a named local derived from
+        # `state.snap` and listed in the key, or the derivation written inline in the key — so
+        # only the absent term and the raw payload fail it.
+        ra = fn("renderAuto")
+        km = re.search(r"JSON\.stringify\(\[(.*?)\]\)", ra, re.S)
+        kt = km.group(1) if km else ""
+        snapvar = re.search(r"(?:const|let|var)\s+(\w+)\s*=\s*state\.snap\b(?!\s*;)", ra)
+        derived = (("state.snap" in kt)
+                   or (snapvar is not None
+                       and re.search(r"\b%s\b" % re.escape(snapvar.group(1)), kt) is not None))
+        # `state.snap` standing alone as one element of the key IS the raw payload
+        raw = re.search(r"(?:^|,)\s*state\.snap\s*(?:,|$)", kt, re.S) is not None
+        check("autogui: renderAuto's no-op key carries a snapshot-derived term, never the snapshot",
+              bool(ra) and km is not None and derived and not raw)
+    except Exception as e:                                   # pragma: no cover - wave-2 guard
+        check("autogui: gui section ran without crashing (%r)" % (e,), False)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -14253,6 +15014,8 @@ def main():
     run_auto_closer()
     run_auto_steward()
     run_auto_report()
+    run_auto_cockpit()
+    run_auto_gui()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

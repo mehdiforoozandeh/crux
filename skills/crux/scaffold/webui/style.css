@@ -28,6 +28,11 @@
   --t-data-acquisition: #4f9fe0; --t-hpc-setup: #57c8c0; --t-implementation: #7b93d6;
   --t-visualization: #c08ad9;    --t-manuscript: #d9a13b; --t-admin: #8b949e;
   --t-experiment: #a882ff;
+  /* autopilot cockpit (spec 05.4): one colour per island, picked by index into
+     Object.keys(run.islands) mod 6 — six is a ceiling on distinguishability, not on
+     island count, so a run with more wraps rather than growing the set. */
+  --au-i0: #4f9fe0; --au-i1: #57c8c0; --au-i2: #d9a13b;
+  --au-i3: #a882ff; --au-i4: #e0724f; --au-i5: #d977b0;
   /* chrome type scale (spec 12): every UI-chrome font-size goes through these three
      steps — hierarchy beyond that is carried by ink tier and weight, not size. Canvas
      text (SVG node labels) is NOT chrome: its px sizes feed the measureText geometry
@@ -57,6 +62,8 @@
   --t-data-acquisition: #2f87cf; --t-hpc-setup: #1f8f80; --t-implementation: #5570c4;
   --t-visualization: #9a5fbe;    --t-manuscript: #c08a1e; --t-admin: #6e7a86;
   --t-experiment: #7b5bd6;
+  --au-i0: #2f87cf; --au-i1: #1f8f80; --au-i2: #c08a1e;
+  --au-i3: #7b5bd6; --au-i4: #c05a35; --au-i5: #b8508f;
   color-scheme: light;
 }
 
@@ -725,3 +732,118 @@ a.ext { color: var(--accent); }
 .tk-c-invalid-run { color: var(--v-invalid-run); }
 .tk-pending { color: var(--q-review); font-size: var(--fs-ui-sm); }
 .tk-drift   { color: var(--v-refuted); font-size: var(--fs-ui-sm); }
+
+/* ---------------------------------------------------------------- run chip (spec 05.4, PRD
+   §I): the run-level explanation for the per-node pulse the tree already draws. Sits in the
+   top bar beside the version chip, mirroring .ro-badge / #version-chip's own chrome so it
+   reads as one family of pills, not a new one. */
+#run-chip { flex: 0 0 auto; font-size: var(--fs-ui-xs); font-weight: 600; color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
+#run-chip:hover { background: color-mix(in srgb, var(--accent) 24%, var(--panel2)); }
+/* an ID selector outranks the UA's [hidden] { display: none }; without this the chip would
+   render empty-but-boxed the moment no run is live — the same bug #tasks-pane once shipped */
+#run-chip[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- autopilot cockpit pane
+   (spec 05, PRD 05.4 §C/§D/§E/§G/§H) — copies #tasks-pane's structure and .tk-* rules
+   exactly (§D: "two views on a rail, the Taskhub's own pattern"), renamed au- so the two
+   panes' rules never collide. */
+#auto-pane { display: flex; flex: 1 1 62%; min-width: 0; min-height: 0; height: 100%;
+             overflow: hidden; border-right: 1px solid var(--line); }
+/* the opt-back-in every earlier pane had to learn for itself: #wiki-pane, the old #rd-pane
+   and #tasks-pane each shipped leaking into other tabs before this line was added. */
+#auto-pane[hidden] { display: none; }
+#auto-rail { width: 190px; flex: 0 0 auto; border-right: 1px solid var(--line);
+             background: var(--panel); overflow-y: auto; }
+#auto-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; }
+.au-view { display: block; width: 100%; text-align: left; background: none; border: 0;
+           color: var(--ink-dim); font: inherit; font-size: var(--fs-ui);
+           padding: 6px 12px; cursor: pointer; }
+.au-view:hover { background: var(--panel2); color: var(--ink); }
+.au-view.on { background: var(--panel2); color: var(--ink); font-weight: 600;
+              box-shadow: inset 2px 0 0 var(--accent); }
+.au-group { margin: 14px 12px 4px; font-size: var(--fs-ui-xs); color: var(--ink-mute);
+            text-transform: uppercase; letter-spacing: .06em; }
+.au-sec { margin: 0 0 6px; font-size: var(--fs-ui); color: var(--ink-dim);
+          text-transform: uppercase; letter-spacing: .04em; }
+.au-note { margin: 0 0 14px; font-size: var(--fs-ui-sm); color: var(--ink-mute); max-width: 62ch; }
+/* one Live/Results panel box — the four §E panels and the two §G blocks are each one of these */
+.au-panel { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--line);
+            border-radius: 8px; background: var(--panel2); }
+
+/* liveness banners (§I-0): stopped names its reason verbatim; stale names only the last
+   write and never claims the driver died — the two must read as different levels of alarm */
+.au-stop { margin: 0 0 14px; padding: 8px 12px; border-radius: 7px; font-size: var(--fs-ui-sm);
+           color: var(--v-refuted); border: 1px solid var(--v-refuted);
+           background: color-mix(in srgb, var(--v-refuted) 12%, var(--panel2)); }
+.au-stale { margin: 0 0 14px; padding: 8px 12px; border-radius: 7px; font-size: var(--fs-ui-sm);
+            color: var(--q-review); border: 1px solid var(--q-review);
+            background: color-mix(in srgb, var(--q-review) 12%, var(--panel2)); }
+
+/* the three budget axes — attempts · hours · model calls, each `used of total` */
+.au-meter { margin: 0 0 10px; }
+.au-meter:last-child { margin-bottom: 0; }
+.au-meter-fill { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.au-meter-fill > span { display: block; height: 100%; background: var(--accent);
+                        border-radius: inherit; }
+.au-meter-lab { margin-top: 3px; font-size: var(--fs-ui-xs); color: var(--ink-mute); }
+
+/* one in-flight row per §E2 entry: island, phase, parent, try counts, elapsed */
+.au-flight { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
+             border-bottom: 1px solid var(--line); font-size: var(--fs-ui); }
+.au-flight:last-child { border-bottom: 0; }
+
+/* an attempt row (§G/§H): a live node is a button, a reserved-only id is a plain, non-
+   clickable div — .dead is rendered as a <div>, never as a <button> */
+.au-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
+          border: 0; border-bottom: 1px solid var(--line); font: inherit;
+          font-size: var(--fs-ui); width: 100%; text-align: left; background: none;
+          color: inherit; cursor: pointer; }
+.au-row:hover { background: var(--panel2); }
+.au-row.on { background: var(--panel2); box-shadow: inset 2px 0 0 var(--accent); }
+.au-row.dead { opacity: .55; cursor: default; }
+
+/* Results (§G): the single best marked apart from the portfolio, so the portfolio is never
+   mistaken for a ranking */
+.au-best { color: var(--v-supported); font-weight: 600; }
+.au-port { margin-top: 8px; }
+
+/* the ledger tail (§F): newest-first, one row per event */
+.au-ledger { margin-top: 4px; }
+.au-ev { display: flex; align-items: baseline; gap: 8px; padding: 3px 0;
+         border-bottom: 1px solid var(--line); font-size: var(--fs-ui-sm); }
+.au-ev:last-child { border-bottom: 0; }
+.au-ev-at { flex: 0 0 auto; color: var(--ink-mute);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.au-ev-name { flex: 0 0 auto; color: var(--accent); font-weight: 600; }
+.au-ev-fields { flex: 1 1 auto; color: var(--ink-dim); overflow-wrap: anywhere; }
+.au-more { margin-top: 8px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel2); color: var(--ink-dim); font-size: var(--fs-ui-sm);
+           cursor: pointer; }
+.au-more:hover { border-color: var(--accent); color: var(--accent); }
+.au-more:disabled { opacity: .5; cursor: default; }
+
+/* the hand-drawn score-vs-attempt plot (§E1): a 200-attempt run scrolls inside its own box —
+   the pane itself must never scroll horizontally */
+.au-chart { overflow-x: auto; }
+.ac-grid { stroke: var(--line); stroke-width: 1; }
+.ac-axis { stroke: var(--ink-mute); stroke-width: 1; }
+.ac-axlab { fill: var(--ink-mute); font-size: var(--fs-ui-xs); }
+.ac-bar { stroke: var(--focus); stroke-width: 1.4; stroke-dasharray: 4 3; }
+.ac-series { fill: none; stroke-width: 1.6; }
+.ac-dot { stroke-width: 1.4; }
+/* an invalid run measured nothing — a hollow mark on the axis, never a zero */
+.ac-dot.invalid { fill: none; stroke: var(--ink-mute); }
+.ac-step { fill: none; stroke: var(--ink-dim); stroke-width: 1; stroke-dasharray: 2 2; }
+
+/* Results' lineage forest (§G): builds_on chains, indented per depth, the same visual
+   grammar taskTreeRows already uses for the taskhub's own hierarchy */
+.au-tree { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px;
+           font-size: var(--fs-ui); }
+.au-tree-kid { padding-left: calc(8px + var(--tk-depth, 0) * 18px); }
+
+/* the ring on the anchor question (§I): a run-level mark, not a second per-node status —
+   an outline change only, so the node's box geometry (width/height, layout) never shifts */
+.node.run-anchor .box { stroke: var(--accent); stroke-dasharray: 3 2; }

@@ -5758,6 +5758,22 @@ AUTO_STEWARD_SLOTS         = ("goal", "objective.address", "objective.direction"
                               "budget", "island_cap")
 AUTO_NO_STEWARD            = "No steward guidance yet."
 
+# 05.4. The cockpit's own read of a run. Everything a reader needs, derived from the run's own
+# directory and nothing else — the tree snapshot is not consulted, because a run rewrites
+# state.json after every event and a reader that touched the tree would rebuild it per poll.
+AUTO_LIVE_SECONDS   = 120.0      # no driver write within this window => `stale`, never `running`
+AUTO_EVENTS_TAIL    = 200        # ledger events carried by default, newest-first
+AUTO_EVENTS_MAX     = 2000       # the ceiling `?events=` may ask for
+AUTO_LIVENESS       = ("running", "stale", "stopped")
+AUTO_PORTFOLIO_K    = 5
+AUTO_PORTFOLIO_RULE = ("Ranked by the objective, then taken greedily — a candidate in the same "
+                       "lineage as one already taken is skipped.")
+AUTO_COCKPIT_RUN_KEYS = ("anchor", "run", "plan", "mode", "opened", "updated", "liveness",
+                         "objective", "stop", "budget", "islands", "best", "in_flight",
+                         "agents", "steward", "attempts", "portfolio", "events", "event_count")
+AUTO_COCKPIT_ATTEMPT_KEYS = ("id", "attempt_no", "island", "parent", "builds_on", "title",
+                             "score", "seed", "verdict", "phase", "at")
+
 OBJECTIVE_LINE_RE = re.compile(r"^\s*(address|direction|bar)::\s*(.+?)\s*$")
 GUIDANCE_RE       = re.compile(r"^- \[(?P<at>[^\]]+)\] (?P<author>[^:]+): (?P<text>.+)$")
 
@@ -6823,6 +6839,249 @@ def auto_status(root, qid=None):
                 events += 1
                 last = o
     return {"anchor": qid, "state": state, "events": events, "last_event": last}
+
+
+def auto_portfolio(rows, direction, k=AUTO_PORTFOLIO_K):
+    """The diverse portfolio: rank by score in the objective's direction, then take greedily,
+    skipping any candidate that is an ancestor or a descendant of one already taken.
+
+    ERA returns top-k DIVERSE deliberately — one score is one evaluation, and five variations of
+    one idea is not five ideas. Lineage is the diversity axis because it is the only one crux has
+    for free: `builds_on` is already written on every attempt, and MAP-Elites' behaviour
+    descriptors are rejected in spec §3 for exactly the reason that nobody writes them.
+
+    TOTAL: a malformed row is dropped, never raised on. Returns the selected rows themselves,
+    in rank order, so a caller that wants ids takes them and a caller that wants the row has it."""
+    try:
+        k = int(k)
+    except (TypeError, ValueError):
+        return []
+    if k <= 0:
+        return []
+
+    # Lineage is built from EVERY row, candidate or not: a chain that passes through an
+    # excluded attempt still links its two ends, or a dropped middle would let one idea in twice.
+    parent = {}
+    for r in rows or ():
+        if isinstance(r, dict) and r.get("id") is not None:
+            parent[r["id"]] = r.get("builds_on")
+
+    def ancestors(x):
+        out, cur = set(), parent.get(x)
+        while cur is not None and cur not in out:
+            out.add(cur)
+            cur = parent.get(cur)
+        return out
+
+    def related(a, b):
+        return a in ancestors(b) or b in ancestors(a)
+
+    cands = []
+    for r in rows or ():
+        if not isinstance(r, dict):
+            continue
+        rid = r.get("id")
+        # an invalid run measured nothing, and a None score is not a candidate — so neither
+        # can ever outrank a real measurement
+        if rid is None or r.get("verdict") == "invalid-run" or r.get("score") is None:
+            continue
+        try:
+            value = float(r.get("score"))
+        except (TypeError, ValueError):
+            continue
+        cands.append((r, rid, value))
+
+    # two stable passes: ties break on natkey(id) ascending in BOTH directions, so the
+    # answer is the same on every machine and every run
+    cands.sort(key=lambda t: natkey(str(t[1])))
+    cands.sort(key=lambda t: t[2], reverse=(direction != "min"))
+
+    out, taken = [], []
+    for r, rid, _value in cands:
+        if any(related(rid, other) for other in taken):
+            continue
+        out.append(r)
+        taken.append(rid)
+        if len(out) >= k:
+            break
+    return out
+
+
+def auto_cockpit(root, events=AUTO_EVENTS_TAIL, at=None):
+    """Everything the Autopilot tab shows, for every run in this vault. A PURE READ of the run's
+    OWN directory — `auto/<qid>/{state.json,ledger.jsonl,plan.md}` — and nothing else.
+
+    It constructs no `Vault`, parses no node, calls no `resolve_address` and calls no
+    `auto_island_attempts`: that one builds a whole `Vault(root)`, which is exactly the cost this
+    endpoint exists to avoid. It creates nothing — not even `auto/` — so a vault that never met
+    autopilot reads exactly as it did, the same rule `auto_status` already keeps.
+
+    `plan.md` is the third file because the objective's `direction` lives in neither the state
+    nor the ledger, and `auto_portfolio` cannot rank without it; `parse_flight_plan` is total
+    text->dict, so reading it costs no tree. `at` stands in for "now" so liveness is testable
+    without moving a clock; the server never passes it."""
+    try:
+        tail = max(0, min(int(events), AUTO_EVENTS_MAX))
+    except (TypeError, ValueError):
+        tail = AUTO_EVENTS_TAIL
+    ref = at or now()
+
+    d = os.path.join(root, AUTO_DIR)
+    if not os.path.isdir(d):
+        return {"active": False, "runs": []}
+    ids = sorted([x for x in os.listdir(d)
+                  if os.path.isfile(os.path.join(d, x, AUTO_STATE_FILE))], key=natkey)
+    if not ids:
+        return {"active": False, "runs": []}
+
+    runs = []
+    for qid in ids:
+        runs.append(_auto_cockpit_run(d, qid, tail, ref))
+    return {"active": bool(runs), "runs": runs}
+
+
+def _auto_cockpit_run(d, qid, tail, ref):
+    """One run's payload — exactly `AUTO_COCKPIT_RUN_KEYS`, in that order, whatever stage the
+    run reached. The frozen shape is 05.3's own rule: a reader must never meet a shape that
+    depends on how far the run got."""
+    try:
+        state = json.loads(read(os.path.join(d, qid, AUTO_STATE_FILE)))
+    except ValueError as e:
+        raise CruxError(f"{AUTO_DIR}/{qid}/{AUTO_STATE_FILE} is damaged: {e}")
+    if not isinstance(state, dict):
+        state = {}
+
+    # ---------------------------------------------------------------------- the ledger, once
+    parsed = []
+    lp = os.path.join(d, qid, AUTO_LEDGER_FILE)
+    if os.path.isfile(lp):
+        for line in read(lp).splitlines():
+            # a torn tail is its own unparseable line; a reader skips it rather than
+            # refusing to report the run it belongs to
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(o, dict):
+                parsed.append(o)
+
+    # ------------------------------------------------------------------------- the objective
+    obj = {"address": None, "direction": None, "bar": None}
+    try:
+        parsed_plan = (parse_flight_plan(read(os.path.join(d, qid, PLAN_FILE))) or {})
+        spec = parsed_plan.get("objective") or {}
+        bar = spec.get("bar")
+        obj = {"address": spec.get("address"), "direction": spec.get("direction"),
+               "bar": (float(bar) if bar not in (None, "") else None)}
+    except Exception:
+        obj = {"address": None, "direction": None, "bar": None}
+
+    # --------------------------------------------------------------- in flight, by the state
+    flight = state.get("in_flight")
+    if not isinstance(flight, dict):
+        flight = {}
+    in_flight = [dict(v, id=key) for key, v in
+                 sorted(flight.items(), key=lambda kv: natkey(str(kv[0])))
+                 if isinstance(v, dict)]
+
+    attempts = _auto_cockpit_attempts(parsed, flight, state.get("closed"))
+    portfolio = [r["id"] for r in auto_portfolio(attempts, obj["direction"], AUTO_PORTFOLIO_K)]
+
+    return {"anchor": qid,
+            "run": state.get("run"),
+            "plan": state.get("plan"),
+            "mode": state.get("mode"),
+            "opened": state.get("opened"),
+            "updated": state.get("updated"),
+            "liveness": _auto_liveness(state, ref),
+            "objective": obj,
+            "stop": state.get("stop"),
+            "budget": state.get("budget"),
+            "islands": state.get("islands"),
+            "best": state.get("best"),
+            "in_flight": in_flight,
+            "agents": state.get("agents"),
+            "steward": state.get("steward"),
+            "attempts": attempts,
+            "portfolio": portfolio,
+            "events": list(reversed(parsed[-tail:])) if tail else [],
+            "event_count": len(parsed)}
+
+
+def _auto_liveness(state, ref):
+    """§I-0's three states. There is no heartbeat field: `driver` is written at open and on
+    resume and never again, and the lock is held only momentarily inside each event. So a set
+    `stop` wins outright, and everything else is the age of `updated` against
+    `AUTO_LIVE_SECONDS`. `stale` says only *no driver write since `updated`* — the tab never
+    claims the driver died, and an `updated` that will not parse is stale, never running."""
+    if state.get("stop"):
+        return "stopped"
+    try:
+        written = datetime.datetime.fromisoformat(str(state.get("updated")))
+        asof = datetime.datetime.fromisoformat(str(ref))
+    except (TypeError, ValueError):
+        return "stale"
+    return "running" if (asof - written).total_seconds() <= AUTO_LIVE_SECONDS else "stale"
+
+
+def _auto_cockpit_attempts(parsed, flight, closed):
+    """The ledger folded into one row per attempt id, every row carrying exactly
+    `AUTO_COCKPIT_ATTEMPT_KEYS` in that order. Later events overwrite earlier fields, `at` is
+    the last event seen for that id, and the live `in_flight` phase wins over the folded one
+    because the driver knows `committed`, a phase no ledger event spells."""
+    rows, order = {}, []
+
+    def row(aid):
+        r = rows.get(aid)
+        if r is None:
+            r = dict((k, None) for k in AUTO_COCKPIT_ATTEMPT_KEYS)
+            r["id"] = aid
+            rows[aid] = r
+            order.append(aid)
+        return r
+
+    for o in parsed:
+        name, aid = o.get("event"), o.get("attempt")
+        if aid is None or name not in ("attempt-reserved", "node-filed", "scored", "closed"):
+            continue
+        try:
+            r = row(aid)
+        except TypeError:                      # an unhashable attempt id is not an attempt id
+            continue
+        if name == "attempt-reserved":
+            r["island"], r["parent"], r["phase"] = o.get("island"), o.get("parent"), "reserved"
+        elif name == "node-filed":
+            r["island"], r["parent"] = o.get("island"), o.get("parent")
+            r["builds_on"], r["title"], r["phase"] = o.get("builds_on"), o.get("title"), "drafted"
+        elif name == "scored":
+            r["score"], r["seed"], r["phase"] = o.get("value"), o.get("seed"), "scored"
+        else:
+            r["verdict"], r["island"], r["phase"] = o.get("verdict"), o.get("island"), "closed"
+            if o.get("value") is not None:     # a closed invalid run carries none, and none is
+                r["score"] = o.get("value")    # invented for it
+        r["at"] = o.get("at")
+
+    for aid, r in rows.items():
+        entry = flight.get(aid)
+        if isinstance(entry, dict) and entry.get("phase") is not None:
+            r["phase"] = entry["phase"]
+
+    ordinal = {}
+    for i, cid in enumerate(closed or ()):
+        try:
+            if cid not in ordinal:
+                ordinal[cid] = i + 1
+        except TypeError:
+            continue
+    for aid, r in rows.items():
+        r["attempt_no"] = ordinal.get(aid)
+
+    def rank(r):
+        n = r.get("attempt_no")
+        # the ones with an ordinal first, ascending by it; then the rest, by natkey(id)
+        return (0, n, ("", 0)) if n is not None else (1, 0, natkey(str(r.get("id"))))
+
+    return sorted((rows[a] for a in order), key=rank)
 
 
 def append_guidance(root, path, text, author):
