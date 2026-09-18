@@ -8,6 +8,28 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Autopilot: the cockpit tab** ([PRD 05.4](docs/prd/05.4-cockpit-tab.md), spec 05, engine **3.3**,
+  unchanged). **No version bump and no migration** — nothing here changes the vault format, the
+  verdict, the roll-up or view logic, and a vault that never met autopilot reads exactly as it did.
+  - **A fourth read-only tab, Autopilot**, with two views on a rail, the Taskhub's own pattern:
+    **Live** (score against attempt number as a hand-drawn SVG plot, what is in flight per island,
+    the three budget axes, the ledger) and **Results** (the `builds_on` lineage forest, and a
+    diverse portfolio rather than a single winner).
+  - **Its data comes from its own small endpoint, `/auto.json`, never the tree snapshot.** It reads
+    the run's own `state.json`, `ledger.jsonl` and `plan.md` — it constructs no `Vault`, parses no
+    node and calls no `resolve_address`, which the suite asserts by monkeypatching those three to
+    raise and demanding a complete payload anyway.
+  - **A caching defect is fixed on the way past.** `vault_stat_key` walked `auto/`, so every ledger
+    append invalidated the snapshot cache and rebuilt the whole tree at 1 Hz during a run — the
+    exact cost spec 15 cites as its reason for a separate endpoint. `engine.snapshot` reads nothing
+    under `auto/`, so a write there cannot change its content; the key now skips it.
+  - **The live-run mark was half-built already.** The driver flips an attempt's node to `running`
+    and the tree already pulses it. What was missing was the explanation, so this slice adds a run
+    chip in the top bar and a ring on the anchor question, and no second per-node mark — two
+    "running" signals would disagree.
+  - **Liveness is reported honestly.** There is no heartbeat: `driver.pid` only works on the same
+    host and the lock is momentary, so the recency of `state.json` is the only general signal. The
+    tab reads **running**, **stale** or **stopped**, and never claims more than it knows.
 - **Autopilot: the agents** ([PRD 05.3](docs/prd/05.3-agents.md), spec 05, engine **3.3**,
   unchanged). Real agents on the loop 05.2 built. **No version bump and no migration** — nothing
   here changes the vault format or the verdict, roll-up or view logic, and every 05.0, 05.1 and

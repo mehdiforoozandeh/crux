@@ -29,11 +29,13 @@
       <span id="project-title"></span>
       <span class="ro-badge" title="This cockpit is read-only — it shows the crux tree but never changes it. Edits (open a question, record a verdict, resolve a question) go through your agent, or the crux CLI.">View-only</span>
       <span id="version-chip" title="crux version"></span>
+      <button id="run-chip" type="button" hidden title="An autopilot run is live on this vault — click to open the Autopilot tab"></button>
       <nav id="tabs" role="tablist" aria-label="Cockpit views" hidden>
         <button data-tab="tree" type="button" role="tab" class="on">Tree</button>
         <button data-tab="wiki" type="button" role="tab">Wiki</button>
         <!-- RDs live INSIDE the taskhub (PI ruling, 2026-08-21): an RD is a kind of task -->
         <button data-tab="tasks" type="button" role="tab">Taskhub</button>
+        <button data-tab="auto" type="button" role="tab">Autopilot</button>
       </nav>
     </div>
     <div class="tools">
@@ -80,6 +82,13 @@
         <div id="tasks-rail-body"></div>
       </aside>
       <div id="tasks-body"></div>
+    </section>
+    <section id="auto-pane" hidden>
+      <aside id="auto-rail">
+        <div class="wr-head"><span>Views</span></div>
+        <div id="auto-rail-body"></div>
+      </aside>
+      <div id="auto-body"></div>
     </section>
     <section id="wiki-pane" hidden>
       <aside id="wiki-rail">

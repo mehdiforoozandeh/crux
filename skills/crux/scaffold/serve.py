@@ -75,6 +75,13 @@ def vault_stat_key(root):
     is a belt-and-braces second signal. Hidden DIRECTORIES are skipped (.git,
     .obsidian — Obsidian rewrites its workspace file constantly, which would
     spuriously regenerate per poll); hidden files (.crux.yaml) are counted.
+    The vault's top-level `auto/` is skipped for the same reason, one level up:
+    engine.snapshot reads nothing there, so a write under it CANNOT change the
+    snapshot's content — while an autopilot driver rewrites state.json inside
+    every event, which would otherwise miss this cache on every 1 Hz poll and
+    rebuild the whole tree for a payload byte-identical to the last one. Only the
+    top level is skipped, so a `results/auto/` or a wiki page named `auto` is
+    still walked. The run's own payload gets its own key — see auto_stat_key.
 
     Documented blind spot: an in-place, same-size edit landing within the same
     mtime tick as the previous scan can serve one stale poll; the next write heals
@@ -83,7 +90,34 @@ def vault_stat_key(root):
     latest = 0.0
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")
+                       and not (dirpath == root and d == engine.AUTO_DIR)]
+        try:
+            latest = max(latest, os.stat(dirpath).st_mtime)
+        except OSError:
+            pass
+        count += len(dirnames) + len(filenames)
+        for fn in filenames:
+            try:
+                latest = max(latest, os.stat(os.path.join(dirpath, fn)).st_mtime)
+            except OSError:
+                pass
+    return (latest, count)
+
+
+def auto_stat_key(root):
+    """Cheap change detector for the /auto.json cache: the same (max mtime, entry count)
+    shape as vault_stat_key, over `auto/` ALONE. It has to be a separate walk precisely
+    because vault_stat_key now skips that directory — the two caches watch disjoint halves
+    of the vault, so a run's constant writes move this key and never the snapshot's.
+    A vault that never met autopilot has no `auto/` and answers (0.0, 0) without a walk."""
+    d = os.path.join(root, engine.AUTO_DIR)
+    if not os.path.isdir(d):
+        return (0.0, 0)
+    latest = 0.0
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = [x for x in dirnames if not x.startswith(".")]
         try:
             latest = max(latest, os.stat(dirpath).st_mtime)
         except OSError:
@@ -168,6 +202,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.unquote(self.path.split("?", 1)[0])
         if path == "/snapshot.json":
             return self._snapshot()
+        if path == "/auto.json":
+            return self._auto()
         if path.startswith("/wiki/") and path.endswith(".json"):
             return self._wiki(path[len("/wiki/"):-len(".json")])
         if path.startswith("/rd/") and path.endswith(".json"):
@@ -202,6 +238,49 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # The UI polls ~1/s; an unchanged vault answers 304 with no body. The validator
         # travels in the ETag header and the client echoes it back itself (If-None-Match),
         # so this works alongside Cache-Control: no-store — no browser cache involved.
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        self._send_json(data, etag)
+
+    def _auto(self):
+        """The autopilot run's own small payload (spec 05 §15, PRD 05.4 §A). Deliberately NOT
+        part of /snapshot.json: a running loop rewrites state.json after every event, and
+        folding this into the tree snapshot would invalidate its cache on every attempt and
+        rebuild the whole tree per poll — the 29 ms / 181 file reads per second spec 12
+        measured and killed.
+
+        Its own cache triple under its own lock, mirroring _snapshot exactly: same content-sha
+        ETag, same 304 on If-None-Match, same Cache-Control: no-store from end_headers. The
+        cache key carries the requested tail length, so ?events=1 and ?events=2000 never
+        collide in one slot. A non-integer ?events= is NOT an error — it is treated as absent
+        and the engine's own default applies, because a mistyped query is a reader's typo, not
+        a reason to hand the tab a 400 it has no way to show.
+
+        No path segment, no id, no traversal surface: the route enumerates `auto/` itself and
+        the only query parameter is an integer, so nothing from the request reaches the disk."""
+        srv = self.server
+        raw = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(self.path).query).get("events", [None])[0]
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            n = None                      # absent or unparseable: let the engine default stand
+        try:
+            with srv.auto_lock:
+                key = (auto_stat_key(srv.root), n)
+                if key != srv.auto_key:
+                    kw = {} if n is None else {"events": n}
+                    data = json.dumps(engine.auto_cockpit(srv.root, **kw)).encode("utf-8")
+                    srv.auto_key = key
+                    srv.auto_data = data
+                    srv.auto_etag = '"%s"' % hashlib.sha256(data).hexdigest()[:32]
+                data, etag = srv.auto_data, srv.auto_etag
+        except Exception as e:
+            self.send_error(500, f"auto failed: {e}")
+            return
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
@@ -300,6 +379,11 @@ def make_server(root, port=None, host="127.0.0.1"):
     httpd.snap_key = None
     httpd.snap_data = None
     httpd.snap_etag = None
+    # /auto.json cache (see Handler._auto): key/bytes/etag + the lock guarding them
+    httpd.auto_lock = threading.Lock()
+    httpd.auto_key = None
+    httpd.auto_data = None
+    httpd.auto_etag = None
     return httpd
 
 
