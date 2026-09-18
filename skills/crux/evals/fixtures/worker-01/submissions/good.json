@@ -1,0 +1,66 @@
+{
+ "fixture": "worker-01",
+ "agent": "crux-auto-worker",
+ "agent_sha": "acbefe174ba27aeed41495fc73d1ccbb307acdba693fd6bc30eee5df8388e9b8",
+ "_note": "CANNED 2026-09-17 — the attempt the brief asks for: it moves the readout width, which the refuted sibling's failure scenario does not name, says why that would move the objective, and carries two outcome-neutral controls, each a metric comparison with its own failure scenario. The proposal validates under auto_proposal exactly as the driver would validate it.",
+ "runs": [
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison",
+    "no-claim-directed-check"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison",
+    "no-claim-directed-check"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison",
+    "no-claim-directed-check"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison",
+    "no-claim-directed-check"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison",
+    "no-claim-directed-check"
+   ]
+  }
+ ],
+ "proposal": {
+  "claim": "Widening the pooled readout from 128 to 384 units closes the held-out gap, and the reason is capacity at the readout rather than the optimiser schedule. The refuted sibling moved the learning rate and the gap did not move, which rules the schedule out as the binding constraint; the readout is the next narrowest point in the network, and a 128-unit projection discards the panel's per-assay structure before the classifier ever sees it. Held-out accuracy rose from 0.812 to 0.829 over three distinct seeds, every seed better than the 0.812 baseline, with no change to parameter count outside the readout itself. The bar of 0.84 is not reached, so this is a step and not an answer, but it is a step whose mechanism the next attempt can push on: if the readout is the constraint, widening it again should keep paying, and if it is not, the curve should flatten immediately.",
+  "controls": [
+   {
+    "fails_if": "the unmodified baseline does not reproduce its recorded score on the same three seeds, which would mean the comparison is against a number this worktree cannot regenerate",
+    "text": "baseline.score >= 0.805 the unmodified baseline reproduces within noise on the same three seeds"
+   },
+   {
+    "fails_if": "two of the three runs shared a seed, which would report one run's luck three times",
+    "text": "seeds.distinct >= 3 the three reported runs used three distinct seeds"
+   }
+  ]
+ }
+}

@@ -119,6 +119,8 @@ orchestrating **skill** rather than one of the isolated ten — the voice rules 
 | `glossary-01` | `crux-glossary` | proxy | stated key | where the jargon line sits; the key is one reviewer's answer |
 | `design-01` | `crux-design` | proxy | stated key | whether the outcome enumeration is complete |
 | `persona-01` | `crux` (the skill) | proxy | judged rubric + `voice_lint` + vault state | whether the conversation was *good science* — only that it was said in science, and that the notebook was kept |
+| `worker-01` | `crux-auto-worker` | proxy | stated key + `auto_proposal` | whether the claim is any good — only that it moves the parameter the sibling's failure scenario names, and that the proposal validates |
+| `steward-01` | `crux-auto-steward` | proxy | stated key + `auto_steward_proposal` | whether the advice would help — only that it names the stalled island, and that the proposal validates |
 
 ## Design notes
 

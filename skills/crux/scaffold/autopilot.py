@@ -71,6 +71,19 @@ BASE_WORKTREE          = "base"                  # the throwaway checkout the ru
                                                  # check runs in, so the PI's tree stays clean
 CRASH_ENV              = "CRUX_AUTO_CRASH_AT"    # test-only; see the module docstring
 OUTPUT_TAIL            = 500                     # characters of worker.log quoted on a failure
+# 05.3, the agents. Two more spawn sites reach the SAME command list the worker walks, so the
+# keys they register under `ctx["procs"]` have to be names no attempt id can collide with: a
+# hid never holds a `:` and is never the literal `steward`, and `auto_run`'s `finally` kills
+# whatever is in that dict. A worker never outlives its driver, and neither does a closer.
+PROC_CLOSE             = "{hid}:close"           # ctx["procs"] key for one closer
+PROC_STEWARD           = "steward"               # ctx["procs"] key for the steward
+CLOSE_BRIEF_NAME       = "close-brief.md"        # <workspace>/close-brief.md — CRUX_BRIEF
+CLOSE_PROPOSAL_NAME    = "close.json"            # <workspace>/close.json — CRUX_PROPOSAL
+CLOSER_LOG             = "closer.log"            # <workspace>/closer.log
+STEWARD_DIR            = "steward"               # auto/<qid>/steward/<n>/ — NOT a writable root
+STEWARD_BRIEF_NAME     = "brief.md"
+STEWARD_PROPOSAL_NAME  = "proposal.json"
+STEWARD_LOG            = "steward.log"
 
 # Pinned on every call rather than left to the machine: a run may start on a box with no
 # global identity at all, and a driver that fails for that reason fails at 3 a.m.
@@ -922,6 +935,53 @@ def score_attempt(root, plan, hid, cwd=None, seed=None, dest=None):
     return obj
 
 
+def probe_agents(root, plan, repo=None):
+    """One row per command of the plan's list: `{command, probe, reachable, seconds, detail}`.
+
+    A misspelled agent command is the cheapest failure to find and the most expensive to find
+    late — found at run open it costs nothing, found after the first reservation it has burned
+    a hypothesis number that can never be handed out again.
+
+    The probe is the command with the placeholders taken out plus `agent_probe`, so it sends
+    no prompt and therefore spends NO model call: `env=None`, so the child inherits the
+    environment and gets no `CRUX_*` variable at all. Reachable means the program STARTED and
+    exited inside the timeout — the exit code is not read, because not every CLI answers
+    `--version` and refusing a plan over that is a check about a flag."""
+    plan_cwd = repo or plan_repo(root, plan)
+    rows = []
+    for command in E.auto_command_list(plan):
+        row = {"command": command, "probe": [], "reachable": False, "seconds": None,
+               "detail": ""}
+        try:
+            argv = E.auto_probe_argv(command, plan["agent_probe"])
+        except ValueError as e:
+            row["detail"] = (f"the agent command does not parse under shlex: "
+                             f"{command} ({e})")
+            rows.append(row)
+            continue
+        row["probe"] = argv
+        if not argv:
+            row["detail"] = "the agent command is empty"
+            rows.append(row)
+            continue
+        t0 = time.monotonic()
+        try:
+            r = _run(argv, cwd=plan_cwd, env=None, timeout=plan["agent_probe_timeout"])
+        except OSError as e:
+            row["detail"] = (f"the agent command cannot start: {command} "
+                             f"({e.strerror or e})")
+        except subprocess.TimeoutExpired:
+            row["seconds"] = time.monotonic() - t0
+            row["detail"] = (f"the agent command ran past agent_probe_timeout "
+                             f"{float(plan['agent_probe_timeout']):g}s: {command}")
+        else:
+            row["reachable"] = True
+            row["seconds"] = time.monotonic() - t0
+            row["detail"] = f"exited {r.returncode}"
+        rows.append(row)
+    return rows
+
+
 def auto_check(root, path, static=False):
     """`auto check`, with the scorer dry-run added. `--static` is 05.0's verb, unchanged.
 
@@ -935,6 +995,8 @@ def auto_check(root, path, static=False):
     res["repo"] = None
     res["scorer"] = {"ran": False, "cmd": None, "cwd": None, "address": None,
                      "value": None, "seconds": None}
+    res["agents"] = []                  # present on EVERY non-static return, the early ones
+                                        # included, so a reader never has to test for the key
     if res["problems"]:
         return res                      # a plan that fails statically is not dry-run
     plan = E.load_flight_plan(root, path)
@@ -971,6 +1033,15 @@ def auto_check(root, path, static=False):
                             f"scorer's output: {e}"})
     finally:
         shutil.rmtree(ws, ignore_errors=True)
+    # The probe runs whether or not the scorer added a problem: two faults in one plan are two
+    # findings, and reporting one at a time turns one review into two.
+    res["agents"] = probe_agents(root, plan, repo)
+    if res["agents"] and not any(r["reachable"] for r in res["agents"]):
+        res["problems"].append(
+            {"check": "agent-reach",
+             "message": "no agent command in the flight plan is reachable: "
+                        + "; ".join(f"{r['command']} ({r['detail']})"
+                                    for r in res["agents"])})
     res["ok"] = not res["problems"]
     return res
 
@@ -1090,16 +1161,181 @@ def _seen(ctx):
     return ctx["seen"]
 
 
-def _log_tail(ws):
-    """The last of a worker's own output, for the failure the PI reads in the morning."""
-    p = os.path.join(ws, WORKER_LOG)
+def _log_tail(ws, name=WORKER_LOG, since=0):
+    """The last of an agent's own output, for the failure the PI reads in the morning.
+
+    `name` (05.3) is the log to read: the worker's by default, and the closer's or the
+    steward's when one of those is the agent that failed. One reader, so a tail cannot be
+    quoted three subtly different ways.
+
+    `since` is the byte offset this try's own output starts at. `_spawn` opens the log in
+    APPEND mode, so one file accumulates every try of an attempt: without an offset, try 1's
+    rate-limit line is still inside the 500-character window when try 2 — on a DIFFERENT
+    command — fails for an unrelated reason, and the cooldown lands on a healthy command.
+    Read in binary so the offset is the byte count the caller measured, then decode with
+    `errors="replace"` because the bytes are a child's."""
+    p = os.path.join(ws, name)
     if not os.path.isfile(p):
         return "(empty)"
     try:
-        with open(p, encoding="utf-8", errors="replace") as f:
-            return f.read()[-OUTPUT_TAIL:].strip() or "(empty)"
-    except (IOError, OSError):
+        with open(p, "rb") as f:
+            if since:
+                f.seek(int(since))
+            data = f.read()
+    except (IOError, OSError, ValueError):
         return "(empty)"
+    return data.decode("utf-8", "replace")[-OUTPUT_TAIL:].strip() or "(empty)"
+
+
+def _log_size(ws, name=WORKER_LOG):
+    """How many bytes an agent's log already holds, so the next try can scan only its own."""
+    try:
+        return os.path.getsize(os.path.join(ws, name))
+    except (IOError, OSError):
+        return 0
+
+
+def _agent_file(path):
+    """The text an agent left in its workspace, or None. The ONE reader for every such file.
+
+    `E.read` opens utf-8 with no `errors=`, so a single byte of a model's output that is not
+    valid UTF-8 raises `UnicodeDecodeError` — a `ValueError`, which `auto_run`'s loop does not
+    catch, so the whole run would die on one bad byte with no event and no stop record. A
+    steward never stops a run and neither does a closer: this reads with `errors="replace"`
+    and turns every I/O failure into None, which the proposal validators already report as
+    `closer-missing` / `steward-missing` / `proposal-missing`."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except (IOError, OSError):
+        return None
+
+
+# ------------------------------------------------------- 05.3: the walk and the cooldown (§B, §C)
+# `agent:` and `agent_failover:` are ONE ordered command list, and one try walks it once. A
+# command that cannot become a process is a `failover`, which charges neither a retry nor a
+# model call — a command that never started cannot have spent a token, and waiting cannot fix
+# a misspelling. A command whose failed try reads as a provider limit goes on COOLDOWN, held
+# as an absolute wall-clock stamp in `state.json` so a resume does not forget it.
+
+def _cooling(ctx, command):
+    """Is `command` inside its cooldown window right now?
+
+    The stamp is absolute and in `E.now()`'s format, so the comparison is a lexicographic one
+    on iso strings — which is exactly why the stamp is absolute: a remaining-seconds count
+    would be wrong the moment the driver was killed and resumed an hour later."""
+    rec = (ctx["state"].get("agents") or {}).get(command)
+    if not rec or not rec.get("cooling_until"):
+        return False
+    return E.now() < rec["cooling_until"]
+
+
+def _cool(ctx, role, command):
+    """Put one command on cooldown and say so in the ledger."""
+    plan, st = ctx["plan"], ctx["state"]
+    secs = float(plan["agent_cooldown"])
+    # E.now()'s own format, plus a microsecond fraction, so the two stamps still compare
+    # lexicographically and the engine's clock and the driver's stay one clock. The fraction
+    # is what makes a sub-second window mean anything at all: `E.now()` is truncated to the
+    # second, so a stamp truncated the same way is already in the past the moment it is
+    # written. It errs on the side of cooling a fraction of a second too long, which is the
+    # harmless direction — the point of a cooldown is to come back later, not exactly then.
+    at = time.time() + secs
+    until = (time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(at))
+             + ".%06d" % int((at % 1) * 1000000))
+    prior = ((st.get("agents") or {}).get(command) or {}).get("hits") or 0
+    st.setdefault("agents", {})[command] = {"cooling_until": until, "hits": prior + 1}
+    _record(ctx, "cooldown", {"role": role, "command": command, "until": until,
+                              "seconds": secs,
+                              "detail": f"the output tail matched a rate-limit pattern; "
+                                        f"{command} is cooling until {until}"})
+
+
+def _wait_for_cooldown(ctx, commands):
+    """Wait until the earliest cooldown lapses. It does NOT abort.
+
+    A rolling provider limit is the interruption this whole feature exists to survive, so the
+    driver waits it out rather than throwing the night away. `auto_stop` is re-evaluated on
+    EVERY pass: a blocking wait would suspend `budget_hours` accounting for as long as a hung
+    agent lives, and a thirty-minute cooldown under a one-minute budget would overrun by
+    twenty-nine. A night lost entirely to limits therefore ends on the `budget` stop.
+
+    Live workers are polled — `.poll()`, which reaps — but an exit is NOT dispatched here: the
+    main loop owns that, and finishing an attempt from inside another attempt's start would
+    re-enter the whole step machine."""
+    st, plan = ctx["state"], ctx["plan"]
+    while True:
+        _charge_hours(ctx)
+        stop = E.auto_stop(st, plan)
+        if stop:
+            _stop_run(ctx, stop)
+        for _hid, pr in list(ctx["procs"].items()):
+            if pr is not None:
+                pr.poll()
+        if any(not _cooling(ctx, c) for c in commands):
+            return
+        time.sleep(POLL)
+
+
+def _walk_detail(ctx):
+    """"every agent command failed to start: …", from the last walk's own failures."""
+    return ("every agent command failed to start: "
+            + "; ".join(f"{c} ({d})" for c, d in (ctx.get("walk_failures") or [])))
+
+
+def _agent_walk(ctx, role, brief, env, log_path, cwd, hid=None):
+    """One try, walking the command list once: `(p, command)`, or None when none started.
+
+    Every try starts at the HEAD of the list, so the preferred command comes back by itself
+    the moment its window lapses — there is no probe schedule and nothing to reset. Within one
+    try each command is attempted at most once, and a cooling command is skipped rather than
+    attempted.
+
+    The model call is charged HERE, at the moment a child is actually spawned, and nowhere
+    else: a walk is ONE try over several commands, so a failover charges neither a retry nor a
+    call."""
+    commands = E.auto_command_list(ctx["plan"])
+    while True:
+        if commands and all(_cooling(ctx, c) for c in commands):
+            _wait_for_cooldown(ctx, commands)
+            continue
+        failures = []
+        ctx["walk_failures"] = failures
+        for pos, c in enumerate(commands):
+            if _cooling(ctx, c):
+                # A command walked past because it is cooling is a failover too: the ledger
+                # reads `cooldown` then `failover`, which is the whole story of a rolling
+                # limit in two lines. It is not a start failure, so it says so.
+                rec = (ctx["state"].get("agents") or {}).get(c) or {}
+                _record(ctx, "failover",
+                        {"role": role, "command": c, "reason": "cooldown",
+                         "detail": f"{c} is cooling until {rec.get('cooling_until')}",
+                         "next": next((o for o in commands[pos + 1:]
+                                       if not _cooling(ctx, o)), None)})
+                continue
+            try:
+                argv = E.auto_agent_argv(c, role, brief)
+            except ValueError as e:
+                failures.append((c, f"the agent command does not parse under shlex: "
+                                    f"{c} ({e})"))
+            else:
+                if not argv:
+                    failures.append((c, "the flight plan names no agent command"))
+                else:
+                    try:
+                        p = _spawn(argv, cwd, env, log_path)
+                    except OSError as e:
+                        failures.append((c, f"worker cannot start: {c} "
+                                            f"({e.strerror or e})"))
+                    else:
+                        ctx["state"]["budget"]["model_calls"]["used"] += 1
+                        return (p, c)
+            nxt = next((o for o in commands[pos + 1:] if not _cooling(ctx, o)), None)
+            _record(ctx, "failover", {"role": role, "command": c, "reason": "start",
+                                      "detail": failures[-1][1], "next": nxt})
+        return None
 
 
 # ------------------------------------------------------------------------- one attempt (§5)
@@ -1134,7 +1370,9 @@ def _start_attempt(ctx, island):
     try:
         # the brief is assembled for the ISLAND, not for the parent's question: the first
         # attempt on an Explore island builds on the baseline, which sits under the anchor
-        w["brief"] = E.auto_brief_text(E.auto_brief(root, parent, island=island))
+        w["brief"] = E.auto_brief_text(
+            E.auto_brief(root, parent, island=island, islands=list(st["islands"]),
+                         steward=((st.get("steward") or {}).get("guidance") or [])))
     except E.CruxError as e:
         _abandon(ctx, hid, "brief")
         _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -1145,11 +1383,16 @@ def _start_attempt(ctx, island):
 
 
 def _worker_try(ctx, hid):
-    """S5: one invocation of the plan's `agent:` command, and nothing else.
+    """S5: one walk of the plan's command list, and nothing else.
 
-    The proposal is deleted first, so a retry can never read the previous try's answer. The
+    The proposal is deleted first, so a retry can never read the previous try's answer. Every
     command is `shlex.split` and handed to the kernel — no shell between the PI's plan and the
-    process — with `{brief}` substituted in any argv element and seven variables added."""
+    process — with `{agent}` and `{brief}` substituted in any argv element and eight variables
+    added. The model call is charged inside the walk, at the spawn.
+
+    A walk that started NOTHING is not retried: one try already attempted every command, so
+    there is nothing left to try and waiting cannot fix a misspelling. The run stops `abort`
+    instead, naming each command and its reason."""
     plan, st = ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     ws, wt = w["ws"], w["wt"]
@@ -1159,25 +1402,23 @@ def _worker_try(ctx, hid):
     except OSError:
         pass
     fl["worker_tries"] += 1
-    st["budget"]["model_calls"]["used"] += 1
-    try:
-        argv = shlex.split(plan["agent"] or "")
-    except ValueError as e:
-        return _fail(ctx, hid, "worker-start",
-                     f"the agent command does not parse: {plan['agent']} ({e})")
-    if not argv:
-        return _fail(ctx, hid, "worker-start", "the flight plan names no agent command")
-    argv = [x.replace("{brief}", w["brief"]) for x in argv]
+    # `_spawn` APPENDS to worker.log, so this try's own output starts here. `_fail` scans from
+    # this offset and no earlier: an earlier try's rate-limit line must never cool the command
+    # a later try ran.
+    w["log_from"] = _log_size(ws, WORKER_LOG)
     env = dict(os.environ)
     env.update({"CRUX_ATTEMPT": hid, "CRUX_WORKSPACE": ws, "CRUX_WORKTREE": wt,
                 "CRUX_BRIEF": os.path.join(ws, BRIEF_NAME), "CRUX_PROPOSAL": proposal,
-                "CRUX_SEED": "0", "CRUX_RUN": str(plan["run"] or "")})
-    try:
-        p = _spawn(argv, wt, env, os.path.join(ws, WORKER_LOG))
-    except OSError as e:
-        return _fail(ctx, hid, "worker-start",
-                     f"worker cannot start: {plan['agent']} ({e.strerror or e})")
-    ctx["procs"][hid] = p
+                "CRUX_SEED": "0", "CRUX_RUN": str(plan["run"] or ""),
+                "CRUX_AGENT": E.AUTO_AGENTS[0]})
+    res = _agent_walk(ctx, E.AUTO_AGENTS[0], w["brief"], env,
+                      os.path.join(ws, WORKER_LOG), wt, hid=hid)
+    if res is None:
+        return _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
+                               "detail": _walk_detail(ctx)})
+    p, c = res
+    ctx["procs"][hid] = p            # _spawn does NOT register its child; every caller does
+    w["command"] = c
     fl["pid"] = p.pid
     _record(ctx, "worker-started", {"attempt": hid, "pid": p.pid, "try": fl["worker_tries"]})
 
@@ -1189,6 +1430,12 @@ def _fail(ctx, hid, reason, detail):
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     _record(ctx, "worker-failed", {"attempt": hid, "reason": reason, "detail": detail,
                                    "try": fl["worker_tries"]})
+    # 05.3. Only a FAILED try's log is ever scanned: an agent that merely mentions a rate
+    # limit in a transcript it then commits over must not be able to move the driver. The
+    # cooldown lands before the retry decision, so the retry's own walk skips the cooling
+    # command and the ledger reads `cooldown` then `failover`, in that order.
+    if w.get("command") and E.auto_rate_limited(_log_tail(w["ws"], since=w.get("log_from") or 0)):
+        _cool(ctx, E.AUTO_AGENTS[0], w["command"])
     if (not w.get("recorded")
             and fl["worker_tries"] <= plan["retries"]
             and st["budget"]["model_calls"]["used"] < st["budget"]["model_calls"]["total"]):
@@ -1246,13 +1493,7 @@ def _worker_checks(ctx, hid, head):
         return _violate(ctx, hid, "manifest",
                         paths, f"the attempt changed shared-root path(s) outside every "
                                f"workspace: {', '.join(paths)}")
-    raw = None
-    pp = os.path.join(w["ws"], PROPOSAL_NAME)
-    if os.path.isfile(pp):
-        try:
-            raw = E.read(pp)
-        except (IOError, OSError):
-            raw = None
+    raw = _agent_file(os.path.join(w["ws"], PROPOSAL_NAME))
     prop = w["prop"] = E.auto_proposal(raw, plan)
     if not prop["ok"]:
         if prop["retry"]:
@@ -1406,18 +1647,133 @@ def _step_score(ctx, hid):
                                 "value": _address_value(plan, metrics, hid)})
 
 
+def _closer_try(ctx, hid, ticks):
+    """Invoke `crux-close` through the same command list, and read what it proposed.
+
+    Synchronous inside phase `closed`, and awaited by POLLING rather than by a timeout: a
+    blocking wait would suspend `budget_hours` accounting for as long as a hung agent lives.
+    No phase is added to `AUTO_PHASES` — the crash fixture iterates that tuple — so a kill
+    during the closer resumes through 05.2's R2: the metrics are on disk, `_step_close` runs
+    again, and the closer is invoked (and charged) again.
+
+    Only a failure to START is retried. Missing, unparseable, malformed, contradicting,
+    over-cap and non-zero-exit are the agent's own act, and the same agent handed the same
+    brief would repeat it. `cwd` is the REPOSITORY, never the attempt's worktree: on resume
+    that worktree may already be gone, and everything the closer needs reaches it through
+    `CRUX_RESULTS` and the brief."""
+    root, plan, st = ctx["root"], ctx["plan"], ctx["state"]
+    key = PROC_CLOSE.format(hid=hid)
+
+    def bad(reason, detail):
+        return {"ok": False, "reason": reason, "detail": detail,
+                "ticks": {}, "findings": None, "report": None}
+
+    # The brief assembly is INSIDE the failure contract. `auto_close_brief` refuses a
+    # tick/checks length mismatch with a CruxError, and the property this function states is
+    # absolute: in every failure case the attempt closes on the engine's own vector. An
+    # exception here would instead unwind `_step_close` and take the run with it.
+    try:
+        ws = make_workspace(root, plan, hid)
+        brief = E.auto_close_brief_text(E.auto_close_brief(root, hid, plan, ticks))
+        with open(os.path.join(ws, CLOSE_BRIEF_NAME), "w", encoding="utf-8") as f:
+            f.write(brief)
+    except (E.CruxError, IOError, OSError) as e:
+        return bad("closer-brief", f"the close brief for {hid} could not be assembled: {e}")
+    prop_path = os.path.join(ws, CLOSE_PROPOSAL_NAME)
+    env = dict(os.environ)
+    env.update({"CRUX_AGENT": "crux-close", "CRUX_ATTEMPT": hid, "CRUX_WORKSPACE": ws,
+                "CRUX_BRIEF": os.path.join(ws, CLOSE_BRIEF_NAME),
+                "CRUX_PROPOSAL": prop_path,
+                "CRUX_RESULTS": os.path.join(root, E.RESULTS_DIR, hid)})
+
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            os.unlink(prop_path)
+        except OSError:
+            pass
+        log_from = _log_size(ws, CLOSER_LOG)      # this try's own output starts here
+        res = _agent_walk(ctx, "crux-close", brief, env,
+                          os.path.join(ws, CLOSER_LOG), ctx["repo"])
+        if res is None:
+            if tries <= plan["retries"]:
+                _record(ctx, "retry", {"attempt": hid, "step": "closer",
+                                       "try": tries + 1, "reason": "closer-start"})
+                continue
+            return bad("closer-start", _walk_detail(ctx))
+        p, c = res
+        ctx["procs"][key] = p
+        while p.poll() is None:
+            _charge_hours(ctx)
+            stop = E.auto_stop(st, plan)
+            if stop:
+                try:
+                    _kill_tree(p)
+                except OSError:
+                    pass
+                ctx["procs"].pop(key, None)
+                # The stop itself fires at the top of the next loop pass; this attempt closes
+                # on the engine's own vector first, so nothing the scorer measured is lost.
+                return bad("stop", stop.get("detail"))
+            time.sleep(POLL)
+        ctx["procs"].pop(key, None)
+        if p.returncode != 0:
+            tail = _log_tail(ws, CLOSER_LOG, since=log_from)
+            if E.auto_rate_limited(tail):
+                _cool(ctx, "crux-close", c)
+            return bad("closer-exit", f"the closer exited {p.returncode} — "
+                                      f"output tail: {tail}")
+        return E.auto_close_proposal(_agent_file(prop_path), plan, ticks)
+
+
+def _step_report(ctx, hid, report):
+    """Write `results/<hid>/report.md` and link it under the node's `## Artifacts`.
+
+    The DRIVER writes it, never the engine — the engine never writes anything under
+    `results/`. Idempotent both halves, so a resumed close is a no-op. Called only from inside
+    `_step_close`'s single lock hold, and BEFORE `cmd_close`, so `artifact_warnings` sees the
+    link and `validate` reports no 'files but no report is linked' problem."""
+    root = ctx["root"]
+    d = os.path.join(root, E.RESULTS_DIR, hid)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, E.AUTO_REPORT_FILE), "w", encoding="utf-8") as f:
+        f.write(str(report or "")[:E.AUTO_REPORT_BYTES])
+    return E.auto_link_report(root, hid, f"{E.RESULTS_DIR}/{hid}/{E.AUTO_REPORT_FILE}")
+
+
 def _step_close(ctx, hid, metrics, value):
-    """S9. Tick from the metrics, then `cmd_close` — the unchanged close path, reached by a
-    new caller. The driver supplies the ticks and never a verdict."""
+    """S9. Tick from the metrics, let the closer propose the rest, then `cmd_close` — the
+    unchanged close path, reached by a new caller. The driver supplies the ticks and never a
+    verdict.
+
+    Every closer failure closes the attempt on the ENGINE's own vector, with the fixed-template
+    findings and report, and is deliberately NOT `invalid-run` for that reason alone: the run
+    happened and the scorer's document is on disk, and a reporting agent's flakiness must not
+    be able to manufacture a streak of invalid runs that trips the `abort` stop."""
     root, plan, st = ctx["root"], ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     fl["phase"] = "closed"
     _save_state(ctx)
     _crash(ctx, "closed")
     ticks = E.cmd_auto_ticks(root, hid, metrics)
-    findings = E.auto_findings(plan["address"], value, ticks, fl["failure"])
+    prop = _closer_try(ctx, hid, ticks) if plan["closer"] else None
+    if prop is not None:
+        _record(ctx, "closer", {"attempt": hid, "ok": prop["ok"],
+                                "reason": prop["reason"], "detail": prop["detail"]})
+    if prop and prop["ok"]:
+        merged = E.auto_merge_ticks(ticks, prop["ticks"])
+        findings, report = prop["findings"], prop["report"]
+    else:
+        merged = ticks
+        findings = E.auto_findings(plan["address"], value, ticks, fl["failure"])
+        report = E.auto_report_text(plan, hid, value, ticks, fl["failure"])
+    if merged != ticks:
+        # The engine writes the vector it was handed; the driver may not call `render_doc`.
+        E.cmd_auto_ticks(root, hid, metrics, ticks=merged)
 
     def act():
+        _step_report(ctx, hid, report)
         out = E.cmd_close(root, hid, metric=repr(value) if value is not None else None,
                           findings=findings)
         tid = None
@@ -1741,6 +2097,174 @@ def _open_base(ctx, ap):
                                 "plan_hash": st["plan_hash"], "base": base})
 
 
+# ------------------------------------------------------------------ 05.3: the steward (§H)
+# It reads the RUN's own record — the ledger, the island table, the budget — and proposes
+# standing guidance or ONE new island under the anchor, up to `island_cap`. It is advice: a
+# steward that cannot start, fails, returns nothing or proposes outside the schema is logged
+# and the run carries on, because a run that dies for want of advice is worse than a run
+# without it. No attempt is ever lost to it.
+
+def _seen_events(ctx):
+    """The run's ledger objects, oldest first, unparseable lines skipped.
+
+    The engine never reads `ledger.jsonl` — that file is the driver's — so the driver reads it
+    and hands the objects over, the same read `_seen` already does."""
+    out = []
+    pth = ledger_path(ctx["root"], ctx["qid"])
+    if os.path.isfile(pth):
+        for line in E.read(pth).splitlines():
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(o, dict):
+                out.append(o)
+    return out
+
+
+def _steward_due(ctx):
+    """Is the steward due right now? Every clause, and no fifth reason.
+
+    On a Climb plan the switch is legal and the steward simply never runs: a run may be
+    moved from Climb to Explore mid-flight, so the switch being on is not a mistake to
+    refuse."""
+    plan, st = ctx["plan"], ctx["state"]
+    if not plan["steward"] or plan["mode"] != "explore":
+        return False
+    if ctx.get("steward_proc") is not None:
+        return False
+    if st["budget"]["model_calls"]["used"] >= st["budget"]["model_calls"]["total"]:
+        return False
+    if st["confirmed"] is not None or st["stop"] is not None:
+        return False
+    if st.get("steward_requested"):
+        return True
+    every = plan["steward_every"]
+    last = ((st.get("steward") or {}).get("last_closed") or 0)
+    return every > 0 and len(st["closed"]) - last >= every
+
+
+def _steward_try(ctx):
+    """Spawn the steward. Asynchronous: it blocks nothing, and a brief assembled while it runs
+    simply predates its advice.
+
+    Its scratch lives at `auto/<qid>/steward/<n>/`, NEVER under a writable root: a steward
+    workspace under `<writable>/…` would show up as a shared-root write in every in-flight
+    attempt's manifest recheck and close honest attempts `invalid-run`. `auto/<qid>/manifests/`
+    sets the precedent. `cwd` is the repository, for the same reason the closer's is."""
+    root, plan, st, qid = ctx["root"], ctx["plan"], ctx["state"], ctx["qid"]
+    # Every command cooling: the walk would sit in `_wait_for_cooldown`, which polls without
+    # dispatching exits, so the driver would stall for up to `agent_cooldown` while finished
+    # workers went unclosed. For the WORKER walk that wait is unavoidable — nothing can start.
+    # For the steward it is pure loss: advice can wait a pass. `invocations`/`last_closed` are
+    # left untouched, so it comes due again on the next pass.
+    commands = E.auto_command_list(plan)
+    if commands and all(_cooling(ctx, c) for c in commands):
+        return
+    n = ((st.get("steward") or {}).get("invocations") or 0) + 1
+    ws = os.path.join(root, E.AUTO_DIR, qid, STEWARD_DIR, str(n))
+    os.makedirs(ws, exist_ok=True)
+    brief = E.auto_steward_brief_text(
+        E.auto_steward_brief(root, plan, st, _seen_events(ctx)))
+    with open(os.path.join(ws, STEWARD_BRIEF_NAME), "w", encoding="utf-8") as f:
+        f.write(brief)
+    prop_path = os.path.join(ws, STEWARD_PROPOSAL_NAME)
+    try:
+        os.unlink(prop_path)
+    except OSError:
+        pass
+    env = dict(os.environ)
+    env.update({"CRUX_AGENT": "crux-auto-steward", "CRUX_WORKSPACE": ws,
+                "CRUX_BRIEF": os.path.join(ws, STEWARD_BRIEF_NAME),
+                "CRUX_PROPOSAL": prop_path})
+    res = _agent_walk(ctx, "crux-auto-steward", brief, env,
+                      os.path.join(ws, STEWARD_LOG), ctx["repo"])
+    # The window closes whether it ran or not: a steward that cannot start must not be retried
+    # on every pass of the loop for the rest of the night.
+    st.setdefault("steward", {"guidance": [], "invocations": 0, "islands": [],
+                              "last_closed": 0})
+    st["steward"]["invocations"] = n
+    st["steward"]["last_closed"] = len(st["closed"])
+    st["steward_requested"] = False
+    if res is None:
+        _record(ctx, "steward", {"ok": False, "reason": "steward-start",
+                                 "detail": _walk_detail(ctx),
+                                 "guidance": None, "island": None})
+        return
+    p, c = res
+    ctx["steward_proc"], ctx["steward_ws"], ctx["steward_command"] = p, ws, c
+    ctx["procs"][PROC_STEWARD] = p
+    # The success path records no event until the steward exits, so without this the window
+    # bookkeeping and the model call charged at the spawn live in memory alone: a kill here
+    # would re-open the same window on resume and spawn — and charge — a second steward for it.
+    _save_state(ctx)
+
+
+def _steward_apply(ctx):
+    """Read what the exited steward proposed, and act on it — or log why not."""
+    root, plan, st, qid = ctx["root"], ctx["plan"], ctx["state"], ctx["qid"]
+    p = ctx.get("steward_proc")
+    ws, command = ctx.get("steward_ws"), ctx.get("steward_command")
+    ctx["procs"].pop(PROC_STEWARD, None)
+    ctx["steward_proc"] = None
+    rc = p.returncode if p is not None else 0
+    if rc != 0 and command and E.auto_rate_limited(_log_tail(ws, STEWARD_LOG)):
+        _cool(ctx, "crux-auto-steward", command)
+    raw = _agent_file(os.path.join(ws, STEWARD_PROPOSAL_NAME) if ws else None)
+    res = E.auto_steward_proposal(raw, plan, st)
+    if not res["ok"]:
+        _record(ctx, "steward", {"ok": False, "reason": res["reason"],
+                                 "detail": res["detail"],
+                                 "guidance": None, "island": None})
+        return
+    if res["guidance"]:
+        # The plan's `## Guidance` is NOT written: `auto guide` is the PI's verb, and the plan
+        # document stays theirs alone. Every later worker brief carries the steward's words in
+        # its own labelled section instead, attributed and stamped, so a worker sees who said
+        # what.
+        st["steward"]["guidance"].append({"at": E.now(), "author": "crux-auto-steward",
+                                          "text": res["guidance"]})
+    if not res["island"]:
+        _record(ctx, "steward", {"ok": True, "reason": None, "detail": None,
+                                 "guidance": res["guidance"], "island": None})
+        return
+
+    def act():
+        qi, _fn = E.cmd_ask(root, res["island"]["title"], parent=plan["anchor"],
+                            body_text=res["island"]["problem"])
+        branch = island_branch(qid, qi)
+        try:
+            _git(ctx["repo"], "branch", branch, st["base"])
+        except (E.CruxError, OSError) as e:
+            # §3.8 is absolute: a steward never stops a run. An existing ref, an `index.lock`
+            # or a read-only object store must not unwind this record — that would leave the
+            # new question node orphaned under the anchor with no island record pointing at
+            # it, no `steward` event, and a resume that files a SECOND one. An existing ref
+            # that already resolves is the resume case and is not a failure.
+            if rev_parse(ctx["repo"], branch) is None:
+                return (None, f"the island branch {branch} could not be cut: {e}")
+        try:
+            score = float(E.resolve_address(
+                root, f"{plan['baseline']}#{plan['address']}")["value"])
+        except (E.CruxError, TypeError, ValueError):
+            score = None
+        # APPENDED, never inserted: `st["next_island"]`'s existing indices have to stay valid.
+        # The plan's `islands:` frontmatter is not edited, because that field IS hashed and
+        # writing it would clear the PI's approval mid-run.
+        st["islands"][qi] = {"branch": branch, "pointer": st["base"],
+                             "best": plan["baseline"], "best_score": score,
+                             "seen_score": score, "stall": 0}
+        st["steward"]["islands"].append(qi)
+        return (qi, None)
+
+    _record(ctx, "steward",
+            lambda r: {"ok": r[0] is not None,
+                       "reason": None if r[0] is not None else "steward-island",
+                       "detail": r[1],
+                       "guidance": res["guidance"], "island": r[0]},
+            work=act)
+
+
 def _next_island(ctx):
     """The island to start the next attempt on, round-robin from where the last one left, or
     None when nothing may start right now."""
@@ -1753,7 +2277,7 @@ def _next_island(ctx):
         return None
     if st["budget"]["model_calls"]["used"] >= st["budget"]["model_calls"]["total"]:
         return None
-    islands = list(plan["islands"])
+    islands = list(st["islands"])
     for k in range(len(islands)):
         idx = (int(st["next_island"] or 0) + k) % len(islands)
         i = islands[idx]
@@ -1777,10 +2301,6 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
                           f"{res['problems'][0]['message']}")
     plan = E.load_flight_plan(root, path)
     qid = plan["anchor"]
-    if plan["steward"] is True:
-        raise E.CruxError(f"auto run: {rel} sets steward: true, and the steward arrives in "
-                          f"slice 05.3 — a run that ignored the switch would not be the run "
-                          f"that was signed")
     ap = E.auto_approval(E.read(os.path.join(root, *rel.split("/"))))
     if ap["state"] == "unapproved":
         raise E.CruxError(f"auto run: {rel} is not approved — the PI approves a flight plan "
@@ -1815,6 +2335,8 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
     ctx = {"root": root, "qid": qid, "rel": rel, "plan": plan, "repo": repo, "state": None,
            "lock_wait": lock_wait, "crash_at": os.environ.get(CRASH_ENV),
            "t0": time.monotonic(), "procs": {}, "work": {}, "seen": None,
+           "steward_proc": None, "steward_ws": None, "steward_command": None,
+           "walk_failures": [],
            "prior_host": (prior or {}).get("driver", {}).get("host")}
     _seen(ctx)                       # the ledger as it stands BEFORE this driver writes to it
 
@@ -1833,6 +2355,11 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             _open_base(ctx, ap)
         else:
             st = ctx["state"] = prior
+            # A state.json written by 05.2 has neither key. Both are defaulted BEFORE the
+            # first `_record`, so the key-set invariant holds from the `resumed` event on.
+            st.setdefault("agents", {})
+            st.setdefault("steward", {"guidance": [], "invocations": 0, "islands": [],
+                                      "last_closed": 0})
             st["driver"] = {"pid": os.getpid(), "host": HOST}
             st["budget"]["attempts"]["total"] = plan["budget_attempts"] \
                 if max_attempts is None else min(plan["budget_attempts"], int(max_attempts))
@@ -1842,6 +2369,15 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
                                      "pid": os.getpid()})
 
         if not st["in_flight"] and not st["closed"] and not reservations(root, qid):
+            # 05.3: the probe FIRST. A misspelled agent is cheaper to find than a scorer run,
+            # and the stop happens before any id is reserved — a reserved hypothesis number
+            # can never be handed out again.
+            rows = probe_agents(root, plan, ctx["repo"])
+            if rows and not any(r["reachable"] for r in rows):
+                _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
+                                "detail": "no agent command is reachable: "
+                                          + "; ".join(f"{r['command']} ({r['detail']})"
+                                                      for r in rows)})
             failed = _base_scorer_check(ctx)
             if failed:
                 _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -1855,12 +2391,16 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             stop = E.auto_stop(st, plan)
             if stop:
                 _stop_run(ctx, stop)
+            if _steward_due(ctx):
+                _steward_try(ctx)
             while True:
                 island = _next_island(ctx)
                 if island is None:
                     break
                 _start_attempt(ctx, island)
-            if not st["in_flight"]:
+            # A live steward counts as activity: it is the one thing in flight that is not an
+            # attempt, and a run waiting on it has not run out of things to do.
+            if not st["in_flight"] and ctx.get("steward_proc") is None:
                 raise E.CruxError("auto run: nothing is in flight and nothing may start, yet "
                                   "no stop applies")
             exited = []
@@ -1870,6 +2410,9 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
                     exited.append((hid, 0))
                 elif p.poll() is not None:
                     exited.append((hid, p.returncode))
+            if (ctx.get("steward_proc") is not None
+                    and ctx["steward_proc"].poll() is not None):
+                _steward_apply(ctx)
             if not exited:
                 time.sleep(POLL)
                 continue

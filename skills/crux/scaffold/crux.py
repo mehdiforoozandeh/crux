@@ -23,7 +23,7 @@ Quick tour:
 `close` reads the `## Verifiables` checkboxes the agent (or the PI) ticked:
 all `- [x]` -> supported · any `- [ ]` -> refuted/partial · `- [-]` -> inconclusive.
 """
-import argparse, sys, os, json
+import argparse, sys, os, json, shlex
 
 if sys.version_info < (3, 8):
     sys.exit("crux: needs Python >= 3.8 (found %d.%d)" % sys.version_info[:2])
@@ -557,6 +557,19 @@ def _dispatch_auto(a):
             sc = res.get("scorer") or {}
             if sc.get("ran"):
                 print(f"\u2713 scorer ok: {sc['address']} = {sc['value']}  ({sc['cmd']})")
+        # 05.3: one line per command of the list. An unreachable entry beside a reachable one
+        # is reported and is not a problem — a failover list may name a CLI this machine
+        # does not have.
+        for row in res.get("agents") or []:
+            if row.get("reachable"):
+                # shlex-joined, not space-joined: an argv element holding a space has to print
+                # quoted, or the line the PI reads cannot be pasted back as the command that ran.
+                shown = " ".join(shlex.quote(str(x)) for x in row.get("probe") or [])
+                print(f"\u2713 agent reachable: {row['command']}  "
+                      f"(probe: {shown}, {float(row.get('seconds') or 0.0):.2f}s)")
+            else:
+                print(f"\u2717 agent unreachable: {row['command']}  ({row.get('detail')})")
+        if res["ok"]:
             return 0
         for p in res["problems"]:
             print(f"\u2717 {p['check']}: {p['message']}")

@@ -20,6 +20,10 @@ writable: work/, results/
 repo:
 agent: claude -p "{brief}"
 agent_failover:
+closer: false
+agent_cooldown: 1800
+agent_probe: --version
+agent_probe_timeout: 20
 steward: false
 steward_every: 10
 stall_attempts: 8

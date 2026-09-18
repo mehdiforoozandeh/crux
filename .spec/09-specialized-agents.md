@@ -66,6 +66,8 @@ check — checks are not user-facing concepts and N new verbs bloats the surface
 | `crux-glossary` | vault prose + glossary + decline list | specialist jargon, or public knowledge? (added by [14](14-glossary.md); no write verb in its belt) |
 | `crux-situate` | `crux brief <node> --mode=situate` | where are we on this subtree, and what are the paths forward? (added by [13](13-situate-and-design.md); output is ephemeral — chat only, never a vault write) |
 | `crux-design` | `crux brief <hid>` (isolated) + `crux task list --ref <hid>` | is there any plausible outcome of this run from which we would conclude nothing? (added by [13](13-situate-and-design.md); detects all three causes of a partial answer, fixes only the run's ability to discriminate, hands (a) to `crux-critic` and (b) to `crux-verifiables`; emits a proposal, never a write) |
+| `crux-auto-worker` | the brief at `CRUX_BRIEF` (assembled by the engine) | draft one attempt: change the program, run it, claim what changed and why (added by [05](05-autopilot.md); headless — it commits in its own worktree and writes one proposal, and it may add outcome-neutral controls only) |
+| `crux-auto-steward` | the run brief at `CRUX_BRIEF` (the ledger, the island table, the budget) | is this search stuck, and is there an angle nobody has tried? (added by [05](05-autopilot.md); proposes standing guidance or one new island up to `island_cap`, never a vault write, and never stops a run) |
 
 `crux-rd` is deliberately **not** here — it is a skill. See [07](07-rd-layer.md).
 

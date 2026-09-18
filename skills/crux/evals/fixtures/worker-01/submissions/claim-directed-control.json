@@ -1,0 +1,61 @@
+{
+ "fixture": "worker-01",
+ "agent": "crux-auto-worker",
+ "agent_sha": "acbefe174ba27aeed41495fc73d1ccbb307acdba693fd6bc30eee5df8388e9b8",
+ "_note": "CANNED 2026-09-17 — the failure the last planted row exists for: the worker writes its own claim-directed check as a control, tagging it with the claim-directed kind. auto_proposal refuses it once and does not retry, because the same agent would repeat it at cost. It also misses that row in its own report, so it loses recall as well as the hard half.",
+ "runs": [
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison"
+   ]
+  },
+  {
+   "findings": [
+    "moves-a-new-parameter",
+    "claim-names-the-reason",
+    "claim-under-cap",
+    "control-is-a-comparison"
+   ]
+  }
+ ],
+ "proposal": {
+  "claim": "Widening the pooled readout to 384 units reaches the bar, and the readout was the binding constraint all along. Held-out accuracy rose from 0.812 to 0.841 over three seeds.",
+  "controls": [
+   {
+    "fails_if": "the widened readout does not reach the bar",
+    "text": "[hypothesis] obj.score >= 0.84 the widened readout reaches the objective bar"
+   },
+   {
+    "fails_if": "the unmodified baseline does not reproduce its recorded score on the same three seeds",
+    "text": "baseline.score >= 0.805 the unmodified baseline reproduces within noise"
+   }
+  ]
+ }
+}

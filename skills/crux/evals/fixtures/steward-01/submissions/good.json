@@ -1,0 +1,56 @@
+{
+ "fixture": "steward-01",
+ "agent": "crux-auto-steward",
+ "agent_sha": "b00f0c3913ce8cd71f7a99a829eaff570c0e56a0b52f4fe319c1d6ee002028d7",
+ "_note": "CANNED 2026-09-17 — the call the record forces: guidance that names the stalled island q1.1, standing rather than single-use, and no island key, because the run already holds an island with one attempt. The proposal validates under auto_steward_proposal exactly as the driver would validate it.",
+ "runs": [
+  {
+   "findings": [
+    "names-the-stalled-island",
+    "does-not-open-a-third",
+    "guidance-is-standing",
+    "guidance-under-cap",
+    "no-fourth-key"
+   ]
+  },
+  {
+   "findings": [
+    "names-the-stalled-island",
+    "does-not-open-a-third",
+    "guidance-is-standing",
+    "guidance-under-cap",
+    "no-fourth-key"
+   ]
+  },
+  {
+   "findings": [
+    "names-the-stalled-island",
+    "does-not-open-a-third",
+    "guidance-is-standing",
+    "guidance-under-cap",
+    "no-fourth-key"
+   ]
+  },
+  {
+   "findings": [
+    "names-the-stalled-island",
+    "does-not-open-a-third",
+    "guidance-is-standing",
+    "guidance-under-cap",
+    "no-fourth-key"
+   ]
+  },
+  {
+   "findings": [
+    "names-the-stalled-island",
+    "does-not-open-a-third",
+    "guidance-is-standing",
+    "guidance-under-cap",
+    "no-fourth-key"
+   ]
+  }
+ ],
+ "proposal": {
+  "guidance": "Island q1.1 has had six of the run's seven attempts and its best score has not moved across the last four, so attempts spent there are buying less and less. Two standing rules follow. First, before proposing a change on q1.1, name which of its six closed attempts already moved the same parameter, and pick a different one; four of the six moved the schedule, and the schedule is the thing the record says does not move the gap. Second, q1.2 has had one attempt in the whole run and is the cheaper place to learn something new, so when the choice is free, take it. Neither rule changes the objective, the bar or the checks, which are frozen; both are about where the remaining five attempts go."
+ }
+}

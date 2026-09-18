@@ -5693,7 +5693,8 @@ AUTO_PHASES            = ("reserved", "drafted", "committed", "scored", "closed"
 AUTO_LEDGER_EVENTS     = ("run-opened", "attempt-reserved", "worker-started", "worker-done",
                           "worker-failed", "node-filed", "scored", "violation", "retry",
                           "closed", "confirm", "island-best", "stall", "escalated",
-                          "abandoned", "resumed", "stop")
+                          "abandoned", "resumed", "stop",
+                          "failover", "cooldown", "closer", "steward")
 AUTO_STOP_REASONS      = ("success", "budget", "abort", "stall")
 AUTO_BUDGET_AXES       = ("attempts", "hours", "model_calls")
 # The whole grammar by which a machine may grade a check. `≤ ≥ ≠` are spellings, not extra
@@ -5719,7 +5720,43 @@ AUTO_STATE_KEYS        = ("run", "anchor", "plan", "plan_hash", "opened", "updat
                           "mode", "c_puct", "escalated", "steward_requested", "base",
                           "islands", "best", "budget", "in_flight", "closed",
                           "consecutive_invalid", "stalls", "confirmed", "stop", "tasks",
-                          "events", "next_island")
+                          "events", "next_island",
+                          "agents", "steward")
+
+# 05.3. The agents. One ordered COMMAND LIST that a try walks once, a cooldown for a command
+# that hit a provider limit, a probe that costs nothing, the closer's proposal schema and the
+# steward's. All of it here, so the impure half cannot invent a second spelling.
+# ---- the command list, the walk, the probe
+AUTO_AGENTS                = ("crux-auto-worker", "crux-close", "crux-auto-steward")
+AUTO_COOLDOWN_DEFAULT      = 1800.0        # seconds; plan field `agent_cooldown:`
+AUTO_PROBE_DEFAULT         = "--version"   # plan field `agent_probe:`
+AUTO_PROBE_TIMEOUT_DEFAULT = 20.0          # seconds; plan field `agent_probe_timeout:`
+# Ported from the era skill's scaffold/generate.py LIMIT_PATTERNS (MIT — that file carries no
+# licence header and is part of the PI's own MIT-licensed `era` skill; Apache-2.0 and FROZEN
+# belong to futs.py alone, which is a different file). Seven regexes, read case-insensitively.
+AUTO_RATE_LIMIT_PATTERNS   = (r"5-?hour limit", r"usage limit", r"rate limit",
+                              r"limit reached", r"too many requests", r"reset[s]? at",
+                              r"please try again later")
+# ---- the closer
+AUTO_CLOSE_KEYS            = ("ticks", "findings", "report")
+AUTO_TICK_ALPHABET         = ("x", " ", "-")
+AUTO_REPORT_FILE           = "report.md"           # results/<hid>/report.md
+AUTO_REPORT_BYTES          = 20000                 # a report is a file, not a node section
+# The closer's findings paragraph goes into the NODE, and `prose_words` sums every one of a
+# node's prose sections against ONE whole-node budget of PROSE_CAP — while `auto_proposal`
+# separately allows a claim of up to PROSE_CAP on its own. A findings cap of PROSE_CAP would
+# therefore let a legal 400-word claim plus a legal 400-word findings put 800 words in a
+# 400-word node, so every closed attempt of the run would carry an over-cap advisory: the
+# self-manufactured backlog the report link exists to close. 80 is the number
+# AUTO_BRIEF_BUDGET already uses for findings, so no new number is invented.
+AUTO_CLOSE_FINDINGS_WORDS  = 80
+# ---- the steward
+AUTO_STEWARD_KEYS          = ("guidance", "island")
+AUTO_ISLAND_KEYS           = ("title", "problem")
+AUTO_STEWARD_SLOTS         = ("goal", "objective.address", "objective.direction",
+                              "objective.bar", "anchor.id", "anchor.title", "islands",
+                              "budget", "island_cap")
+AUTO_NO_STEWARD            = "No steward guidance yet."
 
 OBJECTIVE_LINE_RE = re.compile(r"^\s*(address|direction|bar)::\s*(.+?)\s*$")
 GUIDANCE_RE       = re.compile(r"^- \[(?P<at>[^\]]+)\] (?P<author>[^:]+): (?P<text>.+)$")
@@ -5942,6 +5979,44 @@ def flight_plan_problems(root, plan, path=None):
         if name in ints_ok and ints_ok[name] < 1:
             add("field-type", f"flight plan field '{name}' must be a whole number of attempts, "
                               f"1 or more (got '{fm.get(name)}')")
+    # 2g (05.3). The three new optional fields. `agent_probe` needs no check of its own: any
+    # string is a legal probe argument list, and one that does not parse is caught by 2h's
+    # sibling logic where the probe argv is built.
+    if present("closer") and not isinstance(fm.get("closer"), bool):
+        add("field-type", f"flight plan field 'closer' must be true or false "
+                          f"(got '{fm.get('closer')}')")
+    if present("agent_cooldown"):
+        raw = fm.get("agent_cooldown")
+        try:
+            if float(raw) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            add("field-type", f"flight plan field 'agent_cooldown' must be a non-negative "
+                              f"number of seconds (got '{raw}')")
+    if present("agent_probe_timeout"):
+        raw = fm.get("agent_probe_timeout")
+        try:
+            if float(raw) <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            add("field-type", f"flight plan field 'agent_probe_timeout' must be a positive "
+                              f"number of seconds (got '{raw}')")
+    # 2h (05.3). Every command of the list has to be argv a process can be started from. A
+    # misspelling here is a whole night lost, and it costs nothing to refuse it where the plan
+    # is signed — `auto check --static` starts nothing and still catches it.
+    for n, c in enumerate([fm.get("agent")] + _csv_field(fm.get("agent_failover")), 1):
+        # A blank `agent:` reads as None out of the frontmatter, and "the plan names no agent
+        # command" is exactly what 2h is for — so it is reported here as well as by check 1,
+        # because the two say different things: one that the field is absent, one that the
+        # list has no first command.
+        try:
+            argv = shlex.split(str(c or ""))
+        except ValueError as e:
+            add("agent-command", f"flight plan agent command {n} does not parse under "
+                                 f"shlex: {c} ({e})")
+            continue
+        if not argv:
+            add("agent-command", f"flight plan agent command {n} is empty")
 
     # 3. the mode
     mode = fm.get("mode")
@@ -6108,16 +6183,18 @@ def flight_plan_problems(root, plan, path=None):
         if gaps:
             add("scenario", f"flight plan verifiable(s) {', '.join(gaps)} have no failure "
                             f"scenario")
-        # 13b (05.2). In this slice the driver has no model, so every check it inherits has to
-        # be one it can evaluate from a metrics document. A prose check would make `supported`
-        # unreachable for the whole run — a fact worth learning before the compute is spent,
-        # not after. Prose checks return in 05.3, when `crux-close` proposes their ticks.
-        for i, item in enumerate(plan.get("verifiables") or [], 1):
-            if auto_check_comparison(item.get("text")) is None:
-                add("check-grammar",
-                    f"flight plan verifiable {i} is not a metric comparison: it must begin "
-                    f"'<key.path> <op> <number>' with <op> one of "
-                    f"{', '.join(AUTO_COMPARISON_OPS)} (got '{item.get('text')}')")
+        # 13b (05.2, amended 05.3). Without a closer the driver has no model, so every check
+        # it inherits has to be one it can evaluate from a metrics document — a prose check
+        # would make `supported` unreachable for the whole run, a fact worth learning before
+        # the compute is spent. With `closer: true` the prose checks are `crux-close`'s to
+        # propose, so the grammar no longer has to hold.
+        if not bool(fm.get("closer")):
+            for i, item in enumerate(plan.get("verifiables") or [], 1):
+                if auto_check_comparison(item.get("text")) is None:
+                    add("check-grammar",
+                        f"flight plan verifiable {i} is not a metric comparison: it must begin "
+                        f"'<key.path> <op> <number>' with <op> one of "
+                        f"{', '.join(AUTO_COMPARISON_OPS)} (got '{item.get('text')}')")
         if address:
             tok = re.compile(r"(?<![\w.])" + re.escape(address) + r"(?![\w.])")
             named = any(item["kind"] == DEFAULT_KIND and s.get("discriminates")
@@ -6209,6 +6286,24 @@ def load_flight_plan(root, path):
                  "retries": int(fm.get("retries")),
                  "stall_attempts": int(fm.get("stall_attempts")),
                  "abort_invalid_runs": int(fm.get("abort_invalid_runs"))})
+    # 05.3, for the driver. `agent_failover` splits with the same `_csv_field` that splits
+    # `islands`/`frozen`/`writable`; the three new optional fields fall back to their
+    # defaults. `steward_every` and `island_cap` are already required and int-checked, but
+    # being in AUTO_REQUIRED_FIELDS is not the same as reaching the driver — the steward needs
+    # both, so they are coerced here like every other field the loop reads.
+    plan.update({"agent_failover": [str(x) for x in _csv_field(fm.get("agent_failover"))],
+                 "closer": bool(fm.get("closer")),
+                 "agent_cooldown": (float(fm["agent_cooldown"])
+                                    if fm.get("agent_cooldown") not in (None, "")
+                                    else AUTO_COOLDOWN_DEFAULT),
+                 "agent_probe": (str(fm["agent_probe"])
+                                 if fm.get("agent_probe") not in (None, "")
+                                 else AUTO_PROBE_DEFAULT),
+                 "agent_probe_timeout": (float(fm["agent_probe_timeout"])
+                                         if fm.get("agent_probe_timeout") not in (None, "")
+                                         else AUTO_PROBE_TIMEOUT_DEFAULT),
+                 "steward_every": int(fm.get("steward_every")),
+                 "island_cap": int(fm.get("island_cap"))})
     checks = []
     for i, (item, s) in enumerate(zip(plan.get("verifiables") or [],
                                       plan.get("scenarios") or []), 1):
@@ -6219,6 +6314,72 @@ def load_flight_plan(root, path):
                        "key": c.get("key"), "op": c.get("op"), "number": c.get("number")})
     plan["checks"] = checks
     return plan
+
+
+# 05.3. The command list, the argv it becomes, the probe argv it is reduced to, and the one
+# question a log tail is asked. All four are pure string work, which is why they live here
+# rather than beside the driver that calls them: a test may pin them without a process.
+
+def auto_command_list(plan):
+    """The ordered command list one try walks once: `agent:` first, then `agent_failover:`.
+
+    Nothing is dropped and nothing is validated — an entry that does not parse is still a row
+    in `auto check`'s agents block, because "the second command is misspelled" is the finding,
+    not a silence. Index 0 is the preference order's head, and every try starts there, so the
+    preferred command comes back by itself the moment its cooldown lapses."""
+    return [plan["agent"]] + list(plan.get("agent_failover") or [])
+
+
+def auto_agent_argv(command, agent, brief):
+    """One command string -> argv, with `{agent}` and `{brief}` substituted in ANY element.
+
+    `{agent}` substitutes BEFORE `{brief}`: the brief is untrusted text a model wrote, and a
+    brief that happens to contain the four characters `{agent}` must not be re-scanned. The
+    brief goes in as TEXT, not as a path — the path reaches the child through CRUX_BRIEF.
+
+    A `ValueError` from `shlex.split` propagates: the caller decides whether an unparseable
+    command is a plan problem, a probe row or a failover."""
+    argv = shlex.split(str(command or ""))
+    a, b = str(agent or ""), str(brief or "")
+    return [x.replace("{agent}", a).replace("{brief}", b) for x in argv]
+
+
+def auto_probe_argv(command, probe):
+    """The same command reduced to something that can be run with no prompt, plus `probe`.
+
+    Two clauses. (1) Every element carrying a placeholder is dropped — the probe sends no
+    brief, so an element that would have held one has nothing to hold. (2) A LONG option left
+    dangling by (1) is dropped too, back to front, because `--agent` with nothing after it is
+    a parse error in most CLIs.
+
+    Clause 2 reads a long option (`--name`) and not every `-`, because by the GNU convention a
+    long option's value is a separate element and a short flag may be a bare toggle: PRD §D's
+    three worked examples turn on exactly that difference — `claude -p --agent {agent}
+    "{brief}"` and the shipped template's `claude -p "{brief}"` both probe as
+    `claude -p --version`, so `--agent` goes and `-p` stays.
+
+    Clause 2 also always tests against clause 1's FIXED removal set, never against what clause
+    2 itself removed: walking on would eat `-p` from
+    `claude -p --agent {agent} --file {brief}` as well.
+
+    A `ValueError` from `shlex.split` propagates, as in `auto_agent_argv`."""
+    argv = shlex.split(str(command or ""))
+    keep = [i for i, x in enumerate(argv) if "{brief}" not in x and "{agent}" not in x]
+    dropped = set(range(len(argv))) - set(keep)
+    while keep and argv[keep[-1]].startswith("--") and (keep[-1] + 1) in dropped:
+        keep.pop()
+    return [argv[i] for i in keep] + shlex.split(str(probe or ""))
+
+
+def auto_rate_limited(text):
+    """True when a log tail reads as a provider limit rather than as a bug in the attempt.
+
+    A closed list of patterns, read case-insensitively, ported from the era skill's own
+    LIMIT_PATTERNS. Total and never raises — it is asked about child output, which may be
+    anything at all. Only a FAILED try's tail is ever passed here: an agent that merely
+    mentions a rate limit in a transcript it then commits over must not be able to move the
+    driver."""
+    return bool(re.search("|".join(AUTO_RATE_LIMIT_PATTERNS), str(text or ""), re.I))
 
 
 def metrics_value(tree, keypath, where):
@@ -6309,18 +6470,24 @@ def auto_tick_body(body, ticks):
     return "\n".join(lines)
 
 
-def cmd_auto_ticks(root, hid, metrics):
+def cmd_auto_ticks(root, hid, metrics, ticks=None):
     """Write the tick vector into one hypothesis' `## Verifiables`. Returns the vector.
 
     No `refresh` and no `updated:` bump: this is the evidence being recorded against a
     pre-registered check, not an edit to the commitment, and spec 11 already treats the
-    `(found: …)` note as separable. `cmd_close` does the refreshing a moment later."""
+    `(found: …)` note as separable. `cmd_close` does the refreshing a moment later.
+
+    `ticks` (05.3) is a vector the caller ALREADY has — the closer's merged onto the
+    scorer's — written through as given, with no recomputation. It exists because the driver
+    may not call `render_doc`/`write_if_changed` itself, so a merged vector has to be able to
+    reach the node through the engine. `ticks=None` is 05.2's behaviour and bytes exactly."""
     v = Vault(root)
     n = v.get(hid)
     if n.type != "idea":
         raise CruxError(f"auto ticks apply to a hypothesis (got a '{n.type}' for '{hid}')")
     where = f"{RESULTS_DIR}/{hid}/{METRICS_FILE}"
-    ticks = [auto_tick(metrics, text, where) for _c, text in _verifiable_lines(n["body"])]
+    if ticks is None:
+        ticks = [auto_tick(metrics, text, where) for _c, text in _verifiable_lines(n["body"])]
     write_if_changed(n["path"], render_doc(n["fm"], auto_tick_body(n["body"], ticks)))
     return ticks
 
@@ -6548,6 +6715,12 @@ def auto_new_state(plan, run_id, at, pid, host, baseline_score, max_attempts=Non
         "in_flight": {}, "closed": [], "consecutive_invalid": 0, "stalls": 0,
         "confirmed": None, "stop": None, "tasks": {"run": None, "exceptions": []},
         "events": 0, "next_island": 0,
+        # 05.3. `agents` is keyed by the COMMAND STRING — the plan is hash-locked for the
+        # run's life, so the string is stable — and holds an absolute wall-clock stamp, so a
+        # resume does not forget a cooldown. `steward.last_closed` is the `len(closed)` at
+        # which the steward last ran: the guard against two invocations in one window.
+        "agents": {},
+        "steward": {"guidance": [], "invocations": 0, "islands": [], "last_closed": 0},
     }
 
 
@@ -6578,8 +6751,8 @@ def auto_stop(state, plan):
                           f"used"}
     if b["model_calls"]["used"] >= b["model_calls"]["total"]:
         return {"reason": "budget", "axis": "model_calls", "attempt": None,
-                "detail": f"{b['model_calls']['used']} of {b['model_calls']['total']} worker "
-                          f"invocations used"}
+                "detail": f"{b['model_calls']['used']} of {b['model_calls']['total']} "
+                          f"model calls used"}
     return None
 
 
@@ -6807,7 +6980,8 @@ def auto_select(root, path, island=None, virtual=()):
 AUTO_BRIEF_SLOTS  = ("goal", "objective.address", "objective.direction", "objective.bar",
                      "island.id", "island.title", "parent.id", "parent.claim", "parent.score",
                      "best.id", "best.score", "null", "verifiables", "rule")
-AUTO_BRIEF_BUDGET = {"inspirations": 3, "refuted": 5, "guidance": 10, "findings_words": 80}
+AUTO_BRIEF_BUDGET = {"inspirations": 3, "refuted": 5, "guidance": 10, "findings_words": 80,
+                     "steward": 10, "ledger": 40}
 AUTO_BRIEF_CHECKS = ("schema", "budget", "stable", "leakage", "addresses")
 AUTO_CUT_PREFIX   = "Cut to budget:"
 AUTO_NO_REFUTED       = "No refuted attempts on this island yet."
@@ -6828,14 +7002,23 @@ def auto_plan_for(root, v, hid):
     return None, None
 
 
-def auto_brief(root, hid, island=None):
+def auto_brief(root, hid, island=None, islands=None, steward=None):
     """The brief for the next attempt built on `hid`. Byte-stable: no timestamps, every list
     order defined, every number carried as the address it came from.
 
     `island` (05.2) names the island the NEW attempt will sit under, which is not always the
     parent's question: the first attempt on an Explore island builds on the baseline, and the
     baseline sits under the anchor. Absent, the island is the parent's own question exactly as
-    in 05.0, and the payload is unchanged."""
+    in 05.0, and the payload is unchanged.
+
+    `islands` (05.3) is the EFFECTIVE island set, which from this slice on is the run's
+    `state.json` table rather than the plan's frontmatter: a steward-opened island is not in
+    `islands:` — that field IS hashed, and writing it would clear the PI's approval mid-run —
+    so without this the membership check below would refuse the very island the run just
+    opened. Absent, the plan's own list, byte-identical to 05.2.
+
+    `steward` (05.3) is the steward's standing guidance, rendered in its OWN labelled section
+    so a worker can see who said what. Absent or empty, the section says so."""
     v = Vault(root)
     n = v.get(hid)
     # The type check comes FIRST. Plan discovery walks ancestors and excludes the node itself,
@@ -6848,13 +7031,14 @@ def auto_brief(root, hid, island=None):
         raise CruxError(f"no flight plan covers {hid}: none of its ancestor questions has "
                         f"{AUTO_DIR}/<qid>/{PLAN_FILE}")
     plan = load_flight_plan(root, ppath)
+    eff_islands = list(plan["islands"] if islands is None else islands)
     if island is None:
         island = n.parent
-        if island != plan["anchor"] and island not in plan["islands"]:
+        if island != plan["anchor"] and island not in eff_islands:
             raise CruxError(f"auto brief: '{hid}' sits under '{island}', which is neither the "
                             f"anchor nor an island of the flight plan")
     else:
-        if island != plan["anchor"] and island not in plan["islands"]:
+        if island != plan["anchor"] and island not in eff_islands:
             raise CruxError(f"auto brief: '{island}' is neither the anchor nor an island of "
                             f"the flight plan")
         if hid != plan["baseline"] and n.parent != island:
@@ -6920,6 +7104,12 @@ def auto_brief(root, hid, island=None):
                    f"(newest)")
         guidance = guidance[-AUTO_BRIEF_BUDGET["guidance"]:]
 
+    steward_lines = list(steward or [])
+    if len(steward_lines) > AUTO_BRIEF_BUDGET["steward"]:
+        cut.append(f"steward: kept {AUTO_BRIEF_BUDGET['steward']} of {len(steward_lines)} "
+                   f"(newest)")
+        steward_lines = steward_lines[-AUTO_BRIEF_BUDGET["steward"]:]
+
     def failed_checks(nid):
         nd = v.nodes[nid]
         out = []
@@ -6937,7 +7127,7 @@ def auto_brief(root, hid, island=None):
     # every OTHER island contributes its BEST and nothing else. A worker that could read a
     # sibling island's dead ends is being told which way to lean.
     migration = []
-    for oi in plan["islands"]:
+    for oi in eff_islands:
         if oi == island or oi not in v.nodes:
             continue
         ocands = auto_island_attempts(root, plan, oi)
@@ -6982,6 +7172,7 @@ def auto_brief(root, hid, island=None):
                                            plan.get("scenarios") or [])],
         "rule": plan.get("rule"), "rule_m": plan.get("rule_m"),
         "guidance": guidance,
+        "steward": steward_lines,
         "budget": {"attempts": {"total": total, "used": used,
                                 "remaining": max((total or 0) - used, 0)}},
         "cut": cut,
@@ -7051,7 +7242,11 @@ def auto_brief_leaks(root, payload):
 
     try:
         _p = load_flight_plan(root, payload.get("plan"))
-        islands, base = _p["islands"], _p["baseline"]
+        # 05.3: a steward-opened island is not in the plan's `islands:` frontmatter, so the
+        # plan's list alone would silently stop excluding that island's prose from another
+        # island's brief — the one lie in a brief no reader could catch. The payload's own
+        # `migration` names every island the brief carried, so the union is the real set.
+        islands, base = sorted(set(_p["islands"]) | set(bests)), _p["baseline"]
     except CruxError:
         islands, base = list(bests), None
     for oi in islands:
@@ -7246,6 +7441,14 @@ def auto_brief_text(payload):
         out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
     out.append("")
 
+    out += ["## Steward guidance", ""]
+    stew = p.get("steward") or []
+    if not stew:
+        out.append(AUTO_NO_STEWARD)
+    for g in stew:
+        out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
+    out.append("")
+
     b = (p.get("budget") or {}).get("attempts") or {}
     out += ["## Budget", "",
             f"attempts: {b.get('used')} of {b.get('total')} used, "
@@ -7254,3 +7457,430 @@ def auto_brief_text(payload):
     if cut:
         out += ["", f"{AUTO_CUT_PREFIX} " + "; ".join(cut)]
     return "\n".join(out).rstrip() + "\n"
+
+
+# ------------------------------------------------- 05.3: the closer, the report, the steward
+# `crux-close` is reused BYTE-UNCHANGED. Everything that makes it usable headlessly is here,
+# in the brief: the schema it must answer in, where its workspace is, and which ticks the
+# scorer has already settled. The agent definition is not edited, because an agent the PI
+# reads and an agent the driver runs have to be the same agent.
+
+def auto_close_brief(root, hid, plan, ticks):
+    """The payload `crux-close` is handed for one finished attempt. A pure read of the vault.
+
+    The anchor's advocacy is excluded by CONSTRUCTION, not by a filter run afterwards: the
+    payload reads the attempt, the plan and the scorer's own vector, and never touches the
+    anchor at all. `results` is the VAULT-RELATIVE path, so the brief is byte-stable across a
+    copy; the absolute path reaches the agent through CRUX_RESULTS."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n.type != "idea":
+        raise CruxError(f"auto close brief is per-attempt (got a '{n.type}' for '{hid}')")
+    if len(ticks) != len(plan["checks"]):
+        raise CruxError(f"auto close brief: {len(ticks)} ticks for "
+                        f"{len(plan['checks'])} checks")
+    return {
+        "engine_version": ENGINE_VERSION, "mode": "close", "plan": plan["path"],
+        "attempt": {"id": hid, "claim": _section(n["body"], "Idea / Hypothesis")},
+        "objective": {"address": plan["address"], "direction": plan["direction"],
+                      "bar": plan["bar"]},
+        "results": f"{RESULTS_DIR}/{hid}/",
+        "checks": [{"index": c["index"], "kind": c["kind"], "text": c["text"],
+                    "fails_if": c["fails_if"], "discriminates": bool(c["discriminates"]),
+                    "graded": ticks[i][0] != "-", "tick": ticks[i][0], "found": ticks[i][1]}
+                   for i, c in enumerate(plan["checks"])],
+        "rule": plan["rule"], "rule_m": plan["rule_m"], "null": plan["null"],
+        "schema": {"keys": list(AUTO_CLOSE_KEYS), "ticks": list(AUTO_TICK_ALPHABET),
+                   "findings_words": AUTO_CLOSE_FINDINGS_WORDS,
+                   "report_bytes": AUTO_REPORT_BYTES}}
+
+
+def auto_close_brief_text(payload):
+    """The close brief as markdown. Deterministic, and every empty case spoken.
+
+    `## Output` asks for the proposal the agent would print ANYWAY, plus the same proposal as
+    one JSON object at `$CRUX_PROPOSAL`. It suppresses nothing: `crux-close` is unchanged, so
+    a PI reading the transcript still sees the table it always saw, and the JSON is an
+    addition for a driver that has no eyes."""
+    p = payload or {}
+    att, obj = p.get("attempt") or {}, p.get("objective") or {}
+    sch = p.get("schema") or {}
+    out = [f"# Close brief — {att.get('id')}  ({p.get('plan')})", ""]
+    out += ["## Attempt", "", f"{att.get('id')} — {att.get('claim')}", ""]
+    out += ["## Objective", "",
+            f"{obj.get('address')} · {obj.get('direction')} · bar {obj.get('bar')}", ""]
+    out += ["## Results", "",
+            f"{p.get('results')}   (the absolute path is in CRUX_RESULTS)", ""]
+    out += ["## Checks", ""]
+    rule_line = f"rule: {p.get('rule')}"
+    if p.get("rule_m") is not None:
+        rule_line += f" (m={p.get('rule_m')})"
+    out.append(rule_line)
+    out.append(f"null: {p.get('null') or '—'}")
+    for c in p.get("checks") or []:
+        out.append(f"- {c.get('index')} [{c.get('kind')}] {c.get('text')}")
+        if c.get("fails_if"):
+            out.append(f"      fails-if:: {c['fails_if']}")
+        if c.get("discriminates"):
+            out.append("      discriminates:: true")
+        if c.get("graded"):
+            out.append(f"      graded by the scorer: [{c.get('tick')}]  "
+                       f"(found: {c.get('found')})")
+        else:
+            out.append("      not graded — this one is the reader's")
+    out.append("")
+    out += ["## Output", "",
+            "Write the same proposal you would print — the table of (verifiable, proposed "
+            "tick, the",
+            "evidence), the outcome-neutral result, and the findings draft —",
+            # This clause stays on ONE line: it is the whole contract with a REUSED agent —
+            # the brief adds an output and replaces nothing — and a reader who greps for it
+            # must find it whole.
+            "**and also write that same proposal as one JSON object to `$CRUX_PROPOSAL`**, "
+            "with", "exactly these keys:", "",
+            "- `ticks`: an object keyed by check index (1-based, the order above), each value "
+            "one of", "  `\"x\"` (met), `\" \"` (unmet) or `\"-\"` (not evaluable). A check "
+            "already graded by the scorer", "  above is the scorer's; proposing a different "
+            "tick for one refuses the whole proposal.",
+            f"- `findings`: the findings paragraph, at most {sch.get('findings_words')} "
+            f"words.",
+            f"- `report`: the markdown of the run report, at most {sch.get('report_bytes')} "
+            f"bytes.", "",
+            "Any other key refuses the proposal. There is no verdict field: the verdict is "
+            "derived."]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def auto_close_proposal(raw, plan, ticks):
+    """`{ok, reason, detail, ticks, findings, report}` for one `close.json`.
+
+    NOTHING here is retried. A closer that ran and answered badly has made its own act, and
+    the same agent handed the same brief would repeat it — so the attempt closes on the
+    engine's own vector instead, which is the honest reading of the evidence on disk.
+
+    First match wins, so one fault is reported once rather than cascading into four."""
+    def bad(reason, detail):
+        return {"ok": False, "reason": reason, "detail": detail,
+                "ticks": {}, "findings": None, "report": None}
+
+    if raw is None:
+        return bad("closer-missing", "the closer left no close.json in its workspace")
+    try:
+        obj = json.loads(raw)
+    except ValueError as e:
+        return bad("closer-unparseable", f"close.json is not one JSON object ({e})")
+    if not isinstance(obj, dict):
+        return bad("closer-unparseable",
+                   f"close.json is not one JSON object (got {type(obj).__name__})")
+    extra = set(obj) - set(AUTO_CLOSE_KEYS)
+    if extra:
+        return bad("closer-schema", f"close.json carries keys outside "
+                                    f"{', '.join(AUTO_CLOSE_KEYS)}: "
+                                    f"{', '.join(sorted(extra))}")
+    if not isinstance(obj.get("ticks"), dict):
+        return bad("closer-schema", "close.json ticks is not an object keyed by check index")
+    for k in sorted(obj["ticks"], key=lambda x: str(x)):
+        if re.fullmatch(r"[1-9]\d*", str(k)) is None or int(k) > len(plan["checks"]):
+            return bad("closer-schema", f"close.json ticks name no check: {k}")
+        if obj["ticks"][k] not in AUTO_TICK_ALPHABET:
+            return bad("closer-schema", f"close.json tick for check {int(k)} is not one of "
+                                        f"'x', ' ', '-' (got {obj['ticks'][k]!r})")
+    # The contradiction. A number the scorer read out of a metrics document is not a matter of
+    # opinion, and a reporter that overrules it is refused whole rather than partly believed.
+    for i in range(1, len(ticks) + 1):
+        if ticks[i - 1][0] == "-":
+            continue
+        for k in obj["ticks"]:
+            if int(k) == i and obj["ticks"][k] != ticks[i - 1][0]:
+                return bad("closer-contradiction",
+                           f"close.json ticks check {i} '{obj['ticks'][k]}' where the "
+                           f"scorer's number grades it '{ticks[i - 1][0]}' "
+                           f"(found: {ticks[i - 1][1]})")
+    if not isinstance(obj.get("findings"), str) or not obj["findings"].strip():
+        return bad("closer-schema", "close.json carries no findings")
+    n = len(_prose_tokens(obj["findings"]))
+    if n > AUTO_CLOSE_FINDINGS_WORDS:
+        return bad("closer-findings",
+                   f"the findings run to {n} words, over the "
+                   f"{AUTO_CLOSE_FINDINGS_WORDS}-word cap")
+    if not isinstance(obj.get("report"), str) or not obj["report"].strip():
+        return bad("closer-schema", "close.json carries no report")
+    return {"ok": True, "reason": None, "detail": None,
+            "ticks": {int(k): v for k, v in obj["ticks"].items()},
+            "findings": obj["findings"].strip(),
+            "report": obj["report"].strip()[:AUTO_REPORT_BYTES]}
+
+
+def auto_merge_ticks(ticks, proposed):
+    """The engine's vector with the closer's proposal filled into the gaps it left. Total.
+
+    A check the scorer graded keeps the SCORER's pair verbatim — an agreeing proposal is
+    ignored rather than applied, so nothing a model wrote can reach a tick a number already
+    settled. Only a `[-]` is the reader's to fill."""
+    out = []
+    for i, pair in enumerate(ticks, 1):
+        if pair[0] != "-":
+            out.append(pair)
+        elif i in (proposed or {}):
+            out.append((proposed[i], "graded by crux-close"))
+        else:
+            out.append(pair)
+    return out
+
+
+def auto_report_text(plan, hid, value, ticks, failure=None):
+    """The run report when no closer wrote one. A fixed template, so two runs of the same
+    attempt read the same. It lives under `results/`, so it does not count against
+    `PROSE_CAP` — the findings paragraph is the part that sits in the node body."""
+    lines = [f"# Attempt {hid}", "",
+             f"Objective {plan['address']} = {repr(value) if value is not None else 'n/a'} "
+             f"(direction {plan['direction']}, bar {plan['bar']:g}).", "",
+             "## Checks", ""]
+    for i, (tick, found) in enumerate(ticks, 1):
+        word = {"x": "met", " ": "unmet", "-": "n/a"}[tick]
+        lines.append(f"- [{tick}] check {i}: {word}, found {found}.")
+    if failure:
+        lines += ["", "## Failure", "", " ".join(str(failure).split())[:2000] + "."]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def auto_link_report(root, hid, rel):
+    """Link `rel` under one hypothesis' `## Artifacts`. Returns the bullet line.
+
+    `append_guidance`'s idiom, applied to a node: every byte through the heading line is
+    untouched, the template's own `_(placeholder)_` goes only when it is all the section
+    holds, and an HTML-comment block survives. Idempotent — a section that already links
+    this path is not rewritten at all, which is what makes a resumed close a no-op.
+
+    No `refresh`, no `updated:` bump and no `lock_hash` change: a link to a file the run
+    produced is not an edit to the commitment the PI signed."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n.type != "idea":
+        raise CruxError(f"auto link report applies to a hypothesis "
+                        f"(got a '{n.type}' for '{hid}')")
+    rel = str(rel).replace(os.sep, "/")
+    for a in parse_artifacts(n["body"]):
+        if a["path"] == rel:
+            return f"- [Report]({rel})"
+    lines = n["body"].split("\n")
+    start = next((i for i, l in enumerate(lines)
+                  if l.startswith("## ") and l[3:].strip().lower() == "artifacts"), None)
+    if start is None:
+        raise CruxError(f"{hid} has no ## Artifacts section to link into")
+    end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")),
+               len(lines))
+    seg = lines[start + 1:end]
+    content = [l for l in seg if l.strip() and not l.lstrip().startswith("<!--")
+               and "-->" not in l]
+    if content and all(_PLACEHOLDER.match(l) for l in content):
+        seg = [l for l in seg if not _PLACEHOLDER.match(l)]
+    while seg and not seg[-1].strip():
+        seg.pop()
+    if not seg or seg[0].strip():
+        seg.insert(0, "")
+    entry = f"- [Report]({rel})"
+    seg.append(entry)
+    write_if_changed(n["path"],
+                     render_doc(n["fm"], "\n".join(lines[:start + 1] + seg + [""]
+                                                   + lines[end:])))
+    return entry
+
+
+# The steward. It reads the RUN's own record — the ledger, the island table, the budget — and
+# nothing from any node body except a title and a score. That is the whole leakage rule: an
+# agent that could read an island's findings would be proposing the angle the findings argue
+# for, which is the one thing a fresh angle must not be.
+
+def auto_steward_brief(root, plan, state, events):
+    """The payload `crux-auto-steward` is handed once per invocation. Byte-stable over
+    unchanged run state: no timestamp of its own, every list order defined.
+
+    `events` is the ledger objects the DRIVER already read, oldest first — the engine never
+    reads `ledger.jsonl`, because the engine never reads a file the driver owns."""
+    v = Vault(root)
+    cut = []
+
+    def score_of(nid):
+        if not nid:
+            return None
+        try:
+            return {"value": float(resolve_address(root, f"{nid}#{plan['address']}")["value"]),
+                    "addr": f"{nid}#{plan['address']}"}
+        except (CruxError, TypeError, ValueError):
+            return None
+
+    closed = list(state.get("closed") or [])
+    islands = []
+    for i, rec in (state.get("islands") or {}).items():
+        nd = v.nodes.get(i)
+        attempts = sum(1 for h in closed
+                       if h in v.nodes and v.nodes[h].parent == i)
+        islands.append({"id": i, "title": nd.title if nd is not None else i,
+                        "best": {"id": rec.get("best"), "score": score_of(rec.get("best"))},
+                        "stall": rec.get("stall"), "attempts": attempts})
+
+    evs = list(events or [])
+    keep = AUTO_BRIEF_BUDGET["ledger"]
+    if len(evs) > keep:
+        cut.append(f"ledger: kept {keep} of {len(evs)} events (newest)")
+        evs = evs[-keep:]
+
+    budget = {}
+    for axis in AUTO_BUDGET_AXES:
+        rec = ((state.get("budget") or {}).get(axis) or {})
+        u, t = rec.get("used") or 0, rec.get("total") or 0
+        budget[axis] = {"used": u, "total": t, "remaining": max(t - u, 0)}
+
+    anchor = plan["anchor"]
+    an = v.nodes.get(anchor)
+    payload = {
+        "engine_version": ENGINE_VERSION, "mode": "steward", "plan": plan["path"],
+        "anchor": {"id": anchor, "title": an.title if an is not None else anchor},
+        "goal": plan.get("goal") or "",
+        "objective": {"address": plan["address"], "direction": plan["direction"],
+                      "bar": plan["bar"]},
+        "islands": islands,
+        "island_cap": plan["island_cap"],
+        "islands_open": len(state.get("islands") or {}),
+        "ledger": evs,
+        "guidance": list(plan.get("guidance") or []),
+        "steward_guidance": list((state.get("steward") or {}).get("guidance") or []),
+        "budget": budget,
+        "schema": {"keys": list(AUTO_STEWARD_KEYS), "island": list(AUTO_ISLAND_KEYS),
+                   "title_words": AUTO_TITLE_WORDS, "problem_words": PROSE_CAP},
+        "cut": cut,
+    }
+    # The same schema check the worker brief runs, over the steward's own slot list: a brief
+    # is never returned half-assembled, because an agent told less than the contract says it
+    # gets would be proposing in the dark.
+    for slot in AUTO_STEWARD_SLOTS:
+        val = payload
+        for part in slot.split("."):
+            val = val.get(part) if isinstance(val, dict) else None
+        if val is None or val == "" or val == [] or val == {}:
+            raise CruxError(f"auto steward brief: required slot '{slot}' is absent or empty")
+    return payload
+
+
+def auto_steward_brief_text(payload):
+    """The steward brief as markdown. Every section present even when empty, so an absence
+    reads as an absence rather than as a section the assembler forgot."""
+    p = payload or {}
+    obj = p.get("objective") or {}
+    anc = p.get("anchor") or {}
+    sch = p.get("schema") or {}
+    out = [f"# Steward brief — {anc.get('id')}  ({p.get('plan')})", ""]
+    out += ["## Goal", "", p.get("goal") or "—", ""]
+    out += ["## Objective", "",
+            f"{obj.get('address')} · {obj.get('direction')} · bar {obj.get('bar')}", ""]
+    out += ["## Islands", ""]
+    out.append(f"{p.get('islands_open')} open, island_cap {p.get('island_cap')}")
+    for i in p.get("islands") or []:
+        b = i.get("best") or {}
+        s = b.get("score") or {}
+        out.append(f"- {i.get('id')} — {i.get('title')} · best {b.get('id')} = "
+                   f"{s.get('value')} · stall {i.get('stall')} · "
+                   f"{i.get('attempts')} attempt(s)")
+    out.append("")
+    out += ["## Budget", ""]
+    for axis in AUTO_BUDGET_AXES:
+        b = (p.get("budget") or {}).get(axis) or {}
+        out.append(f"{axis}: {b.get('used')} of {b.get('total')} used, "
+                   f"{b.get('remaining')} remaining")
+    out.append("")
+    out += ["## The PI's guidance", ""]
+    guid = p.get("guidance") or []
+    if not guid:
+        out.append(AUTO_NO_GUIDANCE)
+    for g in guid:
+        out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
+    out.append("")
+    out += ["## Earlier steward guidance", ""]
+    sg = p.get("steward_guidance") or []
+    if not sg:
+        out.append(AUTO_NO_STEWARD)
+    for g in sg:
+        out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
+    out.append("")
+    out += ["## Ledger", ""]
+    for e in p.get("ledger") or []:
+        rest = {k: val for k, val in (e or {}).items() if k not in ("at", "event")}
+        out.append(f"- {(e or {}).get('at')} {(e or {}).get('event')} "
+                   f"{json.dumps(rest, sort_keys=True, ensure_ascii=False)}")
+    cut = p.get("cut") or []
+    if cut:
+        out += ["", f"{AUTO_CUT_PREFIX} " + "; ".join(cut)]
+    out.append("")
+    out += ["## Output", "",
+            "Write one JSON object to `$CRUX_PROPOSAL`, with at most these keys and at least "
+            "one of", "them:", "",
+            f"- `guidance`: one standing instruction for every later attempt, at most "
+            f"{sch.get('problem_words')} words.",
+            f"- `island`: a NEW sub-question under the anchor, as an object with exactly "
+            f"`title` (at most", f"  {sch.get('title_words')} words) and `problem` (at most "
+            f"{sch.get('problem_words')} words). Refused at `island_cap` "
+            f"{p.get('island_cap')},",
+            f"  and {p.get('islands_open')} are open already.", "",
+            "Any other key refuses the proposal. The objective, the bar and the checks are "
+            "frozen and", "are not the steward's to touch; a verdict is derived and is not "
+            "anybody's to propose."]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def auto_steward_proposal(raw, plan, state):
+    """`{ok, reason, detail, guidance, island}` for one steward `proposal.json`.
+
+    A steward NEVER stops a run: every branch below is advice the driver logs and carries on
+    past. A run that dies for want of advice is worse than a run without it."""
+    def bad(reason, detail):
+        return {"ok": False, "reason": reason, "detail": detail,
+                "guidance": None, "island": None}
+
+    if raw is None:
+        return bad("steward-missing", "the steward left no proposal.json in its workspace")
+    try:
+        obj = json.loads(raw)
+    except ValueError as e:
+        return bad("steward-unparseable", f"proposal.json is not one JSON object ({e})")
+    if not isinstance(obj, dict):
+        return bad("steward-unparseable",
+                   f"proposal.json is not one JSON object (got {type(obj).__name__})")
+    extra = set(obj) - set(AUTO_STEWARD_KEYS)
+    if extra:
+        return bad("steward-schema", f"proposal.json carries keys outside "
+                                     f"{', '.join(AUTO_STEWARD_KEYS)}: "
+                                     f"{', '.join(sorted(extra))}")
+    g, isl = obj.get("guidance"), obj.get("island")
+    if g is None and isl is None:
+        return bad("steward-empty", "proposal.json proposes neither guidance nor an island")
+    if g is not None:
+        if not isinstance(g, str) or not g.strip():
+            return bad("steward-schema", "proposal.json guidance is not a non-empty string")
+        n = len(_prose_tokens(g))
+        if n > PROSE_CAP:
+            return bad("steward-schema",
+                       f"the guidance runs to {n} words, over the {PROSE_CAP}-word cap")
+    if isl is not None:
+        if (not isinstance(isl, dict) or set(isl) != set(AUTO_ISLAND_KEYS)
+                or not all(isinstance(isl.get(k), str) and isl.get(k).strip()
+                           for k in AUTO_ISLAND_KEYS)):
+            return bad("steward-schema", "proposal.json island must be an object with "
+                                         "exactly title and problem, both non-empty strings")
+        n = len(_prose_tokens(isl["title"]))
+        if n > AUTO_TITLE_WORDS:
+            return bad("steward-schema", f"the island title runs to {n} words, over the "
+                                         f"{AUTO_TITLE_WORDS}-word cap")
+        n = len(_prose_tokens(isl["problem"]))
+        if n > PROSE_CAP:
+            return bad("steward-schema", f"the island problem statement runs to {n} words, "
+                                         f"over the {PROSE_CAP}-word cap")
+        if len(state.get("islands") or {}) >= plan["island_cap"]:
+            return bad("steward-cap", f"the run already holds "
+                                      f"{len(state.get('islands') or {})} islands, at "
+                                      f"island_cap {plan['island_cap']}")
+    return {"ok": True, "reason": None, "detail": None,
+            "guidance": " ".join(g.split()) if g is not None else None,
+            "island": ({"title": " ".join(isl["title"].split()),
+                        "problem": " ".join(isl["problem"].split())}
+                       if isl is not None else None)}
