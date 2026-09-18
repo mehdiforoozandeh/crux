@@ -404,6 +404,15 @@ def acquire_lock(root, op, wait=LOCK_WAIT, stale_after=LOCK_STALE):
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             pass
+        except PermissionError:
+            # Windows only. A name whose last handle has not closed yet is DELETE PENDING:
+            # the holder has released it, some reader still has it open, and O_CREAT|O_EXCL
+            # on that name answers ERROR_ACCESS_DENIED rather than "it exists". That is the
+            # same "somebody else has it" the line above waits out, a few microseconds
+            # earlier, so it is waited out the same way. On POSIX a PermissionError here is a
+            # directory this process may not write, which is not a thing to spin on.
+            if os.name != "nt":
+                raise
         else:
             # A lock file that exists but holds nothing is the worst of both: it blocks every
             # other caller and names no holder, so nobody can be asked to let go. If the write
@@ -451,15 +460,29 @@ def release_lock(root):
     Ownership is checked because a reclaim makes the two events possible in this order: this
     process is declared dead and its lock taken by another, then this process wakes up and
     releases. Without the check that release deletes the NEW holder's lock, and two writers
-    run at once — the one failure the lock exists to prevent."""
+    run at once — the one failure the lock exists to prevent.
+
+    The unlink is RETRIED on a Windows sharing violation. CPython opens a file for reading
+    without FILE_SHARE_DELETE, so while any contender is inside `read_lock` — every one of
+    them, every LOCK_POLL — deleting the same name fails with PermissionError. Letting that
+    out of a `finally` turns a microsecond of overlap into a crashed writer; swallowing it
+    leaves a lock nobody holds standing until LOCK_STALE, which is worse still. The reader
+    closes within microseconds, so the retry is the honest answer."""
     rec = read_lock(root)
     if rec and (rec.get("pid") != os.getpid() or rec.get("host") != HOST):
         return None
-    try:
-        os.unlink(lock_path(root))
-    except (FileNotFoundError, IsADirectoryError):
-        pass
-    return None
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            os.unlink(lock_path(root))
+        except (FileNotFoundError, IsADirectoryError):
+            return None
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(LOCK_POLL)
+        else:
+            return None
 
 
 @contextlib.contextmanager

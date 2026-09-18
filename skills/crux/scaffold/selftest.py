@@ -9606,7 +9606,12 @@ def run_auto_reserve():
                                       encoding="utf-8", errors="replace") for _ in range(4)]
             # Bounded: the thing under test is a lock, and the way a lock fails is by never
             # letting go. Without the timeout that failure hangs the suite instead of failing it.
-            outs = [p.communicate(timeout=30) for p in procs]
+            # The bound has to sit OUTSIDE the mechanism it guards: a child that cannot take
+            # the lock refuses on its own after A.LOCK_WAIT, so a deadline shorter than that
+            # reports "the lock never let go" on a runner that was merely slow. It costs
+            # nothing on a run that passes — nobody waits on a process that has already
+            # exited.
+            outs = [p.communicate(timeout=2 * A.LOCK_WAIT) for p in procs]
             st["rcs"] = [p.returncode for p in procs]
             st["ids"] = [l.strip() for out, _ in outs for l in out.splitlines() if l.strip()]
             st["after"] = _counter(root)
@@ -12334,29 +12339,58 @@ AG_STUB_ARGS = "step valid guidance"          # worker, closer, steward — all 
 # says the exit code is not read.
 AG_NO_SUCH_BINARY = "no_such_agent_binary"
 
-# Two commands that the PROBE can start and the WORKER cannot: scripts in the repository's
-# working tree that were never committed. The probe runs with the repository as its cwd, and an
-# attempt worktree is cut from a commit — so the same relative argv[0] resolves for one and not
-# for the other. This is the only shape that reaches §3.3's abort, because `auto_probe_argv` and
-# `auto_agent_argv` share argv[0] and §3.9 otherwise aborts the run first.
-# Windows has no shebang: CreateProcess cannot run a `.sh`, so there the PROBE fails too and
-# the run aborts under §3.9 before the walk — the very path this fixture exists to avoid. A
-# `.bat` is executable by CreateProcess, and Windows searches the current directory, so the
-# `./` POSIX needs (a bare name is not on PATH there) is dropped. `os.name == "nt"` is the
-# idiom autopilot.py already uses.
-AG_UNCOMMITTED = (("uncommitted_a.bat", "uncommitted_b.bat") if os.name == "nt"
-                  else ("./uncommitted_a.sh", "./uncommitted_b.sh"))
-AG_UNCOMMITTED_SH = "@echo off\r\nexit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
+# Two commands the PROBE can start and the WORKER cannot. §3.3's abort has exactly one live
+# path: `auto_probe_argv` and `auto_agent_argv` share argv[0], so a command the run-open probe
+# cannot start aborts the run under §3.9 first, with no walk and no failover at all. Something
+# about the world therefore has to differ between the probe and the spawn.
+#
+# That difference cannot be a PATH. On POSIX a relative argv[0] resolves against the child's
+# `cwd=`, so a script in the repository's working tree — which an attempt worktree, cut from a
+# commit, does not carry — starts for the probe and not for the worker. On Windows it does not:
+# `cwd=` is only where the child STARTS, and CreateProcess looks the program up against the
+# CALLING process's current directory and PATH. The same relative name therefore fails for both
+# there, the probe included, and the run aborts under §3.9 — the very path this fixture exists
+# to avoid.
+#
+# The difference that holds on every platform is TIME. Both programs are real, on PATH and
+# genuinely startable when the run-open probe runs them, and gone by the time the walk asks for
+# one — a provider CLI uninstalled, or a mount dropped, between run open and the first attempt.
+# `_ag_gone_bin` removes them the moment the real `probe_agents` returns; §0 promises that name
+# is resolved by module-global at call time for exactly this kind of seam. One mechanism, one
+# code path, POSIX and Windows alike.
+AG_GONE = (("crux_gone_a.bat", "crux_gone_b.bat") if os.name == "nt"
+           else ("crux_gone_a.sh", "crux_gone_b.sh"))
+AG_GONE_BODY = "@echo off\r\nexit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
 
 
-def _ag_uncommitted(repo):
-    """Write `AG_UNCOMMITTED` into the repository's working tree and leave them uncommitted."""
-    for name in AG_UNCOMMITTED:
-        if not repo:                                         # pragma: no cover - wave-1 guard
-            return
-        p = os.path.join(repo, name.lstrip("./"))
-        write(p, AG_UNCOMMITTED_SH)
+def _ag_gone_bin():
+    """Put `AG_GONE` on PATH as two real programs. Returns (restore, remove).
+
+    A bare name, not a path: `shlex.split` is POSIX everywhere, so a Windows absolute path in
+    a flight plan would lose its backslashes on the way to argv. A directory prepended to
+    `os.environ["PATH"]` is found by `execvp` on POSIX and by CreateProcess on Windows —
+    `os.environ` writes reach the real process environment block on both — and the probe
+    inherits it, because `probe_agents` spawns with `env=None`."""
+    d = os.path.realpath(tempfile.mkdtemp(prefix="crux_agbin_"))
+    _AUTO_TRASH.append(d)
+    for name in AG_GONE:
+        p = os.path.join(d, name)
+        write(p, AG_GONE_BODY)
         os.chmod(p, 0o755)      # a no-op on Windows, where the .bat extension is what counts
+    old = os.environ.get("PATH", "")
+    os.environ["PATH"] = d + os.pathsep + old
+
+    def remove():
+        for name in AG_GONE:
+            try:
+                os.unlink(os.path.join(d, name))
+            except OSError:                                  # pragma: no cover - wave-1 guard
+                pass
+
+    def restore():
+        os.environ["PATH"] = old
+
+    return restore, remove
 
 
 def _ag_fixture(stubs=AG_ALL_STUBS, **kw):
@@ -12573,30 +12607,40 @@ def run_auto_agents():
                       == "1 of 1 %s used" % E.AUTO_BUDGET_AXES[2].replace("_", " "))))
 
         # ------------------------------------------------ every command in the list is broken
-        # §3.3's abort has exactly one live path. `auto_probe_argv` and `auto_agent_argv` share
-        # argv[0], so a command the run-open probe cannot start aborts the run under §3.9
-        # first, with no walk and no failover at all. The command that reaches the walk is one
-        # whose argv[0] resolves where the PROBE runs — the repository — and not where the
-        # WORKER runs: a script written into the repository's working tree and never committed.
-        # An attempt worktree is cut from a commit, so it does not carry the file.
+        # Both commands are real programs on PATH when the run-open probe runs them, and gone
+        # when the walk tries to spawn one — see `AG_GONE` for why the asymmetry has to be time
+        # rather than a path. The run therefore opens for the REAL reason (§3.9 saw a reachable
+        # command) and the walk fails for the real reason (§3.3 could start nothing).
         fa = _ag_fixture(x0=0, abort_invalid_runs="1", agent_probe_timeout="2",
-                         agent=AG_UNCOMMITTED[0] + " step",
-                         agent_failover=AG_UNCOMMITTED[1] + " step")
-        _ag_uncommitted(fa[0])
-        allbad = _loop_run("failover-all", fa[1], fa[2], fa[5])
+                         agent=AG_GONE[0] + " step",
+                         agent_failover=AG_GONE[1] + " step")
+        ag_restore, ag_remove = _ag_gone_bin()
+        porig = _auto_val(lambda: A.probe_agents)
+        if porig is not None:
+            def _pgone(root, plan, repo=None, _o=porig, _rm=ag_remove):
+                rows = _o(root, plan, repo)
+                _rm()          # the agent CLI is gone by the time the first walk asks for it
+                return rows
+            A.probe_agents = _pgone
+        try:
+            allbad = _loop_run("failover-all", fa[1], fa[2], fa[5])
+        finally:
+            if porig is not None:
+                A.probe_agents = porig
+            ag_restore()
         afo, ab = _ev(allbad, "failover"), _ev(allbad, "abandoned")
         check("aagent: every command failing to start stops the run abort, naming each command and its reason",
               _auto_ok(lambda: (
                   len(afo) == 2
-                  and [e["command"] for e in afo] == [AG_UNCOMMITTED[0] + " step",
-                                                      AG_UNCOMMITTED[1] + " step"]
-                  and [e["next"] for e in afo] == [AG_UNCOMMITTED[1] + " step", None]
+                  and [e["command"] for e in afo] == [AG_GONE[0] + " step",
+                                                      AG_GONE[1] + " step"]
+                  and [e["next"] for e in afo] == [AG_GONE[1] + " step", None]
                   and _loop_stop(allbad)["reason"] == "abort"
                   and _loop_stop(allbad)["axis"] is None
                   and _loop_stop(allbad)["detail"].startswith(
                       "every agent command failed to start: ")
                   and all(c + " step" in _loop_stop(allbad)["detail"]
-                          for c in AG_UNCOMMITTED)
+                          for c in AG_GONE)
                   # a list that cannot start is not a worker that failed: no node is filed,
                   # nothing is retried, and the in-flight attempt is abandoned by the stop
                   and _ev(allbad, "node-filed") == []
@@ -12753,8 +12797,16 @@ def run_auto_cooldown():
         # `abort_invalid_runs` is lifted clear of the way: LOOP_PLAN's 2 aborts the run on two
         # failed tries BEFORE the driver ever has to wait, so the criterion would pass on a
         # driver that never waited at all.
-        wt = _ag_fixture(x0=0, retries="0", budget_hours="1", budget_attempts="2",
-                         abort_invalid_runs="9", agent_cooldown="0.2",
+        #
+        # `retries` is 1 so that the walk which finds everything cooling is the RETRY's — the
+        # gap between `_cool` and that walk is three ledger appends and nothing else. With
+        # `retries=0` the next walk is the next attempt's, a git worktree and a whole teardown
+        # later, and on a slow runner the window has lapsed before anyone looks: the driver
+        # then never waits and the criterion fails for a reason that is about the machine
+        # rather than about the driver. `budget_attempts` is 1 because one attempt now spends
+        # both tries, and the closed attempt is what ends the run.
+        wt = _ag_fixture(x0=0, retries="1", budget_hours="1", budget_attempts="1",
+                         abort_invalid_runs="9", agent_cooldown="1",
                          agent="python3 dispatch.py limited valid guidance",
                          agent_failover="python3 dispatch.py limited valid guidance")
         # A spy on the wait itself: `cooldown >= 1` and `reason != abort` hold on a driver that
