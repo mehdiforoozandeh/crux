@@ -14916,6 +14916,257 @@ def run_doctor():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------- 05.5 fixtures
+# Four verifiable blocks, differing in exactly one token each, so every objective-op check
+# below changes one thing and nothing else.
+#
+# `SETUP_MAX_BAD` is the defect §E exists to catch: `direction: max` with a discriminating
+# check that reads `<=`. `SETUP_MAX_OK` is the same block with the operator that agrees.
+# `LOOP_VERIFIABLES` (reused, not copied) is the tier-zero fixture's own pair — an agreeing
+# `>=` claim check beside an `obj.score <= 0` control — and it is CORRECT: §D says the
+# control's operator is not derived from direction.
+SETUP_MAX_BAD = ("- [ ] obj.score <= -0.5 on the frozen scorer\n"
+                 "      fails-if:: x stays two or more steps away from 3\n"
+                 "      discriminates:: true\n"
+                 "- [ ] [outcome-neutral] baseline.drift <= 0.01 — the baseline re-run reproduces\n"
+                 "      fails-if:: the baseline re-run lands outside 0.01\n")
+SETUP_MAX_OK = SETUP_MAX_BAD.replace("obj.score <= -0.5", "obj.score >= -0.5")
+# the mirror: `direction: min` with a `>=` claim check, against the default `eval.loss` bar
+SETUP_MIN_BAD = AUTO_PLAN_VERIFIABLES.replace("eval.loss <= 0.85", "eval.loss >= 0.85")
+# a prose (non-comparison) control — what `check-grammar` refuses unless `closer:` is true
+SETUP_PROSE_V = ("- [ ] eval.loss <= 0.85 on the held-out split\n"
+                 "      fails-if:: the median of three seeds stays above 0.85\n"
+                 "      discriminates:: true\n"
+                 "- [ ] [outcome-neutral] the baseline reproduces\n"
+                 "      fails-if:: the baseline re-run lands outside 0.01\n")
+
+# §B's fourteen defaulted slots. `steward`/`steward_every` is ONE slot and is named by the
+# longer spelling, which contains the shorter; `agent` stands for the whole agent block.
+# Criterion 12: these must occur together in ONE line of SKILL.md, not fourteen.
+SETUP_DEFAULTED = ("mode", "islands", "island_cap", "parallel_total", "parallel_island",
+                   "retries", "retention", "replicates", "rule", "steward_every",
+                   "stall_attempts", "abort_invalid_runs", "scorer_timeout", "agent")
+
+# §B's five voice rules, each as the fragment that must be greppable in SKILL.md.
+SETUP_VOICE = ("one question per turn",
+               "never ask what a command can measure",
+               "never ask what the template defaults",
+               "never ask the pi to choose between options",
+               "takes the default")
+
+
+def _setup_file(*parts):
+    """A repo file's text, or "" when it is not there yet.
+
+    Items 7, 8 and 9 are written before the files exist. Returning "" rather than raising is
+    what turns an absent file into a clean `FAIL setup: …` line instead of a traceback that
+    costs the rest of the section."""
+    p = os.path.abspath(os.path.join(HERE, *parts))
+    if not os.path.isfile(p):
+        return ""
+    return _auto_val(lambda: read(p), "")
+
+
+def _setup_section(text, name):
+    """The body of `## <name>` in a markdown file, "" when the file or the section is absent."""
+    if not text:
+        return ""
+    parts = re.split(r"^## +", text, flags=re.M)
+    for part in parts[1:]:
+        head, _, body = part.partition("\n")
+        if head.strip().lower() == name.lower():
+            return body
+    return ""
+
+
+def run_auto_setup():
+    """Spec 05 §9, PRD 05.5 — the setup skill, the `objective-op` lint and the plan grammar
+    the skill writes against.
+
+    The whole slice exists for one sentence of spec §9: *the objective must come from a check
+    that discriminates against the null.* The engine already enforces that the objective
+    address is NAMED by a discriminating check; what it has never enforced is that the check's
+    own operator agrees with `direction:`. A plan that reads `obj.score <= -0.5` under
+    `direction: max` passes every lint today and then searches against its own bar — 05.2
+    reverted a hard-coded `<=` for exactly this reason. §E closes it with one pure helper and
+    one refusal.
+
+    These checks are written against the PRD with no implementation present, so every call to
+    a name the engine may not carry yet goes through `_auto_val` / `_auto_ok`: one absent name
+    costs its own checks and leaves the rest of the section reporting."""
+    print("\n# autopilot — the setup skill (spec 05, PRD 05.5)")
+    root = tempfile.mkdtemp(prefix="crux_asetup_")
+    shutil.rmtree(root); os.makedirs(root)
+    try:
+        E.cmd_init("Setup", root, goal="drive the held-out loss below the bar")
+        qa, _ = E.cmd_ask(root, "the anchor question")
+        qi, _ = E.cmd_ask(root, "island one", parent=qa)
+        hb = _auto_attempt(root, qa, "the baseline attempt", score=0.90)
+        # the same baseline, with an `obj.score` in its metrics too, so a plan whose objective
+        # address is `obj.score` is otherwise CLEAN and the only thing left to differ is the
+        # operator. Without it every obj.score plan also carries a does-not-resolve problem.
+        write(os.path.join(root, "results", hb, "metrics.json"),
+              json.dumps({"eval": {"loss": {"value": 0.90}},
+                          "obj": {"score": {"value": -3.0}}}))
+        rel = f"auto/{qa}/plan.md"
+
+        def problems(text):
+            return _auto_val(lambda: E.flight_plan_problems(
+                root, E.parse_flight_plan(text), rel), None)
+
+        def slugs(text):
+            ps = problems(text)
+            return set() if ps is None else {p["check"] for p in ps}
+
+        def op_msgs(text):
+            ps = problems(text)
+            return [] if ps is None else [p["message"] for p in ps
+                                          if p["check"] == "objective-op"]
+
+        def max_plan(verifiables):
+            return _plan_text(qa, hb, islands=qi, address="obj.score", direction="max",
+                              bar="-0.5", verifiables=verifiables)
+
+        # ------------------------------------------------ §E: the helper, pure and total
+        check("setup: auto_direction_op derives >= from max and <= from min",
+              _auto_val(lambda: (E.auto_direction_op("max"), E.auto_direction_op("min")))
+              == (">=", "<="))
+        # expect_error only absorbs CruxError, so an absent name would escape it as an
+        # AttributeError and kill the section. Probe for the name first.
+        if _auto_ok(lambda: E.auto_direction_op("max") is not None):
+            expect_error("setup: auto_direction_op refuses a direction that is neither min nor max",
+                         lambda: E.auto_direction_op("sideways"))
+        else:
+            check("setup: auto_direction_op refuses a direction that is neither min nor max",
+                  False)
+
+        # -------------------------------------------- §E: the lint, on the check it applies to
+        bad = max_plan(SETUP_MAX_BAD)
+        # A refusal, not a warning (§E, criterion 5): the only way to see the difference is to
+        # ask the loader. Asserting that the AGREEING plan still loads is what stops this from
+        # passing because `load_flight_plan` refused both for some unrelated reason.
+        bad_rel = _setup_written(root, qa, bad, "bad.md")
+        ok_rel = _setup_written(root, qa, max_plan(SETUP_MAX_OK), "ok.md")
+        check("setup: a discriminating check whose operator disagrees with direction is REFUSED",
+              "objective-op" in slugs(bad)
+              and not _auto_ok(lambda: E.load_flight_plan(root, bad_rel))
+              and _auto_ok(lambda: E.load_flight_plan(root, ok_rel)))
+        check("setup: the objective-op message names the direction and the operator it expects",
+              bool(op_msgs(bad)) and all("max" in m and ">=" in m for m in op_msgs(bad)))
+        check("setup: the same plan with the agreeing operator reports no objective-op",
+              problems(max_plan(SETUP_MAX_OK)) is not None
+              and "objective-op" not in slugs(max_plan(SETUP_MAX_OK)))
+        check("setup: the mirror case fires too — eval.loss >= 0.85 under direction min",
+              "objective-op" in slugs(_plan_text(qa, hb, islands=qi,
+                                                 verifiables=SETUP_MIN_BAD)))
+        check("setup: the default plan is clean — eval.loss <= 0.85 under direction min agrees",
+              _plan_msgs(root, _plan_text(qa, hb, islands=qi), rel) == [])
+
+        # ------------------------------------------------------------- §D: the control exemption
+        # The lint fires only on the verifiable `discriminates` already singles out. The
+        # tier-zero pair is the proof: its control names the objective address and points the
+        # other way, and that is correct, not a defect.
+        check("setup: the tier-zero plan still passes — obj.score >= -0.5 under direction max agrees",
+              _plan_msgs(root, max_plan(LOOP_VERIFIABLES), rel) == [])
+        check("setup: a control may disagree with direction — obj.score <= 0 under direction max is correct",
+              problems(max_plan(LOOP_VERIFIABLES)) is not None
+              and "objective-op" not in slugs(max_plan(LOOP_VERIFIABLES))
+              and "obj.score <= 0" in LOOP_VERIFIABLES)
+
+        # ------------------------------------------- §F: closer: moves in the template, not here
+        no_closer = _plan_text(qa, hb, islands=qi, verifiables=SETUP_PROSE_V)
+        with_closer = _plan_text(qa, hb, islands=qi, verifiables=SETUP_PROSE_V,
+                                 extra=(("closer", "true"),))
+        check("setup: a plan omitting closer: still gets check-grammar — the engine default is unchanged",
+              "check-grammar" in slugs(no_closer))
+        check("setup: closer: true lifts check-grammar off the same plan",
+              problems(with_closer) is not None
+              and "check-grammar" not in slugs(with_closer))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------- §D: the template
+    tpl = _setup_file("templates", "flight_plan.md")
+    check("setup: the flight-plan template ships", bool(tpl))
+    check("setup: the template's frontmatter carries closer: true",
+          bool(re.search(r"^closer: true\s*$", tpl, flags=re.M)))
+    ver = _setup_section(tpl, "Verifiables")
+    check("setup: no placeholder check in ## Verifiables writes a literal <= or >=",
+          bool(tpl) and bool(ver)
+          and not re.search(r"^- \[ \].*(<=|>=)", ver, flags=re.M))
+    low = ver.lower()
+    check("setup: the legend derives the operator — >= for max, <= for min",
+          ">=" in ver and "<=" in ver and "max" in low and "min" in low)
+    check("setup: the legend says the first check must repeat the address verbatim",
+          "verbatim" in low)
+    check("setup: the legend ties the placeholder bar to bar::",
+          "bar::" in ver)
+    check("setup: the legend says the control's operator is not derived from direction",
+          "outcome-neutral" in low and "not derived" in low)
+    check("setup: the legend defines fails-if:: as the world where the check passes and the claim is still false",
+          "fails-if::" in ver and "still false" in low)
+
+    # ------------------------------------------------------------------- §A/§B/§C/§G: the skill
+    sk = _setup_file("..", "..", "crux-autopilot", "SKILL.md")
+    check("setup: skills/crux-autopilot/SKILL.md exists", bool(sk))
+    fm = sk.split("---")[1] if sk.startswith("---") else ""
+    check("setup: crux-autopilot carries the standard frontmatter",
+          all(k in fm for k in ("name: crux-autopilot", "description:", "license:", "metadata:")))
+    lines = sk.splitlines()
+    slow = sk.lower()
+    missing_voice = [r for r in SETUP_VOICE if r not in slow]
+    check(f"setup: all five voice rules of the conversation are greppable lines "
+          f"(missing {missing_voice})",
+          bool(sk) and not missing_voice)
+    check("setup: the conversation names exactly three asks and two approvals",
+          sum(1 for l in lines if "**ask**" in l.lower()) == 3
+          and sum(1 for l in lines if "**approve**" in l.lower()) == 2)
+    one_line = [l for l in lines if all(s in l for s in SETUP_DEFAULTED)]
+    check("setup: the fourteen defaulted slots are stated in one line, not fourteen",
+          len(one_line) == 1)
+    check("setup: the skill writes the plan and stops — it never runs crux auto approve itself",
+          "crux auto approve" in sk
+          and any("crux auto approve" in l and ("never" in l.lower() or "PI" in l)
+                  for l in lines)
+          and "stops" in slow)
+    check("setup: the skill never runs crux auto guide on the PI's behalf",
+          any("crux auto guide" in l and "never" in l.lower() for l in lines))
+    causes = ("compound claim", "does not follow from the claim", "cannot discriminate")
+    check(f"setup: the rejection table names crux-design's three causes "
+          f"({[c for c in causes if c not in slow]} missing)",
+          all(c in slow for c in causes))
+
+    # ------------------------------------------------------------------ the setup-01 fixture
+    # `__import__` rather than an import statement on purpose: this slice adds no import, and
+    # `evals` is already importable from HERE (the suite imports it in run_agent_evals).
+    V = _auto_val(lambda: __import__("evals"))
+    check("setup: the setup-01 eval fixture certifies",
+          bool(_auto_val(lambda: V.certify("setup-01"), {}).get("ok")))
+
+    def _setup01_verdicts():
+        m = V.load_manifest("setup-01")
+        d = os.path.join(V.FIXTURES, "setup-01", "submissions")
+        return [V.score(m, V.load_submission(os.path.join(d, n)))["verdict"]
+                for n in sorted(os.listdir(d))]
+
+    verdicts = _auto_val(_setup01_verdicts, [])
+    check(f"setup: every shipped setup-01 submission scores without REFUSED — the agent_sha "
+          f"pin is fresh ({verdicts})",
+          bool(verdicts) and all(v != "REFUSED" for v in verdicts))
+
+    # ---------------------------------------------------------------------- criterion 16
+    check("setup: the engine version is unchanged at 3.3", E.ENGINE_VERSION == "3.3")
+
+
+def _setup_written(root, qid, text, name="plan.md"):
+    """Write a plan into the vault and hand back its vault-relative path.
+
+    `load_flight_plan` reads from disk, and §E's report is a REFUSAL rather than a warning —
+    which is only observable by asking the loader, not by reading the problem list."""
+    write(os.path.join(root, "auto", qid, name), text)
+    return f"auto/{qid}/{name}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
@@ -15016,6 +15267,7 @@ def main():
     run_auto_report()
     run_auto_cockpit()
     run_auto_gui()
+    run_auto_setup()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
