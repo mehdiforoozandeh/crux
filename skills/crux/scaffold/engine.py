@@ -5702,6 +5702,24 @@ AUTO_BUDGET_AXES       = ("attempts", "hours", "model_calls")
 # well to a human must not be refused for the shape of one glyph.
 AUTO_COMPARISON_OPS    = ("<=", "<", ">=", ">", "==", "!=")
 AUTO_OP_ALIASES        = {"≤": "<=", "≥": ">=", "≠": "!="}
+
+
+def auto_direction_op(direction):
+    """The comparison operator a plan's objective `direction` implies: max -> `>=`, min -> `<=`.
+
+    It exists because the rule was previously spelled twice and got out of step: 05.2 reverted
+    a hard-coded `<=`, and `auto_crosses` already says `value >= bar if direction == "max" else
+    value <= bar` for the VALUE. This is the same rule for the CHECK TEXT, so a plan whose
+    discriminating check points the other way from its own objective can be refused before the
+    compute is spent. Pure and total; anything but min/max is a CruxError."""
+    if direction == "max":
+        return ">="
+    if direction == "min":
+        return "<="
+    raise CruxError(f"objective direction must be one of {', '.join(OBJECTIVE_DIRECTIONS)} "
+                    f"(got '{direction}')")
+
+
 # What the approval hash does NOT cover: the stamp itself, and the `updated:` clock. The
 # `## Guidance` region is excluded inside `flight_plan_hash` for the same reason — the PI is
 # meant to keep talking to the workers mid-run, and having that clear the signature would
@@ -6221,6 +6239,27 @@ def flight_plan_problems(root, plan, path=None):
                 add("discriminates", f"flight plan objective '{address}' does not correspond "
                                      f"to a discriminating check: no verifiable marked "
                                      f"discriminates:: true names it")
+            # 14b (05.5). The discriminating check must point the same way as the objective:
+            # `direction: max` with a check reading `<=` searches against its own bar, which
+            # is what 05.2 reverted a hard-coded operator for. It is the SAME selection as
+            # above — only the discriminating check that names the address is constrained. A
+            # control may point either way on purpose: the tier-zero plan's own control reads
+            # `obj.score <= 0` under `direction: max` and is correct. Skipped when the
+            # direction is missing or already reported, and when the text is not a comparison
+            # at all — that line already has `check-grammar`, and one mistake is reported once.
+            if direction is not None:
+                want = auto_direction_op(direction)
+                for item, s in zip(plan.get("verifiables") or [],
+                                   plan.get("scenarios") or []):
+                    if not (item["kind"] == DEFAULT_KIND and s.get("discriminates")
+                            and tok.search(item["text"] or "")):
+                        continue
+                    cmp_ = auto_check_comparison(item["text"])
+                    if cmp_ is None or cmp_["op"] == want:
+                        continue
+                    add("objective-op",
+                        f"flight plan objective direction '{direction}' wants '{want}' on the "
+                        f"discriminating check, got '{cmp_['op']}' ('{item['text']}')")
 
     # 15. frozen vs writable. A frozen path a worker may also write is not frozen.
     if present("frozen") and present("writable"):

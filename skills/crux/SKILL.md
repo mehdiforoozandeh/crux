@@ -337,7 +337,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `status` · `review` · `task review` · `validate` | ○ | none — act; what reaches the PI is the science, never the call |
 | `init` · `serve` | ○ | none — `serve` opens the read-only cockpit (launch playbook: the **crux-cockpit** skill) |
 | `task add` · `done` · `drop` · `list` · `show` · `categories` | ○ | none — and ordinary task bookkeeping is silent |
-| `auto check` · `auto brief` | ○ | none — `auto brief` only reads, and so does the lint half of `auto check`; the rest of `auto check` starts **the PI's own scorer, once**, as a dry run that writes nothing, and **probes each agent command once** with `agent_probe` (default `--version`), which sends no prompt and spends no model call. `auto check --static` is the lint alone and starts nothing |
+| `auto check` · `auto brief` | ○ | none — `auto brief` only reads, and so does the lint half of `auto check`; the rest of `auto check` starts **the PI's own scorer, once**, as a dry run that writes nothing, and **probes each agent command once** with `agent_probe` (default `--version`), which sends no prompt and spends no model call. `auto check --static` is the lint alone and starts nothing (the plan `auto check` validates is the one the **crux-autopilot** skill produces) |
 | `auto refs` | ○ | none — it lists what a run already made: its refs, its branches, its worktrees. Read-only, and it creates nothing |
 | `auto status` | ○ | none — it reads a run's `state.json`, starts nothing and writes nothing |
 | `ask` · `hypothesize` · `pursue` | ◆ | it sets direction — propose the node, get a yes |
@@ -350,7 +350,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `rd` | ◆ | the Requirements Document the 400-word cap displaces (see the **crux-rd** skill) |
 | `auto guide` | ◆ | it appends **the PI's own standing instruction** to a flight plan, stamped with the time and the author — their words, on their yes, and the section is append-only |
 | `auto promote` | ◆ | it writes **a branch into the PI's repository** at a recorded attempt — their repo, on their yes. It never checks out, never merges, and never touches `main` |
-| `auto approve` | ◆ | **the PI's signature on a flight plan** — it stamps the plan with a hash of what was approved, so any later edit outside `## Guidance` clears it. Never run this without the PI's yes |
+| `auto approve` | ◆ | **the PI's signature on a flight plan** — it stamps the plan with a hash of what was approved, so any later edit outside `## Guidance` clears it. Never run this without the PI's yes (the **crux-autopilot** skill stops at this row — the signature is the PI's) |
 | `auto run` | ◆ | it spends compute unattended on an approved plan — start it only on the PI's yes. Inside the run the driver files, approves the null of, runs and closes each attempt under that approval (see the leash above). With `closer: true` the plan's own `crux-close` reads each finished attempt and proposes the ticks the numbers cannot grade; with `steward: true` the run's steward may open one new island, which is the fifth act above |
 | `ingest` | ○→◆ | registers a PI-curated `raw/` source (see the **crux-wiki** skill) |
 

@@ -1,0 +1,48 @@
+{
+ "fixture": "setup-01",
+ "agent": "crux-autopilot",
+ "agent_sha": "dc0b88fbe4d17bfbff447c739a2e7a7ad8ecf9a46de4c6511b064bcd2fe38e7b",
+ "_note": "CANNED 2026-09-19 — the failure case: the proposal picked the number first and wrote the check around it afterwards. The resulting plan still lints clean, so the four structural rows are all found — and the one row about reading the address off a check written before it is missed, on every one of the k=5 runs.",
+ "runs": [
+  {
+   "findings": [
+    "operator-agrees-with-direction",
+    "control-is-present",
+    "discriminating-check-repeats-address-verbatim",
+    "plan-written-not-approved"
+   ]
+  },
+  {
+   "findings": [
+    "operator-agrees-with-direction",
+    "control-is-present",
+    "discriminating-check-repeats-address-verbatim",
+    "plan-written-not-approved"
+   ]
+  },
+  {
+   "findings": [
+    "operator-agrees-with-direction",
+    "control-is-present",
+    "discriminating-check-repeats-address-verbatim",
+    "plan-written-not-approved"
+   ]
+  },
+  {
+   "findings": [
+    "operator-agrees-with-direction",
+    "control-is-present",
+    "discriminating-check-repeats-address-verbatim",
+    "plan-written-not-approved"
+   ]
+  },
+  {
+   "findings": [
+    "operator-agrees-with-direction",
+    "control-is-present",
+    "discriminating-check-repeats-address-verbatim",
+    "plan-written-not-approved"
+   ]
+  }
+ ]
+}
