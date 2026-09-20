@@ -197,6 +197,7 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("ingest", aliases=["source", "add-source"], help="register a PI-curated source (under raw/) into the literature wiki"))
     s.add_argument("path", help="path (under raw/, relative to the vault) to the source to register")
     s.add_argument("-t", "--title", default=None, help="human title for the source (default: filename)")
+    s.add_argument("--doi", default=None, help="look the source up on OpenAlex and use its canonical title, author list and year (needs the network; set OPENALEX_API_KEY)")
 
     s = _jsonable(sub.add_parser("rd", aliases=["design", "requirements"], help="write the Requirements Document for a node's design"))
     s.add_argument("node", help="the question or hypothesis this design belongs to")
@@ -853,7 +854,12 @@ def dispatch(a):
             return _emit({"id": nid, "file": fn})
         print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
     elif c in ("ingest", "source", "add-source"):
-        state, rel = E.cmd_ingest(_vault(), a.path, a.title)
+        _root, _wid, _title = _vault(), None, a.title
+        if a.doi:                       # lazy: a plain ingest never loads the network module
+            import openalex
+            _work = openalex.work_by_doi(_root, a.doi)
+            _wid, _title = openalex.work_id(_work), _title or openalex.title_line(_work)
+        state, rel = E.cmd_ingest(_root, a.path, _title, workid=_wid)
         if a.json:
             return _emit({"state": state, "path": rel})
         print(f"✓ {state}: {rel}\n  next: compile/update the wiki page(s) that cite it, then `crux validate`")

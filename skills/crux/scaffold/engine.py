@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex, math
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.3"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -95,7 +95,9 @@ LEDGER_END   = "<!-- crux:ledger:end -->"
 WIKI_DIR     = "wiki"           # agent-owned compiled markdown pages + log.md + SCHEMA.md
 RAW_DIR      = "raw"            # immutable, PI-curated sources; the engine hashes bytes, never reads content
 WIKI_INDEX   = "WIKI.md"        # generated index of wiki pages (Karpathy's index.md), rendered at vault root
-SOURCES_FILE = os.path.join(WIKI_DIR, ".sources.tsv")   # engine-owned source registry: sha256<TAB>date<TAB>path<TAB>title
+SOURCES_FILE = os.path.join(WIKI_DIR, ".sources.tsv")   # engine-owned source registry: sha256<TAB>date<TAB>path<TAB>openalex-id<TAB>title
+OPENALEX_DIR = os.path.join(WIKI_DIR, ".openalex")      # cached OpenAlex responses, one JSON per url
+OPENALEX_API = "https://api.openalex.org"
 WIKI_LOG     = os.path.join(WIKI_DIR, "log.md")          # append-only chronological log (Karpathy's log.md)
 WIKI_SCHEMA  = os.path.join(WIKI_DIR, "SCHEMA.md")       # per-vault conventions the agent + PI co-evolve
 
@@ -2457,12 +2459,18 @@ def load_sources(root):
             if not line.strip():
                 continue
             parts = line.split("\t")
-            if len(parts) >= 4:
-                reg[parts[2]] = {"sha256": parts[0], "date": parts[1], "title": "\t".join(parts[3:])}
+            # 4 columns is the pre-3.4 format (no work id). Titles are whitespace-collapsed
+            # on write, so they never contain a tab — the column count is unambiguous.
+            if len(parts) == 4:
+                reg[parts[2]] = {"sha256": parts[0], "date": parts[1], "workid": "", "title": parts[3]}
+            elif len(parts) >= 5:
+                reg[parts[2]] = {"sha256": parts[0], "date": parts[1], "workid": parts[3],
+                                 "title": "\t".join(parts[4:])}
     return reg
 
 def save_sources(root, reg):
-    lines = [f"{r['sha256']}\t{r['date']}\t{rel}\t{r['title']}" for rel, r in sorted(reg.items())]
+    lines = [f"{r['sha256']}\t{r['date']}\t{rel}\t{r.get('workid', '')}\t{r['title']}"
+             for rel, r in sorted(reg.items())]
     write_if_changed(os.path.join(root, SOURCES_FILE), ("\n".join(lines) + "\n") if lines else "")
 
 def _sha256_file(path):
@@ -2605,7 +2613,7 @@ def ensure_wiki(root):
     if not os.path.exists(os.path.join(root, WIKI_SCHEMA)):
         write_if_changed(os.path.join(root, WIKI_SCHEMA), load_template("wiki_schema"))
 
-def cmd_ingest(root, path, title=None):
+def cmd_ingest(root, path, title=None, workid=None):
     """Register a PI-curated source under raw/: record its sha256, append a Karpathy-format
     log line, (re)render the index. The agent compiles pages afterward — the engine never
     reads the source's content. Idempotent on an unchanged, already-registered file."""
@@ -2618,13 +2626,15 @@ def cmd_ingest(root, path, title=None):
         raise CruxError(f"ingest: no such file: {path}")
     ensure_wiki(root)
     rel, sha = _rel(root, abspath), _sha256_file(abspath)
-    title = " ".join((title or os.path.splitext(os.path.basename(abspath))[0]).split())  # single-line: registry + log are line-based
     reg = load_sources(root)
+    workid = workid or reg.get(rel, {}).get("workid", "")   # a known id survives a re-ingest
+    title = " ".join((title or os.path.splitext(os.path.basename(abspath))[0]).split())  # single-line: registry + log are line-based
     if rel in reg and reg[rel]["sha256"] == sha:
         refresh(root)
         return "unchanged", rel
     state = "updated" if rel in reg else "ingested"
-    reg[rel] = {"sha256": sha, "date": datetime.date.today().isoformat(), "title": title}
+    reg[rel] = {"sha256": sha, "date": datetime.date.today().isoformat(),
+                "workid": workid, "title": title}
     save_sources(root, reg)
     with open(os.path.join(root, WIKI_LOG), "a", encoding="utf-8") as f:
         f.write(f"\n## [{datetime.date.today().isoformat()}] ingest | {title}\n")
