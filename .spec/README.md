@@ -24,6 +24,7 @@ being built — do not implement)
 | 14 | [Project glossary](14-glossary.md) | `glossary` | ☑ |
 | 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ◐ |
 | 16 | [Science voice: the invisible notebook](16-science-voice.md) | `voice` | ☑ |
+| 17 | [OpenAlex: literature search into the wiki](17-openalex.md) | `wiki` | ◐ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
@@ -33,7 +34,7 @@ rule and the inner search; see below.
 
 ## What to build, and what not to
 
-**No spec is `☐ todo`. Three are `◐ in progress` — 05, 08 and 15** — and they are the work.
+**No spec is `☐ todo`. Four are `◐ in progress` — 05, 08, 15 and 17** — and they are the work.
 (11 landed 2026-08-15: engine 1.4's `crux deck` verbs + the `prezit` skill. 13 landed
 2026-08-16: engine 3.1's `crux brief --mode=situate`, the situate bound, the methodology
 slots, and the `crux-situate` / `crux-design` agents. 10 landed 2026-08-16 as a **zero-bump**
