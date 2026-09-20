@@ -32,10 +32,19 @@ open-access status and PDF url, assigned topics, `referenced_works` (what it cit
 Since 2026-02-13 the REST API needs a registered key and bills by credits. Measured against
 the live API on 2026-09-19:
 
-| | budget | what it buys |
+Measured against the live API on 2026-09-19, rather than taken from the pricing page, which
+quotes a list request at ten times what one actually costs:
+
+| | daily budget | measured cost |
 |---|---|---|
-| no key | $0.10/day | ~100 list requests — DOI lookups yes, a crawl no |
-| free key | $1.00/day | ~10,000 credits; 50 works per list request |
+| no key | 1,000 credits ($0.10) | a filtered list request: **1 credit** |
+| free key | 10,000 credits ($1.00) | up to **100 work ids** returned per request |
+| | | a full-text *search* request: 10 credits |
+
+So a depth-2 crawl over ~8,000 works is ~80 requests, and fits inside the **anonymous** budget
+with room to spare. The free key is worth having for headroom and for usage visibility, but it
+is not the line between "can crawl" and "cannot" — which means "no OpenAlex account" stays a
+genuinely usable path, not a crippled one.
 
 A crawl that cannot finish inside the remaining budget **refuses before spending anything**
 and prints the estimate. Half a candidate list looks complete and is not.

@@ -14896,6 +14896,167 @@ def run_openalex():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# --- spec 17.2 — the crawl and the ranking --------------------------------------------
+# A frozen fixture graph with hand-checked arithmetic. The shape is chosen so that the one
+# thing the ranking exists to do is visible in the output: CLASSIC is cited 100,000 times
+# and is reached by every seed, yet must rank BELOW works a fraction as famous, because
+# everything reaches it and that is precisely why it carries no information about this
+# problem.
+#
+#   seeds        S1, S2, S3
+#   backward     S1 -> A, B    S2 -> A, C    S3 -> A, D
+#   forward      S1 <- E       S2 <- E       S3 <- F
+#   hubs         A (3 seeds), E (2 seeds)      -- B, C, D, F have one seed each, no expansion
+#   depth 2      A -> G, CLASSIC               E -> CLASSIC
+_OA_CITES = {"CLASSIC": 100000, "A": 50, "B": 40, "C": 30, "D": 20, "E": 60, "F": 10, "G": 10,
+             "S1": 5, "S2": 5, "S3": 5}
+_OA_REFS = {"S1": ["A", "B"], "S2": ["A", "C"], "S3": ["A", "D"],
+            "A": ["G", "CLASSIC"], "E": ["CLASSIC"]}
+_OA_CITERS = {"S1": ["E"], "S2": ["E"], "S3": ["F"]}
+
+def _norm(t):
+    return "".join(c for c in (t or "").lower() if c.isalnum())
+
+def _oa_work(wid):
+    # S1DUP is S1 under a second OpenAlex id: same title, different id — the shape OpenAlex
+    # really carries for a paper deposited twice.
+    return {"id": "https://openalex.org/" + wid,
+            "display_name": "Work " + ("S1" if wid == "S1DUP" else wid),
+            "publication_year": 2020, "cited_by_count": _OA_CITES.get(wid, 0),
+            "doi": "https://doi.org/10.1/" + wid.lower(),
+            "best_oa_location": {"pdf_url": "https://x/" + wid + ".pdf"},
+            "referenced_works": ["https://openalex.org/" + r for r in _OA_REFS.get(wid, [])],
+            "authorships": [{"author": {"display_name": "A Author"}}]}
+
+def _oa_graph_fetch(calls):
+    """Serve the fixture graph from the url alone, the way the live API would."""
+    import urllib.parse as U
+    def fetch(url):
+        calls.append(url)
+        q = U.parse_qs(U.urlparse(url).query)
+        f = q.get("filter", [""])[0]
+        if f.startswith("openalex_id:"):
+            ids = f[len("openalex_id:"):].split("|")
+            return json.dumps({"results": [_oa_work(i) for i in ids if i in _OA_CITES]})
+        if f.startswith("cites:"):
+            src = f[len("cites:"):]
+            out = sorted(_OA_CITERS.get(src, []), key=lambda w: -_OA_CITES.get(w, 0))
+            return json.dumps({"results": [_oa_work(w) for w in out]})
+        raise AssertionError("unexpected crawl query: " + url)
+    return fetch
+
+def run_lit_crawl():
+    """Spec 17.2 — seed-reach ranking over a frozen citation subgraph."""
+    print("\n# literature crawl + ranking (spec 17.2)")
+    import openalex as OA
+    root = tempfile.mkdtemp(prefix="crux_lit_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Lit Demo", root, goal="Exercise the crawl.")
+    os.environ.pop("OPENALEX_API_KEY", None)
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    real_fetch, calls = OA._fetch, []
+    OA.LAST_LIMITS.clear()
+
+    expect_error("lit: a crawl with no seeds refuses rather than writing an empty list",
+                 lambda: OA.crawl(root, []))
+
+    try:
+        OA._fetch = _oa_graph_fetch(calls)
+        rows = OA.crawl(root, ["S1", "S2", "S3"])
+        by = {r["workid"]: r for r in rows}
+
+        # -- the arithmetic, checked by hand ------------------------------------------
+        # A: three seeds at depth 1        -> reach 3.0, 3.0 / log10(110)        = 1.4696
+        # E: two seeds at depth 1          -> reach 2.0, 2.0 / log10(110)        = 0.9798
+        # B: one seed at depth 1           -> reach 1.0, 1.0 / log10(110)        = 0.4899
+        # G: one hub (A) at depth 2        -> reach 0.5, 0.5 / log10(110)        = 0.2449
+        # CLASSIC: two hubs (A, E)         -> reach 1.0, 1.0 / log10(100010)     = 0.2000
+        # Citations below CITES_FLOOR=100 do not move the divisor, so A/E/B/G all divide by
+        # log10(110) despite having 50, 60, 40 and 10 citations.
+        check("lit: reach is one per distinct seed at depth 1",
+              by["A"]["reach"] == 3.0 and by["A"]["seeds"] == 3 and by["A"]["hubs"] == 0
+              and by["E"]["reach"] == 2.0 and by["E"]["seeds"] == 2)
+        check("lit: a depth-2 work counts the HUBS that reach it, not those hubs' seeds — "
+              "one hub is half a point, not that hub's whole seed set",
+              by["G"]["hubs"] == 1 and by["G"]["seeds"] == 0 and by["G"]["reach"] == 0.5
+              and by["CLASSIC"]["hubs"] == 2 and by["CLASSIC"]["reach"] == 1.0)
+        check("lit: the score is reach / log10(10 + max(citations, 100))",
+              abs(by["A"]["score"] - 1.4696) < 5e-4
+              and abs(by["G"]["score"] - 0.2449) < 5e-4
+              and abs(by["CLASSIC"]["score"] - 0.2000) < 5e-4)
+        check("lit: the citation floor means obscurity is not rewarded — equal reach and "
+              "both under the floor scores equal, and the better-cited one wins the tie",
+              by["B"]["score"] == by["C"]["score"] == by["D"]["score"] == by["F"]["score"]
+              and by["B"]["rank"] < by["C"]["rank"] < by["D"]["rank"] < by["F"]["rank"])
+        check("lit: a work with 100,000 citations, reached only through hubs, ranks last — "
+              "the divisor demotes the field's furniture",
+              by["CLASSIC"]["rank"] == len(rows))
+        check("lit: rank 1 is the work the most seeds reach at depth 1", rows[0]["workid"] == "A")
+        check("lit: rows are sorted best-first and ranked from 1",
+              [r["rank"] for r in rows] == list(range(1, len(rows) + 1))
+              and all(rows[i]["score"] >= rows[i + 1]["score"] for i in range(len(rows) - 1)))
+
+        # -- who is and is not a candidate ---------------------------------------------
+        check("lit: a seed is never its own candidate",
+              not ({"S1", "S2", "S3"} & set(by)))
+        check("lit: both directions are walked and recorded",
+              by["B"]["direction"] == "backward" and by["E"]["direction"] == "forward")
+        check("lit: depth is recorded and depth-2 works are present",
+              by["A"]["depth"] == 1 and by["G"]["depth"] == 2)
+
+        # -- depth-2 expansion is gated on reach >= 2 ----------------------------------
+        import urllib.parse as _U
+        asked = {_U.parse_qs(_U.urlparse(c).query).get("filter", [""])[0] for c in calls}
+        expanded = {w for w in ("A", "E", "B", "C", "D", "F") if "cites:" + w in asked}
+        check("lit: only hubs that two or more seeds reach expand to depth 2",
+              expanded == {"A", "E"})
+
+        # -- a warm cache reproduces the run with no network at all --------------------
+        first = OA.write_candidates(root, "demo", rows)
+        before = read(first)
+        OA._fetch = lambda url: (_ for _ in ()).throw(
+            AssertionError("network reached despite a warm cache"))
+        rows2 = OA.crawl(root, ["S1", "S2", "S3"])
+        OA.write_candidates(root, "demo", rows2)
+        check("lit: a re-run from a warm cache is free and byte-identical",
+              read(first) == before and rows2 == rows)
+        check("lit: the candidate list is a TSV under wiki/lit/<slug>/",
+              first.endswith(os.path.join("wiki", "lit", "demo", "candidates.tsv"))
+              and before.splitlines()[0].split("\t")[:5] == ["rank", "score", "reach", "seeds", "hubs"])
+
+        OA._fetch = _oa_graph_fetch(calls)      # back on the wire for the sections below
+
+        # -- a source already curated into raw/ is not offered again -------------------
+        write(os.path.join(root, "raw", "a.txt"), "already have this one\n")
+        E.cmd_ingest(root, "raw/a.txt", title="Work A", workid="A")
+        rows3 = OA.crawl(root, ["S1", "S2", "S3"])
+        check("lit: a work already registered in raw/ is not offered as a candidate",
+              "A" not in {r["workid"] for r in rows3})
+
+        # -- a seed's duplicate record, under a second id, is not a candidate -----------
+        _OA_CITES["S1DUP"] = 400
+        _OA_CITERS["S2"] = ["E", "S1DUP"]
+        try:
+            rows4 = OA.crawl(root, ["S1", "S2", "S3"])
+            dup = _oa_work("S1DUP"); dup["display_name"] = "Work S1"
+            check("lit: a duplicate OpenAlex record of a seed is dropped, not ranked first",
+                  "S1DUP" in {c for c in _OA_CITES}
+                  and not [r for r in rows4
+                           if _norm(r["title"]) == _norm("Work S1 — A Author (2020)")])
+        finally:
+            _OA_CITERS["S2"] = ["E"]; _OA_CITES.pop("S1DUP", None)
+
+        # -- the budget refusal ---------------------------------------------------------
+        OA.LAST_LIMITS["remaining"] = 1
+        expect_error("lit: a crawl that cannot finish inside the daily budget refuses",
+                     lambda: OA.crawl(root, ["S1", "S2", "S3", "E", "F", "G", "B"]))
+        OA.LAST_LIMITS.clear()
+    finally:
+        OA._fetch = real_fetch
+        OA.LAST_LIMITS.clear()
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -15430,6 +15591,7 @@ def main():
     run_auto_gui()
     run_auto_setup()
     run_openalex()
+    run_lit_crawl()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
