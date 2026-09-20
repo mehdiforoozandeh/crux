@@ -348,6 +348,19 @@ def main(argv=None):
     # and no process; `check` dry-runs the PI's scorer once (`--static` is what it used to
     # do), `refs` lists a run's refs read-only, `promote` cuts one branch at a recorded
     # attempt, `approve` is the PI's signature on a plan, and `run` is the driver loop.
+    lp = sub.add_parser("lit", aliases=["literature"],
+                        help="literature search (spec 17): walk the citation graph out from "
+                             "trusted seeds and rank what is missing from raw/")
+    lsub = lp.add_subparsers(dest="lcmd", metavar="<sub-verb>")
+    s = _jsonable(lsub.add_parser("crawl", help="build the citation subgraph around the seed "
+                                               "set and write a ranked candidate list"))
+    s.add_argument("slug", help="a name for this search; output lands in wiki/lit/<slug>/")
+    s.add_argument("--seed", action="append", default=[], metavar="W…",
+                   help="an OpenAlex work id to seed with, beyond the raw/ sources that carry "
+                        "one; repeatable")
+    s.add_argument("--forward-cap", type=int, default=None,
+                   help="top citers to take per work (default 200; the tail is noise)")
+
     ap = sub.add_parser("auto", aliases=["autopilot"],
                         help="autopilot (spec 05): validate, approve and run a flight plan, "
                              "read a run's state, print a worker's brief, append the PI's "
@@ -867,6 +880,24 @@ def dispatch(a):
         return _dispatch_task(a)
     elif c in ("auto", "autopilot"):
         return _dispatch_auto(a)
+    elif c in ("lit", "literature"):
+        if getattr(a, "lcmd", None) != "crawl":
+            raise E.CruxError("lit: expected a sub-verb — `crux lit crawl <slug>`")
+        import openalex                # lazy: no other verb loads the network module
+        root = _vault()
+        seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
+        seeds += list(a.seed or [])
+        rows = openalex.crawl(root, seeds,
+                              **({"forward_cap": a.forward_cap} if a.forward_cap else {}))
+        path = openalex.write_candidates(root, a.slug, rows)
+        rel = os.path.relpath(path, root)
+        if a.json:
+            return _emit({"slug": a.slug, "seeds": len(seeds), "candidates": len(rows),
+                          "file": rel})
+        print(f"✓ {len(rows)} candidates from {len(seeds)} seeds → {rel}")
+        for r in rows[:10]:
+            print(f"  {r['rank']:>3}. {r['score']:.3f}  {r['seeds']} seeds  {r['title'][:88]}")
+        print("  next: read the list, and ingest the keepers with `crux ingest <file> --doi …`")
     elif c in ("rd", "design", "requirements"):
         root = _vault()
         slug, fn = E.cmd_rd(root, a.node, a.title, a.supersedes)

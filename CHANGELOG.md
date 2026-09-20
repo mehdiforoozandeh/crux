@@ -8,6 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **OpenAlex: the literature crawl** ([PRD 17.2](docs/prd/17.2-crawl-and-ranking.md), spec 17,
+  engine **3.4**, unchanged). **No vault-format change, no verdict change, no migration.**
+  - **`crux lit crawl <slug>`** walks the citation graph out from the `raw/` sources that
+    carry a work id — backward through `referenced_works`, forward through `cites:` — to
+    depth 2, and writes a ranked candidate list to `wiki/lit/<slug>/candidates.tsv`. It
+    answers the question the wiki could not: which papers should be in `raw/` and are not.
+  - **Ranked by seed-reach, not citation count.** A candidate scores one point per distinct
+    seed that reaches it directly and half a point per distinct hub that reaches it at depth
+    two, divided by `log10(10 + max(citations, 100))`. The divisor demotes the field's
+    furniture — works cited by everything, which is exactly why they say nothing about this
+    problem. The floor stops it rewarding obscurity at the other end.
+  - **Refuses rather than half-finishing.** A crawl that cannot fit in the remaining daily
+    budget stops before the bulk phases and names the estimate. A re-run from the cache makes
+    no network call and reproduces the list byte for byte.
+
 - **OpenAlex: DOI enrichment on ingest** ([PRD 17.1](docs/prd/17.1-openalex-client.md),
   spec 17, engine **3.3 → 3.4**). First slice of the epic that walks the citation graph
   outward from PI-trusted sources and hands back a ranked candidate list for `raw/`.
