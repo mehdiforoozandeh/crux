@@ -2648,6 +2648,98 @@ def cmd_ingest(root, path, title=None, workid=None):
     refresh(root)
     return state, rel
 
+# ---------------------------------------------------------------------------------------
+# The literature scope (spec 17.3) — what a search is about, written down before it runs.
+#
+# `crux lit crawl` seeds itself from every raw/ source that carries a work id, which is
+# wrong for any vault holding more than one line of enquiry: a raw/ with chromatin papers
+# AND optimiser papers produces a subgraph about neither. The seed set is the load-bearing
+# input, so it gets a file the PI approves rather than an accident of what was ingested.
+#
+# The skill writes this file; the engine checks it. Same split as the flight plan.
+# ---------------------------------------------------------------------------------------
+
+LIT_DIR   = os.path.join(WIKI_DIR, "lit")
+SCOPE_MIN_SEEDS, SCOPE_MAX_SEEDS = 3, 8
+
+
+def scope_path(root, slug):
+    return os.path.join(root, LIT_DIR, slug, "scope.md")
+
+
+def parse_scope(text):
+    """-> {fm, problem, seeds, out_of_scope}. Pure: takes text, never a path."""
+    fm, body = {}, text
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            for line in text[4:end].splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fm[k.strip()] = v.strip()
+            body = text[end + 4:]
+    seeds = [l.strip().lstrip("-*").strip() for l in _section(body, "Seeds").splitlines()]
+    return {"fm": fm, "problem": _section(body, "Problem"),
+            "seeds": [x for x in seeds if x],
+            "out_of_scope": _section(body, "Out of scope")}
+
+
+def _looks_like_seed(root, seed):
+    """A bare OpenAlex work id, or a DOI — nothing else is resolvable without guessing."""
+    if re.fullmatch(r"W\d+", seed):
+        return True
+    return bool(re.fullmatch(r"(https?://doi\.org/)?10\.\d{4,9}/\S+", seed))
+
+
+def scope_problems(root, scope, slug):
+    """[{check, message}] — EVERY way this scope is wrong, in one pass.
+
+    All of them, not the first: the PI reads this once and fixes it once."""
+    out = []
+    def add(c, m):
+        out.append({"check": c, "message": m})
+
+    declared = (scope.get("fm") or {}).get("slug", "")
+    if declared and slug and declared != slug:
+        add("scope-slug", f"scope declares slug {declared!r} but lives in {slug!r}/ — the "
+                          "directory is the name; make the frontmatter agree with it")
+
+    seeds = scope.get("seeds") or []
+    seen, dups = set(), []
+    for x in seeds:
+        (dups.append(x) if x in seen else seen.add(x))
+    if dups:
+        add("scope-seed-duplicate", f"seed listed more than once: {', '.join(sorted(set(dups)))}"
+                                    " — a seed counts once however many times it appears, so a "
+                                    "repeat silently buys nothing")
+    unknown = [x for x in seeds if not _looks_like_seed(root, x)]
+    if unknown:
+        add("scope-seed-unknown", f"not a work id or a DOI: {', '.join(unknown)} — a seed must "
+                                  "be resolvable without guessing. Use the OpenAlex id (W…) or "
+                                  "the DOI, not the paper's name")
+    elif not (SCOPE_MIN_SEEDS <= len(set(seeds)) <= SCOPE_MAX_SEEDS):
+        add("scope-seed-count",
+            f"{len(set(seeds))} distinct seeds; wanted {SCOPE_MIN_SEEDS}-{SCOPE_MAX_SEEDS}. "
+            "Fewer than three and the shared subgraph is whatever one paper happened to cite; "
+            "more than eight and the seeds stop agreeing on a subject")
+
+    problem = (scope.get("problem") or "").strip()
+    if not problem:
+        add("scope-problem-empty", "## Problem is empty — the search has nothing to be about, "
+                                   "and the PI reading the candidate list in a month will have "
+                                   "no way to tell what it was for")
+    elif len(_prose_tokens(problem)) > PROSE_CAP:
+        add("scope-problem-long", f"## Problem runs {len(_prose_tokens(problem))} words, over "
+                                  f"the {PROSE_CAP}-word cap — a scope that needs an essay is "
+                                  "two searches")
+    return out
+
+
+def load_scope(root, slug):
+    """The parsed scope for `slug`, or None when the search has no scope file."""
+    path = scope_path(root, slug)
+    return parse_scope(read(path)) if os.path.exists(path) else None
+
 def validate_wiki(root):
     """Structural lint over the wiki layer — mechanical checks only (broken/flow links,
     orphans, missing frontmatter, source hash drift, uncompiled/missing sources). Semantic

@@ -360,6 +360,9 @@ def main(argv=None):
                         "one; repeatable")
     s.add_argument("--forward-cap", type=int, default=None,
                    help="top citers to take per work (default 200; the tail is noise)")
+    s = _jsonable(lsub.add_parser("lint", help="check a search's scope file and report every "
+                                               "problem it carries, not just the first"))
+    s.add_argument("slug", help="the search whose wiki/lit/<slug>/scope.md to check")
 
     ap = sub.add_parser("auto", aliases=["autopilot"],
                         help="autopilot (spec 05): validate, approve and run a flight plan, "
@@ -881,14 +884,37 @@ def dispatch(a):
     elif c in ("auto", "autopilot"):
         return _dispatch_auto(a)
     elif c in ("lit", "literature"):
-        if getattr(a, "lcmd", None) != "crawl":
-            raise E.CruxError("lit: expected a sub-verb — `crux lit crawl <slug>`")
-        import openalex                # lazy: no other verb loads the network module
+        lcmd = getattr(a, "lcmd", None)
         root = _vault()
-        seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
-        seeds += list(a.seed or [])
-        rows = openalex.crawl(root, seeds,
-                              **({"forward_cap": a.forward_cap} if a.forward_cap else {}))
+        if lcmd == "lint":                # pure: the scope lint never loads the network module
+            scope = E.load_scope(root, a.slug)
+            if scope is None:
+                raise E.CruxError(f"lit lint: no scope file at {E.scope_path(root, a.slug)} — "
+                                  "a search may run without one, but there is nothing to check")
+            probs = E.scope_problems(root, scope, a.slug)
+            if a.json:
+                return _emit({"slug": a.slug, "problems": probs})
+            if not probs:
+                print(f"✓ scope for {a.slug} is clean ({len(scope['seeds'])} seeds)")
+                return 0
+            print(f"⚠ {len(probs)} problem(s) in the scope for {a.slug}:")
+            for p in probs:
+                print(f"  · {p['message']}")
+            return 1
+        if lcmd != "crawl":
+            raise E.CruxError("lit: expected a sub-verb — `crux lit crawl <slug>` or "
+                              "`crux lit lint <slug>`")
+        import openalex                # lazy: no other verb loads the network module
+        if a.seed:
+            seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
+            seeds += list(a.seed)
+            rows = openalex.crawl(root, seeds,
+                                  **({"forward_cap": a.forward_cap} if a.forward_cap else {}))
+        else:
+            rows = openalex.crawl_scope(root, a.slug,
+                                        **({"forward_cap": a.forward_cap} if a.forward_cap else {}))
+        seeds = seeds if a.seed else (E.load_scope(root, a.slug) or {}).get("seeds") or [
+            r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
         path = openalex.write_candidates(root, a.slug, rows)
         rel = os.path.relpath(path, root)
         if a.json:
