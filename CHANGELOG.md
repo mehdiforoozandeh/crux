@@ -8,6 +8,27 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **OpenAlex: the scoping skill** ([PRD 17.3](docs/prd/17.3-scoping-skill.md), spec 17, engine
+  **3.4**, unchanged). **No vault-format change, no verdict change, no migration.**
+  - **A new skill, `skills/crux-litsearch/`**, carries the PI from "what am I missing?" to a
+    scope file in **two asks and one approval**: what the search is for, and the 3–8 papers
+    they already trust. It spends its turns on the seeds rather than the prose, because the
+    seeds define the subgraph and a beautiful scope over bad seeds gives a bad list. It writes
+    `wiki/lit/<slug>/scope.md` and **stops** — the PI runs the crawl.
+  - **`crux lit lint <slug>`** checks that file and reports every problem in one pass: too few
+    or too many seeds, a duplicate, a seed that is neither a work id nor a DOI, an empty or
+    over-cap problem statement, a slug that disagrees with its directory. It is pure, and
+    never loads the network module.
+  - **`crux lit crawl <slug>`** now seeds from the scope when one exists, and from the whole
+    registry when it does not — a one-topic vault need not hold a conversation first. A seed
+    written as a DOI is resolved to a work id before the crawl.
+
+### Fixed
+
+- **An OpenAlex HTTP 400 no longer reads as a budget problem.** A malformed query is a crux
+  bug; it now says so instead of sending the PI to register a key. 401/403 names the key, 429
+  mentions the daily reset, and only a genuine network failure gets the original text.
+
 - **OpenAlex: the literature crawl** ([PRD 17.2](docs/prd/17.2-crawl-and-ranking.md), spec 17,
   engine **3.4**, unchanged). **No vault-format change, no verdict change, no migration.**
   - **`crux lit crawl <slug>`** walks the citation graph out from the `raw/` sources that

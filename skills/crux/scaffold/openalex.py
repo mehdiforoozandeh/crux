@@ -59,9 +59,22 @@ def get(root, path, params=None):
         body = _fetch(url + ("&" if "?" in url else "?") + "api_key=" + key if key else url)
         data = json.loads(body)
     except (OSError, ValueError) as e:   # URLError/HTTPError are OSError; JSONDecodeError is ValueError
+        code = getattr(e, "code", None)
+        if code == 400:
+            raise E.CruxError(
+                f"openalex: rejected the query as malformed ({url}). This is a crux bug, not "
+                "a key or budget problem — the identifiers in it are not the shape OpenAlex "
+                "expects.")
+        if code in (401, 403):
+            raise E.CruxError(
+                f"openalex: refused the request ({code}). OPENALEX_API_KEY is "
+                + ("set but not accepted — check it at https://openalex.org/settings/api."
+                   if key else "unset, and this endpoint requires one."))
         raise E.CruxError(
             f"openalex: lookup failed for {url} ({e.__class__.__name__}: {e}). "
-            "Without a key OpenAlex allows about $0.10 of traffic a day; a free key raises "
+            + ("Today's budget may be spent; it resets daily. "
+               if code == 429 else "")
+            + "Without a key OpenAlex allows about $0.10 of traffic a day; a free key raises "
             "that to $1 a day. Register at https://openalex.org/settings/api and export it "
             "as OPENALEX_API_KEY. To skip OpenAlex entirely, ingest with --title instead — "
             "nothing else in crux needs the network.")
@@ -209,7 +222,17 @@ def crawl(root, seed_ids, forward_cap=FORWARD_CAP):
     expands only from depth-1 works that at least DEPTH2_MIN_REACH distinct seeds already
     reach — the frontier would otherwise be ~320,000 works, and a work only one seed points
     at is not where the shared subgraph is. Returns rows sorted best-first."""
-    seed_ids = [_bare(s) for s in dict.fromkeys(seed_ids) if _bare(s)]
+    # A seed may be given as a DOI. It has to become a work id before anything else, because
+    # _bare() would shear "10.1038/nmeth.1906" down to "nmeth.1906" and query for a work that
+    # does not exist.
+    resolved = []
+    for sd in dict.fromkeys(seed_ids):
+        sd = (sd or "").strip()
+        if not sd:
+            continue
+        resolved.append(work_id(work_by_doi(root, sd)) if "/" in sd and "10." in sd
+                        else _bare(sd))
+    seed_ids = [x for x in dict.fromkeys(resolved) if x]
     if not seed_ids:
         raise E.CruxError(
             "lit crawl: no seeds. Seeds are the sources in raw/ that carry an OpenAlex work "
@@ -291,3 +314,19 @@ def write_candidates(root, slug, rows):
     lines += ["\t".join(str(r[c]).replace("\t", " ") for c in CAND_COLUMNS) for r in rows]
     E.write_if_changed(path, "\n".join(lines) + "\n")
     return path
+
+
+def crawl_scope(root, slug, forward_cap=FORWARD_CAP):
+    """Crawl the search named by `slug`: its scope's seeds when it has a scope file, and
+    every raw/ source carrying a work id when it does not. A one-topic vault should not have
+    to hold a conversation before it can search."""
+    scope = E.load_scope(root, slug)
+    if scope:
+        problems = E.scope_problems(root, scope, slug)
+        if problems:
+            raise E.CruxError("lit crawl: " + E.scope_path(root, slug) + " has problems:\n  · "
+                              + "\n  · ".join(p["message"] for p in problems))
+        seeds = scope["seeds"]
+    else:
+        seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
+    return crawl(root, seeds, forward_cap=forward_cap)

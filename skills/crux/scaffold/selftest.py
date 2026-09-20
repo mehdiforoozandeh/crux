@@ -14923,7 +14923,7 @@ def _oa_work(wid):
     return {"id": "https://openalex.org/" + wid,
             "display_name": "Work " + ("S1" if wid == "S1DUP" else wid),
             "publication_year": 2020, "cited_by_count": _OA_CITES.get(wid, 0),
-            "doi": "https://doi.org/10.1/" + wid.lower(),
+            "doi": "https://doi.org/10.1234/" + wid.lower(),   # real DOI shape: 10.NNNN/…
             "best_oa_location": {"pdf_url": "https://x/" + wid + ".pdf"},
             "referenced_works": ["https://openalex.org/" + r for r in _OA_REFS.get(wid, [])],
             "authorships": [{"author": {"display_name": "A Author"}}]}
@@ -14933,6 +14933,11 @@ def _oa_graph_fetch(calls):
     import urllib.parse as U
     def fetch(url):
         calls.append(url)
+        if "/works/https://doi.org/" in url:      # the singleton DOI lookup
+            wid = url.split("/works/https://doi.org/")[1].split("?")[0].split("/")[-1].upper()
+            if wid in _OA_CITES:
+                return json.dumps(_oa_work(wid))
+            raise AssertionError("unknown fixture DOI: " + url)
         q = U.parse_qs(U.urlparse(url).query)
         f = q.get("filter", [""])[0]
         if f.startswith("openalex_id:"):
@@ -15054,6 +15059,161 @@ def run_lit_crawl():
     finally:
         OA._fetch = real_fetch
         OA.LAST_LIMITS.clear()
+    shutil.rmtree(root, ignore_errors=True)
+
+
+# --- spec 17.3 — the scoping skill's file and its lint --------------------------------
+# The skill writes; the engine checks. Same split as PRD 05.5: the setup skill is not
+# unit-tested, the grammar it writes against is. These run against the PRD alone, so every
+# call to a name the engine may not carry yet is guarded.
+
+_SCOPE_OK = """---
+type: lit-scope
+slug: chromatin
+---
+
+## Problem
+
+Which segmentation methods annotate chromatin state from histone ChIP-seq, and what do they
+report as their baseline?
+
+## Seeds
+
+- 10.1038/nmeth.1906
+- W4230875896
+- W2076154138
+
+## Out of scope
+
+- single-cell assays
+"""
+
+def _scope_val(fn, default=None):
+    try:
+        return fn()
+    except (AttributeError, TypeError, KeyError):
+        return default
+
+def run_lit_scope():
+    """Spec 17.3 — wiki/lit/<slug>/scope.md, and the lint the skill writes against."""
+    print("\n# literature scope + lint (spec 17.3)")
+    root = tempfile.mkdtemp(prefix="crux_scope_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Scope Demo", root, goal="Exercise the scoping file.")
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    write(os.path.join(root, "raw", "chromhmm.txt"), "seed one\n")
+    E.cmd_ingest(root, "raw/chromhmm.txt", title="ChromHMM", workid="W1598350571")
+    reg = E.load_sources(root)
+    reg["raw/chromhmm.txt"]["doi"] = "10.1038/nmeth.1906"   # tolerated if unsupported
+
+    def slugs(text, slug="chromatin"):
+        sc = _scope_val(lambda: E.parse_scope(text))
+        if sc is None:
+            return None
+        ps = _scope_val(lambda: E.scope_problems(root, sc, slug))
+        return None if ps is None else {p["check"] for p in ps}
+
+    check("scope: a well-formed scope parses into problem, seeds and out-of-scope",
+          _scope_val(lambda: (lambda sc: (
+              sc["seeds"] == ["10.1038/nmeth.1906", "W4230875896", "W2076154138"]
+              and sc["problem"].startswith("Which segmentation")
+              and "single-cell" in sc["out_of_scope"]))(E.parse_scope(_SCOPE_OK))) is True)
+
+    check("scope: a well-formed scope lints clean", slugs(_SCOPE_OK) == set())
+
+    two = _SCOPE_OK.replace("- W4230875896\n- W2076154138\n", "")
+    check("scope: fewer than three seeds is a finding",
+          slugs(two) == {"scope-seed-count"})
+
+    nine = _SCOPE_OK.replace("- W2076154138\n",
+                             "".join(f"- W{9000000 + i}\n" for i in range(7)))
+    check("scope: more than eight seeds is a finding",
+          slugs(nine) == {"scope-seed-count"})
+
+    dup = _SCOPE_OK.replace("- W2076154138", "- W4230875896")
+    check("scope: a seed listed twice is a finding",
+          slugs(dup) == {"scope-seed-duplicate", "scope-seed-count"}
+          or slugs(dup) == {"scope-seed-duplicate"})
+
+    bad = _SCOPE_OK.replace("- W2076154138", "- the ChromHMM paper")
+    check("scope: a seed that is neither a work id nor a DOI is a finding, not a crash",
+          slugs(bad) == {"scope-seed-unknown"})
+
+    empty = _SCOPE_OK.replace("Which segmentation methods annotate chromatin state from "
+                              "histone ChIP-seq, and what do they\nreport as their baseline?",
+                              "")
+    check("scope: an empty problem statement is a finding",
+          slugs(empty) == {"scope-problem-empty"})
+
+    longp = _SCOPE_OK.replace("report as their baseline?",
+                              "report as their baseline? " + ("word " * (E.PROSE_CAP + 20)))
+    check("scope: a problem statement over the prose cap is a finding",
+          slugs(longp) == {"scope-problem-long"})
+
+    check("scope: a slug that disagrees with its directory is a finding",
+          slugs(_SCOPE_OK, slug="something-else") == {"scope-slug"})
+
+    check("scope: every problem is reported in one pass, not just the first",
+          (slugs(_SCOPE_OK.replace("- W2076154138", "- the ChromHMM paper")
+                          .replace("Which segmentation", "")) or set())
+          >= {"scope-seed-unknown"})
+
+    # -- the skill itself: it exists, it is not bloated, and scope.md is its only output --
+    sk = os.path.join(HERE, "..", "..", "crux-litsearch", "SKILL.md")
+    auto_sk = os.path.join(HERE, "..", "..", "crux-autopilot", "SKILL.md")
+    have = os.path.isfile(sk) and os.path.isfile(auto_sk)
+    body = read(sk) if have else ""
+    check("scope: the crux-litsearch skill ships and stays under the autopilot skill's size",
+          have and 0 < len(body.splitlines()) < len(read(auto_sk).splitlines()))
+    check("scope: the skill names scope.md as its output and refuses to write raw/ itself",
+          "wiki/lit/<slug>/scope.md" in body and "The PI curates `raw/`" in body
+          and "crux lit lint" in body)
+
+    # -- the crawl prefers the scope's seeds, and works without one ---------------------
+    import openalex as OA
+    real_fetch, calls = OA._fetch, []
+    try:
+        OA._fetch = _oa_graph_fetch(calls)
+        OA.LAST_LIMITS.clear()
+        path = _scope_val(lambda: E.scope_path(root, "fixture"))
+        check("scope: the scope file lives at wiki/lit/<slug>/scope.md",
+              bool(path) and path.endswith(os.path.join("wiki", "lit", "fixture", "scope.md")))
+        if path:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            # the fixture graph under W-shaped ids, because a seed must look resolvable
+            for n, src in (("W1001", "S1"), ("W1002", "S2"), ("W1003", "S3")):
+                _OA_CITES[n] = _OA_CITES[src]
+                _OA_REFS[n] = _OA_REFS[src]
+                _OA_CITERS[n] = _OA_CITERS[src]
+            write(path, _SCOPE_OK.replace("slug: chromatin", "slug: fixture")
+                                 .replace("- 10.1038/nmeth.1906", "- W1001")
+                                 .replace("- W4230875896", "- W1002")
+                                 .replace("- W2076154138", "- W1003"))
+            calls.clear()
+            rows = _scope_val(lambda: OA.crawl_scope(root, "fixture"))
+            import urllib.parse as _U
+            asked = {_U.parse_qs(_U.urlparse(c).query).get("filter", [""])[0] for c in calls}
+            check("scope: a crawl driven by a scope uses the scope's seeds",
+                  rows is not None and {"cites:W1001", "cites:W1002", "cites:W1003"} <= asked)
+            check("scope: and does not seed from the whole registry",
+                  "cites:W1598350571" not in asked)
+
+            # a DOI seed must become a work id first; _bare() alone would shear
+            # "10.1/w1001" down to "w1001" and query for a work that does not exist
+            write(path, read(path).replace("- W1001", "- 10.1234/w1001"))
+            calls.clear()
+            rows5 = _scope_val(lambda: OA.crawl_scope(root, "fixture"))
+            # the graph queries are already cached, so the proof is the result, not the
+            # traffic: the same crawl under a DOI seed must come out identical, and the only
+            # new request may be the DOI's own singleton lookup
+            check("scope: a seed given as a DOI is resolved to a work id before the crawl",
+                  rows5 is not None and rows5 == rows
+                  and all("/works/https://doi.org/" in c for c in calls))
+    finally:
+        OA._fetch = real_fetch
+        OA.LAST_LIMITS.clear()
+        for n in ("W1001", "W1002", "W1003"):
+            _OA_CITES.pop(n, None); _OA_REFS.pop(n, None); _OA_CITERS.pop(n, None)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -15592,6 +15752,7 @@ def main():
     run_auto_setup()
     run_openalex()
     run_lit_crawl()
+    run_lit_scope()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
