@@ -8,6 +8,37 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **OpenAlex: DOI enrichment on ingest** ([PRD 17.1](docs/prd/17.1-openalex-client.md),
+  spec 17, engine **3.3 → 3.4**). First slice of the epic that walks the citation graph
+  outward from PI-trusted sources and hands back a ranked candidate list for `raw/`.
+  - **`crux ingest --doi 10.…`** looks the source up on OpenAlex and writes the canonical
+    title, **full author list** and year into the registry, instead of the PI hand-typing
+    them. The registry title is the vault's only author-bearing field, so a typo or an
+    "et al" there is what makes a source unfindable by author.
+  - **A new module, `skills/crux/scaffold/openalex.py`** — crux's only network path, placed
+    beside `autopilot.py` on the impure side of spec 05's purity line. `engine.py` imports no
+    `urllib` and never imports it; `crux.py` imports it lazily inside the one branch that
+    needs it, so a verb that does not ask for OpenAlex never loads a module that can reach the
+    network.
+  - **Opt-in, cached, never blocking.** Reached only from an explicit `--doi`. Every response
+    is written to `wiki/.openalex/` and re-read from there, so a re-run is free, reproducible
+    and works offline. `crux validate` and `selftest` stay fully offline and green from a
+    fresh clone with no key — "no OpenAlex at all" remains a first-class choice.
+  - **The key lives in `OPENALEX_API_KEY`**, never in the vault (a vault is a git repo), and
+    is excluded from the cache key so a cache is portable and holds no secret. With no key and
+    a cold cache the failure is a one-line refusal naming the env var, the daily budget and
+    the `--title` alternative — not a traceback and not a hang.
+  - **A DOI can be attached after the fact.** Registering with `--title` today and adding
+    `--doi` later records the work id even though the file's bytes have not changed, and
+    adds no duplicate log line.
+
+### Changed
+
+- **Vault format: `wiki/.sources.tsv` gains an OpenAlex work-id column** (4 → 5, id inserted
+  before the title). A 4-column registry loads with an empty id and rewrites as 5 columns on
+  the next write, titles intact. The id is stored now rather than in 17.2 so the crawl's seed
+  mapping costs one migration instead of two.
+
 - **Autopilot: the setup skill** ([PRD 05.5](docs/prd/05.5-setup-skill.md), spec 05, engine
   **3.3**, unchanged). **No vault-format change, no verdict change, no roll-up change, no
   migration** — see *Backward-compat* below for the one place a plan accepted today could be

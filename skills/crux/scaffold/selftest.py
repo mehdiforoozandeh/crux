@@ -14760,6 +14760,142 @@ def run_auto_gui():
         check("autogui: gui section ran without crashing (%r)" % (e,), False)
 
 
+# --- spec 17.1 — OpenAlex client + DOI enrichment ------------------------------------
+# Every assert below runs with OPENALEX_API_KEY unset and the network boundary stubbed.
+# That is the point: the gate must stay green from a fresh clone with no key and no socket,
+# or "opt-in" is a claim rather than a property.
+
+_OA_WORK = {
+    "id": "https://openalex.org/W2605897695",
+    "display_name": "Nextflow enables reproducible computational workflows",
+    "publication_year": 2017,
+    "authorships": [
+        {"author": {"display_name": "Paolo Di Tommaso"}},
+        {"author": {"display_name": "Maria Chatzou"}},
+        {"author": {"display_name": "Evan W. Floden"}},
+    ],
+}
+
+def run_openalex():
+    """Spec 17.1 — the one network path the rest of epic 17 sits on: its own module on the
+    impure side of spec 05's purity line, cached, opt-in, and inert without a key. Also the
+    .sources.tsv 4->5 column migration that 17.2 needs in order to seed a crawl."""
+    print("\n# openalex client + doi enrichment (spec 17.1)")
+    import openalex as OA
+    root = tempfile.mkdtemp(prefix="crux_oa_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("OA Demo", root, goal="Exercise the OpenAlex client.")
+    os.environ.pop("OPENALEX_API_KEY", None)
+
+    # -- the purity line holds: the engine never reaches the network, the CLI loads the
+    #    module lazily, and openalex imports engine rather than the reverse ---------------
+    eng = read(os.path.join(HERE, "engine.py"))
+    oa_src = read(os.path.join(HERE, "openalex.py"))
+    lazy = [l for l in read(os.path.join(HERE, "crux.py")).splitlines()
+            if re.match(r"\s*import openalex\b", l)]
+    check("oa: the engine imports no urllib and never imports openalex",
+          not re.search(r"^\s*(import|from)\s+urllib\b", eng, re.M)
+          and not re.search(r"^\s*(import|from)\s+openalex\b", eng, re.M))
+    check("oa: crux.py imports openalex lazily, inside the branch that needs it",
+          bool(lazy) and all(l.lstrip() != l for l in lazy))
+    check("oa: openalex.py imports engine and nothing outside the stdlib",
+          bool(re.search(r"^import engine as E", oa_src, re.M))
+          and all(m.split(".")[0] in {"os", "json", "hashlib", "engine", "urllib"}
+                  for m in re.findall(r"^\s*(?:import|from)\s+([\w.]+)", oa_src, re.M)))
+
+    # -- registry migration: a 4-column legacy line must load, then round-trip as 5 --------
+    os.makedirs(os.path.join(root, "wiki"), exist_ok=True)
+    legacy = os.path.join(root, E.SOURCES_FILE)
+    write(legacy, "abc123\t2026-01-01\traw/legacy.txt\tLegacy Paper — A Author (2020)\n")
+    reg = E.load_sources(root)
+    check("oa: legacy 4-column line loads with an empty work id",
+          reg["raw/legacy.txt"]["workid"] == "" and
+          reg["raw/legacy.txt"]["title"] == "Legacy Paper — A Author (2020)")
+    E.save_sources(root, reg)
+    check("oa: legacy line re-saves as 5 columns with no data loss",
+          read(legacy).strip().split("\t") ==
+          ["abc123", "2026-01-01", "raw/legacy.txt", "", "Legacy Paper — A Author (2020)"])
+
+    # -- doi enrichment, driven the way the CLI drives it ---------------------------------
+    src = os.path.join(root, "raw", "nextflow.txt")
+    write(src, "Nextflow paper stand-in.\n")
+    real_fetch, calls = OA._fetch, []
+    def ingest_doi(rel, doi, title=None):
+        w = OA.work_by_doi(root, doi)
+        return E.cmd_ingest(root, rel, title or OA.title_line(w), workid=OA.work_id(w))
+    try:
+        OA._fetch = lambda url: (calls.append(url), json.dumps(_OA_WORK))[1]
+        ingest_doi("raw/nextflow.txt", "10.1038/nbt.3820")
+        rec = E.load_sources(root)["raw/nextflow.txt"]
+        check("oa: --doi writes the canonical title, full author list and year",
+              rec["title"] == "Nextflow enables reproducible computational workflows — "
+                              "Paolo Di Tommaso, Maria Chatzou, Evan W. Floden (2017)")
+        check("oa: --doi records the bare work id", rec["workid"] == "W2605897695")
+        check("oa: the api key is absent from the url when the env var is unset",
+              len(calls) == 1 and "api_key" not in calls[0])
+
+        # -- the cache is authoritative: a second lookup must not reach the boundary ------
+        OA._fetch = lambda url: (_ for _ in ()).throw(
+            AssertionError("network reached despite a warm cache"))
+        write(src, "Nextflow paper stand-in, edited.\n")     # force a real re-ingest
+        ingest_doi("raw/nextflow.txt", "10.1038/nbt.3820")
+        check("oa: a warm cache serves the second lookup with no network call", True)
+        check("oa: the cached response is one file under wiki/.openalex/",
+              [f for f in os.listdir(os.path.join(root, "wiki", ".openalex"))
+               if f.endswith(".json")] != [] )
+
+        # -- an explicit title wins, but the id is still recorded -------------------------
+        write(src, "Nextflow paper stand-in, edited twice.\n")
+        ingest_doi("raw/nextflow.txt", "10.1038/nbt.3820", title="My Own Title")
+        rec = E.load_sources(root)["raw/nextflow.txt"]
+        check("oa: an explicit --title overrides the fetched one", rec["title"] == "My Own Title")
+        check("oa: the work id is recorded even when --title overrides", rec["workid"] == "W2605897695")
+
+        # -- a re-ingest with no doi keeps the id already on record ----------------------
+        write(src, "Nextflow paper stand-in, edited thrice.\n")
+        E.cmd_ingest(root, "raw/nextflow.txt", title="My Own Title")
+        check("oa: a plain re-ingest does not drop a known work id",
+              E.load_sources(root)["raw/nextflow.txt"]["workid"] == "W2605897695")
+
+        # -- a DOI attached to an already-registered, unchanged source must stick ---------
+        write(os.path.join(root, "raw", "later.txt"), "Registered first, DOI attached later.\n")
+        E.cmd_ingest(root, "raw/later.txt", title="Later Paper")
+        check("oa: a source registered with --title alone carries no work id",
+              E.load_sources(root)["raw/later.txt"]["workid"] == "")
+        state, _ = ingest_doi("raw/later.txt", "10.1038/nbt.3820", title="Later Paper")
+        check("oa: attaching a DOI later records the id although the bytes are unchanged",
+              E.load_sources(root)["raw/later.txt"]["workid"] == "W2605897695" and state == "unchanged")
+        check("oa: attaching a DOI to unchanged bytes adds no duplicate log line",
+              len(re.findall(r"^## \[.*\] ingest \| Later Paper$",
+                             read(os.path.join(root, "wiki", "log.md")), re.M)) == 1)
+
+        # -- cold cache + no key + a dead boundary = a CruxError naming the remedy --------
+        OA._fetch = lambda url: (_ for _ in ()).throw(OSError("no route to host"))
+        write(os.path.join(root, "raw", "other.txt"), "Another source.\n")
+        try:
+            ingest_doi("raw/other.txt", "10.1234/nope")
+            check("oa: a cold lookup with no key fails as a CruxError", False)
+            check("oa: the error names OPENALEX_API_KEY and the daily budget", False)
+        except E.CruxError as e:
+            check("oa: a cold lookup with no key fails as a CruxError", True)
+            check("oa: the error names OPENALEX_API_KEY and the daily budget",
+                  "OPENALEX_API_KEY" in str(e) and "$1" in str(e))
+        expect_error("oa: a non-DOI argument is refused before any lookup",
+                     lambda: OA.work_by_doi(root, "not-a-doi"))
+
+        # -- ingest without a doi never touches the boundary at all ----------------------
+        OA._fetch = lambda url: (_ for _ in ()).throw(
+            AssertionError("plain ingest must not call OpenAlex"))
+        write(os.path.join(root, "raw", "plain.txt"), "No doi here.\n")
+        E.cmd_ingest(root, "raw/plain.txt", title="Plain Paper")
+        check("oa: ingest without --doi makes no network call", True)
+        check("oa: validate stays offline on a vault that holds an openalex cache",
+              isinstance(E.cmd_validate(root), list))
+    finally:
+        OA._fetch = real_fetch
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def run_cli_help():
     print("\n# CLI --help smoke")
     for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
@@ -15177,7 +15313,10 @@ def run_auto_setup():
           bool(verdicts) and all(v != "REFUSED" for v in verdicts))
 
     # ---------------------------------------------------------------------- criterion 16
-    check("setup: the engine version is unchanged at 3.3", E.ENGINE_VERSION == "3.3")
+    # 05.5 shipped zero-bump; the pin is a tripwire that a later slice must move deliberately
+    # rather than drift into. Moved to 3.4 by spec 17.1, which adds a column to .sources.tsv.
+    check("setup: the engine version is the one the last format change set (3.4)",
+          E.ENGINE_VERSION == "3.4")
 
 
 def _setup_written(root, qid, text, name="plan.md"):
@@ -15290,6 +15429,7 @@ def main():
     run_auto_cockpit()
     run_auto_gui()
     run_auto_setup()
+    run_openalex()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

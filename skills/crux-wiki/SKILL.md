@@ -84,6 +84,14 @@ findable by author (in the cockpit's wiki search, in `WIKI.md`, and by grep); a 
 "He et al" hides every co-author. Keep it on one line (the registry and log are
 line-based).
 
+**Don't type it if the source has a DOI.** `crux ingest raw/<file> --doi 10.1038/nbt.3820`
+looks the work up on OpenAlex and writes the canonical title, the full author list and the
+year for you — no typos, no dropped co-authors. The response is cached under
+`wiki/.openalex/`, so a re-run is free and works offline. Set `OPENALEX_API_KEY` (a free key
+from `openalex.org/settings/api`) in the environment, never in the vault — a vault is a git
+repo. With no key and nothing cached, ingest refuses with a one-line message; fall back to
+`--title`. Nothing else in crux touches the network.
+
 Then **you** (◆) do the reading and synthesis the engine can't:
 
 1. Read the source in `raw/`.
