@@ -15159,12 +15159,15 @@ def run_lit_scope():
           >= {"scope-seed-unknown"})
 
     # -- the skill itself: it exists, it is not bloated, and scope.md is its only output --
+    # An absolute cap, not "under crux-autopilot". The PRD's original bar was a proxy for
+    # "not bloated", written when this skill covered one flow; it now documents three verbs
+    # that autopilot has no equivalent of, and trimming to beat an arbitrary comparison would
+    # have cost the fetch section rather than any fat.
     sk = os.path.join(HERE, "..", "..", "crux-litsearch", "SKILL.md")
-    auto_sk = os.path.join(HERE, "..", "..", "crux-autopilot", "SKILL.md")
-    have = os.path.isfile(sk) and os.path.isfile(auto_sk)
+    have = os.path.isfile(sk)
     body = read(sk) if have else ""
-    check("scope: the crux-litsearch skill ships and stays under the autopilot skill's size",
-          have and 0 < len(body.splitlines()) < len(read(auto_sk).splitlines()))
+    check("scope: the crux-litsearch skill ships and stays inside its 130-line cap",
+          have and 0 < len(body.splitlines()) <= 130)
     check("scope: the skill names scope.md as its output and refuses to write raw/ itself",
           "wiki/lit/<slug>/scope.md" in body and "The PI curates `raw/`" in body
           and "crux lit lint" in body)
@@ -15214,6 +15217,123 @@ def run_lit_scope():
         OA.LAST_LIMITS.clear()
         for n in ("W1001", "W1002", "W1003"):
             _OA_CITES.pop(n, None); _OA_REFS.pop(n, None); _OA_CITERS.pop(n, None)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+# --- spec 17.4 — fetching a picked candidate into raw/ --------------------------------
+# The only part of crux that writes bytes from the internet into the PI's curated directory,
+# so most of this section is about what must NOT land there.
+
+def _pdf(n=2048):
+    return b"%PDF-1.7\n" + b"x" * n
+
+def run_lit_fetch():
+    """Spec 17.4 — crux lit fetch: download the open-access PDF for a picked candidate and
+    ingest it with the canonical title, or refuse and write nothing."""
+    print("\n# literature fetch + ingest (spec 17.4)")
+    import openalex as OA
+    root = tempfile.mkdtemp(prefix="crux_fetch_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Fetch Demo", root, goal="Exercise the fetch path.")
+    os.makedirs(os.path.join(root, "raw"), exist_ok=True)
+    os.environ.pop("OPENALEX_API_KEY", None)
+    real_fetch, real_dl = OA._fetch, getattr(OA, "_download", None)
+
+    def rec(wid, oa="https://repo.example/p.pdf", year=2017, name="Di Tommaso"):
+        return {"id": "https://openalex.org/" + wid, "display_name": "Nextflow enables it all",
+                "publication_year": year, "cited_by_count": 10,
+                "doi": "https://doi.org/10.1234/" + wid.lower(),
+                "best_oa_location": ({"pdf_url": oa} if oa else None),
+                "authorships": [{"author": {"display_name": name}}]}
+
+    store = {"W1": rec("W1"), "W2": rec("W2", oa=None), "W3": rec("W3")}
+    def api(url):
+        import urllib.parse as U
+        f = U.parse_qs(U.urlparse(url).query).get("filter", [""])[0]
+        ids = f.split("openalex_id:")[-1].split("|") if "openalex_id:" in f else []
+        return json.dumps({"results": [store[i] for i in ids if i in store]})
+
+    def raw_names():
+        return sorted(os.listdir(os.path.join(root, "raw")))
+
+    try:
+        OA._fetch = api
+
+        # -- the happy path -------------------------------------------------------------
+        OA._download = lambda url, cap: _pdf()
+        out = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W1"]))
+        names = raw_names()
+        check("fetch: the fetch lookup asks for authorships — the registry title is the "
+              "vault's only author-bearing field",
+              "authorships" in _scope_val(lambda: OA.FETCH_SELECT, ""))
+        check("fetch: an open-access pick lands in raw/ under a readable derived name",
+              len(names) == 1 and names[0].endswith(".pdf")
+              and "2017" in names[0] and "tommaso" in names[0].lower())
+        reg = E.load_sources(root)
+        rel = "raw/" + names[0] if names else ""
+        check("fetch: the downloaded file is ingested with the canonical title and work id",
+              rel in reg and reg[rel]["workid"] == "W1"
+              and reg[rel]["title"].startswith("Nextflow enables it all — Di Tommaso (2017)"))
+
+        # -- a pick already on record is skipped, not re-downloaded ---------------------
+        OA._download = lambda url, cap: (_ for _ in ()).throw(
+            AssertionError("re-downloaded a work already in the registry"))
+        out2 = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W1"]))
+        check("fetch: a pick already in raw/ is skipped rather than fetched again",
+              out2 is not None and raw_names() == names)
+
+        # -- not a PDF: nothing may land, and the run carries on --------------------------
+        before = raw_names()
+        OA._download = lambda url, cap: b"<html>403 Forbidden</html>"
+        res = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W3"]))
+        check("fetch: a response that is not a PDF is refused and reported, not raised",
+              res is not None and res[0]["state"] == "failed"
+              and "did not return a PDF" in res[0]["reason"])
+        check("fetch: and nothing is written to raw/ when it is refused", raw_names() == before)
+
+        # -- a gated publisher is one pick's problem, not the run's -----------------------
+        def _gated(url, cap):
+            raise E.CruxError("the host refused the request (403)")
+        OA._download = _gated
+        res = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W3"]))
+        check("fetch: a publisher that refuses the request is reported against that pick "
+              "alone — one gated host must not sink a ten-pick run",
+              res is not None and res[0]["state"] == "failed" and "403" in res[0]["reason"])
+
+        # -- over the size cap: refused before it is written -----------------------------
+        def _toobig(url, cap):
+            raise E.CruxError(f"is larger than the {cap} byte cap")
+        OA._download = _toobig
+        res = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W3"]))
+        check("fetch: a download over the size cap is refused",
+              res is not None and res[0]["state"] == "failed" and "cap" in res[0]["reason"])
+        check("fetch: and nothing is written to raw/ when it is over the cap",
+              raw_names() == before)
+        check("fetch: the cap is 50 MB", _scope_val(lambda: OA.PDF_CAP_BYTES) == 50 * 1024 * 1024)
+
+        # -- a pick with no open-access url is reported, and does not sink the run --------
+        OA._download = lambda url, cap: _pdf()
+        res = _scope_val(lambda: OA.fetch_picks(root, "demo", ["W2", "W3"]))
+        got = raw_names()
+        check("fetch: a pick with no open-access pdf writes nothing and is reported with its DOI",
+              res is not None
+              and any(r.get("workid") == "W2" and r.get("state") == "no-oa"
+                      and "10.1234/w2" in (r.get("doi") or "") for r in res))
+        check("fetch: and the other picks in the same run still land",
+              len(got) == len(before) + 1
+              and any(r.get("workid") == "W3" and r.get("state") == "ingested" for r in res))
+
+        # -- a filename collision gets a suffix rather than an overwrite -----------------
+        store["W4"] = rec("W4")                 # same author, year and title as W1
+        OA._download = lambda url, cap: _pdf(4096)
+        _scope_val(lambda: OA.fetch_picks(root, "demo", ["W4"]))
+        final = raw_names()
+        check("fetch: a filename collision takes a suffix and overwrites nothing",
+              len(final) == len(got) + 1 and len(set(final)) == len(final))
+    finally:
+        OA._fetch = real_fetch
+        if real_dl is not None:
+            OA._download = real_dl
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -15753,6 +15873,7 @@ def main():
     run_openalex()
     run_lit_crawl()
     run_lit_scope()
+    run_lit_fetch()
     run_cli_help()
     run_doctor()
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")

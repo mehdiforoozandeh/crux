@@ -1,6 +1,6 @@
 # Spec 17 — OpenAlex: the literature the wiki has not read yet
 
-**Label:** `wiki` · **Status:** ◐ in progress
+**Label:** `wiki` · **Status:** ☑ done
 **Relates to:** [03 LLM wiki](03-llm-wiki.md) (the layer this feeds), [05 autopilot](05-autopilot.md)
 (the setup-conversation shape reused by 17.3)
 
@@ -125,8 +125,20 @@ scorer that already exists, rather than a guessed one.
 | 17.3 | Scoping skill | the conversation that writes an approved scope file |
 | 17.4 | Fetch + ingest | OA PDFs for ticked candidates into `raw/`, auto-ingested |
 
-## Open questions
+## Resolved questions
 
-- Does `candidates.tsv` belong in the vault's git history, or under an ignored cache path?
-- 17.4 fetches only open-access PDFs. What does the list do with a paywalled candidate the PI
-  ticks — record the DOI and wait for the PI's own copy, or drop it?
+- **`candidates.tsv` is git-tracked** (17.2). It is the record of what the PI chose from, and
+  it is small. The response cache under `wiki/.openalex/` stays untracked.
+- **A candidate crux cannot fetch is reported with its DOI and nothing is written** (17.4).
+  No placeholder file: an empty or HTML `.pdf` in `raw/` would be hashed, registered and
+  compiled into the wiki as though it were the paper, and nothing downstream would catch it.
+
+## What the first real run taught
+
+Every slice's fixtures passed before its manual check did. The suite never caught: a hub
+handing its whole seed set to each of its two hundred citers; a divisor that rewarded
+obscurity; OpenAlex's duplicate records putting a seed top of its own candidate list; a DOI
+seed sheared to its last path segment; an HTTP 400 dressed as a budget problem; publishers
+returning 403 to a non-browser agent; PMC serving HTML with a 200; and a `select=` that
+quietly dropped the author list. Fixtures check the arithmetic. Only a real crawl checks
+whether the arithmetic was the right arithmetic.

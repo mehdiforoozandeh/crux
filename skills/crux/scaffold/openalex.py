@@ -16,7 +16,7 @@ Three further properties, each asserted in selftest:
            vault is a git repo). It is also excluded from the cache key, so a cache is
            portable between machines and holds nothing private.
 """
-import os, json, math, hashlib
+import os, re, json, math, hashlib
 import engine as E
 
 API = "https://api.openalex.org"
@@ -127,6 +127,9 @@ DEPTH2_MIN_REACH = 2      # a depth-1 work expands only if at least two seeds re
 DEPTH2_WEIGHT   = 0.5     # a hub reaching a work is worth half a seed reaching it
 CITES_FLOOR     = 100     # below this, citation count does not change the divisor at all
 CAND_SELECT = "id,doi,display_name,publication_year,cited_by_count,best_oa_location"
+# the fetch path needs authorships too: the registry title is the vault's only author-bearing
+# field, and a source ingested without one is exactly what 17.1 exists to prevent
+FETCH_SELECT = CAND_SELECT + ",authorships"
 HUB_SELECT  = CAND_SELECT + ",referenced_works"
 
 
@@ -330,3 +333,113 @@ def crawl_scope(root, slug, forward_cap=FORWARD_CAP):
     else:
         seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
     return crawl(root, seeds, forward_cap=forward_cap)
+
+
+# ---------------------------------------------------------------------------------------
+# Fetch (spec 17.4) — the only place crux writes bytes from the internet into raw/.
+#
+# raw/ is the PI's curated, immutable source of truth, and everything the wiki claims traces
+# back to a file in it. So most of this is about what must NOT land there: a response that is
+# not a PDF, a file over the cap, a placeholder for a paper we could not get. A zero-byte or
+# HTML "paper" would be hashed, registered and compiled into the wiki as though it were real,
+# and nothing downstream would ever catch it.
+# ---------------------------------------------------------------------------------------
+
+PDF_CAP_BYTES = 50 * 1024 * 1024      # a paper is rarely over 20 MB; this stops a mislinked
+                                      # dataset landing in raw/, it is not meant to be tight
+PDF_MAGIC = b"%PDF"
+
+
+def _download(url, cap=PDF_CAP_BYTES):
+    """The PDF boundary — a different host from the API, no key, isolated for stubbing."""
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": f"crux/{E.ENGINE_VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            declared = r.headers.get("Content-Length")
+            if declared and int(declared) > cap:
+                raise E.CruxError(f"declares {declared} bytes, over the {cap} byte cap")
+            body = r.read(cap + 1)
+    except E.CruxError:
+        raise
+    except OSError as e:
+        code = getattr(e, "code", None)
+        if code in (401, 403):
+            # Common and not a crux bug: publishers serve a browser check or a login wall on
+            # a url OpenAlex lists as open access. Pretending to be a browser to get past it
+            # is circumvention, so crux says so and lets the PI fetch it themselves.
+            raise E.CruxError(f"the host refused the request ({code}) — the paper is listed "
+                              "as open access but the publisher is gating the file")
+        raise E.CruxError(f"{e.__class__.__name__}: {e}")
+    if len(body) > cap:
+        raise E.CruxError(f"is larger than the {cap} byte cap")
+    return body
+
+
+def _surname(work):
+    a = [x.get("author", {}).get("display_name") for x in work.get("authorships", [])]
+    a = [x for x in a if x]
+    return (a[0].split()[-1] if a else "unknown")
+
+
+def raw_filename(root, work):
+    """<year>-<first-author-surname>-<three title words>.pdf, unique within raw/.
+
+    Readable in a file listing, which a bare work id is not, and derived from the record
+    rather than from anything the PI has to type."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", work.get("display_name") or "") if w][:3]
+    stem = "-".join([str(work.get("publication_year") or "n.d."), _surname(work)] + words)
+    stem = re.sub(r"-+", "-", "".join(c for c in stem if c.isalnum() or c in "-.").lower())
+    base, n = stem, 2
+    while os.path.exists(os.path.join(E.raw_dir(root), base + ".pdf")):
+        base, n = f"{stem}-{n}", n + 1
+    return base + ".pdf"
+
+
+def fetch_picks(root, slug, picks, cap=PDF_CAP_BYTES):
+    """Download the open-access PDF for each picked work id and ingest it.
+
+    Returns one row per pick: {workid, state, path|doi, title}. A pick that cannot be got is
+    reported and skipped — one paywalled or browser-gated publisher must not sink the rest of
+    the run, and nothing partial or non-PDF is ever written to raw/."""
+    picks = [_bare(p) for p in dict.fromkeys(picks) if _bare(p)]
+    if not picks:
+        raise E.CruxError("lit fetch: no picks. Name the candidates to take with "
+                          "`--pick W…`, one per paper, reading them off "
+                          f"{os.path.join(E.LIT_DIR, slug, 'candidates.tsv')}.")
+    have = {r.get("workid"): rel for rel, r in E.load_sources(root).items() if r.get("workid")}
+    works = works_by_ids(root, [p for p in picks if p not in have], FETCH_SELECT)
+    out = []
+    for p in picks:
+        if p in have:
+            out.append({"workid": p, "state": "skipped", "path": have[p], "title": ""})
+            continue
+        w = works.get(p)
+        if not w:
+            out.append({"workid": p, "state": "unknown", "doi": "", "title": ""})
+            continue
+        url = (w.get("best_oa_location") or {}).get("pdf_url") or ""
+        doi = (w.get("doi") or "").replace("https://doi.org/", "")
+        if not url:
+            # No placeholder file. An empty raw/ entry would be hashed, registered and
+            # compiled as though it were the paper.
+            out.append({"workid": p, "state": "no-oa", "doi": doi, "title": title_line(w)})
+            continue
+        try:
+            body = _download(url, cap)
+            if not body.startswith(PDF_MAGIC):
+                head = body[:40].decode("utf-8", "replace").strip()
+                raise E.CruxError(f"did not return a PDF — it starts {head!r}, which is "
+                                  "usually a login wall or an error page served with a 200")
+        except E.CruxError as e:
+            out.append({"workid": p, "state": "failed", "doi": doi, "url": url,
+                        "reason": str(e), "title": title_line(w)})
+            continue
+        name = raw_filename(root, w)
+        os.makedirs(E.raw_dir(root), exist_ok=True)
+        with open(os.path.join(E.raw_dir(root), name), "wb") as f:
+            f.write(body)
+        state, rel = E.cmd_ingest(root, "raw/" + name, title_line(w), workid=p)
+        out.append({"workid": p, "state": "ingested", "path": rel, "doi": doi,
+                    "title": title_line(w)})
+    return out
