@@ -28,6 +28,9 @@ verdict/roll-up/view logic changes.
     is excluded from the cache key so a cache is portable and holds no secret. With no key and
     a cold cache the failure is a one-line refusal naming the env var, the daily budget and
     the `--title` alternative — not a traceback and not a hang.
+  - **A DOI can be attached after the fact.** Registering with `--title` today and adding
+    `--doi` later records the work id even though the file's bytes have not changed, and
+    adds no duplicate log line.
 
 ### Changed
 

@@ -14857,6 +14857,18 @@ def run_openalex():
         check("oa: a plain re-ingest does not drop a known work id",
               E.load_sources(root)["raw/nextflow.txt"]["workid"] == "W2605897695")
 
+        # -- a DOI attached to an already-registered, unchanged source must stick ---------
+        write(os.path.join(root, "raw", "later.txt"), "Registered first, DOI attached later.\n")
+        E.cmd_ingest(root, "raw/later.txt", title="Later Paper")
+        check("oa: a source registered with --title alone carries no work id",
+              E.load_sources(root)["raw/later.txt"]["workid"] == "")
+        state, _ = ingest_doi("raw/later.txt", "10.1038/nbt.3820", title="Later Paper")
+        check("oa: attaching a DOI later records the id although the bytes are unchanged",
+              E.load_sources(root)["raw/later.txt"]["workid"] == "W2605897695" and state == "unchanged")
+        check("oa: attaching a DOI to unchanged bytes adds no duplicate log line",
+              len(re.findall(r"^## \[.*\] ingest \| Later Paper$",
+                             read(os.path.join(root, "wiki", "log.md")), re.M)) == 1)
+
         # -- cold cache + no key + a dead boundary = a CruxError naming the remedy --------
         OA._fetch = lambda url: (_ for _ in ()).throw(OSError("no route to host"))
         write(os.path.join(root, "raw", "other.txt"), "Another source.\n")

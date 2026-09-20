@@ -49,9 +49,7 @@ def get(root, path, params=None):
     try:
         body = _fetch(url + ("&" if "?" in url else "?") + "api_key=" + key if key else url)
         data = json.loads(body)
-    except AssertionError:
-        raise
-    except Exception as e:
+    except (OSError, ValueError) as e:   # URLError/HTTPError are OSError; JSONDecodeError is ValueError
         raise E.CruxError(
             f"openalex: lookup failed for {url} ({e.__class__.__name__}: {e}). "
             "Without a key OpenAlex allows about $0.10 of traffic a day; a free key raises "

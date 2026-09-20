@@ -2630,6 +2630,13 @@ def cmd_ingest(root, path, title=None, workid=None):
     workid = workid or reg.get(rel, {}).get("workid", "")   # a known id survives a re-ingest
     title = " ".join((title or os.path.splitext(os.path.basename(abspath))[0]).split())  # single-line: registry + log are line-based
     if rel in reg and reg[rel]["sha256"] == sha:
+        # The bytes are unchanged, so this is not a re-ingest and gets no log line. But a
+        # work id supplied now for a source registered earlier is new information, and
+        # dropping it would make `ingest --doi` a silent no-op on the common path: register
+        # with --title today, attach the DOI later.
+        if workid and reg[rel].get("workid", "") != workid:
+            reg[rel]["workid"] = workid
+            save_sources(root, reg)
         refresh(root)
         return "unchanged", rel
     state = "updated" if rel in reg else "ingested"
