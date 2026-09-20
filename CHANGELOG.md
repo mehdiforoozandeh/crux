@@ -8,6 +8,27 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **Autopilot: the setup skill** ([PRD 05.5](docs/prd/05.5-setup-skill.md), spec 05, engine
+  **3.3**, unchanged). **No vault-format change, no verdict change, no roll-up change, no
+  migration** — see *Backward-compat* below for the one place a plan accepted today could be
+  refused tomorrow.
+  - **A new skill, `skills/crux-autopilot/`**, carries the PI from "I want to search this" to
+    a flight plan that passes `crux auto check`, in **three asks and two approvals**: the
+    anchor question and goal (ask), the null (approve), the direction and bar plus the
+    harness (ask), and `crux-design`'s verdict then `crux auto approve` (approve). The other
+    fourteen of spec 05 §9's twenty slots are derived, measured, or stated back from the
+    template default, never asked. The skill **writes** `auto/<qid>/plan.md` and stops —
+    `crux auto approve` stays the PI's own signature.
+  - **The template's `## Verifiables` block is now a worked grammar**, not a stub: the
+    discriminating check's operator is **derived from `direction:`**, never written as a
+    literal, and a legend under the block states the rule. `closer: true` is now the
+    template's default for a newly written plan; the engine's own default is unchanged, so
+    every plan written before this release runs exactly as it did.
+  - **A new refusal, `objective-op`.** The objective is read off the discriminating check,
+    never chosen first — spec 05 §9 calls this "the single most important line in the plan," and
+    `flight_plan_problems` now enforces the order, not just the shape: a discriminating check
+    whose operator disagrees with its own `direction` is refused. This is the one place a plan
+    that validated today can be newly refused tomorrow.
 - **Autopilot: the cockpit tab** ([PRD 05.4](docs/prd/05.4-cockpit-tab.md), spec 05, engine **3.3**,
   unchanged). **No version bump and no migration** — nothing here changes the vault format, the
   verdict, the roll-up or view logic, and a vault that never met autopilot reads exactly as it did.

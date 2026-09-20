@@ -121,6 +121,7 @@ orchestrating **skill** rather than one of the isolated ten — the voice rules 
 | `persona-01` | `crux` (the skill) | proxy | judged rubric + `voice_lint` + vault state | whether the conversation was *good science* — only that it was said in science, and that the notebook was kept |
 | `worker-01` | `crux-auto-worker` | proxy | stated key + `auto_proposal` | whether the claim is any good — only that it moves the parameter the sibling's failure scenario names, and that the proposal validates |
 | `steward-01` | `crux-auto-steward` | proxy | stated key + `auto_steward_proposal` | whether the advice would help — only that it names the stalled island, and that the proposal validates |
+| `setup-01` | `crux-autopilot` | proxy | stated key | whether the conversation was pleasant, or whether the plan's science is any good — every row is structural |
 
 ## Design notes
 

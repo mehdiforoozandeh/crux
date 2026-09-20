@@ -427,8 +427,10 @@ informs the tree, and a project's own findings never flow back. Autopilot change
   in unchanged behind `closer:`; the report under `## Artifacts`; the steward, and the fifth
   act the PI ruled in (2026-09-17); eval fixtures `worker-01` and `steward-01`.
 - ☑ **05.4 — the cockpit tab.** Endpoint, two views, the live mark on the tree.
-- ☐ **05.5 — the setup skill.** The conversation that produces a flight plan, calling
-  `crux-null`, `crux-verifiables` and `crux-design`.
+- ☑ **05.5 — the setup skill.** The conversation that produces a flight plan, calling
+  `crux-null`, `crux-verifiables` and `crux-design`, in three asks and two approvals; the
+  `## Verifiables` template's derived-operator grammar; the `objective-op` refusal; and the
+  `setup-01` eval fixture.
 - ☐ **05.6 — validation on real problems.** Tiers 1 to 3.
 
 ## Acceptance criteria
