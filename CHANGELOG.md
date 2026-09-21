@@ -8,6 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
+- **OpenAlex: fetch and ingest the picks** ([PRD 17.4](docs/prd/17.4-fetch-and-ingest.md),
+  spec 17 — **the epic closes**; engine **3.4**, unchanged). **No vault-format change.**
+  - **`crux lit fetch <slug> --pick W… --pick W…`** downloads the open-access PDF for each
+    picked candidate into `raw/` under a readable `<year>-<surname>-<title>.pdf` name and
+    registers it with the canonical title and work id. Picks are named on the command line;
+    there is no picks file, because `raw/` and the registry already record what was taken.
+  - **Nothing partial or non-PDF ever reaches `raw/`.** The body must start with `%PDF`; there
+    is a 50 MB cap; and a paper crux cannot get is reported with its DOI rather than written
+    as a placeholder. An HTML login wall filed as a paper would be hashed, registered and
+    compiled into the wiki as though it were real, and nothing downstream would catch it.
+  - **A pick that fails is one row's problem.** A publisher refusing a non-browser agent, a
+    paywalled paper, an HTML page served with a 200 — each is reported with its DOI and
+    skipped, the rest of the run still lands, and the command exits 1. crux does not pretend
+    to be a browser to get past a gate.
+
 - **OpenAlex: the scoping skill** ([PRD 17.3](docs/prd/17.3-scoping-skill.md), spec 17, engine
   **3.4**, unchanged). **No vault-format change, no verdict change, no migration.**
   - **A new skill, `skills/crux-litsearch/`**, carries the PI from "what am I missing?" to a

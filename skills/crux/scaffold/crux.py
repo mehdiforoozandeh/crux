@@ -360,6 +360,12 @@ def main(argv=None):
                         "one; repeatable")
     s.add_argument("--forward-cap", type=int, default=None,
                    help="top citers to take per work (default 200; the tail is noise)")
+    s = _jsonable(lsub.add_parser("fetch", help="download the open-access PDF for each picked "
+                                               "candidate into raw/ and register it"))
+    s.add_argument("slug", help="the search whose candidate list the picks were read from")
+    s.add_argument("--pick", action="append", default=[], metavar="W…", required=True,
+                   help="an OpenAlex work id from candidates.tsv to take; repeatable")
+
     s = _jsonable(lsub.add_parser("lint", help="check a search's scope file and report every "
                                                "problem it carries, not just the first"))
     s.add_argument("slug", help="the search whose wiki/lit/<slug>/scope.md to check")
@@ -901,9 +907,33 @@ def dispatch(a):
             for p in probs:
                 print(f"  · {p['message']}")
             return 1
+        if lcmd == "fetch":
+            import openalex            # lazy: no other verb loads the network module
+            rows = openalex.fetch_picks(root, a.slug, a.pick)
+            if a.json:
+                return _emit({"slug": a.slug, "picks": rows})
+            for r in rows:
+                if r["state"] == "ingested":
+                    print(f"✓ {r['path']}\n    {r['title']}")
+                elif r["state"] == "skipped":
+                    print(f"· already in raw/: {r['path']}")
+                elif r["state"] == "failed":
+                    print(f"⚠ could not fetch {r['workid']}: {r['reason']}\n"
+                          f"    nothing was written to raw/; get it from "
+                          f"https://doi.org/{r['doi']} yourself\n    {r['title']}")
+                elif r["state"] == "no-oa":
+                    print(f"⚠ no open-access PDF for {r['workid']} — fetch it yourself from "
+                          f"https://doi.org/{r['doi']}\n    {r['title']}")
+                else:
+                    print(f"⚠ OpenAlex does not know {r['workid']}")
+            n = sum(1 for r in rows if r["state"] == "ingested")
+            if n:
+                print(f"  next: compile the wiki page(s) for the {n} new source(s), "
+                      "then `crux validate`")
+            return 1 if any(r["state"] in ("failed", "unknown") for r in rows) else 0
         if lcmd != "crawl":
-            raise E.CruxError("lit: expected a sub-verb — `crux lit crawl <slug>` or "
-                              "`crux lit lint <slug>`")
+            raise E.CruxError("lit: expected a sub-verb — `crux lit crawl <slug>`, "
+                              "`crux lit lint <slug>` or `crux lit fetch <slug> --pick W…`")
         import openalex                # lazy: no other verb loads the network module
         if a.seed:
             seeds = [r["workid"] for r in E.load_sources(root).values() if r.get("workid")]
