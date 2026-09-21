@@ -15714,14 +15714,16 @@ def run_auto_setup():
     lines = sk.splitlines()
     slow = sk.lower()
     missing_voice = [r for r in SETUP_VOICE if r not in slow]
-    check(f"setup: all five voice rules of the conversation are greppable lines "
+    check(f"setup: every voice rule of the conversation is a greppable line "
           f"(missing {missing_voice})",
           bool(sk) and not missing_voice)
-    check("setup: the conversation names exactly three asks and two approvals",
-          sum(1 for l in lines if "**ask**" in l.lower()) == 3
+    # Four asks since the guidance act: the PI's own priors are the one input no derivation
+    # and no measurement can produce, so they cost a turn like the other three.
+    check("setup: the conversation names exactly four asks and two approvals",
+          sum(1 for l in lines if "**ask**" in l.lower()) == 4
           and sum(1 for l in lines if "**approve**" in l.lower()) == 2)
     one_line = [l for l in lines if all(s in l for s in SETUP_DEFAULTED)]
-    check("setup: the fourteen defaulted slots are stated in one line, not fourteen",
+    check("setup: the defaulted slots are stated in one line, not one each",
           len(one_line) == 1)
     check("setup: the skill writes the plan and stops — it never runs crux auto approve itself",
           "crux auto approve" in sk

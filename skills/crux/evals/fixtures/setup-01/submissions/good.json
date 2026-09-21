@@ -1,7 +1,7 @@
 {
  "fixture": "setup-01",
  "agent": "crux-autopilot",
- "agent_sha": "dc0b88fbe4d17bfbff447c739a2e7a7ad8ecf9a46de4c6511b064bcd2fe38e7b",
+ "agent_sha": "5a0bf1f85100b172d194dcf1045bf84e9ccbf175360a48f5183c86959574bd0e",
  "_note": "CANNED 2026-09-19 — the plan the skill is supposed to produce: the objective address is read off a discriminating check that was already written, the operator agrees with direction, a control is present, and the plan is written but unapproved. All five planted rows found, on every one of the k=5 runs.",
  "runs": [
   {

@@ -26,7 +26,7 @@ flowchart TB
   classDef agt fill:#dcfce7,stroke:#15803d,color:#1c1917
   classDef bad fill:#fee2e2,stroke:#b91c1c,color:#1c1917
 
-  subgraph SETUP["1 · Setup — a conversation with the PI, five acts, three asks and two approvals"]
+  subgraph SETUP["1 · Setup — a conversation with the PI, six acts, four asks and two approvals"]
     direction TB
     A0(["crux-autopilot skill — the flight plan is written here, in dialogue,<br/>and every slot it does not ask for is derived, measured, or defaulted"]):::agt
     A1["ask · the anchor question, and the goal in one falsifiable sentence"]:::pi
@@ -34,13 +34,14 @@ flowchart TB
     A3["derived · verifiables against that null — kinds, combination rule,<br/>and at least one outcome-neutral control (crux-verifiables)"]:::agt
     A4["derived · the objective address, read off the discriminating check<br/>— never chosen first, or the search clears a bar it was always going to clear"]:::agt
     A5["ask · direction and bar · ask · the harness: scorer, run command,<br/>frozen paths, writable roots, budget"]:::pi
-    A6["measured · the baseline, from crux auto check dry-running the scorer"]:::drv
-    A7["approve · crux-design's verdict on the design"]:::pi
-    A0 --> A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7
+    A6["ask · the PI's standing guidance — their priors, the analogies they see,<br/>the routes they rate, the dead ends. The one input nothing else can derive."]:::pi
+    A7["measured · the baseline at several seeds, and the published rivals<br/>— so every threshold is set outside the noise, against what has really been achieved"]:::drv
+    A8["approve · crux-design's verdict on the design"]:::pi
+    A0 --> A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
   end
 
   SIGN{{"crux auto approve — the PI's signature, on a hash of the plan.<br/>Spec 15 made a verdict arithmetic, so what is signed is the bar, once."}}:::pi
-  A7 --> SIGN --> L1
+  A8 --> SIGN --> L1
 
   subgraph LOOP["2 · The run — the driver is plain Python, no model; no agent outlives one step"]
     direction TB
@@ -83,7 +84,7 @@ flowchart TB
 
 - **The flight plan** — one file, `auto/<qid>/plan.md`, twenty slots plus a baseline. The
   driver reads only this, so everything the loop does later traces to something you approved.
-  The `crux-autopilot` skill writes it with you in five acts; `crux auto check` validates it
+  The `crux-autopilot` skill writes it with you in six acts; `crux auto check` validates it
   and dry-runs the scorer before anything starts.
 - **The objective must come from a check that discriminates against the null.** Optimising a
   bar the hypothesis was always going to clear means the search will clear it, thousands of
@@ -127,8 +128,11 @@ domain-agnostic, so containment belongs in your run command.
 ## Getting started
 
 Ask for a flight plan in your own words — "set up a flight plan", "I want to search this" —
-and the `crux-autopilot` skill takes it from there. It asks you three things, derives or
-measures the rest, and stops with a path and the exact `crux auto approve` line. Writing the
+and the `crux-autopilot` skill takes it from there. It asks you four things, derives or
+measures the rest, and stops with a path and the exact `crux auto approve` line. One of the
+four is an open question about your own priors: the analogies you see, the routes you rate,
+the dead ends you already know about. That answer is the only part of the plan nothing else
+can produce, and it is what the workers start from. Writing the
 plan costs you nothing: the approval stamp covers a hash of the document, so an unapproved
 plan is inert and `crux auto run` refuses it.
 
