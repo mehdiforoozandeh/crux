@@ -9731,7 +9731,7 @@ def run_auto_git():
             h1 = A.reserve_id(root, qa, island=qi); st["h1"] = h1; snap("reserve")
             wt1 = A.add_worktree(root, plan, h1); st["wt1"] = wt1; snap("worktree")
             st["wt1_at"] = _git(wt1, "rev-parse", "HEAD")
-            st["wt1_where"] = os.path.join(A.git_common_dir(repo), "crux-auto", qa, h1)
+            st["wt1_where"] = os.path.join(A.worktrees_root(repo), qa, h1)
             write(os.path.join(wt1, "work_notes.txt"), "one\n")
             _git(wt1, "add", "-A"); _git(wt1, "commit", "-q", "-m", "attempt 1"); snap("commit")
             st["head1"] = _git(wt1, "rev-parse", "HEAD")
@@ -9754,7 +9754,7 @@ def run_auto_git():
             # "a directory is there" and "git holds a worktree there" come apart in both
             # directions, and a driver that treats either as the other loses a run: one way it
             # refuses to clean up, the other it reports a checkout nobody can open.
-            stray = os.path.join(A.git_common_dir(repo), "crux-auto", qa, "h901")
+            stray = os.path.join(A.worktrees_root(repo), qa, "h901")
             os.makedirs(stray)
             st["stray"] = A.remove_worktree(root, plan, "h901")
             st["stray_kept"] = os.path.isdir(stray)

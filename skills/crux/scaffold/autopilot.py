@@ -14,7 +14,7 @@ What 05.1 is:
     branch, which is what lets its worktree be thrown away the moment the commit is recorded;
   * the branches `crux/auto/<qid>/run` and `crux/auto/<qid>/island/<island>`, plus the one
     `crux/auto/<qid>/promoted/<hid>` the PI asks for by name;
-  * per-attempt worktrees under `<git common dir>/crux-auto/<qid>/<hid>`;
+  * per-attempt worktrees under `<repo>.crux-auto/<qid>/<hid>`;
   * the frozen-path diff and the manifest over shared roots — both DETECT AND REPORT ONLY;
   * retention over the workspace alone, never over the record;
   * the scorer contract: stdout is one JSON object, and the DRIVER writes it verbatim to
@@ -52,7 +52,7 @@ HOST                   = socket.gethostname()
 LOCK_NAME              = ".lock"                 # <root>/auto/.lock
 RESERVED_FILE          = "reserved.json"         # <root>/auto/<qid>/reserved.json
 MANIFESTS_DIR          = "manifests"             # <root>/auto/<qid>/manifests/<hid>.json
-WORKTREES_DIR          = "crux-auto"             # <git common dir>/crux-auto/<qid>/<hid>
+WORKTREES_DIR          = "crux-auto"             # <repo>.crux-auto/<qid>/<hid> — see worktrees_root
 REF_PREFIX             = "refs/crux/auto"
 BRANCH_PREFIX          = "crux/auto"
 LOCK_WAIT              = 60.0                    # seconds a caller waits before refusing
@@ -287,10 +287,11 @@ def git_toplevel(path):
 
 
 def git_common_dir(repo):
-    """The repository's shared git directory — where the per-attempt worktrees live.
+    """The repository's shared git directory.
 
-    Shared rather than per-worktree on purpose: every attempt's checkout hangs off the one
-    directory, so a single `crux-auto/<qid>/` subtree holds the whole run."""
+    Shared rather than per-worktree on purpose: every attempt resolves the same one, whichever
+    checkout asks. The per-attempt checkouts themselves live OUTSIDE it — see `worktrees_root`,
+    which explains why."""
     hit = _COMMON_DIR_CACHE.get(repo)
     if hit and os.path.isdir(hit):
         return hit
@@ -298,6 +299,19 @@ def git_common_dir(repo):
     got = os.path.realpath(out if os.path.isabs(out) else os.path.join(repo, out))
     _COMMON_DIR_CACHE[repo] = got
     return got
+
+
+def worktrees_root(repo):
+    """Where this repository's per-attempt checkouts live: `<repo>.crux-auto/`, a SIBLING of
+    the repository and deliberately not inside `.git/`.
+
+    They used to hang off the shared git directory, which reads well and does not work: a
+    coding agent refuses to write anything under `.git/`, treating it as a protected path, so
+    every worker could draft a candidate and none could save it. The checkout has to be an
+    ordinary directory the worker may edit. A sibling keeps it out of the working tree too, so
+    it never shows up as untracked noise in the PI's `git status`."""
+    full = os.path.realpath(repo)
+    return full.rstrip(os.sep) + "." + WORKTREES_DIR
 
 
 def plan_repo(root, plan):
@@ -599,8 +613,7 @@ def open_run(root, plan):
 
 
 def worktree_path(root, plan, hid):
-    return os.path.join(git_common_dir(plan_repo(root, plan)), WORKTREES_DIR,
-                        plan["anchor"], hid)
+    return os.path.join(worktrees_root(plan_repo(root, plan)), plan["anchor"], hid)
 
 
 def add_worktree(root, plan, hid, parent=None):
@@ -618,7 +631,7 @@ def add_worktree(root, plan, hid, parent=None):
         commit = rev_parse(repo, base_ref(qid))
         if commit is None:
             raise E.CruxError(f"auto run for {qid} is not open: {base_ref(qid)} does not exist")
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     if os.path.exists(path):
         raise E.CruxError(f"worktree for {hid} already exists at {path}")
     _git(repo, "worktree", "add", "--detach", path, commit)
@@ -633,7 +646,7 @@ def record_attempt(root, plan, hid):
     silently moves is a run whose history cannot be read back."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     if not os.path.isdir(path):
         raise E.CruxError(f"no worktree for {hid} at {path}")
     sha = rev_parse(path, "HEAD")
@@ -660,7 +673,7 @@ def remove_worktree(root, plan, hid):
     is a worse outcome than the leftover."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     _git(repo, "worktree", "prune")                  # registrations whose directory is gone
     if not os.path.isdir(path):
         return False
@@ -2539,7 +2552,7 @@ def auto_refs(root, qid=None):
     rb = run_branch(qid)
     branches.sort(key=lambda b: (0 if b["name"] == rb else 1, b["name"]))
 
-    base_dir = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid)
+    base_dir = os.path.join(worktrees_root(repo), qid)
     worktrees = []
     for block in _worktree_blocks(repo):
         p = block.get("worktree")
