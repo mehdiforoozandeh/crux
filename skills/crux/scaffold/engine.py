@@ -86,7 +86,7 @@ ENGINE_VERSION = "3.4"          # bumped when verdict/roll-up/view logic or vaul
                                 # else the slice adds is read-only or append-only and touches
                                 # no node: the flight plan document at auto/<qid>/plan.md,
                                 # flat PUCT selection, and the engine-assembled worker brief.
-CRUX_VERSION = "0.7.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+CRUX_VERSION = "0.8.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"

@@ -6,6 +6,8 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-21
+
 ### Added
 
 - **OpenAlex: fetch and ingest the picks** ([PRD 17.4](docs/prd/17.4-fetch-and-ingest.md),
