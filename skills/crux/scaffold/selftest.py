@@ -10578,6 +10578,8 @@ if mode == "extrakey":
     proposal["verdict"] = "supported"
 if mode == "taggedcontrol":
     proposal["controls"] = [{"text": "[hypothesis] obj.score <= 1 the value stays small", "fails_if": "the scorer drifts upward"}]
+if mode == "prosecontrol":
+    proposal["controls"] = [{"text": "the value stays at most one, measured on the local bench", "fails_if": "the scorer drifts upward"}]
 if mode == "control":
     proposal["controls"] = [{"text": "obj.score <= 1 — the value stays at most one", "fails_if": "the scorer drifts upward"}]
 with open(os.environ["CRUX_PROPOSAL"], "w", encoding="utf-8") as f:
@@ -11622,31 +11624,51 @@ def run_auto_loop():
                   and "word word" not in read(node_path(gcroot, lgc[0]))
                   and len(E._prose_tokens(E.Vault(gcroot).get(lgc[0])["body"])) <= E.PROSE_CAP
                   and E.Vault(gcroot).get(lgc[0])["fm"]["verdict"] == "invalid-run")))
-        _, kroot, kqa, _, _, krel = _loop_fixture(x0=0, agent="python3 agent.py extrakey",
-                                                  abort_invalid_runs="1")
+        # REWRITTEN. These three used to close `invalid-run`, and that ruling cost a real run
+        # every one of its five attempts: each worker wrote a good program, measured it, and
+        # lost the measurement to the SHAPE of an optional field. A proposal is a report, not
+        # evidence, so a fault in its form is now repaired — the key ignored, the control
+        # dropped — and the attempt is scored like any other. `prosecontrol` is the exact
+        # witness for the control that was refused there.
+        _, kroot, kqa, _, _, krel = _loop_fixture(x0=2, agent="python3 agent.py extrakey",
+                                                  budget_attempts="1")
         k = _loop_run("extrakey", kroot, kqa, krel)
-        _, troot, tqa, _, _, trel = _loop_fixture(x0=0, agent="python3 agent.py taggedcontrol",
-                                                  abort_invalid_runs="1")
+        _, troot, tqa, _, _, trel = _loop_fixture(x0=2, agent="python3 agent.py taggedcontrol",
+                                                  budget_attempts="1")
         t = _loop_run("taggedcontrol", troot, tqa, trel)
+        _, proot, pqa, _, _, prel = _loop_fixture(x0=2, agent="python3 agent.py prosecontrol",
+                                                  budget_attempts="1")
+        pr = _loop_run("prosecontrol", proot, pqa, prel)
         _, groot, gqa, _, _, grel = _loop_fixture(x0=2, agent="python3 agent.py control",
                                                   budget_attempts="1")
         g = _loop_run("control", groot, gqa, grel)
         gc = (g["state"] or {}).get("closed") or []
-        check("arun: a proposal key outside claim and controls, or a tagged control, closes invalid-run unretried; a good control is filed outcome-neutral",
+
+        def _warn(run):
+            done = _ev(run, "worker-done")
+            return " ".join(w for e in done for w in (e.get("warnings") or []))
+
+        check("arun: an extra proposal key, a self-tagged control and a prose control are each repaired and the attempt still scores; a good control is filed outcome-neutral",
               _auto_ok(lambda: (
-                  all(len(_ev(r, "violation")) == 1
-                      and _ev(r, "violation")[0]["kind"] == "proposal"
-                      and _ev(r, "violation")[0]["paths"] == []
-                      and _ev(r, "retry") == []
+                  # not one of the three is a violation, and not one is retried
+                  all(_ev(r, "violation") == [] and _ev(r, "retry") == []
                       and len(_ev(r, "worker-started")) == 1
-                      for r in (k, t))
-                  and "claim, controls: verdict" in _ev(k, "violation")[0]["detail"]
-                  and "the driver tags every control outcome-neutral"
-                      in _ev(t, "violation")[0]["detail"]
-                  and all(E.Vault(rt).get(h)["fm"]["verdict"] == "invalid-run"
-                          for rt, run in ((kroot, k), (troot, t))
-                          for h in (run["state"] or {}).get("closed") or [])
-                  and len(gc) == 1
+                      and len(_ev(r, "scored")) == 1
+                      and all(E.Vault(rt).get(h)["fm"]["verdict"] != "invalid-run"
+                              for h in (r["state"] or {}).get("closed") or [])
+                      for r, rt in ((k, kroot), (t, troot), (pr, proot)))
+                  # each says on the ledger exactly what it threw away, and why
+                  and "ignored key(s) outside claim, controls: verdict" in _warn(k)
+                  and "dropped control 1" in _warn(t)
+                  and "the driver tags every control outcome-neutral" in _warn(t)
+                  and "dropped control 1: not a metric comparison" in _warn(pr)
+                  # a dropped control is GONE — the node carries only the plan's own checks
+                  and all([i["kind"] for i in E._verifiables(E.Vault(rt).get(h)["body"])]
+                          == [E.DEFAULT_KIND, E.NEUTRAL_KIND]
+                          for r, rt in ((t, troot), (pr, proot))
+                          for h in (r["state"] or {}).get("closed") or [])
+                  # and the good one is still carried through, tagged by the driver
+                  and len(gc) == 1 and _warn(g) == ""
                   and ("- [x] [outcome-neutral] obj.score <= 1 — the value stays at most one "
                        "(found: ") in read(node_path(groot, gc[0]))
                   and [i["kind"] for i in E._verifiables(E.Vault(groot).get(gc[0])["body"])]

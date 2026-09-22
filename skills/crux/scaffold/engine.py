@@ -6758,13 +6758,20 @@ def auto_proposal(raw, plan):
     `controls` of `{text, fails_if}`.
 
     `retry` is the whole judgment here. A missing, unparseable or over-cap proposal is the
-    machine's failure and is retried; a key outside the schema, or a control carrying its own
-    `[kind]` tag, is the worker's ACT — the same agent would simply repeat it at cost — and is
-    refused once. There is no field in which a worker can express a claim-directed check, so
-    D17 holds by construction rather than by instruction."""
+    machine's failure and is retried. Everything else about the FORM of the document is
+    repaired rather than refused: a key outside the schema is ignored, and a control that is
+    malformed, self-tagged, ungrammatical or duplicated is DROPPED, each with a line in
+    `warnings`. A proposal is a report, not evidence — the commit and the scorer's document
+    are the evidence — so a reporting mistake must not be able to throw away a measurement
+    that was never taken. The integrity checks that DO void an attempt live in the driver:
+    the frozen-path diff and the shared-root manifest.
+
+    There is no field in which a worker can express a claim-directed check, so D17 holds by
+    construction rather than by instruction: a control is tagged by the driver, and one that
+    arrives carrying its own tag is dropped rather than honoured."""
     def out(retry, reason, detail, claim=None):
         return {"ok": False, "retry": retry, "reason": reason, "detail": detail,
-                "claim": claim, "controls": []}
+                "claim": claim, "controls": [], "warnings": []}
 
     if raw is None:
         return out(True, "proposal-missing",
@@ -6782,14 +6789,16 @@ def auto_proposal(raw, plan):
              if isinstance(raw_claim, str) and raw_claim.strip()
              and len(_prose_tokens(raw_claim)) <= PROSE_CAP else None)
 
+    warnings = []
     extra = set(obj) - set(AUTO_PROPOSAL_KEYS)
     if extra:
-        return out(False, "proposal", f"proposal.json carries keys outside "
-                                      f"{', '.join(AUTO_PROPOSAL_KEYS)}: "
-                                      f"{', '.join(sorted(extra))}", claim)
+        warnings.append(f"ignored key(s) outside {', '.join(AUTO_PROPOSAL_KEYS)}: "
+                        f"{', '.join(sorted(extra))}")
     controls = obj.get("controls", [])
     if not isinstance(controls, list):
-        return out(False, "proposal", "proposal.json controls is not a list", claim)
+        warnings.append(f"dropped controls: not a list (got "
+                        f"{type(controls).__name__})")
+        controls = []
     seen = {" ".join(str(c.get("fails_if") or "").lower().split())
             for c in (plan.get("checks") or [])}
     seen.discard("")
@@ -6798,20 +6807,25 @@ def auto_proposal(raw, plan):
         if (not isinstance(c, dict) or set(c) != set(AUTO_CONTROL_KEYS)
                 or not all(isinstance(c.get(k), str) and c.get(k).strip()
                            for k in AUTO_CONTROL_KEYS)):
-            return out(False, "proposal", f"control {i} must be an object with exactly text "
-                                          f"and fails_if, both non-empty strings", claim)
+            warnings.append(f"dropped control {i}: it must be an object with exactly text "
+                            f"and fails_if, both non-empty strings")
+            continue
         tag = _KIND_TAG_RE.match(c["text"])
         if tag:
-            return out(False, "proposal", f"control {i} carries its own [{tag.group(1)}] tag; "
-                                          f"the driver tags every control "
-                                          f"{NEUTRAL_KIND}", claim)
+            warnings.append(f"dropped control {i}: it carries its own [{tag.group(1)}] tag, "
+                            f"and the driver tags every control {NEUTRAL_KIND}")
+            continue
         if auto_check_comparison(c["text"]) is None:
-            return out(False, "proposal", f"control {i} is not a metric comparison: "
-                                          f"{c['text'].strip()}", claim)
+            warnings.append(f"dropped control {i}: not a metric comparison "
+                            f"'<key.path> <op> <number>' with <op> one of "
+                            f"{', '.join(AUTO_COMPARISON_OPS)} (got "
+                            f"'{c['text'].strip()}')")
+            continue
         norm = " ".join(c["fails_if"].lower().split())
         if norm in seen:
-            return out(False, "proposal", f"control {i} repeats an existing failure scenario: "
-                                          f"{c['fails_if'].strip()}", claim)
+            warnings.append(f"dropped control {i}: it repeats an existing failure scenario "
+                            f"'{c['fails_if'].strip()}'")
+            continue
         seen.add(norm)
         clean.append({"text": c["text"].strip(), "fails_if": c["fails_if"].strip()})
 
@@ -6822,7 +6836,7 @@ def auto_proposal(raw, plan):
         return out(True, "claim-over-cap",
                    f"the claim runs to {n} words, over the {PROSE_CAP}-word cap", claim)
     return {"ok": True, "retry": False, "reason": None, "detail": None,
-            "claim": raw_claim.strip(), "controls": clean}
+            "claim": raw_claim.strip(), "controls": clean, "warnings": warnings}
 
 
 def auto_claim_title(claim):

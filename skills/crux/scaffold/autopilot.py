@@ -1536,7 +1536,8 @@ def _worker_checks(ctx, hid, head):
             return _fail(ctx, hid, prop["reason"], prop["detail"])
         return _violate(ctx, hid, "proposal", [], prop["detail"])
     fl["phase"] = "committed"
-    _record(ctx, "worker-done", dict(attempt=hid, commit=head))
+    _record(ctx, "worker-done",
+            dict(attempt=hid, commit=head, warnings=prop.get("warnings") or []))
     _crash(ctx, "committed")
     _finish(ctx, hid, w.get("stage") or "record")
 
