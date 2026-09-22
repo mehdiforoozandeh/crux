@@ -5913,6 +5913,25 @@ def flight_plan_path(root, qid):
     return os.path.join(root, AUTO_DIR, qid, PLAN_FILE)
 
 
+def auto_qid_arg(value):
+    """The anchor out of whatever the PI typed: a qid, or the plan path the other verbs take.
+
+    `status` and `refs` are keyed by anchor while `check`, `approve`, `run` and `guide` are
+    keyed by `auto/<qid>/plan.md`, and nothing on the command line says which is which. A PI
+    who has just typed the plan path five times types it a sixth, and `auto status
+    auto/q1/plan.md` then went looking for a run on an anchor literally named
+    `auto/q1/plan.md` — reported as a mangled path, with nothing to say the ARGUMENT was the
+    fault. One verb set, one argument: a path ending in the plan file yields the directory it
+    sits in, and anything else is already a qid and is returned untouched."""
+    if value is None:
+        return None
+    s = str(value).replace(os.sep, "/").rstrip("/")
+    head, _, tail = s.rpartition("/")
+    if tail == PLAN_FILE and head:
+        return head.rpartition("/")[2] or value
+    return value
+
+
 def _auto_text(text):
     """A plan section as content: HTML comments stripped, whitespace trimmed."""
     return re.sub(r"<!--.*?-->", "", text or "", flags=re.S).strip()
@@ -6967,6 +6986,7 @@ def auto_status(root, qid=None):
     """`{anchor, state, events, last_event}` for one run. A PURE READ: no lock, no process,
     and it creates nothing — not even `auto/` — so a vault that never met autopilot reads
     exactly as it did."""
+    qid = auto_qid_arg(qid)
     d = os.path.join(root, AUTO_DIR)
     if qid is None:
         ids = []

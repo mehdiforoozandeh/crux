@@ -9396,11 +9396,27 @@ def _git(cwd, *args, check=True):
 
 # The scorer's whole contract in six lines: stdout is one JSON object, stderr is free text.
 # Each variant below breaks exactly one clause of it, so each failure name has a witness.
+# It READS the candidate's program, out of the working directory it was started in, and will
+# not score without it. A scorer that ignores the checkout and prints a constant is exactly the
+# defect `probe_scorer_responds` exists to catch — a thirty-attempt run was lost to one — so the
+# fixture that every `auto check` assertion below leans on must not itself be that scorer. The
+# value is still 0.80 on an intact checkout, which is what those assertions pin.
 SCORE_PY = '''import json, os, sys
+try:
+    with open("train.py", encoding="utf-8") as f:
+        src = f.read()
+except IOError:
+    sys.stderr.write("no train.py in the checkout I was started in\\n")
+    sys.exit(4)
 sys.stderr.write("scoring\\n")
-print(json.dumps({"eval": {"loss": {"value": 0.80}},
+print(json.dumps({"eval": {"loss": {"value": 0.80 if "train" in src else 0.50}},
                   "env": {"attempt": {"value": os.environ.get("CRUX_ATTEMPT", "")},
                           "workspace": {"value": os.environ.get("CRUX_WORKSPACE", "")}}}))
+'''
+# The 2026-09-21 defect, as a witness: it produces a number, the number resolves at the
+# objective, and it never once looks at the program it is supposed to be scoring.
+SCORE_CONST = '''import json
+print(json.dumps({"eval": {"loss": {"value": 0.80}}}))
 '''
 SCORE_EXIT = '''import sys
 sys.stderr.write("boom: the dataset is missing\\n")
@@ -9431,7 +9447,7 @@ sys.exit(1)
 SCORERS = (("score.py", SCORE_PY), ("score_exit.py", SCORE_EXIT), ("score_slow.py", SCORE_SLOW),
            ("score_text.py", SCORE_TEXT), ("score_two.py", SCORE_TWO), ("score_num.py", SCORE_NUM),
            ("score_noaddr.py", SCORE_NOADDR), ("score_str.py", SCORE_STR),
-           ("score_noisy.py", SCORE_NOISY))
+           ("score_noisy.py", SCORE_NOISY), ("score_const.py", SCORE_CONST))
 
 
 _AUTO_TRASH = []      # every fixture repository made below, so none can outlive its section
@@ -9807,6 +9823,47 @@ def run_auto_git():
                   and len(bs) == 2 and sorted(bs) == st["made"]
                   and not any(b != c and c.startswith(b + "/") for b in bs for c in bs)
                   and "already open" in st["reopen"])))
+
+        # A PREVIOUS run's branches, which is the normal state of a repository the PI has
+        # decided to start over in: clearing the vault's run record clears `base` and clears
+        # nothing in git. On 2026-09-22 the restart died on the first git call with `fatal: a
+        # branch named 'crux/auto/q1/run' already exists`, and nothing said what to delete.
+        lo = {}
+        try:
+            lrepo, lroot, lqa, lqi, lhb, lrel = _auto_repo()
+            lplan = E.load_flight_plan(lroot, lrel)
+            lmain = _git(lrepo, "rev-parse", "HEAD")
+            # branches at base with no base ref — exactly what a cleared run record leaves
+            _git(lrepo, "branch", A.run_branch(lqa), lmain)
+            _git(lrepo, "branch", A.island_branch(lqa, lqi), lmain)
+            lo["adopted"] = A.open_run(lroot, lplan)
+            lo["at"] = _git(lrepo, "rev-parse", A.run_branch(lqa))
+
+            mrepo, mroot, mqa, mqi, mhb, mrel = _auto_repo()
+            mplan = E.load_flight_plan(mroot, mrel)
+            write(os.path.join(mrepo, "drift.txt"), "elsewhere\n")
+            _git(mrepo, "add", "-A")
+            _git(mrepo, "commit", "-q", "-m", "somewhere else")
+            other = _git(mrepo, "rev-parse", "HEAD")
+            _git(mrepo, "reset", "-q", "--hard", "HEAD~1")
+            _git(mrepo, "branch", A.run_branch(mqa), other)
+            _git(mrepo, "branch", A.island_branch(mqa, mqi), other)
+            lo["refused"] = _auto_msg(lambda: A.open_run(mroot, mplan))
+            lo["nobase"] = A.rev_parse(mrepo, A.base_ref(mqa))
+        except Exception:
+            pass
+        check("agit: open_run ADOPTS a leftover branch already at base rather than dying on it",
+              _auto_ok(lambda: (
+                  lo["adopted"]["base"] == lo["at"]
+                  and lo["adopted"]["run_branch"].endswith("/run"))))
+        check("agit: a leftover branch pointing elsewhere is refused by NAME, with the command that clears it",
+              _auto_ok(lambda: (
+                  "cannot open" in lo["refused"]
+                  and A.run_branch(mqa) in lo["refused"]
+                  and A.island_branch(mqa, mqi) in lo["refused"]
+                  and "branch -D" in lo["refused"]
+                  and lo["nobase"] is None)))        # and it left no base ref behind
+
         check("agit: main and the main working tree are untouched across open, reserve, worktree, commit, record, manifest, retention and promote",
               _auto_ok(lambda: (
                   [l for l, _ in clean] == ["open", "reserve", "worktree", "commit", "record",
@@ -10121,6 +10178,53 @@ def run_auto_scorer():
                   and isinstance(r_ok["scorer"]["seconds"], float)
                   and r_ok["scorer"]["seconds"] >= 0
                   and results_now == [hb])))              # a dry run writes nothing anywhere
+
+        # ---------------------------------------------------- the scorer has to RESPOND
+        # A scorer that prints a number is not yet a scorer that prints the CANDIDATE's
+        # number. On 2026-09-21 a plan named `score.py` by absolute path, the file resolved
+        # `import train` against its own directory, and every attempt of a thirty-attempt run
+        # would have scored the baseline — while `auto check` printed `0.0` and everyone read
+        # that as the baseline scoring zero by construction. `score_const.py` is that scorer
+        # with the accident taken out: it passes every check above and reads nothing.
+        r_const = checked(scorer="python3 score_const.py")
+        wt_before = _auto_val(lambda: len(A._worktree_blocks(repo)), None)
+        r_resp = checked()
+        wt_after = _auto_val(lambda: len(A._worktree_blocks(repo)), None)
+        check("ascore: check catches a scorer that produces a number without reading the candidate",
+              _auto_ok(lambda: (
+                  names(r_const) == ["scorer-responds"] and r_const["ok"] is False
+                  and r_const["scorer"]["ran"] is True and r_const["scorer"]["value"] == 0.8
+                  and r_const["scorer"]["responds"] is False
+                  and "does not read the candidate" in first(r_const)
+                  and "score the baseline" in first(r_const))))
+        check("ascore: a scorer that reads its checkout passes, and the probe leaves no worktree behind",
+              _auto_ok(lambda: (r_resp["ok"] is True and r_resp["scorer"]["responds"] is True
+                                and wt_before == wt_after and wt_before is not None)))
+
+        # ---------------------------------------------------- writable has to be a DIRECTORY
+        # `workspace_path` builds `<repo>/<writable[0]>/<hid>`, so a writable root that is a
+        # FILE passed all three gates and then died at `make_workspace` with a bare
+        # NotADirectoryError naming a path nobody had written and never saying `writable`.
+        r_wfile = checked(writable="train.py, results/")
+        check("ascore: check refuses a writable root that is a file, in the plan's own vocabulary",
+              _auto_ok(lambda: (
+                  "writable" in (names(r_wfile) or []) and r_wfile["ok"] is False
+                  and any("writable root 'train.py' is not a directory" in p["message"]
+                          for p in r_wfile["problems"]))))
+        r_wnew = checked(writable="not_there_yet/, results/")
+        check("ascore: a writable root that does not exist yet is fine — the driver makes it",
+              _auto_ok(lambda: "writable" not in (names(r_wnew) or [])))
+        write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, writable="train.py"))
+
+        def _ws_error():
+            try:
+                A.make_workspace(root, E.load_flight_plan(root, rel), "h99")
+            except Exception as e:
+                return str(e)
+            return ""
+        ws_err = _auto_val(_ws_error, "")
+        check("ascore: make_workspace's own refusal names writable, not errno",
+              _auto_ok(lambda: "writable" in ws_err and "must be a directory" in ws_err))
 
         # The complement of criterion 5: `--static` starts nothing, and the bare verb starts the
         # scorer on purpose — that is the whole of what this slice added to `auto check`.
@@ -12168,6 +12272,12 @@ def run_auto_loop_purity():
         cs1 = cli("auto", "status", "--json")
         cs2 = cli("auto", "status", qa, "--json")
         cs3 = cli("auto", "status")
+        # The plan path every OTHER auto verb takes. `status` and `refs` are keyed by anchor,
+        # nothing on the command line says so, and `auto status auto/<qid>/plan.md` used to go
+        # looking for a run on an anchor literally named `auto/<qid>/plan.md`.
+        cs4 = cli("auto", "status", rel, "--json")
+        cs5 = cli("auto", "refs", rel, "--json")
+        cs6 = cli("auto", "refs", qa, "--json")
 
         sys.path.insert(0, HERE)
         import crux as C
@@ -12221,6 +12331,14 @@ def run_auto_loop_purity():
                   and spawned == [] and rc == 0
                   and _auto_val(lambda: json.loads(out), {}).get("anchor") == qa
                   and bool(before) and before == after)))
+        check("acli: auto status and auto refs take the PLAN PATH as well as the anchor, and answer the same",
+              _auto_ok(lambda: (
+                  cs4.returncode == 0 and j(cs4) == j(cs2)
+                  and cs5.returncode == 0 and cs6.returncode == 0
+                  and j(cs5) == j(cs6) and j(cs5)["anchor"] == qa
+                  and E.auto_qid_arg(f"{E.AUTO_DIR}/{qa}/{E.PLAN_FILE}") == qa
+                  and E.auto_qid_arg(os.path.join(root, E.AUTO_DIR, qa, E.PLAN_FILE)) == qa
+                  and E.auto_qid_arg(qa) == qa and E.auto_qid_arg(None) is None)))
 
         # ------------------------------- a vault that never met autopilot, left exactly alone
         tmp = tempfile.mkdtemp(prefix="crux_anoauto2_")

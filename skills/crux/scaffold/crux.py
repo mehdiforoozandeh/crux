@@ -392,7 +392,8 @@ def main(argv=None):
     s = _jsonable(asub.add_parser("refs", help="list a run's refs, branches and live "
                                                "worktrees — creates nothing"))
     s.add_argument("qid", nargs="?", default=None,
-                   help="the anchor question; optional when the vault holds one flight plan")
+                   help="the anchor question, or the auto/<qid>/plan.md the other verbs take; "
+                        "optional when the vault holds one flight plan")
 
     s = _jsonable(asub.add_parser("brief", help="assemble the worker brief for the next "
                                                 "attempt built on a given attempt"))
@@ -420,7 +421,8 @@ def main(argv=None):
     s = _jsonable(asub.add_parser("status", help="read a run's state.json — starts nothing, "
                                                  "writes nothing"))
     s.add_argument("qid", nargs="?", default=None,
-                   help="the anchor question; optional when the vault holds one autopilot run")
+                   help="the anchor question, or the auto/<qid>/plan.md the other verbs take; "
+                        "optional when the vault holds one autopilot run")
 
     s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
 

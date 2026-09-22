@@ -574,7 +574,10 @@ def open_run(root, plan):
     `base` is a REF rather than a branch because nothing may ever move it: every attempt is
     diffed against it and every island starts from it. The island branches are cut here, at
     base, so the prefix-directory rule (`refs/heads/a/b` and `refs/heads/a` cannot coexist)
-    is discovered now rather than halfway through a run."""
+    is discovered now rather than halfway through a run.
+
+    A branch this run wants that ALREADY points at base is adopted rather than refused, and
+    one pointing elsewhere is refused by name with the command that clears it."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
     head = rev_parse(repo, "HEAD")
@@ -583,18 +586,36 @@ def open_run(root, plan):
     if rev_parse(repo, base_ref(qid)) is not None:
         raise E.CruxError(f"auto run for {qid} is already open ({base_ref(qid)} exists)")
     rb = run_branch(qid)
+    wanted = [rb] + [island_branch(qid, i) for i in (plan.get("islands") or [qid])]
+
+    # A previous run's branches are the NORMAL state of a repository the PI has decided to
+    # start over in: clearing the vault's run record clears `base`, and nothing clears these.
+    # `git branch` refuses a name that exists, so the run used to die on its first git call
+    # with `fatal: a branch named 'crux/auto/q1/run' already exists` and no word about which
+    # of them to delete. A branch already AT base is where this run wants it and is adopted; a
+    # branch pointing anywhere else is somebody's work, and every one of them is named at once
+    # with the command that removes them — a PI who deletes one only to be refused on the next
+    # is reading the same error four times.
+    stale = [b for b in wanted
+             if rev_parse(repo, "refs/heads/" + b) not in (None, head)]
+    if stale:
+        raise E.CruxError(
+            f"auto run for {qid} cannot open: {len(stale)} branch(es) from an earlier run "
+            f"point somewhere other than this run's base commit {head[:12]}: "
+            f"{', '.join(stale)}. Check that nothing there is worth keeping, then: "
+            f"git -C {repo} branch -D {' '.join(stale)}")
+
     islands = {}
     made = []
     try:
         _git(repo, "update-ref", base_ref(qid), head)
         made.append(("ref", base_ref(qid)))
-        _git(repo, "branch", rb, head)
-        made.append(("branch", rb))
+        for b in wanted:
+            if rev_parse(repo, "refs/heads/" + b) is None:
+                _git(repo, "branch", b, head)
+                made.append(("branch", b))
         for island in (plan.get("islands") or [qid]):
-            b = island_branch(qid, island)
-            _git(repo, "branch", b, head)
-            made.append(("branch", b))
-            islands[island] = b
+            islands[island] = island_branch(qid, island)
     except BaseException:
         # All of it, or none of it. The prefix-directory rule means island two can be refused
         # after island one was cut; leaving base behind would make every retry of this call
@@ -743,9 +764,47 @@ def workspace_path(root, plan, hid):
 
 
 def make_workspace(root, plan, hid):
+    """The attempt's own directory, created. The failure here is reported in the plan's own
+    vocabulary, never in the filesystem's.
+
+    A plan reading `writable: train.py` passed every pre-flight gate and then died at the
+    first attempt with a bare `NotADirectoryError: <repo>/train.py/<hid>` — a message that
+    names a path nobody wrote and never says the word `writable`. `writable_problems` refuses
+    that plan before a run opens; this is the backstop for every other way a writable root can
+    fail to be a directory by the time an attempt needs one."""
     p = workspace_path(root, plan, hid)
-    os.makedirs(p, exist_ok=True)
+    try:
+        os.makedirs(p, exist_ok=True)
+    except OSError as e:
+        first = (plan.get("writable") or [None])[0]
+        raise E.CruxError(f"the workspace for {hid} could not be created at {p}: "
+                          f"{e.strerror or e}. The flight plan's first writable root is "
+                          f"'{first}', and every attempt's workspace is made inside it, so it "
+                          f"must be a directory in the repository")
     return p
+
+
+def writable_problems(root, plan):
+    """[{check, message}] — every writable root that exists and is NOT a directory.
+
+    The one fact about `writable:` that no amount of reading the plan can settle, so it is
+    checked against the repository instead. A root that does not exist yet is fine: the driver
+    makes it. A root that is a FILE is the plan that reached attempt one of a hundred and
+    forty and crashed there.
+
+    Reported for every root rather than the first, because the manifest walks all of them —
+    and because a PI who fixes one line only to be refused on the next has reviewed one plan
+    twice."""
+    out = []
+    repo = plan_repo(root, plan)
+    for w in (plan.get("writable") or []):
+        p = os.path.join(repo, w)
+        if os.path.exists(p) and not os.path.isdir(p):
+            out.append({"check": "writable",
+                        "message": f"flight plan writable root '{w}' is not a directory "
+                                   f"({p}). Every attempt's workspace is made inside it, so a "
+                                   f"file there is a run that dies at its first attempt"})
+    return out
 
 
 def shared_roots(root, plan):
@@ -971,6 +1030,123 @@ def score_attempt(root, plan, hid, cwd=None, seed=None, dest=None):
     return obj
 
 
+def _scorer_own_paths(repo, cmd):
+    """The repository paths the scorer COMMAND itself names, relative to the repo.
+
+    Everything else in a checkout is the candidate's program and may be taken away to see
+    whether the scorer notices. The scorer's own file may not: a probe that deletes the
+    scorer is measuring whether a missing program can be executed, which is a different and
+    much less interesting question."""
+    keep = set()
+    try:
+        argv = shlex.split(cmd or "")
+    except ValueError:
+        return keep
+    for a in argv:
+        p = a if os.path.isabs(a) else os.path.join(repo, a)
+        if not os.path.exists(p):
+            continue
+        rel = _rel_posix(repo, os.path.realpath(p))
+        if rel != "." and not rel.startswith("../"):
+            keep.add(rel)
+    return keep
+
+
+def probe_scorer_responds(root, plan, base_value, repo=None):
+    """Does the scorer READ the candidate's checkout, or does it score the baseline every
+    time? Writes nothing the caller can see.
+
+    `{responds, detail}`, where `responds` is True, False, or None for NOT ESTABLISHED — a
+    probe that could not be set up has learned nothing, and reporting that as a pass is the
+    one outcome that makes a check worthless. Only False is a problem.
+
+    This is the probe that was missing on 2026-09-21, and its absence is the most expensive
+    defect this driver has had. A flight plan named `score.py` by ABSOLUTE path; `score.py`
+    does `sys.path.insert(0, HERE)` with HERE its own directory, so `import train` resolved to
+    the main repository's baseline `train.py` and never to the candidate's. Every attempt of a
+    thirty-attempt run would have scored the baseline. `auto check` could not see it: its one
+    scorer run printed `0.0`, and `0.0` reads exactly like "the baseline scores zero by
+    construction". A candidate with seventy-five changed lines scored byte-identical to the
+    baseline before anybody thought to check by hand.
+
+    The probe is a deliberate perturbation, because responsiveness is not a property of the
+    scorer's text — it is a property of the pair (scorer, checkout) and only an experiment
+    settles it. A throwaway worktree at HEAD has its tracked files taken away, everything the
+    scorer command itself names excepted, and the scorer is run in it. A scorer that reads the
+    checkout then either fails or returns a different number, and BOTH count as responsive: a
+    scorer that crashes because the program is gone has proved it was reading the program. The
+    one answer that fails is the objective coming back bit-for-bit what the intact checkout
+    gave, which means the candidate's code was never on the path at all.
+
+    `base_value` is the objective from the unperturbed run the caller already paid for, so
+    this costs one extra scorer run and not two."""
+    def out(responds, detail):
+        return {"responds": responds, "detail": detail}
+
+    repo = repo or plan_repo(root, plan)
+    keep = _scorer_own_paths(repo, plan["scorer"])
+    wt = tempfile.mkdtemp(prefix="crux_auto_probe_")
+    shutil.rmtree(wt, ignore_errors=True)         # git wants to create it itself
+    ws = tempfile.mkdtemp(prefix="crux_auto_probe_ws_")
+    try:
+        try:
+            _git(repo, "worktree", "add", "--detach", wt, "HEAD")
+        except E.CruxError as e:
+            return out(None, f"the probe checkout could not be made: {e}")
+        try:
+            tracked = _git(wt, "ls-files", "-z").split("\0")
+        except E.CruxError as e:
+            return out(None, f"the probe checkout could not be listed: {e}")
+        removed = 0
+        for rel in tracked:
+            rel = rel.strip()
+            if not rel or rel in keep:
+                continue
+            # A kept path may be a directory the scorer named; nothing under it is touched.
+            if any(rel.startswith(k + "/") for k in keep):
+                continue
+            try:
+                os.unlink(os.path.join(wt, *rel.split("/")))
+                removed += 1
+            except OSError:
+                pass
+        if not removed:
+            # Nothing was takeable, so nothing was tested. Saying so is the honest answer; a
+            # probe that reports "responsive" after perturbing nothing is worse than no probe.
+            return out(None, "the checkout holds no tracked file the scorer does not name, "
+                             "so there was nothing to take away")
+        try:
+            obj, _s = run_scorer(plan["scorer"], wt, plan["baseline"], ws,
+                                 plan["scorer_timeout"])
+        except ScorerError as e:
+            return out(True, f"the scorer failed on the perturbed checkout, so it reads "
+                             f"it: {e}")
+        try:
+            value = E.metrics_value(obj, plan["address"], "the scorer's output on the probe")
+        except E.AddressError as e:
+            return out(True, f"the objective stopped resolving on the perturbed checkout, "
+                             f"so the scorer reads it: {e}")
+        if value != base_value:
+            return out(True, f"{plan['address']} moved {base_value} -> {value} when "
+                             f"{removed} tracked file(s) were taken away")
+        return out(False,
+                   f"the scorer does not read the candidate: with {removed} tracked file(s) "
+                   f"taken out of a throwaway checkout it still returned "
+                   f"{plan['address']} = {value}, the same number the intact checkout gave. "
+                   f"Every attempt of this run would score the baseline. The usual cause is a "
+                   f"scorer named by ABSOLUTE path that resolves the program against its own "
+                   f"directory rather than the working directory it is run in — name the "
+                   f"scorer by a path relative to the repository, and have it import what is "
+                   f"beside it in the checkout it was started in")
+    finally:
+        try:
+            _git(repo, "worktree", "remove", "--force", wt)
+        except E.CruxError:
+            pass
+        shutil.rmtree(wt, ignore_errors=True)
+        shutil.rmtree(ws, ignore_errors=True)
+
+
 def probe_agents(root, plan, repo=None):
     """One row per command of the plan's list: `{command, probe, reachable, seconds, detail}`.
 
@@ -1024,13 +1200,19 @@ def auto_check(root, path, static=False):
     A flight plan that passes every engine check and then cannot produce a number is a plan
     that fails at attempt one of a hundred and forty. So the default runs the PI's scorer
     ONCE, in the repository, against a throwaway workspace, and writes nothing anywhere —
-    the baseline's own metrics file is the PI's, and a dry run does not get to touch it."""
+    the baseline's own metrics file is the PI's, and a dry run does not get to touch it.
+
+    It runs the scorer a SECOND time, against a deliberately perturbed checkout, because a
+    scorer that produces a number is not yet a scorer that produces the CANDIDATE's number —
+    see `probe_scorer_responds` for the run that was lost to the difference. `responds` is
+    reported alongside `ran` for the same reason `ran` exists: they are two facts and a reader
+    should not have to infer one from the other."""
     res = E.auto_check(root, path)
     if static:
         return res
     res["repo"] = None
     res["scorer"] = {"ran": False, "cmd": None, "cwd": None, "address": None,
-                     "value": None, "seconds": None}
+                     "value": None, "seconds": None, "responds": None}
     res["agents"] = []                  # present on EVERY non-static return, the early ones
                                         # included, so a reader never has to test for the key
     if res["problems"]:
@@ -1043,6 +1225,7 @@ def auto_check(root, path, static=False):
         res["ok"] = False
         return res                      # and no further process of any kind
     res["repo"] = repo
+    res["problems"].extend(writable_problems(root, plan))
     res["scorer"].update({"cmd": plan["scorer"], "cwd": repo, "address": plan["address"]})
     ws = tempfile.mkdtemp(prefix="crux_auto_dry_")
     t0 = time.monotonic()
@@ -1069,6 +1252,13 @@ def auto_check(root, path, static=False):
                             f"scorer's output: {e}"})
     finally:
         shutil.rmtree(ws, ignore_errors=True)
+    # Only when there IS a number to compare against: perturbing a checkout to see whether a
+    # scorer that already failed fails differently answers nothing.
+    if res["scorer"]["value"] is not None:
+        probe = probe_scorer_responds(root, plan, res["scorer"]["value"], repo)
+        res["scorer"]["responds"] = probe["responds"]
+        if probe["responds"] is False:
+            res["problems"].append({"check": "scorer-responds", "message": probe["detail"]})
     # The probe runs whether or not the scorer added a problem: two faults in one plan are two
     # findings, and reporting one at a time turns one review into two.
     res["agents"] = probe_agents(root, plan, repo)
@@ -2409,6 +2599,13 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             # 05.3: the probe FIRST. A misspelled agent is cheaper to find than a scorer run,
             # and the stop happens before any id is reserved — a reserved hypothesis number
             # can never be handed out again.
+            # `auto run` gates on the STATIC check, which cannot see the filesystem — so the
+            # one thing `auto check` learned about the repository has to be re-learned here or
+            # a plan that was never `auto check`ed dies at `make_workspace` instead.
+            bad = writable_problems(root, plan)
+            if bad:
+                _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
+                                "detail": bad[0]["message"]})
             rows = probe_agents(root, plan, ctx["repo"])
             if rows and not any(r["reachable"] for r in rows):
                 _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -2534,6 +2731,7 @@ def auto_refs(root, qid=None):
 
     Read-only, and read-only all the way down — it creates no directory, no ref and no file,
     because the one question a PI asks after a run is not a reason to write to the vault."""
+    qid = E.auto_qid_arg(qid)
     if qid is None:
         qid = _sole_anchor(root)
     ppath = f"{E.AUTO_DIR}/{qid}/{E.PLAN_FILE}"
