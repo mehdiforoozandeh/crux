@@ -48,11 +48,18 @@ def detect_install(engine_dir=None):
     """('clone', repo_root) | ('skills', skills_dir) | ('unknown', path).
 
     realpath first: `install.sh` symlinks the skills into a clone, so the import path is the
-    symlink while the thing you'd actually `git pull` is its target."""
+    symlink while the thing you'd actually `git pull` is its target.
+
+    `exists`, not `isdir`: in a git WORKTREE `.git` is a file holding a `gitdir:` line, not a
+    directory. Testing for a directory made every worktree read as a `skills` install, which
+    took the agent roster away from `crux doctor` — so `./crux selftest` could not go green in
+    a worktree, and a suite that cannot go green where the work happens is a suite nobody
+    trusts. A worktree is a clone for both purposes this answer serves: `git -C <it> pull`
+    is right, and the repo layout beside it is real."""
     here = os.path.realpath(engine_dir or os.path.dirname(os.path.abspath(__file__)))
     # <root>/skills/crux/scaffold  ->  <root>
     root = os.path.dirname(os.path.dirname(os.path.dirname(here)))
-    if os.path.isdir(os.path.join(root, ".git")):
+    if os.path.exists(os.path.join(root, ".git")):
         return "clone", root
     if os.path.basename(os.path.dirname(os.path.dirname(here))) == "skills":
         return "skills", os.path.dirname(os.path.dirname(here))
