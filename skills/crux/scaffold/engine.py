@@ -5892,7 +5892,20 @@ AUTO_RATE_LIMIT_PATTERNS   = (r"5-?hour limit", r"usage limit", r"rate limit",
                               r"limit reached", r"too many requests", r"reset[s]? at",
                               r"please try again later",
                               r"overloaded", r"service unavailable",
-                              r"internal server error", r"\b529\b", r"api_error")
+                              r"internal server error", r"\b529\b", r"api_error",
+                              # The CLI's OWN session limit — the commonest provider failure
+                              # on a workstation, and the one shape no row above caught:
+                              # "You've hit your session limit · resets 9:10pm". It killed the
+                              # first run of a search and then the fourth, and because this
+                              # same predicate also drives the cooldown there was no wait
+                              # either: four attempts burned in thirteen seconds, retrying
+                              # into a wall with hours left on it. Matched as a FAMILY, since
+                              # the wording moves with the surface and the plan — but never on
+                              # the bare word "limit", because a program is entitled to print
+                              # that about its own iteration cap.
+                              r"hit your [^\n]{0,40}limit", r"session limit",
+                              r"reset[s]? (?:at\s+)?\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?",
+                              r"reset[s]? (?:at\s+)?\d{1,2}:\d{2}")
 # ---- the closer
 AUTO_CLOSE_KEYS            = ("ticks", "findings", "report")
 AUTO_TICK_ALPHABET         = ("x", " ", "-")

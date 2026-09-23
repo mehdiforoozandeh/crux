@@ -13055,17 +13055,34 @@ def run_auto_cooldown():
         out = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
             "API Error 529 overloaded_error", "503 Service Unavailable",
             "Internal Server Error", '{"type":"api_error"}')]
-        check("acool: the rate-limit read is the era skill's patterns plus the outages, case-insensitive, and total",
+        # The CLI's OWN session limit, as a run actually recorded it. Four attempts died on
+        # this exact tail and no row above matched it, so the streak advanced on four outages
+        # — and since the same predicate drives the cooldown, no wait was taken either:
+        # thirteen seconds to burn four attempts into a wall that had hours left on it.
+        sess = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "worker exited 1 — output tail: You've hit your session limit · "
+            "resets 9:10pm (America/Vancouver)",
+            "You've hit your usage limit · resets 11:00pm",
+            "Session limit reached", "resets 21:10")]
+        # ...while a program stays entitled to print the word "limit" about its own iteration
+        # cap without the driver reading that as the provider going down. A broken PROGRAM is
+        # the worker's own act and must never be excused.
+        prog = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "Traceback: ZeroDivisionError", "exited 1",
+            "the optimiser hit a limit of 100 iterations",
+            "set the token limit to 4096", "converged: reset 0 counters")]
+        check("acool: the rate-limit read is the era skill's patterns plus the outages and the CLI's own session limit, case-insensitive, and total",
               _auto_ok(lambda: (
                   E.AUTO_RATE_LIMIT_PATTERNS == (
                       r"5-?hour limit", r"usage limit", r"rate limit", r"limit reached",
                       r"too many requests", r"reset[s]? at", r"please try again later",
                       r"overloaded", r"service unavailable", r"internal server error",
-                      r"\b529\b", r"api_error")
+                      r"\b529\b", r"api_error",
+                      r"hit your [^\n]{0,40}limit", r"session limit",
+                      r"reset[s]? (?:at\s+)?\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?",
+                      r"reset[s]? (?:at\s+)?\d{1,2}:\d{2}")
                   and lim == [True] * 5 and neg == [False] * 3 and out == [True] * 4
-                  # a broken PROGRAM is still the worker's own act and must not be excused
-                  and E.auto_rate_limited("Traceback: ZeroDivisionError") is False
-                  and E.auto_rate_limited("exited 1") is False
+                  and sess == [True] * 4 and prog == [False] * 5
                   and E.AUTO_COOLDOWN_DEFAULT == 1800.0)))
 
         # --------------------------------- a failed try whose tail matches: cool, then walk on
