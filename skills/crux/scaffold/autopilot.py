@@ -1577,7 +1577,8 @@ def _start_attempt(ctx, island):
     hid = reserve_id(root, qid, island=island, parent=parent)
     st["in_flight"][hid] = {"island": island, "parent": parent, "from": None,
                             "phase": "reserved", "worker_tries": 0, "scorer_tries": 0,
-                            "pid": None, "failure": None, "started": E.now()}
+                            "pid": None, "failure": None, "provider": False,
+                            "started": E.now()}
     _record(ctx, "attempt-reserved", {"attempt": hid, "island": island, "parent": parent})
     _crash(ctx, "reserved")
 
@@ -1723,6 +1724,10 @@ def _fail(ctx, hid, reason, detail):
     # command and the ledger reads `cooldown` then `failover`, in that order.
     if w.get("command") and E.auto_rate_limited(_log_tail(w["ws"], since=w.get("log_from") or 0)):
         _cool(ctx, E.AUTO_AGENTS[0], w["command"])
+        # ...and this try was lost to the PROVIDER rather than to the worker. Recorded on
+        # `fl`, not on the side-table, so it reaches `state.json` and survives a resume. One
+        # matcher decides the cooldown, the failover and this — a second one would drift.
+        fl["provider"] = True
     if (not w.get("recorded")
             and fl["worker_tries"] <= plan["retries"]
             and st["budget"]["model_calls"]["used"] < st["budget"]["model_calls"]["total"]):
@@ -2161,9 +2166,22 @@ def _step_counters(ctx, hid, verdict, value):
     Climb toward a bar refutes every attempt until the last one, and a verdict-based rule
     would call that a stall on the second try."""
     plan, st = ctx["plan"], ctx["state"]
-    island = _fl(ctx, hid)["island"]
+    fl = _fl(ctx, hid)
+    island = fl["island"]
     isl = st["islands"][island]
-    st["consecutive_invalid"] = st["consecutive_invalid"] + 1 if verdict == "invalid-run" else 0
+    # An attempt the PROVIDER killed is NEUTRAL to the streak: it neither advances it nor
+    # clears it. `abort_invalid_runs` exists to catch a worker behaving badly, and an outage
+    # or a session limit is not a worker act — the first run of one search ended on this stop
+    # with 25 attempts of budget left, five workers killed by a limit and a run of 529s and
+    # every one of them counted against the worker. Clearing the streak would be the opposite
+    # error: an outage in the middle of three genuinely bad attempts would hide them.
+    #
+    # Only what `auto_rate_limited` positively identifies is excused. A worker that exits
+    # non-zero because the PROGRAM is broken is a worker act and still counts, which is why
+    # `worker-exit` is not excluded wholesale.
+    if not fl.get("provider"):
+        st["consecutive_invalid"] = (st["consecutive_invalid"] + 1
+                                     if verdict == "invalid-run" else 0)
     if verdict != "invalid-run" and E.auto_improves(value, isl["seen_score"],
                                                     plan["direction"]):
         isl["seen_score"], isl["stall"] = value, 0
@@ -2306,7 +2324,7 @@ def _reconcile(ctx):
             st["in_flight"][hid] = {"island": rec.get("island") or qid,
                                     "parent": rec.get("parent"), "from": None,
                                     "phase": "reserved", "worker_tries": 0, "scorer_tries": 0,
-                                    "pid": None, "failure": None,
+                                    "pid": None, "failure": None, "provider": False,
                                     "started": rec.get("at") or E.now()}
         _resume_one(ctx, hid)
 

@@ -10700,6 +10700,10 @@ with open(os.environ["CRUX_BRIEF"], encoding="utf-8") as f:
 if mode == "exit1":
     sys.stderr.write("stub failed on purpose\\n")
     sys.exit(1)
+if mode == "limited":
+    # the PROVIDER failing, not the worker: the shape a killed session leaves behind
+    sys.stderr.write("API Error 529 overloaded_error\\n")
+    sys.exit(1)
 with open("params.json", encoding="utf-8") as f:
     x = json.load(f)["x"]
 if mode != "still":
@@ -11067,7 +11071,7 @@ def _skip_first_materialize(A):
 _ISLAND_KEYS = {"branch", "pointer", "best", "best_score", "seen_score", "stall"}
 _BEST_KEYS = {"id", "score"}
 _IN_FLIGHT_KEYS = {"island", "parent", "from", "phase", "worker_tries", "scorer_tries",
-                   "pid", "failure", "started"}
+                   "pid", "failure", "started", "provider"}
 
 
 def _record_probe(A, root, qa):
@@ -12170,6 +12174,31 @@ def run_auto_stops():
         _, iroot, iqa, _, _, irel = _loop_fixture(x0=0, agent="python3 agent.py exit1",
                                                   retries="1", abort_invalid_runs="2")
         inv = _loop_run("abort-invalid", iroot, iqa, irel)
+        # The SAME run with one thing changed: the worker dies on the provider rather than on
+        # its own program. `abort_invalid_runs` exists to catch a worker behaving badly, and
+        # an outage is not a worker act — the first run of one search ended on this stop with
+        # 25 attempts of budget left, five workers killed by a session limit and a run of
+        # 529s, every one counted against the worker. The attempts still close, are still
+        # recorded and are still visible; the streak simply does not advance, so the run goes
+        # on to spend its budget instead of aborting on the machine's bad night.
+        _, lroot, lqa, _, _, lrel = _loop_fixture(x0=0, agent="python3 agent.py limited",
+                                                  retries="0", abort_invalid_runs="2",
+                                                  budget_attempts="3", agent_cooldown="0")
+        lim = _loop_run("provider-limited", lroot, lqa, lrel)
+        lst = lim["state"] or {}
+        check("astop: an attempt the PROVIDER killed closes and is recorded, but never advances the abort streak",
+              _auto_ok(lambda: (
+                  E.auto_rate_limited("API Error 529 overloaded_error") is True
+                  and E.auto_rate_limited("Traceback: ZeroDivisionError") is False
+                  and len(_ev(lim, "cooldown")) >= 1
+                  and [e["reason"] for e in _ev(lim, "worker-failed")] == ["worker-exit"] * 3
+                  and all(fl.get("provider") is True
+                          for fl in (lst.get("in_flight") or {}).values()) is not False
+                  and len(lst.get("closed") or []) == 3
+                  and all(E.Vault(lroot).get(h)["fm"]["verdict"] == "invalid-run"
+                          for h in lst.get("closed") or [])
+                  and lst.get("consecutive_invalid") == 0
+                  and _loop_stop(lim)["reason"] == "budget")))
         _, oroot, oqa, _, _, orel = _loop_fixture(x0=0,
                                                   scorer="python3 score.py --fail-always")
         opn = _loop_run("fail-open", oroot, oqa, orel)
@@ -13019,13 +13048,24 @@ def run_auto_cooldown():
             "resets at 3pm", "Please try again later.")]
         neg = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>")
                for t in ("limit", "", None)]
-        check("acool: the rate-limit read is the era skill's seven patterns, case-insensitive, and total",
+        # An OUTAGE joins the limits, because for every purpose this read serves the two are
+        # one family: the provider failing rather than the worker acting. The second row is
+        # what a killed session and a run of 529s leave in a log, and counting those against
+        # the worker ended a run with 25 attempts of budget left.
+        out = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "API Error 529 overloaded_error", "503 Service Unavailable",
+            "Internal Server Error", '{"type":"api_error"}')]
+        check("acool: the rate-limit read is the era skill's patterns plus the outages, case-insensitive, and total",
               _auto_ok(lambda: (
-                  len(E.AUTO_RATE_LIMIT_PATTERNS) == 7
-                  and E.AUTO_RATE_LIMIT_PATTERNS == (
+                  E.AUTO_RATE_LIMIT_PATTERNS == (
                       r"5-?hour limit", r"usage limit", r"rate limit", r"limit reached",
-                      r"too many requests", r"reset[s]? at", r"please try again later")
-                  and lim == [True] * 5 and neg == [False] * 3
+                      r"too many requests", r"reset[s]? at", r"please try again later",
+                      r"overloaded", r"service unavailable", r"internal server error",
+                      r"\b529\b", r"api_error")
+                  and lim == [True] * 5 and neg == [False] * 3 and out == [True] * 4
+                  # a broken PROGRAM is still the worker's own act and must not be excused
+                  and E.auto_rate_limited("Traceback: ZeroDivisionError") is False
+                  and E.auto_rate_limited("exited 1") is False
                   and E.AUTO_COOLDOWN_DEFAULT == 1800.0)))
 
         # --------------------------------- a failed try whose tail matches: cool, then walk on

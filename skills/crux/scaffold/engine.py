@@ -5881,10 +5881,18 @@ AUTO_PROBE_DEFAULT         = "--version"   # plan field `agent_probe:`
 AUTO_PROBE_TIMEOUT_DEFAULT = 20.0          # seconds; plan field `agent_probe_timeout:`
 # Ported from the era skill's scaffold/generate.py LIMIT_PATTERNS (MIT — that file carries no
 # licence header and is part of the PI's own MIT-licensed `era` skill; Apache-2.0 and FROZEN
-# belong to futs.py alone, which is a different file). Seven regexes, read case-insensitively.
+# belong to futs.py alone, which is a different file). Read case-insensitively.
+#
+# A LIMIT AND AN OUTAGE ARE ONE FAMILY for every purpose the driver has: both are the provider
+# failing rather than the worker acting, both are waited out rather than retried harder, and
+# neither may be read as a bad attempt. The second row was added after a run died on
+# `abort_invalid_runs` with 25 attempts of budget left — five workers killed by a session limit
+# and a run of 529s, every one of them counted as a worker behaving badly.
 AUTO_RATE_LIMIT_PATTERNS   = (r"5-?hour limit", r"usage limit", r"rate limit",
                               r"limit reached", r"too many requests", r"reset[s]? at",
-                              r"please try again later")
+                              r"please try again later",
+                              r"overloaded", r"service unavailable",
+                              r"internal server error", r"\b529\b", r"api_error")
 # ---- the closer
 AUTO_CLOSE_KEYS            = ("ticks", "findings", "report")
 AUTO_TICK_ALPHABET         = ("x", " ", "-")
