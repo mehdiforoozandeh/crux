@@ -2293,7 +2293,14 @@ def _base_scorer_check(ctx):
 
     A scorer that cannot produce a number on the commit the run starts from is a run that
     fails at attempt one of a hundred and forty — and the throwaway checkout is what keeps the
-    PI's own working tree clean while finding that out."""
+    PI's own working tree clean while finding that out.
+
+    It then asks the harder question, the one `probe_scorer_responds` exists for: does that
+    number have anything to do with the CANDIDATE? `auto run` gates on the STATIC engine check
+    and never calls `autopilot.auto_check`, so a PI who approves a plan and runs it without
+    ever typing `crux auto check` would otherwise reach this point with the scorer's
+    responsiveness untested — which is exactly how a thirty-attempt run came to score the
+    baseline thirty times. It costs one more scorer run, once, at run open."""
     root, plan = ctx["root"], ctx["plan"]
     remove_worktree(root, plan, BASE_WORKTREE)
     tmp = tempfile.mkdtemp(prefix="crux_auto_base_")
@@ -2301,12 +2308,15 @@ def _base_scorer_check(ctx):
         wt = add_worktree(root, plan, BASE_WORKTREE)
         obj, _s = run_scorer(plan["scorer"], wt, plan["baseline"], tmp,
                              plan["scorer_timeout"], seed=0)
-        E.metrics_value(obj, plan["address"], "the scorer's output at run open")
+        value = E.metrics_value(obj, plan["address"], "the scorer's output at run open")
     except (ScorerError, E.AddressError) as e:
         return str(e)
     finally:
         remove_worktree(root, plan, BASE_WORKTREE)
         shutil.rmtree(tmp, ignore_errors=True)
+    probe = probe_scorer_responds(root, plan, value, ctx["repo"])
+    if probe["responds"] is False:
+        return probe["detail"]
     return None
 
 

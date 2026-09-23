@@ -9134,6 +9134,31 @@ def run_auto_brief():
                                           "## Refuted attempts", "## Other islands",
                                           "## Inherited bar", "## Guidance", "## Budget"))
               and f"{ids['best']}#eval.loss" in text)
+        # The three facts a worker needs in order to SUCCEED rather than to choose. A run
+        # aborted after five invalid attempts for want of them on 2026-09-21: workers reached
+        # for an interpreter the plan never named, and wrote a twenty-key proposal where
+        # `auto_proposal` reads two. They used to arrive only if a human remembered `crux auto
+        # guide`, so this check is the guarantee that replaced the reminder.
+        check("abrief: the brief STATES the harness and the proposal schema, every run, with no guidance appended",
+              all(h in text for h in ("## Harness", "## Output"))
+              and pay.get("harness", {}).get("scorer") == "python score.py"
+              and "python score.py" in text
+              and "COMMIT your work" in text
+              and "authorized" in text
+              and "$CRUX_PROPOSAL" in text
+              and "$CRUX_WORKSPACE" in text
+              # the two integrity rules that CANNOT be repaired afterwards are stated, since
+              # stating them is the only thing the engine can do about them
+              and pay.get("harness", {}).get("shared") == "`work`, `results`"
+              and pay.get("harness", {}).get("frozen") == "`score.py`, `data`"
+              and "`work`, `results`" in text and "`score.py`, `data`" in text
+              and all(k in text for k in E.AUTO_PROPOSAL_KEYS)
+              and all(k in text for k in E.AUTO_CONTROL_KEYS)
+              and all(op in text for op in E.AUTO_COMPARISON_OPS)
+              and "<key.path> <op> <number>" in text
+              and str(E.PROSE_CAP) in text
+              # and it does not come at the cost of the PI's own Guidance, which is separate
+              and "## Guidance" in text and "guidance number 11" in text)
         check("abrief: a plan is found on the nearest ancestor question of the attempt",
               _auto_val(lambda: E.auto_brief(root, ids["insp"][0]), {}).get("plan")
               == ids["rel"])
@@ -12065,6 +12090,24 @@ def run_auto_stops():
                   and _ev(opn, "attempt-reserved") == []
                   and not ores
                   and (opn["state"] or {})["closed"] == [])))
+
+        # `auto run` gates on the STATIC engine check, so a PI who approves a plan and runs it
+        # without ever typing `crux auto check` would reach the loop with the scorer's
+        # responsiveness untested — which is how thirty attempts came to score the baseline
+        # thirty times. The gate is at run open too, and it stops before any id is reserved.
+        _, croot, cqa, _, _, crel = _loop_fixture(
+            x0=0, scorer="python3 score_const.py",
+            _files={"score_const.py": 'import json\nprint(json.dumps('
+                                      '{"obj": {"score": {"value": -9.0}}}))\n'})
+        con = _loop_run("const-scorer", croot, cqa, crel)
+        cres = _auto_val(lambda: A.reservations(croot, cqa), {})
+        check("astop: a scorer that never reads the candidate stops the run abort, before an id is reserved",
+              _auto_ok(lambda: (
+                  _loop_stop(con)["reason"] == "abort"
+                  and "does not read the candidate" in _loop_stop(con)["detail"]
+                  and _ev(con, "attempt-reserved") == []
+                  and not cres
+                  and (con["state"] or {})["closed"] == [])))
 
         _, nroot, nqa, _, _, nrel = _loop_fixture(x0=0, agent="python3 agent.py still",
                                                   stall_attempts="2", budget_attempts="8")

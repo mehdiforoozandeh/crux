@@ -7616,6 +7616,23 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
         "steward": steward_lines,
         "budget": {"attempts": {"total": total, "used": used,
                                 "remaining": max((total or 0) - used, 0)}},
+        # The three facts a worker needs in order to SUCCEED, as opposed to the facts it needs
+        # in order to choose. They reached the worker only when a human remembered to append
+        # them with `crux auto guide`, and on 2026-09-21 a run aborted after five invalid
+        # attempts for want of them: three workers tried an interpreter the plan never named,
+        # could not run anything, and concluded execution was forbidden; two wrote a
+        # twenty-key `proposal.json` where `auto_proposal` reads exactly two keys. Two of the
+        # five had in fact measured a program that passed every check. Guidance is a prompt
+        # and a prompt is not a guarantee, so what the engine already KNOWS it now states —
+        # every run, whether or not anybody remembered.
+        "harness": {"scorer": plan["scorer"], "address": address,
+                    "op": auto_direction_op(direction),
+                    "shared": ", ".join(f"`{w}`" for w in plan["writable"]) or "no shared root",
+                    "frozen": ", ".join(f"`{f}`" for f in plan["frozen"]) or "nothing"},
+        "schema": {"keys": list(AUTO_PROPOSAL_KEYS),
+                   "control_keys": list(AUTO_CONTROL_KEYS),
+                   "ops": list(AUTO_COMPARISON_OPS),
+                   "claim_words": PROSE_CAP},
         "cut": cut,
     }
 
@@ -7889,6 +7906,53 @@ def auto_brief_text(payload):
     for g in stew:
         out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
     out.append("")
+
+    # ## Harness and ## Output are the engine SPEAKING rather than reporting. Everything above
+    # is what the run has learned; these two are what the worker has to do, and they are here
+    # because a run died when they were only in someone's memory of `crux auto guide`.
+    h = p.get("harness") or {}
+    out += ["## Harness", "",
+            f"You are in a throwaway git checkout of the repository, and it is yours. Edit it,",
+            f"run it, and COMMIT your work there — the commit is the attempt, and an attempt",
+            f"with no commit is discarded. Committing here is authorized even where a standing",
+            f"rule tells you not to commit: this checkout is not the PI's branch and is thrown",
+            f"away after the driver has read it.", "",
+            f"Your own directory for anything bigger than a commit is `$CRUX_WORKSPACE`.",
+            f"`$CRUX_WORKTREE` is the checkout; `$CRUX_PROPOSAL` is the file named below.",
+            f"Other attempts are running beside you and share {h.get('shared')}, so write",
+            f"under those ONLY inside `$CRUX_WORKSPACE`. Touching another attempt's files",
+            f"there voids yours, and unlike a mis-shaped proposal that one cannot be repaired.",
+            "",
+            f"The driver — not you — scores your commit by running, in the checkout:", "",
+            f"    {h.get('scorer')}", "",
+            f"Run that yourself to see where you stand. It is also the interpreter and the",
+            f"entry point this project is known to work under, so prefer it to any other one",
+            f"you might reach for; an interpreter the plan does not name may not be installed.",
+            f"Do NOT write `{RESULTS_DIR}/` — the driver writes the score, from that command's",
+            f"own output, and a number you write there is not evidence. Do not touch",
+            f"{h.get('frozen')}: a commit that does voids the attempt outright.", ""]
+
+    sch = p.get("schema") or {}
+    out += ["## Output", "",
+            f"Write ONE JSON object to `$CRUX_PROPOSAL` with exactly these keys:", "",
+            f"- `claim`: what you changed and why you expected it to help, at most "
+            f"{sch.get('claim_words')} words.",
+            f"- `controls`: a list — possibly empty — of "
+            f"{{{', '.join(f'`{k}`' for k in sch.get('control_keys') or [])}}} objects.", "",
+            f"Every `text` must BEGIN with a metric comparison — `<key.path> <op> <number>`,",
+            f"with `<op>` one of {', '.join(sch.get('ops') or [])} — and may carry prose after",
+            f"it. A control points whichever way you mean it to — the example below borrows",
+            f"the objective's own operator only so it reads as something rather than nothing:",
+            "",
+            f"    {{\"text\": \"{h.get('address')} {h.get('op')} {obj.get('bar')} — "
+            f"measured on three seeds\",",
+            f"     \"fails_if\": \"the value moves with the seed rather than with the change\"}}",
+            "",
+            f"A control that is prose alone is DROPPED, not refused, and so is a key outside",
+            f"the two above — the attempt is still scored and still gets a verdict. The one",
+            f"thing you cannot leave out is `claim`: an attempt that reports no hypothesis has",
+            f"nothing to grade. Do not name a verdict and do not tag a control with a kind;",
+            f"both are the driver's.", ""]
 
     b = (p.get("budget") or {}).get("attempts") or {}
     out += ["## Budget", "",
