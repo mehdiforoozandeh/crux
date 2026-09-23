@@ -9126,6 +9126,19 @@ def run_auto_brief():
                                                    if n.type == "idea")
               and pay.get("budget", {}).get("attempts", {}).get("used") == under
               and pay.get("budget", {}).get("attempts", {}).get("remaining") == 40 - under)
+        # …but the vault walk counts the baseline and everything EVERY earlier run left
+        # behind, so a fresh run told its first worker "16 of 30 used, 14 remaining" while its
+        # own state.json read "0 of 30". Wrong from the first attempt, and further wrong after
+        # every restart. The driver passes the run's own counter — the same number `auto_stop`
+        # reads — so a worker and the stop condition can no longer disagree.
+        rb = _auto_val(lambda: E.auto_brief(root, hp, budget={"used": 3, "total": 30}), {})
+        rt = _auto_val(lambda: E.auto_brief_text(rb), "")
+        check("abrief: the RUN's own attempt counter overrides the vault walk, and the vault walk stays the fallback for a hand-typed brief",
+              _auto_ok(lambda: (
+                  rb["budget"]["attempts"] == {"used": 3, "total": 30, "remaining": 27}
+                  and "attempts: 3 of 30 used, 27 remaining" in rt
+                  and under != 3                      # the walk really would have said else
+                  and pay["budget"]["attempts"]["used"] == under)))
         check("abrief: the rendering names the island, the bar and the current best",
               text.startswith(f"# Autopilot brief — next attempt on {qi}")
               and ids["rel"] in text
@@ -9156,7 +9169,13 @@ def run_auto_brief():
               and all(k in text for k in E.AUTO_CONTROL_KEYS)
               and all(op in text for op in E.AUTO_COMPARISON_OPS)
               and "<key.path> <op> <number>" in text
-              and str(E.PROSE_CAP) in text
+              # The CAP, rendered from the constant so the brief can never drift from it. An
+              # attempt wrote 1126 words into its claim, then 737 on its one retry, and lost
+              # both — real work each time, and nothing in the brief had said a cap existed.
+              and f"HARD LIMIT {E.PROSE_CAP} words" in text
+              and f"{E.AUTO_CLAIM_TARGET[0]}–{E.AUTO_CLAIM_TARGET[1]} words" in text
+              and E.AUTO_CLAIM_TARGET[1] < E.PROSE_CAP
+              and "NO tables" in text and "NO code" in text
               # and it does not come at the cost of the PI's own Guidance, which is separate
               and "## Guidance" in text and "guidance number 11" in text)
         check("abrief: a plan is found on the nearest ancestor question of the attempt",
@@ -10698,6 +10717,8 @@ if mode == "shared":
 if mode == "crashscore":
     with open("crash_scorer", "w", encoding="utf-8") as f:
         f.write("1\\n")
+if mode == "nocommit":
+    sys.exit(0)          # real work on disk, exit 0, and never a commit or a proposal
 subprocess.run(GIT + ["add", "-A"], check=True)
 subprocess.run(GIT + ["commit", "-q", "--allow-empty", "-m", "attempt " + os.environ["CRUX_ATTEMPT"]], check=True)
 proposal = {"claim": "x = %s" % x}
@@ -10897,7 +10918,14 @@ def _loop_note_verdicts(root, ids):
     own truth table says about the same ticks.
 
     Captured here rather than at the end of the suite because the section that built the fixture
-    deletes it, and the criterion that compares the two is asserted after every fixture is gone."""
+    deletes it, and the criterion that compares the two is asserted after every fixture is gone.
+
+    An attempt that reported NO CLAIM is the one sanctioned departure, and it is recorded here as
+    such rather than smuggled past the comparison. Such an attempt is measured like any other —
+    that is the point, a reporting fault must not destroy a measurement — so its ticks are real
+    and the truth table's answer over them can be `supported`. What it does not have is a
+    hypothesis for that answer to be about, so `cmd_close(no_claim=True)` withholds the reading.
+    The driver still names no verdict: it reports the fact, and the engine decides."""
     for hid in (ids or ()) if root else ():
         n = _auto_val(lambda h=hid: E.Vault(root).get(h))
         if not n:
@@ -10905,6 +10933,8 @@ def _loop_note_verdicts(root, ids):
         by = _auto_val(lambda: E.count_verifiables_by_kind(n["body"]), {})
         want = _auto_val(lambda: E.derive_verdict_15(by[E.DEFAULT_KIND], by[E.NEUTRAL_KIND],
                                                      *E.node_rule(n)))
+        if _auto_val(lambda h=hid: E.auto_is_no_claim(root, h), False):
+            want = "invalid-run"
         _LOOP_CLOSED.append((hid, n["fm"].get("verdict"), want))
 
 
@@ -11753,6 +11783,67 @@ def run_auto_loop():
                   and "word word" not in read(node_path(gcroot, lgc[0]))
                   and len(E._prose_tokens(E.Vault(gcroot).get(lgc[0])["body"])) <= E.PROSE_CAP
                   and E.Vault(gcroot).get(lgc[0])["fm"]["verdict"] == "invalid-run")))
+        # PRESERVE AND MEASURE EVERYTHING, GRADE ONLY WHAT CARRIES A CLAIM. The same attempt,
+        # read the other way: its program is real and its commit passed both integrity checks,
+        # so it is scored and its number reaches the ledger — a fault in the REPORT must not
+        # destroy a measurement. What it does not get is a verdict, because a verdict is a
+        # judgment about a hypothesis and this attempt stated none. An over-cap claim now
+        # costs the answer, not the work.
+        check("arun: an over-cap claim is still MEASURED — metrics, a scored event and a metric on the node — and only the verdict is withheld",
+              _auto_ok(lambda: (
+                  E.load_metrics(gcroot, lgc[0]) is not None
+                  and len(_ev(lg, "scored")) == 1
+                  and _ev(lg, "scored")[0]["attempt"] == lgc[0]
+                  and _ev(lg, "scored")[0]["value"] is not None
+                  and (E.Vault(gcroot).get(lgc[0])["fm"].get("metric") or "").strip()
+                  and [e["value"] for e in _ev(lg, "closed")] == [_ev(lg, "scored")[0]["value"]]
+                  and E.auto_is_no_claim(gcroot, lgc[0]) is True)))
+        # The other half of the same rule, and the reason it is not simply "is there a
+        # commit": a commit that touched frozen data or wrote into ground another attempt
+        # shares is never scored, because a number taken from it would be a reward for that.
+        # EVERY writable root, not just the first. `writable: work/, results/` tells a PI two
+        # roots are writable; only the first excused a workspace, so a worker that put a
+        # checkpoint in the second lost its attempt to a violation it could not have
+        # predicted, unretried and unrepairable. The plan grammar no longer lies about its
+        # own list. A bare string is still accepted, because that is what 05.2 passes.
+        _mdiff = {"added": ["work/h7/ckpt", "results/h7/out", "results/h9/out",
+                            "work/shared/x", "results/loose"],
+                  "removed": [], "changed": []}
+        check("arun: a workspace under ANY writable root is somebody's, and only ground no attempt owns is a violation",
+              _auto_ok(lambda: (
+                  E.auto_manifest_violations(_mdiff, ["work/", "results/"], ["h7", "h9"])
+                      == ["results/loose", "work/shared/x"]
+                  and E.auto_manifest_violations(_mdiff, "work/", ["h7", "h9"])
+                      == ["results/h7/out", "results/h9/out", "results/loose",
+                          "work/shared/x"])))
+        check("arun: a frozen-path or shared-root commit is NEVER scored, however good its report was",
+              _auto_ok(lambda: (
+                  _ev(f, "scored") == [] and _ev(sh, "scored") == []
+                  and all(E.load_metrics(r, h) is None
+                          for r, run in ((froot, f), (shroot, sh))
+                          for h in (run["state"] or {}).get("closed") or []))))
+
+        # A worker that does the work and exits 0 without committing used to lose all of it:
+        # retention removes the worktree `--force`, and its reasoning — "the commit it held is
+        # already in a ref" — is the one thing that is not true here.
+        _, ncroot, ncqa, _, _, ncrel = _loop_fixture(x0=2, agent="python3 agent.py nocommit",
+                                                     retries="0", budget_attempts="1")
+        nc = _loop_run("nocommit", ncroot, ncqa, ncrel)
+        ncc = (nc["state"] or {}).get("closed") or []
+        check("arun: work left uncommitted by the worker is committed on its behalf, recorded, scored — and still closes invalid-run",
+              _auto_ok(lambda: (
+                  [e["reason"] for e in _ev(nc, "worker-failed")] == ["no-commit"]
+                  and len(ncc) == 1
+                  and _auto_val(lambda: _git(ncroot, "rev-parse",
+                                             f"refs/crux/auto/{ncqa}/{ncc[0]}"), "")
+                  and E.load_metrics(ncroot, ncc[0]) is not None
+                  and len(_ev(nc, "scored")) == 1
+                  # the rescued commit really carries the worker's edit, not an empty tree
+                  and "x" in _auto_val(
+                      lambda: _git(ncroot, "show",
+                                   f"refs/crux/auto/{ncqa}/{ncc[0]}:params.json"), "")
+                  and E.auto_is_no_claim(ncroot, ncc[0]) is True
+                  and E.Vault(ncroot).get(ncc[0])["fm"]["verdict"] == "invalid-run")))
         # REWRITTEN. These three used to close `invalid-run`, and that ruling cost a real run
         # every one of its five attempts: each worker wrote a good program, measured it, and
         # lost the measurement to the SHAPE of an optional field. A proposal is a report, not
@@ -11965,14 +12056,24 @@ def run_auto_resume():
                 r4 = _loop_run("resume-recorded", r4root, r4qa, r4rel, max_attempts=1)
                 r4ref = _auto_val(lambda: _git(r4repo, "rev-parse",
                                                f"refs/crux/auto/{r4qa}/{r4h}"), "")
-        check("aresume: an attempt already recorded at its ref is never handed to a second worker, and closes on the commit the ref names",
+        # REWRITTEN for "preserve and measure everything, grade only what carries a claim".
+        # This attempt is the exact shape the rule is about: the worker's proposal is gone, so
+        # it reports no hypothesis — but its commit is at its ref, it passed both integrity
+        # checks, and the program is real. It used to be closed unmeasured, which threw away a
+        # measurement over a missing REPORT. Now it is scored, its value reaches the ledger,
+        # and it still closes `invalid-run`, because there is no claim for a verdict to be
+        # about. Nothing about what `invalid-run` means has changed.
+        check("aresume: an attempt already recorded at its ref is never handed to a second worker, is MEASURED anyway, and still closes invalid-run for want of a claim",
               _auto_ok(lambda: (
                   bool(r4head) and r4ref == r4head
                   and _ev(_since_resume(r4), "worker-started") == []
                   and _ev(_since_resume(r4), "retry") == []
-                  and _ev(r4, "scored") == []
                   and [e["reason"] for e in _ev(_since_resume(r4), "worker-failed")]
                       == ["proposal-missing"]
+                  and len(_ev(r4, "scored")) == 1
+                  and _ev(r4, "scored")[0]["attempt"] == r4h
+                  and _ev(r4, "scored")[0]["value"] is not None
+                  and E.load_metrics(r4root, r4h) is not None
                   and ((r4["state"] or {}).get("closed") or []) == [r4h]
                   and len(_ev(r4, "closed")) == 1
                   and E.Vault(r4root).get(r4h)["fm"]["verdict"] == "invalid-run")))

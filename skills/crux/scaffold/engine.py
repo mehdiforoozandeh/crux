@@ -4048,7 +4048,22 @@ def cmd_test(root, nid, to=None, run=None):
     refresh(root)
     return target
 
-def cmd_close(root, nid, metric=None, findings=None):
+def cmd_close(root, nid, metric=None, findings=None, no_claim=False):
+    """Close one hypothesis on its pre-registered checks. The verdict is DERIVED here and is
+    never an argument — that is most of what makes a crux verdict worth reading.
+
+    `no_claim` is the autopilot's no-claim path, and it is deliberately a FACT rather than a
+    verdict: the caller reports that this node carries no hypothesis, and the engine decides
+    what that means. A driver still cannot name a verdict, and no value of this argument
+    produces `supported`.
+
+    It exists because an autopilot attempt is now measured even when its REPORT was faulty — a
+    reporting mistake must not destroy a measurement — so a node whose claim is the
+    AUTO_NO_CLAIM placeholder can arrive here carrying a real, fully graded tick vector. That
+    vector would derive `supported`, and the verdict would be a judgment about a hypothesis
+    nobody ever stated. So the measurement is kept, the metric is kept, and the judgment is
+    withheld: `invalid-run` already means "the apparatus ran and the claim cannot be read",
+    which is the honest reading of an attempt that claimed nothing."""
     v = Vault(root)
     n = v.get(nid)
     if n.type != "idea":
@@ -4069,6 +4084,12 @@ def cmd_close(root, nid, metric=None, findings=None):
         verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
     else:
         verdict = derive_verdict(met, unmet, na)
+    # AFTER the derivation, never instead of it: the gap that is checked, the rule that is
+    # read and the refusal on an unclosable node all still happen, so a no-claim attempt is
+    # held to every structural rule its siblings are. Only the reading of the vector is
+    # withheld, because there is no claim for it to be a reading OF.
+    if no_claim:
+        verdict = "invalid-run"
     # `cmd_close` has no status precondition and is reachable straight from `idea`, so a
     # lock taken only at `running` is bypassable by the shortest path the CLI offers. Lock
     # here too, and record that it was never a pre-registration — refusing the close instead
@@ -6858,6 +6879,26 @@ def auto_proposal(raw, plan):
             "claim": raw_claim.strip(), "controls": clean, "warnings": warnings}
 
 
+def auto_is_no_claim(root, hid):
+    """Does this attempt's node carry the AUTO_NO_CLAIM placeholder instead of a hypothesis?
+
+    The DURABLE answer to "did this attempt report a claim", and the reason it is read from
+    the node rather than from the driver's side-table: that table is rebuilt from disk on
+    resume and holds no proposal for an attempt whose worker ran under a driver that has since
+    died. Asking it there made every RESUMED attempt look claimless, which forced
+    `invalid-run` onto attempts that had stated a perfectly good hypothesis — a resumed
+    attempt and a fresh one grading differently, which is the one thing the finish path
+    exists to prevent.
+
+    `_step_file` always runs before the close and writes either the worker's claim or the
+    placeholder, so by the time anyone asks, the node already knows."""
+    n = Vault(root).nodes.get(hid)
+    if n is None:
+        return True
+    marker = AUTO_NO_CLAIM.split("{")[0].strip()
+    return bool(marker) and marker in _section(n["body"], "Idea / Hypothesis")
+
+
 def auto_claim_title(claim):
     """A node title from a claim: its first sentence, capped at AUTO_TITLE_WORDS words."""
     s = " ".join(str(claim).split())
@@ -6965,18 +7006,25 @@ def auto_ledger_line(event, fields, at=None):
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
 
 
-def auto_manifest_violations(diff, workspace_root, ids):
+def auto_manifest_violations(diff, workspace_roots, ids):
     """The shared-root paths an attempt touched that belong to NO attempt of this run.
 
     Every path under `<writable>/<some reserved id>/` is somebody's workspace and is therefore
     fine; anything else is a write into ground two attempts share, which is the one thing a
-    parallel run cannot allow."""
-    r = _auto_norm_path(workspace_root)
+    parallel run cannot allow.
+
+    `workspace_roots` is EVERY writable root, not just the first. It used to be the first
+    alone, which made the plan grammar lie about its own list: a PI reading `writable: work/,
+    results/` is told two roots are writable, and a worker that put a checkpoint in the second
+    lost its attempt to a violation it could not have predicted, unretried and unrepairable.
+    One string is still accepted, because that is what every 05.2 caller passes."""
+    roots = [workspace_roots] if isinstance(workspace_roots, str) else list(workspace_roots or [])
+    roots = [_auto_norm_path(r) for r in roots] or [""]
     owned = tuple(ids or ())
     out = set()
     for p in (list((diff or {}).get("added") or []) + list((diff or {}).get("removed") or [])
               + list((diff or {}).get("changed") or [])):
-        if any(p == f"{r}/{h}" or p.startswith(f"{r}/{h}/") for h in owned):
+        if any(p == f"{r}/{h}" or p.startswith(f"{r}/{h}/") for r in roots for h in owned):
             continue
         out.add(p)
     return sorted(out)
@@ -7425,6 +7473,11 @@ AUTO_BRIEF_BUDGET = {"inspirations": 3, "refuted": 5, "guidance": 10, "findings_
                      "steward": 10, "ledger": 40}
 AUTO_BRIEF_CHECKS = ("schema", "budget", "stable", "leakage", "addresses")
 AUTO_CUT_PREFIX   = "Cut to budget:"
+# What a claim is FOR, in words. The cap itself is PROSE_CAP and is the engine's; this is the
+# range a worker should aim at, well under it, so a claim is never close enough to the cap for
+# one more sentence to cost the attempt. An attempt wrote 1126 words into its claim and then
+# 737 on its retry, and lost both — the brief had never said a cap existed.
+AUTO_CLAIM_TARGET     = (150, 250)
 AUTO_NO_REFUTED       = "No refuted attempts on this island yet."
 AUTO_NO_INSPIRATIONS  = "No other supported attempts on this island yet."
 AUTO_NO_OTHER_ISLANDS = "No other islands."
@@ -7443,7 +7496,7 @@ def auto_plan_for(root, v, hid):
     return None, None
 
 
-def auto_brief(root, hid, island=None, islands=None, steward=None):
+def auto_brief(root, hid, island=None, islands=None, steward=None, budget=None):
     """The brief for the next attempt built on `hid`. Byte-stable: no timestamps, every list
     order defined, every number carried as the address it came from.
 
@@ -7459,7 +7512,11 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
     opened. Absent, the plan's own list, byte-identical to 05.2.
 
     `steward` (05.3) is the steward's standing guidance, rendered in its OWN labelled section
-    so a worker can see who said what. Absent or empty, the section says so."""
+    so a worker can see who said what. Absent or empty, the section says so.
+
+    `budget` is the RUN's own `{used, total}` for attempts, straight out of `state.json`.
+    Absent — `crux auto brief` typed by hand — the attempt count falls back to the vault walk
+    it always used. See the comment at the count itself for what that walk gets wrong."""
     v = Vault(root)
     n = v.get(hid)
     # The type check comes FIRST. Plan discovery walks ancestors and excludes the node itself,
@@ -7585,9 +7642,22 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
                           "best": {"id": ob["id"], "claim": claim_of(ob["id"]),
                                    "score": score_or_none(ob["id"])}})
 
-    used = sum(1 for nd in v.nodes.values()
-               if nd.type == "idea" and any(m.id == anchor for m in ancestor_chain(v, nd)))
-    total = plan["fm"].get("budget_attempts")
+    # THE RUN's counter, not the vault's. Counting every `idea` under the anchor counts the
+    # baseline and every attempt every EARLIER run left behind, so a fresh run told its first
+    # worker "16 of 30 used, 14 remaining" while its own `state.json` read `0 of 30` — wrong
+    # from the first attempt and further wrong after every restart. The driver holds the only
+    # honest answer, which is the same number `auto_stop` reads, so a worker and the stop
+    # condition can no longer disagree about how much run is left.
+    #
+    # The vault count survives as the fallback for `crux auto brief` run BY HAND, where there
+    # is no driver to ask. That path reports on a run rather than steering one.
+    if budget:
+        used = int(budget.get("used") or 0)
+        total = budget.get("total")
+    else:
+        used = sum(1 for nd in v.nodes.values()
+                   if nd.type == "idea" and any(m.id == anchor for m in ancestor_chain(v, nd)))
+        total = plan["fm"].get("budget_attempts")
 
     payload = {
         "engine_version": ENGINE_VERSION, "mode": "auto", "plan": plan["path"],
@@ -7632,7 +7702,8 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
         "schema": {"keys": list(AUTO_PROPOSAL_KEYS),
                    "control_keys": list(AUTO_CONTROL_KEYS),
                    "ops": list(AUTO_COMPARISON_OPS),
-                   "claim_words": PROSE_CAP},
+                   "claim_words": PROSE_CAP,
+                   "claim_target": list(AUTO_CLAIM_TARGET)},
         "cut": cut,
     }
 
@@ -7919,10 +7990,9 @@ def auto_brief_text(payload):
             f"away after the driver has read it.", "",
             f"Your own directory for anything bigger than a commit is `$CRUX_WORKSPACE`.",
             f"`$CRUX_WORKTREE` is the checkout; `$CRUX_PROPOSAL` is the file named below.",
-            f"Other attempts are running beside you and share {h.get('shared')}, so write",
-            f"under those ONLY inside `$CRUX_WORKSPACE`. Touching another attempt's files",
-            f"there voids yours, and unlike a mis-shaped proposal that one cannot be repaired.",
-            "",
+            f"Other attempts are running beside you and share {h.get('shared')}. Your own",
+            f"workspace under any of those is yours; another attempt's files there are not,",
+            f"and touching them voids your attempt.", "",
             f"The driver — not you — scores your commit by running, in the checkout:", "",
             f"    {h.get('scorer')}", "",
             f"Run that yourself to see where you stand. It is also the interpreter and the",
@@ -7933,10 +8003,17 @@ def auto_brief_text(payload):
             f"{h.get('frozen')}: a commit that does voids the attempt outright.", ""]
 
     sch = p.get("schema") or {}
+    tgt = list(sch.get("claim_target") or AUTO_CLAIM_TARGET)
     out += ["## Output", "",
             f"Write ONE JSON object to `$CRUX_PROPOSAL` with exactly these keys:", "",
-            f"- `claim`: what you changed and why you expected it to help, at most "
-            f"{sch.get('claim_words')} words.",
+            f"- `claim`: what you changed and why you expected it to help. HARD LIMIT "
+            f"{sch.get('claim_words')} words —",
+            f"  a claim over it costs the whole attempt, after all the work is done, and no",
+            f"  retry gets that work back. Aim at {tgt[0]}–{tgt[1]} words and you will never",
+            f"  be near it. Put NO tables, NO per-case or per-country numbers, NO ablation",
+            f"  sweeps and NO code in there: the driver reads every number from the scorer and",
+            f"  not one from this file, so detail here buys nothing and can cost everything.",
+            f"  What changed, and why you thought it would help. That is all it is for.",
             f"- `controls`: a list — possibly empty — of "
             f"{{{', '.join(f'`{k}`' for k in sch.get('control_keys') or [])}}} objects.", "",
             f"Every `text` must BEGIN with a metric comparison — `<key.path> <op> <number>`,",
@@ -7949,10 +8026,12 @@ def auto_brief_text(payload):
             f"     \"fails_if\": \"the value moves with the seed rather than with the change\"}}",
             "",
             f"A control that is prose alone is DROPPED, not refused, and so is a key outside",
-            f"the two above — the attempt is still scored and still gets a verdict. The one",
-            f"thing you cannot leave out is `claim`: an attempt that reports no hypothesis has",
-            f"nothing to grade. Do not name a verdict and do not tag a control with a kind;",
-            f"both are the driver's.", ""]
+            f"the two above — the attempt is still scored and still gets a verdict. Your",
+            f"commit is measured either way; what a missing or over-cap `claim` costs is the",
+            f"VERDICT, because a verdict is a judgment about a hypothesis and an attempt that",
+            f"stated none has nothing to judge. The work survives; the answer does not.",
+            f"Do not name a verdict and do not tag a control with a kind; both are the",
+            f"driver's.", ""]
 
     b = (p.get("budget") or {}).get("attempts") or {}
     out += ["## Budget", "",

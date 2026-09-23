@@ -1598,7 +1598,10 @@ def _start_attempt(ctx, island):
         # attempt on an Explore island builds on the baseline, which sits under the anchor
         w["brief"] = E.auto_brief_text(
             E.auto_brief(root, parent, island=island, islands=list(st["islands"]),
-                         steward=((st.get("steward") or {}).get("guidance") or [])))
+                         steward=((st.get("steward") or {}).get("guidance") or []),
+                         # the run's own counter — the same one `auto_stop` reads, so the
+                         # worker and the stop condition cannot disagree about what is left
+                         budget=st["budget"]["attempts"]))
     except E.CruxError as e:
         _abandon(ctx, hid, "brief")
         _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -1649,9 +1652,67 @@ def _worker_try(ctx, hid):
     _record(ctx, "worker-started", {"attempt": hid, "pid": p.pid, "try": fl["worker_tries"]})
 
 
+def _rescue_commit(ctx, hid):
+    """Commit what the worker left uncommitted in its own worktree, on its behalf. The new
+    head, or None when there was nothing to rescue or the rescue would preserve a cheat.
+
+    A worker that does the work and exits 0 without committing used to lose ALL of it: the
+    attempt failed `no-commit`, retention removed the worktree `--force`, and the changes were
+    gone — while the retention rule that permits the removal reasons that "the commit it held
+    is already in a ref", which is exactly the thing that is not true here. Committing is
+    bookkeeping, not science, and the brief now says so in as many words; where the engine can
+    do the bookkeeping itself rather than hope, it does.
+
+    The two integrity checks are re-run on what is about to be committed, and a rescue that
+    would trip either is REFUSED rather than recorded. A worker that both forgot to commit and
+    touched a frozen path is a double fault, and the safe direction is not to launder it into
+    a scorable commit.
+
+    Built out of PLUMBING — `write-tree`, `commit-tree`, `update-ref` — and never `git
+    commit`. The driver is held to a list of git verbs it may not run (see the purity section
+    of the suite) and the porcelain ones are on it, because a driver that can `commit`,
+    `checkout` or `reset` can rewrite a history it is only supposed to read. None of these
+    three touches a file in the working tree: they write an object and move a detached HEAD,
+    which is the same thing `record_attempt` already does one step later."""
+    root, plan, qid = ctx["root"], ctx["plan"], ctx["qid"]
+    w, fl = _wk(ctx, hid), _fl(ctx, hid)
+    wt = w.get("wt")
+    if w.get("recorded") or not wt or not os.path.isdir(wt):
+        return None
+    if not fl.get("from") or rev_parse(wt, "HEAD") != fl["from"]:
+        return None                      # it committed after all; there is nothing to rescue
+    try:
+        if not _git(wt, "status", "--porcelain"):
+            return None                  # it changed nothing; there is nothing to preserve
+        _git(wt, "add", "-A")
+        tree = _git(wt, "write-tree")
+        head = _git(wt, "commit-tree", tree, "-p", fl["from"], "-m",
+                    f"crux autopilot: work rescued from attempt {hid}, which exited without "
+                    f"recording it")
+        _git(wt, "update-ref", "HEAD", head)
+    except E.CruxError:
+        return None                      # a rescue that cannot happen is not a run-ending fault
+    if head is None or head == fl.get("from"):
+        return None
+    if frozen_violations(root, plan, fl["from"], head):
+        return None
+    if E.auto_manifest_violations(recheck_manifest(root, plan, hid),
+                                  plan["writable"] or [""],
+                                  list(reservations(root, qid))):
+        return None
+    w["head"] = head
+    return head
+
+
 def _fail(ctx, hid, reason, detail):
     """A failure that is the MACHINE's: retried while `retries` and the call budget allow, and
-    otherwise carried into the close as the finding that explains an `invalid-run`."""
+    otherwise carried into the close as the finding that explains an `invalid-run`.
+
+    On the LAST try, whatever the worker left on disk is committed on its behalf before the
+    attempt is carried into the close — see `_rescue_commit`. The failure still stands and the
+    attempt still closes `invalid-run` when it named no hypothesis; what changes is that the
+    program and its number survive, which is the whole of "preserve and measure everything,
+    grade only what carries a claim"."""
     plan, st = ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     _record(ctx, "worker-failed", {"attempt": hid, "reason": reason, "detail": detail,
@@ -1668,6 +1729,10 @@ def _fail(ctx, hid, reason, detail):
         _record(ctx, "retry", {"attempt": hid, "step": "worker",
                                "try": fl["worker_tries"] + 1, "reason": reason})
         return _worker_try(ctx, hid)
+    # The last try is over, so whatever is on disk is all there will ever be. Rescue it BEFORE
+    # the attempt is carried into the close, because `_step_retire` removes the worktree under
+    # every retention setting and takes an uncommitted program with it.
+    _rescue_commit(ctx, hid)
     fl["failure"] = f"{reason}: {detail}"
     fl["phase"] = "committed"
     w["reason"], w["exhausted"] = reason, True
@@ -1713,7 +1778,7 @@ def _worker_checks(ctx, hid, head):
         return _violate(ctx, hid, "frozen", paths,
                         f"the commit touches frozen path(s): {', '.join(paths)}")
     paths = E.auto_manifest_violations(recheck_manifest(root, plan, hid),
-                                       (plan["writable"] or [""])[0],
+                                       plan["writable"] or [""],
                                        list(reservations(root, qid)))
     if paths:
         return _violate(ctx, hid, "manifest",
@@ -1736,6 +1801,62 @@ def _worker_checks(ctx, hid, head):
 _FINISH_STEPS = ("record", "file", "score", "close", "post")
 
 
+_UNSCORABLE_KINDS = ("frozen", "manifest", "filing")
+
+
+def _integrity_failed(fl):
+    """Is this a failure whose commit must NOT be measured?
+
+    `frozen` and `manifest` are integrity: the commit exists, but a number taken from it would
+    be a reward for touching frozen data or for writing into ground another attempt shares.
+
+    `filing` is the third and is not integrity — it is a refusal from the engine part-way
+    through the three acts that write the node, so the node is in a state no verdict is a
+    reading of, and the run is already aborting behind it. Measuring it would spend a scorer
+    run to decorate a record nobody will trust.
+
+    Read off `fl["failure"]`, which `_violate` and `_step_file` write as `"<kind>: <detail>"`
+    and which lives in `state.json` — so a resumed attempt reaches the same answer as a fresh
+    one even though the side-table that held the kind died with the driver. That is the whole
+    reason it is read from here and not from `_wk`."""
+    f = fl.get("failure") or ""
+    return any(f.startswith(k + ": ") for k in _UNSCORABLE_KINDS)
+
+
+def _scorable(ctx, hid):
+    """May this attempt's commit be scored?
+
+    The rule, and it is one rule for both halves of the run: PRESERVE AND MEASURE EVERYTHING,
+    GRADE ONLY WHAT CARRIES A CLAIM. A commit exists and it passed both integrity checks, so
+    it gets measured — whatever the worker's REPORT looked like. A faulty report is not a
+    reason to throw away a measurement that was already taken; that is `3751491`'s argument
+    one step later, and it used to cost an attempt its number for a claim one word over a cap.
+
+    The two exclusions are integrity, not form, and they are why this is not simply "is there
+    a commit". An attempt that touched a frozen path or wrote into ground another attempt
+    shares has a commit whose number would be a reward for the cheat, so it is never scored.
+
+    Keyed on the ref rather than on the worktree: the ref is the commit of record, it survives
+    the worktree being thrown away, and it is what makes this answer the same before and after
+    a crash."""
+    if _integrity_failed(_fl(ctx, hid)):
+        return False
+    return rev_parse(ctx["repo"], attempt_ref(ctx["qid"], hid)) is not None
+
+
+def _no_claim(ctx, hid):
+    """Did this attempt report a hypothesis at all?
+
+    Asked of the NODE, not of the driver's side-table. `auto_proposal` hands back a `claim`
+    only when there is a usable one, and `_step_file` writes either that claim or the
+    AUTO_NO_CLAIM placeholder — so the node carries the answer for exactly the four faults
+    that leave nothing to grade (missing, unparseable, absent, over-cap) and for the attempts
+    that never produced a proposal at all. The side-table would answer the same for a FRESH
+    attempt and wrongly for a resumed one, because it is rebuilt from disk and holds no
+    proposal for a worker whose driver has died."""
+    return E.auto_is_no_claim(ctx["root"], hid)
+
+
 def _finish(ctx, hid, stage="record"):
     """Everything after the worker, entered at whichever step the evidence on disk says is
     next. One path, so a resumed attempt and a fresh one cannot diverge."""
@@ -1746,7 +1867,7 @@ def _finish(ctx, hid, stage="record"):
         _step_record(ctx, hid)
     if k <= 1:
         _step_file(ctx, hid)
-    if k <= 2 and fl["failure"] is None:
+    if k <= 2 and _scorable(ctx, hid):
         _step_score(ctx, hid)
     metrics = E.load_metrics(root, hid)
     value = _address_value(plan, metrics, hid)
@@ -1848,7 +1969,12 @@ def _step_file(ctx, hid):
 def _step_score(ctx, hid):
     """S8. The scorer, retried while it is the MACHINE that failed. A scorer whose output
     parses but whose objective does not resolve is NOT retried: the document is on disk, and
-    the ticks decide from there."""
+    the ticks decide from there.
+
+    Reached now with a failure ALREADY set — an attempt whose report was faulty is still
+    measured — so the first failure is the one kept. It is the one that explains the close,
+    and overwriting "the claim ran to 412 words" with a scorer's message would leave the
+    findings describing the wrong fault."""
     root, plan = ctx["root"], ctx["plan"]
     fl = _fl(ctx, hid)
     fl["phase"] = "scored"
@@ -1863,7 +1989,8 @@ def _step_score(ctx, hid):
                 _record(ctx, "retry", {"attempt": hid, "step": "scorer",
                                        "try": fl["scorer_tries"] + 1, "reason": e.check})
                 continue
-            fl["failure"] = f"{e.check}: {e}"
+            if fl["failure"] is None:
+                fl["failure"] = f"{e.check}: {e}"
             if e.check in E.AUTO_SCORER_RETRY_CHECKS:
                 _wk(ctx, hid)["exhausted"] = True
                 _wk(ctx, hid)["reason"] = e.check
@@ -1977,7 +2104,12 @@ def _step_close(ctx, hid, metrics, value):
     Every closer failure closes the attempt on the ENGINE's own vector, with the fixed-template
     findings and report, and is deliberately NOT `invalid-run` for that reason alone: the run
     happened and the scorer's document is on disk, and a reporting agent's flakiness must not
-    be able to manufacture a streak of invalid runs that trips the `abort` stop."""
+    be able to manufacture a streak of invalid runs that trips the `abort` stop.
+
+    An attempt that reported NO CLAIM is the other half of that rule and cuts the other way.
+    It is measured like any other — the number is on the ledger and the program is at its ref
+    — but the fact that it stated no hypothesis is reported to `cmd_close`, which withholds
+    the reading of the vector. The driver names the fact; the engine still names the verdict."""
     root, plan, st = ctx["root"], ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     fl["phase"] = "closed"
@@ -2002,7 +2134,7 @@ def _step_close(ctx, hid, metrics, value):
     def act():
         _step_report(ctx, hid, report)
         out = E.cmd_close(root, hid, metric=repr(value) if value is not None else None,
-                          findings=findings)
+                          findings=findings, no_claim=_no_claim(ctx, hid))
         tid = None
         if w.get("exhausted"):
             # an attempt that burned every retry is an exception, and an exception belongs in
@@ -2202,7 +2334,13 @@ def _resume_one(ctx, hid):
             return _finish(ctx, hid, "post")                            # R1
         if E.load_metrics(root, hid) is not None:
             return _finish(ctx, hid, "close")                           # R2
-        return _finish(ctx, hid, "close" if fl.get("failure") else "score")   # R3
+        # R3. It enters at `score` unconditionally now, and `_finish`'s own `_scorable` gate
+        # decides. It used to branch on `fl["failure"]`, which was right only while the fresh
+        # path skipped scoring on any failure at all; now that the fresh path measures a
+        # commit whose REPORT was faulty, a resumed attempt branching the old way would be
+        # graded differently from an identical fresh one — and one path for both is the
+        # property `_finish` exists to hold. One rule, read from `state.json`, in both places.
+        return _finish(ctx, hid, "score")                              # R3
     head = rev_parse(repo, attempt_ref(qid, hid))
     if head is not None:                                                # R4
         w["stage"] = "file"
