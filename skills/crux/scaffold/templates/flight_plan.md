@@ -19,6 +19,8 @@ frozen: score.py, data/
 writable: work/, results/
 repo:
 agent: claude -p "{brief}"
+model:
+effort:
 agent_failover:
 closer: true
 agent_cooldown: 1800

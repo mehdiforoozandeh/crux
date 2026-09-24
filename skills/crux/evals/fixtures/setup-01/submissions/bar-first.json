@@ -1,7 +1,7 @@
 {
  "fixture": "setup-01",
  "agent": "crux-autopilot",
- "agent_sha": "5a0bf1f85100b172d194dcf1045bf84e9ccbf175360a48f5183c86959574bd0e",
+ "agent_sha": "d4c1b606f24f703ec0601729b35343567a221874b6d7829dfae87ee8fefb0025",
  "_note": "CANNED 2026-09-19 — the failure case: the proposal picked the number first and wrote the check around it afterwards. The resulting plan still lints clean, so the four structural rows are all found — and the one row about reading the address off a check written before it is missed, on every one of the k=5 runs.",
  "runs": [
   {
