@@ -1,0 +1,76 @@
+name: clone-count
+
+# GitHub keeps clone counts for 14 days and shows them only to admins. This adds each day to
+# a running log on the `traffic` branch, which the README badge reads. It never checks the
+# repo out: a checkout is itself a clone, and it would count itself.
+#
+# Needs a `TRAFFIC_TOKEN` secret: a fine-grained token on this repo with
+# "Administration: read" (the traffic API refuses `github.token`).
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the last 14 days to the log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TRAFFIC_TOKEN" ]; then
+            echo "::error::TRAFFIC_TOKEN secret is not set"; exit 1
+          fi
+
+          # {"YYYY-MM-DD": count}
+          GH_TOKEN="$TRAFFIC_TOKEN" gh api "repos/$REPO/traffic/clones" \
+            --jq '[.clones[] | {key: .timestamp[0:10], value: .count}] | from_entries' > clones.json
+          since=$(jq -r 'keys | min // empty' clones.json)
+          [ -n "$since" ] || { echo "no traffic yet"; exit 0; }
+
+          # CI checkouts are clones too (selftest alone is 8 per push); count them per day so
+          # the badge can leave them out. {"YYYY-MM-DD": n}
+          since_minus_1=$(date -u -d "$since - 1 day" +%F)
+          for id in $(gh api "repos/$REPO/actions/runs?created=>=$since_minus_1&per_page=100" \
+                        --paginate --jq '.workflow_runs[].id'); do
+            gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" --paginate \
+              --jq '.jobs[] | select(any(.steps[]?; .name | test("checkout"; "i"))) | .started_at[0:10]'
+          done | jq -R . | jq -s 'group_by(.) | map({key: .[0], value: length}) | from_entries' > ci.json
+
+          # The branch is created once, holding an empty log, so on every later run a failed
+          # read fails the job instead of overwriting the history with 14 days.
+          if ! gh api "repos/$REPO/branches/traffic" --silent 2>/dev/null; then
+            tree=$(jq -n '{tree: [{path: "clones.json", mode: "100644", type: "blob",
+                                   content: "{\"total\": 0, \"days\": {}}\n"}]}' \
+                   | gh api "repos/$REPO/git/trees" --input - --jq .sha)
+            commit=$(jq -n --arg t "$tree" '{message: "start the clone log", tree: $t, parents: []}' \
+                     | gh api "repos/$REPO/git/commits" --input - --jq .sha)
+            jq -n --arg s "$commit" '{ref: "refs/heads/traffic", sha: $s}' \
+              | gh api "repos/$REPO/git/refs" --input - --silent
+          fi
+
+          gh api "repos/$REPO/contents/clones.json?ref=traffic" > old.json
+          jq -r .content old.json | base64 -d > log.json
+
+          # Days in the window replace what the log had (today's count is partial until
+          # tomorrow); days older than the window are kept as they were.
+          jq --slurpfile new clones.json --slurpfile ci ci.json --arg now "$(date -u +%FT%TZ)" '
+            .days += ($new[0] | with_entries(.value = {clones: .value, ci: ($ci[0][.key] // 0)}))
+            | .total = ([.days[] | [.clones - .ci, 0] | max] | add // 0)
+            | .updated = $now
+          ' log.json > merged.json
+          cat merged.json
+
+          jq -n --arg c "$(base64 -w0 merged.json)" --arg sha "$(jq -r .sha old.json)" \
+                --arg m "clones: $(jq .total merged.json)" \
+            '{message: $m, content: $c, sha: $sha, branch: "traffic"}' \
+            | gh api -X PUT "repos/$REPO/contents/clones.json" --input - --silent
