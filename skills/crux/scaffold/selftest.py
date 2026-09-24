@@ -12149,6 +12149,20 @@ def run_auto_stops():
                   and _loop_stop(m)["reason"] == "budget"
                   and _loop_stop(m)["axis"] == "attempts"
                   and len(_ev(m, "island-best")) == 1)))
+        # The missed confirmation is a fact about the program, so it goes where a reader of the
+        # tree looks: the node's findings. The verdict stays the checks' — only the note is new.
+        mfind = {e["attempt"]: _auto_val(lambda h=e["attempt"]: E._section(
+            E.Vault(mroot).get(h)["body"], "Findings"), "") or "" for e in mconf}
+        wfind = _auto_val(lambda: E._section(E.Vault(root).get(w)["body"], "Findings"), "") or ""
+        check("astop: a missed confirmation is written once into the attempt's findings with its seeds and values; a passed one adds nothing",
+              _auto_ok(lambda: (
+                  len(mconf) == 2
+                  and all(mfind[e["attempt"]].count(E.AUTO_CONFIRM_MISSED) == 1
+                          and "seeds 1, 2" in mfind[e["attempt"]]
+                          and all(f"{v:g}" in mfind[e["attempt"]] for v in e["values"])
+                          and E.Vault(mroot).get(e["attempt"])["fm"]["verdict"] == "supported"
+                          for e in mconf)
+                  and E.AUTO_CONFIRM_MISSED not in wfind)))
 
         axes = {}
         for name, field, axis in (("budget-attempts", "budget_attempts", "attempts"),

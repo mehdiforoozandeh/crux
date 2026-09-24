@@ -17,6 +17,9 @@ verdict/roll-up/view logic changes.
   void a measurement; a provider outage or session limit is not a worker failure; the brief's
   budget line reads the run, not the vault; an agent probe exiting 126 or 127 is unreachable;
   and a scored attempt with no ref is refused before the run writes anything.
+- **A missed confirmation is written into the attempt's findings** (spec 05; engine **3.4**,
+  unchanged; no vault-format change). The verdict still reads off the seed-0 checks, but the
+  node now says, once, which re-scored seeds missed the bar and by what values.
 
 ## [0.8.0] - 2026-09-21
 
