@@ -71,6 +71,12 @@ nav.solid{border-bottom-color:var(--rule)}
 nav .sp{flex:1}
 nav a.nl{border:0; color:var(--dim); font-size:14.5px}
 nav a.nl:hover{color:var(--gold)}
+/* the clone count, filled from the `traffic` branch log; stays hidden if the fetch fails.
+   No `display` here: it would override the [hidden] attribute. */
+nav a.dl{font:500 11.5px/1 var(--mono); padding:3px 7px; border:1px solid var(--rule);
+  border-radius:999px; color:var(--gold); white-space:nowrap}
+nav a.dl:hover{border-color:var(--gold)}
+@media (max-width:400px){ nav{gap:10px} nav a.dl{padding:3px 6px} }
 button.tt{border:0; background:none; color:var(--mute); cursor:pointer; padding:4px;
   width:22px; height:22px; display:grid; place-items:center; opacity:.55}
 button.tt:hover{color:var(--gold); opacity:1}
@@ -407,6 +413,7 @@ footer .quote{max-width:56ch; color:var(--mute); font-style:italic}
     <span class="wm">Crux</span>
   </a>
   <span class="sp"></span>
+  <a class="dl" id="clones" href="https://github.com/mehdiforoozandeh/crux" hidden></a>
   <a class="nl" href="#sixty">Install</a>
   <a class="nl" href="https://github.com/mehdiforoozandeh/crux">GitHub</a>
   <button class="tt" id="tt" aria-label="Switch colour theme" title="theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor" stroke="none"/></svg></button>
@@ -533,6 +540,16 @@ cd crux &amp;&amp; ./crux serve --dir skills/crux/examples/sortlab_vault</div>
   mark();
   var nav=document.getElementById('nav');
   addEventListener('scroll',function(){nav.classList.toggle('solid',scrollY>40);},{passive:true});
+  /* .github/workflows/clone-count.yml keeps this log; CI's own checkouts are left out */
+  fetch('https://raw.githubusercontent.com/mehdiforoozandeh/crux/traffic/clones.json')
+    .then(function(res){ return res.json(); })
+    .then(function(d){
+      var n=d.total, el=document.getElementById('clones');
+      if(!(n>0)) return;
+      el.textContent=(n<1000 ? n : (n/1000).toFixed(n<10000 ? 1 : 0).replace(/\.0$/,'')+'k')+' downloads';
+      el.hidden=false;
+    })
+    .catch(function(){});
 })();
 [].forEach.call(document.querySelectorAll('.copy'),function(btn){
   btn.onclick=function(){
