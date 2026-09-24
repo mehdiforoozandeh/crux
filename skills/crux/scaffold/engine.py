@@ -6734,6 +6734,37 @@ def auto_findings(address, value, ticks, failure=None):
     return " ".join(parts).replace("\\", "/")
 
 
+AUTO_CONFIRM_MISSED = "Confirmation missed:"
+
+
+def cmd_auto_note_confirm_missed(root, hid, address, bar, direction, seeds, values):
+    """Append the missed confirmation to a closed attempt's findings, once.
+
+    The verdict is read at seed 0 off the pre-registered checks and does not move — a missed
+    seed is a failed confirmation, never a changed verdict. But without this line the tree
+    reads `supported` for a crossing that did not hold at the seeds the run re-scored it at,
+    and the only record of that was the run's own ledger. Idempotent, so a resumed driver that
+    re-runs the confirmation writes the line once."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n is None or n.type != "idea":
+        raise CruxError(f"auto confirm note applies to a hypothesis (got '{hid}')")
+    if AUTO_CONFIRM_MISSED in _section(n["body"], "Findings"):
+        return False
+    op = ">=" if direction == "max" else "<="
+    shown = ", ".join("n/a" if x is None else f"{x:g}" for x in values)
+    note = (f"{AUTO_CONFIRM_MISSED} re-scored at seeds {', '.join(str(s) for s in seeds)}, "
+            f"{address} = {shown}, where every seed had to reach {op} {bar:g}. The checks "
+            f"above are read at seed 0 and stand; the run did not stop on this attempt.")
+    body = re.sub(r"(## Findings\n\n)(.*?)(\n*)(?=\n## |\Z)",
+                  lambda m: f"{m.group(1)}{m.group(2)}\n\n{note}{m.group(3)}",
+                  n["body"], count=1, flags=re.S)
+    if body == n["body"]:
+        raise CruxError(f"auto confirm note: '{hid}' has no ## Findings section to append to")
+    write_if_changed(n["path"], render_doc(n["fm"], body))
+    return True
+
+
 def auto_crosses(value, bar, direction):
     """Did this value cross the plan's bar, inclusive, by the plan's direction?"""
     return value is not None and (value >= bar if direction == "max" else value <= bar)

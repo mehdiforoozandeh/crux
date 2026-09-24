@@ -2262,8 +2262,12 @@ def _step_confirm(ctx, hid, verdict, value):
         values.append(v)
     passed = bool(values) and all(E.auto_crosses(v, plan["bar"], plan["direction"])
                                   for v in values)
+    # a miss is also written where a reader of the tree looks, or the node reads `supported`
+    # for a crossing only the ledger knows did not hold
+    note = None if passed else (lambda: E.cmd_auto_note_confirm_missed(
+        root, hid, plan["address"], plan["bar"], plan["direction"], seeds, values))
     _record(ctx, "confirm", {"attempt": hid, "seeds": seeds, "values": values,
-                             "passed": passed})
+                             "passed": passed}, work=note)
     if passed:
         st["confirmed"] = hid
 
