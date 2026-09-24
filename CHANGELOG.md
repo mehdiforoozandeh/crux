@@ -17,6 +17,20 @@ verdict/roll-up/view logic changes.
   void a measurement; a provider outage or session limit is not a worker failure; the brief's
   budget line reads the run, not the vault; an agent probe exiting 126 or 127 is unreachable;
   and a scored attempt with no ref is refused before the run writes anything.
+- **A missed confirmation is written into the attempt's findings** (spec 05; engine **3.4**,
+  unchanged; no vault-format change). The verdict still reads off the seed-0 checks, but the
+  node now says, once, which re-scored seeds missed the bar and by what values.
+
+### Changed
+
+- **The flight plan names the workers' `model` and `effort`, and the engine enforces them**
+  (spec 05; engine **3.4 → 3.5**). Both fields are required; `effort` is one of
+  `low, medium, high, xhigh, max`. Every agent command gets `{model}`/`{effort}` substituted,
+  a `claude` command that names neither gets `--model`/`--effort` appended, and one that
+  hard-codes either is refused. The setup conversation asks for both and never defaults them.
+  **Migration:** an older plan is refused by `auto check`/`auto run` naming the two missing
+  fields; add them and re-sign. `status`, `validate` and `review` are unaffected.
+- **The confirmation seeds are scored at the same time**, not one after another.
 
 ## [0.8.0] - 2026-09-21
 

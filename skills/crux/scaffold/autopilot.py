@@ -43,6 +43,7 @@ on any branch, and any write to `main`. Nothing below checks out a branch, merge
 on the PI's behalf; vault writes stay uncommitted.
 """
 import os, sys, json, time, shlex, signal, socket, subprocess, shutil, tempfile, contextlib
+import concurrent.futures
 
 import engine as E
 
@@ -2247,23 +2248,30 @@ def _step_confirm(ctx, hid, verdict, value):
     root, plan, st = ctx["root"], ctx["plan"], ctx["state"]
     if verdict != "supported" or not E.auto_crosses(value, plan["bar"], plan["direction"]):
         return
-    seeds, values = [], []
-    for s in range(1, int(plan["replicates"]) + 1):
+    def one(s):
         where = f"{E.RESULTS_DIR}/{hid}/confirm/{s}/{E.METRICS_FILE}"
         p = os.path.join(root, *where.split("/"))
-        v = None
         try:
             obj = json.loads(E.read(p)) if os.path.isfile(p) \
                 else score_attempt(root, plan, hid, seed=s, dest=where)
-            v = E.metrics_value(obj, plan["address"], where)
+            return E.metrics_value(obj, plan["address"], where)
         except (ValueError, E.CruxError):
-            v = None
-        seeds.append(s)
-        values.append(v)
+            return None
+
+    # The seeds are independent re-scorings of one commit, each writing its own directory, so
+    # they run at the same time: one after another, they added a whole scorer run of wall
+    # clock per seed to every attempt that crossed the bar. `map` keeps them in seed order.
+    seeds = list(range(1, int(plan["replicates"]) + 1))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(len(seeds), 1)) as pool:
+        values = list(pool.map(one, seeds))
     passed = bool(values) and all(E.auto_crosses(v, plan["bar"], plan["direction"])
                                   for v in values)
+    # a miss is also written where a reader of the tree looks, or the node reads `supported`
+    # for a crossing only the ledger knows did not hold
+    note = None if passed else (lambda: E.cmd_auto_note_confirm_missed(
+        root, hid, plan["address"], plan["bar"], plan["direction"], seeds, values))
     _record(ctx, "confirm", {"attempt": hid, "seeds": seeds, "values": values,
-                             "passed": passed})
+                             "passed": passed}, work=note)
     if passed:
         st["confirmed"] = hid
 

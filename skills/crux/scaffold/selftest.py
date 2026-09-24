@@ -8257,7 +8257,8 @@ def _plan_fm(anchor, baseline, islands):
             ("parallel_total", "1"), ("parallel_island", "1"), ("retries", "2"),
             ("retention", "failed"), ("scorer", "python score.py"), ("run", "python train.py"),
             ("frozen", "score.py, data/"), ("writable", "work/, results/"),
-            ("agent", 'python3 "{brief}"'), ("agent_failover", ""), ("steward", "false"),
+            ("agent", 'python3 "{brief}"'), ("agent_failover", ""),
+            ("model", "fixture-model"), ("effort", "medium"), ("steward", "false"),
             ("steward_every", "10"), ("stall_attempts", "8"), ("abort_invalid_runs", "3"),
             ("replicates", "3 seeds"), ("rule", "all"), ("rule_m", ""),
             ("created", "2026-09-16T00:00:00"), ("updated", "2026-09-16T00:00:00")]
@@ -8385,7 +8386,7 @@ def run_flight_plan():
 
         # ------------------------------------------------------- criterion 1: missing fields
         req = _auto_val(lambda: list(E.AUTO_REQUIRED_FIELDS), [])
-        named = bool(req) and len(req) == 22
+        named = bool(req) and len(req) == 24 and {"model", "effort"} <= set(req)
         for name in req:
             if (f"flight plan missing required field: {name}"
                     not in _plan_msgs(root, _plan_text(qa, hb, islands=qi, drop=(name,)), rel)):
@@ -8396,6 +8397,37 @@ def run_flight_plan():
               in _plan_msgs(root, _plan_text(qa, hb, islands=qi, scorer=""), rel)
               and "flight plan missing required field: steward"
               not in _plan_msgs(root, _plan_text(qa, hb, islands=qi), rel))
+
+        # ---------------------------------- the worker's model and effort are the plan's, always
+        # A run once went a whole night on the CLI's default model and effort because the plan
+        # never said which, and the PI had asked for a specific pair in chat. The two fields are
+        # required, and they are the ONLY place a claude worker's model and effort are set.
+        bad_m = _plan_msgs(root, _plan_text(qa, hb, islands=qi, model="opus 5"), rel)
+        hard_m = _plan_msgs(root, _plan_text(qa, hb, islands=qi,
+                                             agent='claude -p --model sonnet "{brief}"'), rel)
+        hard_e = _plan_msgs(root, _plan_text(qa, hb, islands=qi,
+                                             agent_failover='claude -p --effort=high "{brief}"'),
+                            rel)
+        check("plan: an effort outside low/medium/high/xhigh/max and a model holding whitespace are refused, naming the value",
+              "flight plan field 'effort' must be one of low, medium, high, xhigh, max "
+              "(got 'meduim')"
+              in _plan_msgs(root, _plan_text(qa, hb, islands=qi, effort="meduim"), rel)
+              and any("flight plan field 'model'" in m and "'opus 5'" in m for m in bad_m))
+        check("plan: a claude command that hard-codes --model or --effort is refused — the plan's two fields are the one place they are set",
+              any("--model" in m and "{model}" in m for m in hard_m)
+              and any("--effort" in m and "{effort}" in m for m in hard_e))
+        cl = lambda agent, fo=(): _auto_val(lambda: E.auto_command_list(
+            {"agent": agent, "agent_failover": list(fo), "model": "opus", "effort": "medium"}), [])
+        check("plan: the command list carries the plan's model and effort — appended to a claude command, substituted into placeholders, and left alone otherwise",
+              cl('claude -p "{brief}"') == ['claude -p "{brief}" --model opus --effort medium']
+              and cl('claude -p --model {model} --effort {effort} "{brief}"')
+                  == ['claude -p --model opus --effort medium "{brief}"']
+              and cl('claude -p --model {model} "{brief}"')
+                  == ['claude -p --model opus "{brief}" --effort medium']
+              and cl('/usr/local/bin/claude -p "{brief}"',
+                     ['python3 a.py {model} {effort}', 'python3 b.py'])
+                  == ['/usr/local/bin/claude -p "{brief}" --model opus --effort medium',
+                      'python3 a.py opus medium', 'python3 b.py'])
         check("plan: a non-integer budget field is refused, naming the field and the value",
               "flight plan field 'budget_attempts' must be a non-negative integer (got 'many')"
               in _plan_msgs(root, _plan_text(qa, hb, islands=qi, budget_attempts="many"), rel))
@@ -10543,7 +10575,7 @@ def run_auto_purity():
         ap = os.path.join(HERE, "autopilot.py")
         auto = read(ap) if os.path.isfile(ap) else ""
         allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
-                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal",
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal", "concurrent",
                    "engine"}
         imports = [m.group(1).split(".")[0] for m in
                    re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
@@ -12107,10 +12139,28 @@ def run_auto_stops():
     try:
         A = _auto_mod()
         repo, root, qa, isl, hb, rel = _loop_fixture(x0=0)
-        ok = _loop_run("success-stop", root, qa, rel)
+        # every confirmation scoring is timed, and held long enough to see whether two overlap
+        spans, sorig = [], A.score_attempt
+
+        def timed(*a, **k):
+            t0 = time.monotonic()
+            try:
+                if k.get("dest"):
+                    time.sleep(0.5)
+                return sorig(*a, **k)
+            finally:
+                if k.get("dest"):
+                    spans.append((t0, time.monotonic()))
+        A.score_attempt = timed
+        try:
+            ok = _loop_run("success-stop", root, qa, rel)
+        finally:
+            A.score_attempt = sorig
         st = ok["state"] or {}
         w = (st.get("best") or {}).get("id")
         conf = _ev(ok, "confirm")
+        check("astop: the confirmation seeds are scored at the same time, not one after another",
+              len(spans) == 2 and max(s for s, _e in spans) < min(e for _s, e in spans))
         _, mroot, mqa, _, _, mrel = _loop_fixture(
             x0=2, agent="python3 agent.py control", budget_attempts="2",
             scorer="python3 score.py --miss-confirm")
@@ -12149,6 +12199,20 @@ def run_auto_stops():
                   and _loop_stop(m)["reason"] == "budget"
                   and _loop_stop(m)["axis"] == "attempts"
                   and len(_ev(m, "island-best")) == 1)))
+        # The missed confirmation is a fact about the program, so it goes where a reader of the
+        # tree looks: the node's findings. The verdict stays the checks' — only the note is new.
+        mfind = {e["attempt"]: _auto_val(lambda h=e["attempt"]: E._section(
+            E.Vault(mroot).get(h)["body"], "Findings"), "") or "" for e in mconf}
+        wfind = _auto_val(lambda: E._section(E.Vault(root).get(w)["body"], "Findings"), "") or ""
+        check("astop: a missed confirmation is written once into the attempt's findings with its seeds and values; a passed one adds nothing",
+              _auto_ok(lambda: (
+                  len(mconf) == 2
+                  and all(mfind[e["attempt"]].count(E.AUTO_CONFIRM_MISSED) == 1
+                          and "seeds 1, 2" in mfind[e["attempt"]]
+                          and all(f"{v:g}" in mfind[e["attempt"]] for v in e["values"])
+                          and E.Vault(mroot).get(e["attempt"])["fm"]["verdict"] == "supported"
+                          for e in mconf)
+                  and E.AUTO_CONFIRM_MISSED not in wfind)))
 
         axes = {}
         for name, field, axis in (("budget-attempts", "budget_attempts", "attempts"),
@@ -12410,7 +12474,7 @@ def run_auto_loop_purity():
               and bool(_LOOP_CLOSED)
               and all(v is not None and v == want for _, v, want in _LOOP_CLOSED))
         allowed = {"os", "sys", "re", "json", "time", "shlex", "socket", "subprocess", "shutil",
-                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal",
+                   "tempfile", "datetime", "contextlib", "errno", "stat", "ctypes", "signal", "concurrent",
                    "engine"}
         imports = [m.group(1).split(".")[0] for m in
                    re.finditer(r"^\s*(?:import|from)\s+([\w.]+)", auto, re.M)]
@@ -16185,9 +16249,10 @@ def run_auto_setup():
 
     # ---------------------------------------------------------------------- criterion 16
     # 05.5 shipped zero-bump; the pin is a tripwire that a later slice must move deliberately
-    # rather than drift into. Moved to 3.4 by spec 17.1, which adds a column to .sources.tsv.
-    check("setup: the engine version is the one the last format change set (3.4)",
-          E.ENGINE_VERSION == "3.4")
+    # rather than drift into. Moved to 3.4 by spec 17.1, which adds a column to .sources.tsv,
+    # and to 3.5 by the flight plan's two required worker fields, `model` and `effort`.
+    check("setup: the engine version is the one the last format change set (3.5)",
+          E.ENGINE_VERSION == "3.5")
 
 
 def _setup_written(root, qid, text, name="plan.md"):

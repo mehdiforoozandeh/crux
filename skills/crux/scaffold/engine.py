@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex, math
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.4"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "3.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -5793,13 +5793,19 @@ AUTO_LEDGER_FILE  = "ledger.jsonl"               # the two slices cannot drift. 
 AUTO_REQUIRED_FIELDS = ("anchor", "mode", "baseline", "island_cap", "budget_attempts",
                         "budget_hours", "budget_model_calls", "parallel_total",
                         "parallel_island", "retries", "retention", "scorer", "run",
-                        "frozen", "writable", "agent", "steward", "steward_every",
+                        "frozen", "writable", "agent", "model", "effort", "steward",
+                        "steward_every",
                         "stall_attempts", "abort_invalid_runs", "replicates", "rule")
 AUTO_INT_FIELDS      = ("island_cap", "budget_attempts", "budget_model_calls", "parallel_total",
                         "parallel_island", "retries", "steward_every", "stall_attempts",
                         "abort_invalid_runs")            # non-negative int
 AUTO_LIST_FIELDS     = ("islands", "frozen", "writable", "agent_failover")   # comma-separated
 AUTO_MODES           = ("climb", "explore")
+# The worker's model and effort are the PI's to choose in the setup conversation, and the
+# plan is the one place they are written: a run once spent a night on the CLI's defaults
+# because nothing carried the pair the PI had asked for. The effort levels are Claude Code's.
+AUTO_EFFORTS         = ("low", "medium", "high", "xhigh", "max")
+AUTO_AGENT_CLAUDE    = "claude"                  # the argv[0] basename the two fields bind
 # D2: Climb IS c_puct = 0. There is no separate greedy code path to drift away from the
 # explore one — the two modes are one formula at two settings of one constant.
 AUTO_C_PUCT          = {"climb": 0.0, "explore": 1.0}
@@ -6221,6 +6227,30 @@ def flight_plan_problems(root, plan, path=None):
             continue
         if not argv:
             add("agent-command", f"flight plan agent command {n} is empty")
+            continue
+        # 2i. A claude command takes its model and effort from the plan's two fields and from
+        # nowhere else, so a pair written into the command itself is refused: it would win
+        # over the fields silently, or be passed twice.
+        if os.path.basename(argv[0]) == AUTO_AGENT_CLAUDE:
+            for flag, ph in (("--model", "{model}"), ("--effort", "{effort}")):
+                for i, x in enumerate(argv):
+                    val = (x[len(flag) + 1:] if x.startswith(flag + "=")
+                           else argv[i + 1] if x == flag and i + 1 < len(argv) else None)
+                    if val is not None and val != ph:
+                        add("agent-command", f"flight plan agent command {n} sets {flag} "
+                                             f"itself ('{val}'): set the plan's "
+                                             f"'{flag[2:]}' field instead, and write "
+                                             f"{flag} {ph} or nothing at all")
+                        break
+
+    # 2j. the worker's model and effort
+    if present("effort") and fm.get("effort") not in AUTO_EFFORTS:
+        add("field-type", f"flight plan field 'effort' must be one of "
+                          f"{', '.join(AUTO_EFFORTS)} (got '{fm.get('effort')}')")
+    if present("model") and (not isinstance(fm.get("model"), str)
+                             or len(str(fm.get("model")).split()) != 1):
+        add("field-type", f"flight plan field 'model' must be one model name with no spaces "
+                          f"(got '{fm.get('model')}')")
 
     # 3. the mode
     mode = fm.get("mode")
@@ -6503,6 +6533,7 @@ def load_flight_plan(root, path):
     plan.update({"replicates": int(re.search(r"-?\d+", str(fm.get("replicates"))).group(0)),
                  "steward": bool(fm.get("steward")),
                  "agent": fm.get("agent"), "run": fm.get("run"),
+                 "model": str(fm.get("model")), "effort": str(fm.get("effort")),
                  "budget_attempts": int(fm.get("budget_attempts")),
                  "budget_hours": float(fm.get("budget_hours")),
                  "budget_model_calls": int(fm.get("budget_model_calls")),
@@ -6551,8 +6582,31 @@ def auto_command_list(plan):
     Nothing is dropped and nothing is validated — an entry that does not parse is still a row
     in `auto check`'s agents block, because "the second command is misspelled" is the finding,
     not a silence. Index 0 is the preference order's head, and every try starts there, so the
-    preferred command comes back by itself the moment its cooldown lapses."""
-    return [plan["agent"]] + list(plan.get("agent_failover") or [])
+    preferred command comes back by itself the moment its cooldown lapses.
+
+    Every command carries the plan's `model` and `effort`: `{model}` and `{effort}` are
+    substituted wherever they appear, and a `claude` command that names neither gets the flag
+    appended — `flight_plan_problems` has already refused one that sets its own. Substituted
+    HERE, before `{brief}`, so the brief — untrusted text a model wrote — is never re-scanned.
+    A plan with no pair (a fixture, a hand-built dict) passes its commands through unchanged."""
+    model, effort = plan.get("model"), plan.get("effort")
+    out = []
+    for c in [plan["agent"]] + list(plan.get("agent_failover") or []):
+        c = str(c)
+        try:
+            prog = os.path.basename((shlex.split(c) or [""])[0])
+        except ValueError:
+            out.append(c)                       # reported by 2h; passed through untouched
+            continue
+        for ph, flag, val in (("{model}", "--model", model), ("{effort}", "--effort", effort)):
+            if not val:
+                continue
+            if ph in c:
+                c = c.replace(ph, shlex.quote(str(val)))
+            elif prog == AUTO_AGENT_CLAUDE:
+                c = f"{c} {flag} {shlex.quote(str(val))}"
+        out.append(c)
+    return out
 
 
 def auto_agent_argv(command, agent, brief):
@@ -6732,6 +6786,37 @@ def auto_findings(address, value, ticks, failure=None):
     if failure:
         parts.append(f"Failure: {' '.join(str(failure).split())[:200]}.")
     return " ".join(parts).replace("\\", "/")
+
+
+AUTO_CONFIRM_MISSED = "Confirmation missed:"
+
+
+def cmd_auto_note_confirm_missed(root, hid, address, bar, direction, seeds, values):
+    """Append the missed confirmation to a closed attempt's findings, once.
+
+    The verdict is read at seed 0 off the pre-registered checks and does not move — a missed
+    seed is a failed confirmation, never a changed verdict. But without this line the tree
+    reads `supported` for a crossing that did not hold at the seeds the run re-scored it at,
+    and the only record of that was the run's own ledger. Idempotent, so a resumed driver that
+    re-runs the confirmation writes the line once."""
+    v = Vault(root)
+    n = v.get(hid)
+    if n is None or n.type != "idea":
+        raise CruxError(f"auto confirm note applies to a hypothesis (got '{hid}')")
+    if AUTO_CONFIRM_MISSED in _section(n["body"], "Findings"):
+        return False
+    op = ">=" if direction == "max" else "<="
+    shown = ", ".join("n/a" if x is None else f"{x:g}" for x in values)
+    note = (f"{AUTO_CONFIRM_MISSED} re-scored at seeds {', '.join(str(s) for s in seeds)}, "
+            f"{address} = {shown}, where every seed had to reach {op} {bar:g}. The checks "
+            f"above are read at seed 0 and stand; the run did not stop on this attempt.")
+    body = re.sub(r"(## Findings\n\n)(.*?)(\n*)(?=\n## |\Z)",
+                  lambda m: f"{m.group(1)}{m.group(2)}\n\n{note}{m.group(3)}",
+                  n["body"], count=1, flags=re.S)
+    if body == n["body"]:
+        raise CruxError(f"auto confirm note: '{hid}' has no ## Findings section to append to")
+    write_if_changed(n["path"], render_doc(n["fm"], body))
+    return True
 
 
 def auto_crosses(value, bar, direction):

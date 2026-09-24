@@ -38,7 +38,7 @@ answer already given, measured by a command, or defaulted and stated back in one
 | — | *derived* — the checks, their kinds, the combination rule, the control | `crux-verifiables`, against the approved null |
 | — | *derived* — the objective address | **read off** the discriminating check just written |
 | 3 | **ask** — which direction is better, and the bar | direction is the one thing that must never be guessed |
-| 4 | **ask** — the harness, in one turn: scorer command, run command, frozen paths, writable paths, budget ceiling | only the PI knows their repo |
+| 4 | **ask** — the harness, in one turn: scorer command, run command, frozen paths, writable paths, budget ceiling, and the workers' `model` and `effort` | only the PI knows their repo and their budget; model and effort set how long every attempt takes, so they are never defaulted — the engine refuses a plan without them |
 | 5 | **ask** — the PI's standing guidance: their priors, the analogies they see, the routes they rate, the dead ends | the one input the search cannot find for itself |
 | — | *measured* — the baseline, and the published rivals | the scorer is run; the literature is searched |
 | — | *defaulted* — the remaining slots | stated back in one line, not asked |
