@@ -9126,6 +9126,19 @@ def run_auto_brief():
                                                    if n.type == "idea")
               and pay.get("budget", {}).get("attempts", {}).get("used") == under
               and pay.get("budget", {}).get("attempts", {}).get("remaining") == 40 - under)
+        # …but the vault walk counts the baseline and everything EVERY earlier run left
+        # behind, so a fresh run told its first worker "16 of 30 used, 14 remaining" while its
+        # own state.json read "0 of 30". Wrong from the first attempt, and further wrong after
+        # every restart. The driver passes the run's own counter — the same number `auto_stop`
+        # reads — so a worker and the stop condition can no longer disagree.
+        rb = _auto_val(lambda: E.auto_brief(root, hp, budget={"used": 3, "total": 30}), {})
+        rt = _auto_val(lambda: E.auto_brief_text(rb), "")
+        check("abrief: the RUN's own attempt counter overrides the vault walk, and the vault walk stays the fallback for a hand-typed brief",
+              _auto_ok(lambda: (
+                  rb["budget"]["attempts"] == {"used": 3, "total": 30, "remaining": 27}
+                  and "attempts: 3 of 30 used, 27 remaining" in rt
+                  and under != 3                      # the walk really would have said else
+                  and pay["budget"]["attempts"]["used"] == under)))
         check("abrief: the rendering names the island, the bar and the current best",
               text.startswith(f"# Autopilot brief — next attempt on {qi}")
               and ids["rel"] in text
@@ -9134,6 +9147,37 @@ def run_auto_brief():
                                           "## Refuted attempts", "## Other islands",
                                           "## Inherited bar", "## Guidance", "## Budget"))
               and f"{ids['best']}#eval.loss" in text)
+        # The three facts a worker needs in order to SUCCEED rather than to choose. A run
+        # aborted after five invalid attempts for want of them on 2026-09-21: workers reached
+        # for an interpreter the plan never named, and wrote a twenty-key proposal where
+        # `auto_proposal` reads two. They used to arrive only if a human remembered `crux auto
+        # guide`, so this check is the guarantee that replaced the reminder.
+        check("abrief: the brief STATES the harness and the proposal schema, every run, with no guidance appended",
+              all(h in text for h in ("## Harness", "## Output"))
+              and pay.get("harness", {}).get("scorer") == "python score.py"
+              and "python score.py" in text
+              and "COMMIT your work" in text
+              and "authorized" in text
+              and "$CRUX_PROPOSAL" in text
+              and "$CRUX_WORKSPACE" in text
+              # the two integrity rules that CANNOT be repaired afterwards are stated, since
+              # stating them is the only thing the engine can do about them
+              and pay.get("harness", {}).get("shared") == "`work`, `results`"
+              and pay.get("harness", {}).get("frozen") == "`score.py`, `data`"
+              and "`work`, `results`" in text and "`score.py`, `data`" in text
+              and all(k in text for k in E.AUTO_PROPOSAL_KEYS)
+              and all(k in text for k in E.AUTO_CONTROL_KEYS)
+              and all(op in text for op in E.AUTO_COMPARISON_OPS)
+              and "<key.path> <op> <number>" in text
+              # The CAP, rendered from the constant so the brief can never drift from it. An
+              # attempt wrote 1126 words into its claim, then 737 on its one retry, and lost
+              # both — real work each time, and nothing in the brief had said a cap existed.
+              and f"HARD LIMIT {E.PROSE_CAP} words" in text
+              and f"{E.AUTO_CLAIM_TARGET[0]}–{E.AUTO_CLAIM_TARGET[1]} words" in text
+              and E.AUTO_CLAIM_TARGET[1] < E.PROSE_CAP
+              and "NO tables" in text and "NO code" in text
+              # and it does not come at the cost of the PI's own Guidance, which is separate
+              and "## Guidance" in text and "guidance number 11" in text)
         check("abrief: a plan is found on the nearest ancestor question of the attempt",
               _auto_val(lambda: E.auto_brief(root, ids["insp"][0]), {}).get("plan")
               == ids["rel"])
@@ -9396,11 +9440,27 @@ def _git(cwd, *args, check=True):
 
 # The scorer's whole contract in six lines: stdout is one JSON object, stderr is free text.
 # Each variant below breaks exactly one clause of it, so each failure name has a witness.
+# It READS the candidate's program, out of the working directory it was started in, and will
+# not score without it. A scorer that ignores the checkout and prints a constant is exactly the
+# defect `probe_scorer_responds` exists to catch — a thirty-attempt run was lost to one — so the
+# fixture that every `auto check` assertion below leans on must not itself be that scorer. The
+# value is still 0.80 on an intact checkout, which is what those assertions pin.
 SCORE_PY = '''import json, os, sys
+try:
+    with open("train.py", encoding="utf-8") as f:
+        src = f.read()
+except IOError:
+    sys.stderr.write("no train.py in the checkout I was started in\\n")
+    sys.exit(4)
 sys.stderr.write("scoring\\n")
-print(json.dumps({"eval": {"loss": {"value": 0.80}},
+print(json.dumps({"eval": {"loss": {"value": 0.80 if "train" in src else 0.50}},
                   "env": {"attempt": {"value": os.environ.get("CRUX_ATTEMPT", "")},
                           "workspace": {"value": os.environ.get("CRUX_WORKSPACE", "")}}}))
+'''
+# The 2026-09-21 defect, as a witness: it produces a number, the number resolves at the
+# objective, and it never once looks at the program it is supposed to be scoring.
+SCORE_CONST = '''import json
+print(json.dumps({"eval": {"loss": {"value": 0.80}}}))
 '''
 SCORE_EXIT = '''import sys
 sys.stderr.write("boom: the dataset is missing\\n")
@@ -9431,7 +9491,7 @@ sys.exit(1)
 SCORERS = (("score.py", SCORE_PY), ("score_exit.py", SCORE_EXIT), ("score_slow.py", SCORE_SLOW),
            ("score_text.py", SCORE_TEXT), ("score_two.py", SCORE_TWO), ("score_num.py", SCORE_NUM),
            ("score_noaddr.py", SCORE_NOADDR), ("score_str.py", SCORE_STR),
-           ("score_noisy.py", SCORE_NOISY))
+           ("score_noisy.py", SCORE_NOISY), ("score_const.py", SCORE_CONST))
 
 
 _AUTO_TRASH = []      # every fixture repository made below, so none can outlive its section
@@ -9731,7 +9791,7 @@ def run_auto_git():
             h1 = A.reserve_id(root, qa, island=qi); st["h1"] = h1; snap("reserve")
             wt1 = A.add_worktree(root, plan, h1); st["wt1"] = wt1; snap("worktree")
             st["wt1_at"] = _git(wt1, "rev-parse", "HEAD")
-            st["wt1_where"] = os.path.join(A.git_common_dir(repo), "crux-auto", qa, h1)
+            st["wt1_where"] = os.path.join(A.worktrees_root(repo), qa, h1)
             write(os.path.join(wt1, "work_notes.txt"), "one\n")
             _git(wt1, "add", "-A"); _git(wt1, "commit", "-q", "-m", "attempt 1"); snap("commit")
             st["head1"] = _git(wt1, "rev-parse", "HEAD")
@@ -9754,7 +9814,7 @@ def run_auto_git():
             # "a directory is there" and "git holds a worktree there" come apart in both
             # directions, and a driver that treats either as the other loses a run: one way it
             # refuses to clean up, the other it reports a checkout nobody can open.
-            stray = os.path.join(A.git_common_dir(repo), "crux-auto", qa, "h901")
+            stray = os.path.join(A.worktrees_root(repo), qa, "h901")
             os.makedirs(stray)
             st["stray"] = A.remove_worktree(root, plan, "h901")
             st["stray_kept"] = os.path.isdir(stray)
@@ -9807,6 +9867,47 @@ def run_auto_git():
                   and len(bs) == 2 and sorted(bs) == st["made"]
                   and not any(b != c and c.startswith(b + "/") for b in bs for c in bs)
                   and "already open" in st["reopen"])))
+
+        # A PREVIOUS run's branches, which is the normal state of a repository the PI has
+        # decided to start over in: clearing the vault's run record clears `base` and clears
+        # nothing in git. On 2026-09-22 the restart died on the first git call with `fatal: a
+        # branch named 'crux/auto/q1/run' already exists`, and nothing said what to delete.
+        lo = {}
+        try:
+            lrepo, lroot, lqa, lqi, lhb, lrel = _auto_repo()
+            lplan = E.load_flight_plan(lroot, lrel)
+            lmain = _git(lrepo, "rev-parse", "HEAD")
+            # branches at base with no base ref — exactly what a cleared run record leaves
+            _git(lrepo, "branch", A.run_branch(lqa), lmain)
+            _git(lrepo, "branch", A.island_branch(lqa, lqi), lmain)
+            lo["adopted"] = A.open_run(lroot, lplan)
+            lo["at"] = _git(lrepo, "rev-parse", A.run_branch(lqa))
+
+            mrepo, mroot, mqa, mqi, mhb, mrel = _auto_repo()
+            mplan = E.load_flight_plan(mroot, mrel)
+            write(os.path.join(mrepo, "drift.txt"), "elsewhere\n")
+            _git(mrepo, "add", "-A")
+            _git(mrepo, "commit", "-q", "-m", "somewhere else")
+            other = _git(mrepo, "rev-parse", "HEAD")
+            _git(mrepo, "reset", "-q", "--hard", "HEAD~1")
+            _git(mrepo, "branch", A.run_branch(mqa), other)
+            _git(mrepo, "branch", A.island_branch(mqa, mqi), other)
+            lo["refused"] = _auto_msg(lambda: A.open_run(mroot, mplan))
+            lo["nobase"] = A.rev_parse(mrepo, A.base_ref(mqa))
+        except Exception:
+            pass
+        check("agit: open_run ADOPTS a leftover branch already at base rather than dying on it",
+              _auto_ok(lambda: (
+                  lo["adopted"]["base"] == lo["at"]
+                  and lo["adopted"]["run_branch"].endswith("/run"))))
+        check("agit: a leftover branch pointing elsewhere is refused by NAME, with the command that clears it",
+              _auto_ok(lambda: (
+                  "cannot open" in lo["refused"]
+                  and A.run_branch(mqa) in lo["refused"]
+                  and A.island_branch(mqa, mqi) in lo["refused"]
+                  and "branch -D" in lo["refused"]
+                  and lo["nobase"] is None)))        # and it left no base ref behind
+
         check("agit: main and the main working tree are untouched across open, reserve, worktree, commit, record, manifest, retention and promote",
               _auto_ok(lambda: (
                   [l for l, _ in clean] == ["open", "reserve", "worktree", "commit", "record",
@@ -10122,6 +10223,53 @@ def run_auto_scorer():
                   and r_ok["scorer"]["seconds"] >= 0
                   and results_now == [hb])))              # a dry run writes nothing anywhere
 
+        # ---------------------------------------------------- the scorer has to RESPOND
+        # A scorer that prints a number is not yet a scorer that prints the CANDIDATE's
+        # number. On 2026-09-21 a plan named `score.py` by absolute path, the file resolved
+        # `import train` against its own directory, and every attempt of a thirty-attempt run
+        # would have scored the baseline — while `auto check` printed `0.0` and everyone read
+        # that as the baseline scoring zero by construction. `score_const.py` is that scorer
+        # with the accident taken out: it passes every check above and reads nothing.
+        r_const = checked(scorer="python3 score_const.py")
+        wt_before = _auto_val(lambda: len(A._worktree_blocks(repo)), None)
+        r_resp = checked()
+        wt_after = _auto_val(lambda: len(A._worktree_blocks(repo)), None)
+        check("ascore: check catches a scorer that produces a number without reading the candidate",
+              _auto_ok(lambda: (
+                  names(r_const) == ["scorer-responds"] and r_const["ok"] is False
+                  and r_const["scorer"]["ran"] is True and r_const["scorer"]["value"] == 0.8
+                  and r_const["scorer"]["responds"] is False
+                  and "does not read the candidate" in first(r_const)
+                  and "score the baseline" in first(r_const))))
+        check("ascore: a scorer that reads its checkout passes, and the probe leaves no worktree behind",
+              _auto_ok(lambda: (r_resp["ok"] is True and r_resp["scorer"]["responds"] is True
+                                and wt_before == wt_after and wt_before is not None)))
+
+        # ---------------------------------------------------- writable has to be a DIRECTORY
+        # `workspace_path` builds `<repo>/<writable[0]>/<hid>`, so a writable root that is a
+        # FILE passed all three gates and then died at `make_workspace` with a bare
+        # NotADirectoryError naming a path nobody had written and never saying `writable`.
+        r_wfile = checked(writable="train.py, results/")
+        check("ascore: check refuses a writable root that is a file, in the plan's own vocabulary",
+              _auto_ok(lambda: (
+                  "writable" in (names(r_wfile) or []) and r_wfile["ok"] is False
+                  and any("writable root 'train.py' is not a directory" in p["message"]
+                          for p in r_wfile["problems"]))))
+        r_wnew = checked(writable="not_there_yet/, results/")
+        check("ascore: a writable root that does not exist yet is fine — the driver makes it",
+              _auto_ok(lambda: "writable" not in (names(r_wnew) or [])))
+        write(_plan_path(root, qa), _plan_text(qa, hb, islands=qi, writable="train.py"))
+
+        def _ws_error():
+            try:
+                A.make_workspace(root, E.load_flight_plan(root, rel), "h99")
+            except Exception as e:
+                return str(e)
+            return ""
+        ws_err = _auto_val(_ws_error, "")
+        check("ascore: make_workspace's own refusal names writable, not errno",
+              _auto_ok(lambda: "writable" in ws_err and "must be a directory" in ws_err))
+
         # The complement of criterion 5: `--static` starts nothing, and the bare verb starts the
         # scorer on purpose — that is the whole of what this slice added to `auto check`.
         spawn, s5 = [], {}
@@ -10323,9 +10471,14 @@ def run_auto_verbs():
                   and all(set(x) == {"id", "path", "commit"} for x in jr["worktrees"])
                   and os.path.realpath(jr["worktrees"][0]["path"]) == os.path.realpath(st["wt0"])
                   and r2.returncode == 0 and "refs/crux/auto/%s/" % qa in r2.stdout
-                  and c1.returncode == 0
+                  # the fixture's "unrecorded attempt" is scored and has no ref, so it is a
+                  # parent the search could pick and never check out — the one problem reported
+                  and c1.returncode == 1
                   and set(jc) >= {"ok", "plan", "anchor", "mode", "problems", "repo", "scorer"}
-                  and jc["ok"] is True and jc["scorer"]["ran"] is True
+                  and jc["ok"] is False
+                  and [p["check"] for p in jc["problems"]] == ["parent-ref"]
+                  and "refs/crux/auto/%s/%s" % (qa, st["h0"]) in jc["problems"][0]["message"]
+                  and jc["scorer"]["ran"] is True
                   and jc["scorer"]["value"] == 0.8
                   and c2.returncode == 0
                   and set(js) == {"ok", "plan", "anchor", "mode", "problems"})))
@@ -10552,6 +10705,10 @@ with open(os.environ["CRUX_BRIEF"], encoding="utf-8") as f:
 if mode == "exit1":
     sys.stderr.write("stub failed on purpose\\n")
     sys.exit(1)
+if mode == "limited":
+    # the PROVIDER failing, not the worker: the shape a killed session leaves behind
+    sys.stderr.write("API Error 529 overloaded_error\\n")
+    sys.exit(1)
 with open("params.json", encoding="utf-8") as f:
     x = json.load(f)["x"]
 if mode != "still":
@@ -10569,6 +10726,8 @@ if mode == "shared":
 if mode == "crashscore":
     with open("crash_scorer", "w", encoding="utf-8") as f:
         f.write("1\\n")
+if mode == "nocommit":
+    sys.exit(0)          # real work on disk, exit 0, and never a commit or a proposal
 subprocess.run(GIT + ["add", "-A"], check=True)
 subprocess.run(GIT + ["commit", "-q", "--allow-empty", "-m", "attempt " + os.environ["CRUX_ATTEMPT"]], check=True)
 proposal = {"claim": "x = %s" % x}
@@ -10578,6 +10737,8 @@ if mode == "extrakey":
     proposal["verdict"] = "supported"
 if mode == "taggedcontrol":
     proposal["controls"] = [{"text": "[hypothesis] obj.score <= 1 the value stays small", "fails_if": "the scorer drifts upward"}]
+if mode == "prosecontrol":
+    proposal["controls"] = [{"text": "the value stays at most one, measured on the local bench", "fails_if": "the scorer drifts upward"}]
 if mode == "control":
     proposal["controls"] = [{"text": "obj.score <= 1 — the value stays at most one", "fails_if": "the scorer drifts upward"}]
 with open(os.environ["CRUX_PROPOSAL"], "w", encoding="utf-8") as f:
@@ -10766,7 +10927,14 @@ def _loop_note_verdicts(root, ids):
     own truth table says about the same ticks.
 
     Captured here rather than at the end of the suite because the section that built the fixture
-    deletes it, and the criterion that compares the two is asserted after every fixture is gone."""
+    deletes it, and the criterion that compares the two is asserted after every fixture is gone.
+
+    An attempt that reported NO CLAIM is the one sanctioned departure, and it is recorded here as
+    such rather than smuggled past the comparison. Such an attempt is measured like any other —
+    that is the point, a reporting fault must not destroy a measurement — so its ticks are real
+    and the truth table's answer over them can be `supported`. What it does not have is a
+    hypothesis for that answer to be about, so `cmd_close(no_claim=True)` withholds the reading.
+    The driver still names no verdict: it reports the fact, and the engine decides."""
     for hid in (ids or ()) if root else ():
         n = _auto_val(lambda h=hid: E.Vault(root).get(h))
         if not n:
@@ -10774,6 +10942,8 @@ def _loop_note_verdicts(root, ids):
         by = _auto_val(lambda: E.count_verifiables_by_kind(n["body"]), {})
         want = _auto_val(lambda: E.derive_verdict_15(by[E.DEFAULT_KIND], by[E.NEUTRAL_KIND],
                                                      *E.node_rule(n)))
+        if _auto_val(lambda h=hid: E.auto_is_no_claim(root, h), False):
+            want = "invalid-run"
         _LOOP_CLOSED.append((hid, n["fm"].get("verdict"), want))
 
 
@@ -10906,7 +11076,7 @@ def _skip_first_materialize(A):
 _ISLAND_KEYS = {"branch", "pointer", "best", "best_score", "seen_score", "stall"}
 _BEST_KEYS = {"id", "score"}
 _IN_FLIGHT_KEYS = {"island", "parent", "from", "phase", "worker_tries", "scorer_tries",
-                   "pid", "failure", "started"}
+                   "pid", "failure", "started", "provider"}
 
 
 def _record_probe(A, root, qa):
@@ -11593,7 +11763,10 @@ def run_auto_loop():
         fv, shv = _ev(f, "violation"), _ev(sh, "violation")
         check("arun: a frozen-path commit and a shared-root write each close invalid-run unretried with one violation event naming the path",
               _auto_ok(lambda: (
-                  E.AUTO_VIOLATION_KINDS == ("frozen", "manifest", "proposal")
+                  # two kinds, not three: since a proposal's FORM stopped voiding a measurement
+                  # every proposal failure is retried, so no proposal is ever a violation
+                  E.AUTO_VIOLATION_KINDS == ("frozen", "manifest")
+                  and '"proposal"' not in read(os.path.join(HERE, "autopilot.py"))
                   and len(fv) == 1 and fv[0]["kind"] == "frozen"
                   and fv[0]["paths"] == ["score.py"] and "score.py" in fv[0]["detail"]
                   and len(_ev(f, "worker-started")) == 1 and _ev(f, "retry") == []
@@ -11622,31 +11795,112 @@ def run_auto_loop():
                   and "word word" not in read(node_path(gcroot, lgc[0]))
                   and len(E._prose_tokens(E.Vault(gcroot).get(lgc[0])["body"])) <= E.PROSE_CAP
                   and E.Vault(gcroot).get(lgc[0])["fm"]["verdict"] == "invalid-run")))
-        _, kroot, kqa, _, _, krel = _loop_fixture(x0=0, agent="python3 agent.py extrakey",
-                                                  abort_invalid_runs="1")
+        # PRESERVE AND MEASURE EVERYTHING, GRADE ONLY WHAT CARRIES A CLAIM. The same attempt,
+        # read the other way: its program is real and its commit passed both integrity checks,
+        # so it is scored and its number reaches the ledger — a fault in the REPORT must not
+        # destroy a measurement. What it does not get is a verdict, because a verdict is a
+        # judgment about a hypothesis and this attempt stated none. An over-cap claim now
+        # costs the answer, not the work.
+        check("arun: an over-cap claim is still MEASURED — metrics, a scored event and a metric on the node — and only the verdict is withheld",
+              _auto_ok(lambda: (
+                  E.load_metrics(gcroot, lgc[0]) is not None
+                  and len(_ev(lg, "scored")) == 1
+                  and _ev(lg, "scored")[0]["attempt"] == lgc[0]
+                  and _ev(lg, "scored")[0]["value"] is not None
+                  and (E.Vault(gcroot).get(lgc[0])["fm"].get("metric") or "").strip()
+                  and [e["value"] for e in _ev(lg, "closed")] == [_ev(lg, "scored")[0]["value"]]
+                  and E.auto_is_no_claim(gcroot, lgc[0]) is True)))
+        # The other half of the same rule, and the reason it is not simply "is there a
+        # commit": a commit that touched frozen data or wrote into ground another attempt
+        # shares is never scored, because a number taken from it would be a reward for that.
+        # EVERY writable root, not just the first. `writable: work/, results/` tells a PI two
+        # roots are writable; only the first excused a workspace, so a worker that put a
+        # checkpoint in the second lost its attempt to a violation it could not have
+        # predicted, unretried and unrepairable. The plan grammar no longer lies about its
+        # own list. A bare string is still accepted, because that is what 05.2 passes.
+        _mdiff = {"added": ["work/h7/ckpt", "results/h7/out", "results/h9/out",
+                            "work/shared/x", "results/loose"],
+                  "removed": [], "changed": []}
+        check("arun: a workspace under ANY writable root is somebody's, and only ground no attempt owns is a violation",
+              _auto_ok(lambda: (
+                  E.auto_manifest_violations(_mdiff, ["work/", "results/"], ["h7", "h9"])
+                      == ["results/loose", "work/shared/x"]
+                  and E.auto_manifest_violations(_mdiff, "work/", ["h7", "h9"])
+                      == ["results/h7/out", "results/h9/out", "results/loose",
+                          "work/shared/x"])))
+        check("arun: a frozen-path or shared-root commit is NEVER scored, however good its report was",
+              _auto_ok(lambda: (
+                  _ev(f, "scored") == [] and _ev(sh, "scored") == []
+                  and all(E.load_metrics(r, h) is None
+                          for r, run in ((froot, f), (shroot, sh))
+                          for h in (run["state"] or {}).get("closed") or []))))
+
+        # A worker that does the work and exits 0 without committing used to lose all of it:
+        # retention removes the worktree `--force`, and its reasoning — "the commit it held is
+        # already in a ref" — is the one thing that is not true here.
+        _, ncroot, ncqa, _, _, ncrel = _loop_fixture(x0=2, agent="python3 agent.py nocommit",
+                                                     retries="0", budget_attempts="1")
+        nc = _loop_run("nocommit", ncroot, ncqa, ncrel)
+        ncc = (nc["state"] or {}).get("closed") or []
+        check("arun: work left uncommitted by the worker is committed on its behalf, recorded, scored — and still closes invalid-run",
+              _auto_ok(lambda: (
+                  [e["reason"] for e in _ev(nc, "worker-failed")] == ["no-commit"]
+                  and len(ncc) == 1
+                  and _auto_val(lambda: _git(ncroot, "rev-parse",
+                                             f"refs/crux/auto/{ncqa}/{ncc[0]}"), "")
+                  and E.load_metrics(ncroot, ncc[0]) is not None
+                  and len(_ev(nc, "scored")) == 1
+                  # the rescued commit really carries the worker's edit, not an empty tree
+                  and "x" in _auto_val(
+                      lambda: _git(ncroot, "show",
+                                   f"refs/crux/auto/{ncqa}/{ncc[0]}:params.json"), "")
+                  and E.auto_is_no_claim(ncroot, ncc[0]) is True
+                  and E.Vault(ncroot).get(ncc[0])["fm"]["verdict"] == "invalid-run")))
+        # REWRITTEN. These three used to close `invalid-run`, and that ruling cost a real run
+        # every one of its five attempts: each worker wrote a good program, measured it, and
+        # lost the measurement to the SHAPE of an optional field. A proposal is a report, not
+        # evidence, so a fault in its form is now repaired — the key ignored, the control
+        # dropped — and the attempt is scored like any other. `prosecontrol` is the exact
+        # witness for the control that was refused there.
+        _, kroot, kqa, _, _, krel = _loop_fixture(x0=2, agent="python3 agent.py extrakey",
+                                                  budget_attempts="1")
         k = _loop_run("extrakey", kroot, kqa, krel)
-        _, troot, tqa, _, _, trel = _loop_fixture(x0=0, agent="python3 agent.py taggedcontrol",
-                                                  abort_invalid_runs="1")
+        _, troot, tqa, _, _, trel = _loop_fixture(x0=2, agent="python3 agent.py taggedcontrol",
+                                                  budget_attempts="1")
         t = _loop_run("taggedcontrol", troot, tqa, trel)
+        _, proot, pqa, _, _, prel = _loop_fixture(x0=2, agent="python3 agent.py prosecontrol",
+                                                  budget_attempts="1")
+        pr = _loop_run("prosecontrol", proot, pqa, prel)
         _, groot, gqa, _, _, grel = _loop_fixture(x0=2, agent="python3 agent.py control",
                                                   budget_attempts="1")
         g = _loop_run("control", groot, gqa, grel)
         gc = (g["state"] or {}).get("closed") or []
-        check("arun: a proposal key outside claim and controls, or a tagged control, closes invalid-run unretried; a good control is filed outcome-neutral",
+
+        def _warn(run):
+            done = _ev(run, "worker-done")
+            return " ".join(w for e in done for w in (e.get("warnings") or []))
+
+        check("arun: an extra proposal key, a self-tagged control and a prose control are each repaired and the attempt still scores; a good control is filed outcome-neutral",
               _auto_ok(lambda: (
-                  all(len(_ev(r, "violation")) == 1
-                      and _ev(r, "violation")[0]["kind"] == "proposal"
-                      and _ev(r, "violation")[0]["paths"] == []
-                      and _ev(r, "retry") == []
+                  # not one of the three is a violation, and not one is retried
+                  all(_ev(r, "violation") == [] and _ev(r, "retry") == []
                       and len(_ev(r, "worker-started")) == 1
-                      for r in (k, t))
-                  and "claim, controls: verdict" in _ev(k, "violation")[0]["detail"]
-                  and "the driver tags every control outcome-neutral"
-                      in _ev(t, "violation")[0]["detail"]
-                  and all(E.Vault(rt).get(h)["fm"]["verdict"] == "invalid-run"
-                          for rt, run in ((kroot, k), (troot, t))
-                          for h in (run["state"] or {}).get("closed") or [])
-                  and len(gc) == 1
+                      and len(_ev(r, "scored")) == 1
+                      and all(E.Vault(rt).get(h)["fm"]["verdict"] != "invalid-run"
+                              for h in (r["state"] or {}).get("closed") or [])
+                      for r, rt in ((k, kroot), (t, troot), (pr, proot)))
+                  # each says on the ledger exactly what it threw away, and why
+                  and "ignored key(s) outside claim, controls: verdict" in _warn(k)
+                  and "dropped control 1" in _warn(t)
+                  and "the driver tags every control outcome-neutral" in _warn(t)
+                  and "dropped control 1: not a metric comparison" in _warn(pr)
+                  # a dropped control is GONE — the node carries only the plan's own checks
+                  and all([i["kind"] for i in E._verifiables(E.Vault(rt).get(h)["body"])]
+                          == [E.DEFAULT_KIND, E.NEUTRAL_KIND]
+                          for r, rt in ((t, troot), (pr, proot))
+                          for h in (r["state"] or {}).get("closed") or [])
+                  # and the good one is still carried through, tagged by the driver
+                  and len(gc) == 1 and _warn(g) == ""
                   and ("- [x] [outcome-neutral] obj.score <= 1 — the value stays at most one "
                        "(found: ") in read(node_path(groot, gc[0]))
                   and [i["kind"] for i in E._verifiables(E.Vault(groot).get(gc[0])["body"])]
@@ -11814,14 +12068,24 @@ def run_auto_resume():
                 r4 = _loop_run("resume-recorded", r4root, r4qa, r4rel, max_attempts=1)
                 r4ref = _auto_val(lambda: _git(r4repo, "rev-parse",
                                                f"refs/crux/auto/{r4qa}/{r4h}"), "")
-        check("aresume: an attempt already recorded at its ref is never handed to a second worker, and closes on the commit the ref names",
+        # REWRITTEN for "preserve and measure everything, grade only what carries a claim".
+        # This attempt is the exact shape the rule is about: the worker's proposal is gone, so
+        # it reports no hypothesis — but its commit is at its ref, it passed both integrity
+        # checks, and the program is real. It used to be closed unmeasured, which threw away a
+        # measurement over a missing REPORT. Now it is scored, its value reaches the ledger,
+        # and it still closes `invalid-run`, because there is no claim for a verdict to be
+        # about. Nothing about what `invalid-run` means has changed.
+        check("aresume: an attempt already recorded at its ref is never handed to a second worker, is MEASURED anyway, and still closes invalid-run for want of a claim",
               _auto_ok(lambda: (
                   bool(r4head) and r4ref == r4head
                   and _ev(_since_resume(r4), "worker-started") == []
                   and _ev(_since_resume(r4), "retry") == []
-                  and _ev(r4, "scored") == []
                   and [e["reason"] for e in _ev(_since_resume(r4), "worker-failed")]
                       == ["proposal-missing"]
+                  and len(_ev(r4, "scored")) == 1
+                  and _ev(r4, "scored")[0]["attempt"] == r4h
+                  and _ev(r4, "scored")[0]["value"] is not None
+                  and E.load_metrics(r4root, r4h) is not None
                   and ((r4["state"] or {}).get("closed") or []) == [r4h]
                   and len(_ev(r4, "closed")) == 1
                   and E.Vault(r4root).get(r4h)["fm"]["verdict"] == "invalid-run")))
@@ -11918,6 +12182,31 @@ def run_auto_stops():
         _, iroot, iqa, _, _, irel = _loop_fixture(x0=0, agent="python3 agent.py exit1",
                                                   retries="1", abort_invalid_runs="2")
         inv = _loop_run("abort-invalid", iroot, iqa, irel)
+        # The SAME run with one thing changed: the worker dies on the provider rather than on
+        # its own program. `abort_invalid_runs` exists to catch a worker behaving badly, and
+        # an outage is not a worker act — the first run of one search ended on this stop with
+        # 25 attempts of budget left, five workers killed by a session limit and a run of
+        # 529s, every one counted against the worker. The attempts still close, are still
+        # recorded and are still visible; the streak simply does not advance, so the run goes
+        # on to spend its budget instead of aborting on the machine's bad night.
+        _, lroot, lqa, _, _, lrel = _loop_fixture(x0=0, agent="python3 agent.py limited",
+                                                  retries="0", abort_invalid_runs="2",
+                                                  budget_attempts="3", agent_cooldown="0")
+        lim = _loop_run("provider-limited", lroot, lqa, lrel)
+        lst = lim["state"] or {}
+        check("astop: an attempt the PROVIDER killed closes and is recorded, but never advances the abort streak",
+              _auto_ok(lambda: (
+                  E.auto_rate_limited("API Error 529 overloaded_error") is True
+                  and E.auto_rate_limited("Traceback: ZeroDivisionError") is False
+                  and len(_ev(lim, "cooldown")) >= 1
+                  and [e["reason"] for e in _ev(lim, "worker-failed")] == ["worker-exit"] * 3
+                  and all(fl.get("provider") is True
+                          for fl in (lst.get("in_flight") or {}).values()) is not False
+                  and len(lst.get("closed") or []) == 3
+                  and all(E.Vault(lroot).get(h)["fm"]["verdict"] == "invalid-run"
+                          for h in lst.get("closed") or [])
+                  and lst.get("consecutive_invalid") == 0
+                  and _loop_stop(lim)["reason"] == "budget")))
         _, oroot, oqa, _, _, orel = _loop_fixture(x0=0,
                                                   scorer="python3 score.py --fail-always")
         opn = _loop_run("fail-open", oroot, oqa, orel)
@@ -11939,6 +12228,24 @@ def run_auto_stops():
                   and _ev(opn, "attempt-reserved") == []
                   and not ores
                   and (opn["state"] or {})["closed"] == [])))
+
+        # `auto run` gates on the STATIC engine check, so a PI who approves a plan and runs it
+        # without ever typing `crux auto check` would reach the loop with the scorer's
+        # responsiveness untested — which is how thirty attempts came to score the baseline
+        # thirty times. The gate is at run open too, and it stops before any id is reserved.
+        _, croot, cqa, _, _, crel = _loop_fixture(
+            x0=0, scorer="python3 score_const.py",
+            _files={"score_const.py": 'import json\nprint(json.dumps('
+                                      '{"obj": {"score": {"value": -9.0}}}))\n'})
+        con = _loop_run("const-scorer", croot, cqa, crel)
+        cres = _auto_val(lambda: A.reservations(croot, cqa), {})
+        check("astop: a scorer that never reads the candidate stops the run abort, before an id is reserved",
+              _auto_ok(lambda: (
+                  _loop_stop(con)["reason"] == "abort"
+                  and "does not read the candidate" in _loop_stop(con)["detail"]
+                  and _ev(con, "attempt-reserved") == []
+                  and not cres
+                  and (con["state"] or {})["closed"] == [])))
 
         _, nroot, nqa, _, _, nrel = _loop_fixture(x0=0, agent="python3 agent.py still",
                                                   stall_attempts="2", budget_attempts="8")
@@ -12146,6 +12453,12 @@ def run_auto_loop_purity():
         cs1 = cli("auto", "status", "--json")
         cs2 = cli("auto", "status", qa, "--json")
         cs3 = cli("auto", "status")
+        # The plan path every OTHER auto verb takes. `status` and `refs` are keyed by anchor,
+        # nothing on the command line says so, and `auto status auto/<qid>/plan.md` used to go
+        # looking for a run on an anchor literally named `auto/<qid>/plan.md`.
+        cs4 = cli("auto", "status", rel, "--json")
+        cs5 = cli("auto", "refs", rel, "--json")
+        cs6 = cli("auto", "refs", qa, "--json")
 
         sys.path.insert(0, HERE)
         import crux as C
@@ -12199,6 +12512,14 @@ def run_auto_loop_purity():
                   and spawned == [] and rc == 0
                   and _auto_val(lambda: json.loads(out), {}).get("anchor") == qa
                   and bool(before) and before == after)))
+        check("acli: auto status and auto refs take the PLAN PATH as well as the anchor, and answer the same",
+              _auto_ok(lambda: (
+                  cs4.returncode == 0 and j(cs4) == j(cs2)
+                  and cs5.returncode == 0 and cs6.returncode == 0
+                  and j(cs5) == j(cs6) and j(cs5)["anchor"] == qa
+                  and E.auto_qid_arg(f"{E.AUTO_DIR}/{qa}/{E.PLAN_FILE}") == qa
+                  and E.auto_qid_arg(os.path.join(root, E.AUTO_DIR, qa, E.PLAN_FILE)) == qa
+                  and E.auto_qid_arg(qa) == qa and E.auto_qid_arg(None) is None)))
 
         # ------------------------------- a vault that never met autopilot, left exactly alone
         tmp = tempfile.mkdtemp(prefix="crux_anoauto2_")
@@ -12735,13 +13056,41 @@ def run_auto_cooldown():
             "resets at 3pm", "Please try again later.")]
         neg = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>")
                for t in ("limit", "", None)]
-        check("acool: the rate-limit read is the era skill's seven patterns, case-insensitive, and total",
+        # An OUTAGE joins the limits, because for every purpose this read serves the two are
+        # one family: the provider failing rather than the worker acting. The second row is
+        # what a killed session and a run of 529s leave in a log, and counting those against
+        # the worker ended a run with 25 attempts of budget left.
+        out = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "API Error 529 overloaded_error", "503 Service Unavailable",
+            "Internal Server Error", '{"type":"api_error"}')]
+        # The CLI's OWN session limit, as a run actually recorded it. Four attempts died on
+        # this exact tail and no row above matched it, so the streak advanced on four outages
+        # — and since the same predicate drives the cooldown, no wait was taken either:
+        # thirteen seconds to burn four attempts into a wall that had hours left on it.
+        sess = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "worker exited 1 — output tail: You've hit your session limit · "
+            "resets 9:10pm (America/Vancouver)",
+            "You've hit your usage limit · resets 11:00pm",
+            "Session limit reached", "resets 21:10")]
+        # ...while a program stays entitled to print the word "limit" about its own iteration
+        # cap without the driver reading that as the provider going down. A broken PROGRAM is
+        # the worker's own act and must never be excused.
+        prog = [_auto_val(lambda: E.auto_rate_limited(t), "<absent>") for t in (
+            "Traceback: ZeroDivisionError", "exited 1",
+            "the optimiser hit a limit of 100 iterations",
+            "set the token limit to 4096", "converged: reset 0 counters")]
+        check("acool: the rate-limit read is the era skill's patterns plus the outages and the CLI's own session limit, case-insensitive, and total",
               _auto_ok(lambda: (
-                  len(E.AUTO_RATE_LIMIT_PATTERNS) == 7
-                  and E.AUTO_RATE_LIMIT_PATTERNS == (
+                  E.AUTO_RATE_LIMIT_PATTERNS == (
                       r"5-?hour limit", r"usage limit", r"rate limit", r"limit reached",
-                      r"too many requests", r"reset[s]? at", r"please try again later")
-                  and lim == [True] * 5 and neg == [False] * 3
+                      r"too many requests", r"reset[s]? at", r"please try again later",
+                      r"overloaded", r"service unavailable", r"internal server error",
+                      r"\b529\b", r"api_error",
+                      r"hit your [^\n]{0,40}limit", r"session limit",
+                      r"reset[s]? (?:at\s+)?\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?",
+                      r"reset[s]? (?:at\s+)?\d{1,2}:\d{2}")
+                  and lim == [True] * 5 and neg == [False] * 3 and out == [True] * 4
+                  and sess == [True] * 4 and prog == [False] * 5
                   and E.AUTO_COOLDOWN_DEFAULT == 1800.0)))
 
         # --------------------------------- a failed try whose tail matches: cool, then walk on
@@ -13066,8 +13415,87 @@ def run_auto_probe():
                   and "'one two'" in qout
                   and ("probe: python3 probe.py 'one two' valid guidance --version"
                        in qout))))
+
+        # ------------------------------ 126 and 127 are "could not run", whatever started
+        # A wrapper — `sh -c`, `env`, `npx` — starts every time, and it is the wrapper that
+        # reports the agent missing, by the shell's own convention: 127 not found, 126 not
+        # executable. Any other exit stays reachable, because not every agent CLI answers
+        # `--version` and refusing a plan over that is a check about a flag.
+        nf = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 127'")
+        nfres = _auto_val(lambda: A.auto_check(nf[1], nf[5]), {})
+        ne = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 126'")
+        neres = _auto_val(lambda: A.auto_check(ne[1], ne[5]), {})
+        n3 = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 3'")
+        n3res = _auto_val(lambda: A.auto_check(n3[1], n3[5]), {})
+        check("aprobe: a command that starts and exits 127 or 126 is unreachable and fails agent-reach; any other exit stays reachable",
+              _auto_ok(lambda: (
+                  nfres["agents"][0]["reachable"] is False
+                  and "exited 127" in nfres["agents"][0]["detail"]
+                  and "agent-reach" in [p["check"] for p in nfres["problems"]]
+                  and nfres["ok"] is False
+                  and neres["agents"][0]["reachable"] is False
+                  and "exited 126" in neres["agents"][0]["detail"]
+                  and "agent-reach" in [p["check"] for p in neres["problems"]]
+                  and n3res["agents"][0]["reachable"] is True
+                  and n3res["agents"][0]["detail"] == "exited 3"
+                  and "agent-reach" not in [p["check"] for p in n3res["problems"]])))
     except Exception as e:                                   # pragma: no cover - wave-1 guard
         check(f"aprobe: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_parent_refs():
+    """Every attempt the search may build on has its ref, checked before anything is written.
+
+    A restart that archives the run record and clears `refs/crux/auto/<qid>/*` while the
+    attempts stay in the tree hands the bandit parents it cannot check out. Both gates passed
+    and the driver died at its first reservation — after `run-opened`, with an attempt id
+    already spent. The vault and the repository disagree, and only the PI can say which is
+    right, so this is refused rather than repaired: skipping those attempts would hide it."""
+    print("\n# autopilot — every parent the search may pick has its ref (spec 05)")
+    try:
+        A = _auto_mod()
+        repo, root, qa, isl, hb, rel = _loop_fixture(x0=0)
+        _loop_run("parent-refs-first", root, qa, rel)
+        plan = _auto_val(lambda: E.load_flight_plan(root, rel), {}) or {}
+        scored = [r["id"] for r in (_auto_val(lambda: E.auto_island_attempts(root, plan, qa),
+                                              []) or [])
+                  if r.get("score") is not None and r["id"] != plan.get("baseline")]
+        gone = scored[0] if scored else None
+        refs = {h: _auto_val(lambda h=h: _git(repo, "rev-parse", f"refs/crux/auto/{qa}/{h}"),
+                             "") for h in scored}
+        # the restart recipe as it was written down: record archived, refs cleared, nodes kept
+        for name in (E.AUTO_STATE_FILE, E.AUTO_LEDGER_FILE, A.RESERVED_FILE):
+            p = os.path.join(root, E.AUTO_DIR, qa, name)
+            if os.path.isfile(p):
+                os.remove(p)
+        shutil.rmtree(os.path.join(root, E.AUTO_DIR, qa, A.MANIFESTS_DIR), ignore_errors=True)
+        for h in scored:
+            _auto_val(lambda h=h: _git(repo, "update-ref", "-d", f"refs/crux/auto/{qa}/{h}"))
+        chk = _auto_val(lambda: A.auto_check(root, rel), {}) or {}
+        again = _loop_run("parent-refs-again", root, qa, rel)
+        pr = [p for p in chk.get("problems") or [] if p["check"] == "parent-ref"]
+        check("aref: auto check names every scored attempt in the tree whose ref is gone",
+              _auto_ok(lambda: (
+                  bool(gone) and len(pr) == 1 and chk["ok"] is False
+                  and all(f"refs/crux/auto/{qa}/{h}" in pr[0]["message"] for h in scored))))
+        check("aref: auto run refuses a missing parent ref before it writes anything — no state, no ledger, no reservation",
+              _auto_ok(lambda: (
+                  bool(gone) and f"refs/crux/auto/{qa}/{gone}" in again["error"]
+                  and not os.path.isfile(_loop_state_path(root, qa))
+                  and not os.path.isfile(_loop_ledger_path(root, qa))
+                  and A.reservations(root, qa) == {})))
+        for h, sha in refs.items():
+            _auto_val(lambda h=h, sha=sha: _git(repo, "update-ref", f"refs/crux/auto/{qa}/{h}",
+                                                sha))
+        fixed = _auto_val(lambda: A.auto_check(root, rel), {}) or {}
+        check("aref: restoring the refs is the whole fix — auto check no longer reports parent-ref",
+              _auto_ok(lambda: (
+                  bool(gone) and bool(fixed)
+                  and "parent-ref" not in [p["check"] for p in fixed["problems"]])))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aref: section ran without crashing ({e!r})", False)
     finally:
         _auto_sweep()
 
@@ -15866,6 +16294,7 @@ def main():
     run_auto_agents()
     run_auto_cooldown()
     run_auto_probe()
+    run_auto_parent_refs()
     run_auto_closer()
     run_auto_steward()
     run_auto_report()

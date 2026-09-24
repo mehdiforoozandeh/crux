@@ -14,7 +14,7 @@ What 05.1 is:
     branch, which is what lets its worktree be thrown away the moment the commit is recorded;
   * the branches `crux/auto/<qid>/run` and `crux/auto/<qid>/island/<island>`, plus the one
     `crux/auto/<qid>/promoted/<hid>` the PI asks for by name;
-  * per-attempt worktrees under `<git common dir>/crux-auto/<qid>/<hid>`;
+  * per-attempt worktrees under `<repo>.crux-auto/<qid>/<hid>`;
   * the frozen-path diff and the manifest over shared roots — both DETECT AND REPORT ONLY;
   * retention over the workspace alone, never over the record;
   * the scorer contract: stdout is one JSON object, and the DRIVER writes it verbatim to
@@ -52,9 +52,10 @@ HOST                   = socket.gethostname()
 LOCK_NAME              = ".lock"                 # <root>/auto/.lock
 RESERVED_FILE          = "reserved.json"         # <root>/auto/<qid>/reserved.json
 MANIFESTS_DIR          = "manifests"             # <root>/auto/<qid>/manifests/<hid>.json
-WORKTREES_DIR          = "crux-auto"             # <git common dir>/crux-auto/<qid>/<hid>
+WORKTREES_DIR          = "crux-auto"             # <repo>.crux-auto/<qid>/<hid> — see worktrees_root
 REF_PREFIX             = "refs/crux/auto"
 BRANCH_PREFIX          = "crux/auto"
+AGENT_NOT_RUNNABLE     = (126, 127)              # the shell's "not executable", "not found"
 LOCK_WAIT              = 60.0                    # seconds a caller waits before refusing
 LOCK_STALE             = 900.0                   # seconds after which any lock is stale by age
 LOCK_POLL              = 0.05                    # seconds between attempts
@@ -287,10 +288,11 @@ def git_toplevel(path):
 
 
 def git_common_dir(repo):
-    """The repository's shared git directory — where the per-attempt worktrees live.
+    """The repository's shared git directory.
 
-    Shared rather than per-worktree on purpose: every attempt's checkout hangs off the one
-    directory, so a single `crux-auto/<qid>/` subtree holds the whole run."""
+    Shared rather than per-worktree on purpose: every attempt resolves the same one, whichever
+    checkout asks. The per-attempt checkouts themselves live OUTSIDE it — see `worktrees_root`,
+    which explains why."""
     hit = _COMMON_DIR_CACHE.get(repo)
     if hit and os.path.isdir(hit):
         return hit
@@ -298,6 +300,19 @@ def git_common_dir(repo):
     got = os.path.realpath(out if os.path.isabs(out) else os.path.join(repo, out))
     _COMMON_DIR_CACHE[repo] = got
     return got
+
+
+def worktrees_root(repo):
+    """Where this repository's per-attempt checkouts live: `<repo>.crux-auto/`, a SIBLING of
+    the repository and deliberately not inside `.git/`.
+
+    They used to hang off the shared git directory, which reads well and does not work: a
+    coding agent refuses to write anything under `.git/`, treating it as a protected path, so
+    every worker could draft a candidate and none could save it. The checkout has to be an
+    ordinary directory the worker may edit. A sibling keeps it out of the working tree too, so
+    it never shows up as untracked noise in the PI's `git status`."""
+    full = os.path.realpath(repo)
+    return full.rstrip(os.sep) + "." + WORKTREES_DIR
 
 
 def plan_repo(root, plan):
@@ -560,7 +575,10 @@ def open_run(root, plan):
     `base` is a REF rather than a branch because nothing may ever move it: every attempt is
     diffed against it and every island starts from it. The island branches are cut here, at
     base, so the prefix-directory rule (`refs/heads/a/b` and `refs/heads/a` cannot coexist)
-    is discovered now rather than halfway through a run."""
+    is discovered now rather than halfway through a run.
+
+    A branch this run wants that ALREADY points at base is adopted rather than refused, and
+    one pointing elsewhere is refused by name with the command that clears it."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
     head = rev_parse(repo, "HEAD")
@@ -569,18 +587,36 @@ def open_run(root, plan):
     if rev_parse(repo, base_ref(qid)) is not None:
         raise E.CruxError(f"auto run for {qid} is already open ({base_ref(qid)} exists)")
     rb = run_branch(qid)
+    wanted = [rb] + [island_branch(qid, i) for i in (plan.get("islands") or [qid])]
+
+    # A previous run's branches are the NORMAL state of a repository the PI has decided to
+    # start over in: clearing the vault's run record clears `base`, and nothing clears these.
+    # `git branch` refuses a name that exists, so the run used to die on its first git call
+    # with `fatal: a branch named 'crux/auto/q1/run' already exists` and no word about which
+    # of them to delete. A branch already AT base is where this run wants it and is adopted; a
+    # branch pointing anywhere else is somebody's work, and every one of them is named at once
+    # with the command that removes them — a PI who deletes one only to be refused on the next
+    # is reading the same error four times.
+    stale = [b for b in wanted
+             if rev_parse(repo, "refs/heads/" + b) not in (None, head)]
+    if stale:
+        raise E.CruxError(
+            f"auto run for {qid} cannot open: {len(stale)} branch(es) from an earlier run "
+            f"point somewhere other than this run's base commit {head[:12]}: "
+            f"{', '.join(stale)}. Check that nothing there is worth keeping, then: "
+            f"git -C {repo} branch -D {' '.join(stale)}")
+
     islands = {}
     made = []
     try:
         _git(repo, "update-ref", base_ref(qid), head)
         made.append(("ref", base_ref(qid)))
-        _git(repo, "branch", rb, head)
-        made.append(("branch", rb))
+        for b in wanted:
+            if rev_parse(repo, "refs/heads/" + b) is None:
+                _git(repo, "branch", b, head)
+                made.append(("branch", b))
         for island in (plan.get("islands") or [qid]):
-            b = island_branch(qid, island)
-            _git(repo, "branch", b, head)
-            made.append(("branch", b))
-            islands[island] = b
+            islands[island] = island_branch(qid, island)
     except BaseException:
         # All of it, or none of it. The prefix-directory rule means island two can be refused
         # after island one was cut; leaving base behind would make every retry of this call
@@ -599,8 +635,7 @@ def open_run(root, plan):
 
 
 def worktree_path(root, plan, hid):
-    return os.path.join(git_common_dir(plan_repo(root, plan)), WORKTREES_DIR,
-                        plan["anchor"], hid)
+    return os.path.join(worktrees_root(plan_repo(root, plan)), plan["anchor"], hid)
 
 
 def add_worktree(root, plan, hid, parent=None):
@@ -618,7 +653,7 @@ def add_worktree(root, plan, hid, parent=None):
         commit = rev_parse(repo, base_ref(qid))
         if commit is None:
             raise E.CruxError(f"auto run for {qid} is not open: {base_ref(qid)} does not exist")
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     if os.path.exists(path):
         raise E.CruxError(f"worktree for {hid} already exists at {path}")
     _git(repo, "worktree", "add", "--detach", path, commit)
@@ -633,7 +668,7 @@ def record_attempt(root, plan, hid):
     silently moves is a run whose history cannot be read back."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     if not os.path.isdir(path):
         raise E.CruxError(f"no worktree for {hid} at {path}")
     sha = rev_parse(path, "HEAD")
@@ -660,7 +695,7 @@ def remove_worktree(root, plan, hid):
     is a worse outcome than the leftover."""
     qid = plan["anchor"]
     repo = plan_repo(root, plan)
-    path = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid, hid)
+    path = os.path.join(worktrees_root(repo), qid, hid)
     _git(repo, "worktree", "prune")                  # registrations whose directory is gone
     if not os.path.isdir(path):
         return False
@@ -730,9 +765,74 @@ def workspace_path(root, plan, hid):
 
 
 def make_workspace(root, plan, hid):
+    """The attempt's own directory, created. The failure here is reported in the plan's own
+    vocabulary, never in the filesystem's.
+
+    A plan reading `writable: train.py` passed every pre-flight gate and then died at the
+    first attempt with a bare `NotADirectoryError: <repo>/train.py/<hid>` — a message that
+    names a path nobody wrote and never says the word `writable`. `writable_problems` refuses
+    that plan before a run opens; this is the backstop for every other way a writable root can
+    fail to be a directory by the time an attempt needs one."""
     p = workspace_path(root, plan, hid)
-    os.makedirs(p, exist_ok=True)
+    try:
+        os.makedirs(p, exist_ok=True)
+    except OSError as e:
+        first = (plan.get("writable") or [None])[0]
+        raise E.CruxError(f"the workspace for {hid} could not be created at {p}: "
+                          f"{e.strerror or e}. The flight plan's first writable root is "
+                          f"'{first}', and every attempt's workspace is made inside it, so it "
+                          f"must be a directory in the repository")
     return p
+
+
+def writable_problems(root, plan):
+    """[{check, message}] — every writable root that exists and is NOT a directory.
+
+    The one fact about `writable:` that no amount of reading the plan can settle, so it is
+    checked against the repository instead. A root that does not exist yet is fine: the driver
+    makes it. A root that is a FILE is the plan that reached attempt one of a hundred and
+    forty and crashed there.
+
+    Reported for every root rather than the first, because the manifest walks all of them —
+    and because a PI who fixes one line only to be refused on the next has reviewed one plan
+    twice."""
+    out = []
+    repo = plan_repo(root, plan)
+    for w in (plan.get("writable") or []):
+        p = os.path.join(repo, w)
+        if os.path.exists(p) and not os.path.isdir(p):
+            out.append({"check": "writable",
+                        "message": f"flight plan writable root '{w}' is not a directory "
+                                   f"({p}). Every attempt's workspace is made inside it, so a "
+                                   f"file there is a run that dies at its first attempt"})
+    return out
+
+
+def parent_ref_problems(root, plan):
+    """[{check, message}] — one row naming every scored attempt the search may build on whose
+    `refs/crux/auto/<qid>/<hid>` is gone.
+
+    The bandit picks a parent from the TREE, and the worktree is cut from the REPOSITORY. A
+    restart that clears the refs and keeps the nodes makes the two disagree, and the driver
+    died at its first reservation — after `run-opened`, with an id spent. Refused, not
+    repaired: skipping those attempts would hide the disagreement, and only the PI knows
+    whether the node or the missing ref is the mistake."""
+    repo, qid = plan_repo(root, plan), plan["anchor"]
+    gone = []
+    for isl in [qid] + [i for i in (plan.get("islands") or []) if i != qid]:
+        for r in E.auto_island_attempts(root, plan, isl):
+            if (r.get("score") is None or r["id"] == plan["baseline"] or r["id"] in gone
+                    or rev_parse(repo, attempt_ref(qid, r["id"])) is not None):
+                continue
+            gone.append(r["id"])
+    if not gone:
+        return []
+    gone.sort(key=E.natkey)
+    return [{"check": "parent-ref",
+             "message": f"{len(gone)} scored attempt(s) in the tree have no ref, so the search "
+                        f"cannot build on them: "
+                        + ", ".join(attempt_ref(qid, h) for h in gone)
+                        + ". Restore each ref to its commit, or take the node out of the tree"}]
 
 
 def shared_roots(root, plan):
@@ -958,6 +1058,123 @@ def score_attempt(root, plan, hid, cwd=None, seed=None, dest=None):
     return obj
 
 
+def _scorer_own_paths(repo, cmd):
+    """The repository paths the scorer COMMAND itself names, relative to the repo.
+
+    Everything else in a checkout is the candidate's program and may be taken away to see
+    whether the scorer notices. The scorer's own file may not: a probe that deletes the
+    scorer is measuring whether a missing program can be executed, which is a different and
+    much less interesting question."""
+    keep = set()
+    try:
+        argv = shlex.split(cmd or "")
+    except ValueError:
+        return keep
+    for a in argv:
+        p = a if os.path.isabs(a) else os.path.join(repo, a)
+        if not os.path.exists(p):
+            continue
+        rel = _rel_posix(repo, os.path.realpath(p))
+        if rel != "." and not rel.startswith("../"):
+            keep.add(rel)
+    return keep
+
+
+def probe_scorer_responds(root, plan, base_value, repo=None):
+    """Does the scorer READ the candidate's checkout, or does it score the baseline every
+    time? Writes nothing the caller can see.
+
+    `{responds, detail}`, where `responds` is True, False, or None for NOT ESTABLISHED — a
+    probe that could not be set up has learned nothing, and reporting that as a pass is the
+    one outcome that makes a check worthless. Only False is a problem.
+
+    This is the probe that was missing on 2026-09-21, and its absence is the most expensive
+    defect this driver has had. A flight plan named `score.py` by ABSOLUTE path; `score.py`
+    does `sys.path.insert(0, HERE)` with HERE its own directory, so `import train` resolved to
+    the main repository's baseline `train.py` and never to the candidate's. Every attempt of a
+    thirty-attempt run would have scored the baseline. `auto check` could not see it: its one
+    scorer run printed `0.0`, and `0.0` reads exactly like "the baseline scores zero by
+    construction". A candidate with seventy-five changed lines scored byte-identical to the
+    baseline before anybody thought to check by hand.
+
+    The probe is a deliberate perturbation, because responsiveness is not a property of the
+    scorer's text — it is a property of the pair (scorer, checkout) and only an experiment
+    settles it. A throwaway worktree at HEAD has its tracked files taken away, everything the
+    scorer command itself names excepted, and the scorer is run in it. A scorer that reads the
+    checkout then either fails or returns a different number, and BOTH count as responsive: a
+    scorer that crashes because the program is gone has proved it was reading the program. The
+    one answer that fails is the objective coming back bit-for-bit what the intact checkout
+    gave, which means the candidate's code was never on the path at all.
+
+    `base_value` is the objective from the unperturbed run the caller already paid for, so
+    this costs one extra scorer run and not two."""
+    def out(responds, detail):
+        return {"responds": responds, "detail": detail}
+
+    repo = repo or plan_repo(root, plan)
+    keep = _scorer_own_paths(repo, plan["scorer"])
+    wt = tempfile.mkdtemp(prefix="crux_auto_probe_")
+    shutil.rmtree(wt, ignore_errors=True)         # git wants to create it itself
+    ws = tempfile.mkdtemp(prefix="crux_auto_probe_ws_")
+    try:
+        try:
+            _git(repo, "worktree", "add", "--detach", wt, "HEAD")
+        except E.CruxError as e:
+            return out(None, f"the probe checkout could not be made: {e}")
+        try:
+            tracked = _git(wt, "ls-files", "-z").split("\0")
+        except E.CruxError as e:
+            return out(None, f"the probe checkout could not be listed: {e}")
+        removed = 0
+        for rel in tracked:
+            rel = rel.strip()
+            if not rel or rel in keep:
+                continue
+            # A kept path may be a directory the scorer named; nothing under it is touched.
+            if any(rel.startswith(k + "/") for k in keep):
+                continue
+            try:
+                os.unlink(os.path.join(wt, *rel.split("/")))
+                removed += 1
+            except OSError:
+                pass
+        if not removed:
+            # Nothing was takeable, so nothing was tested. Saying so is the honest answer; a
+            # probe that reports "responsive" after perturbing nothing is worse than no probe.
+            return out(None, "the checkout holds no tracked file the scorer does not name, "
+                             "so there was nothing to take away")
+        try:
+            obj, _s = run_scorer(plan["scorer"], wt, plan["baseline"], ws,
+                                 plan["scorer_timeout"])
+        except ScorerError as e:
+            return out(True, f"the scorer failed on the perturbed checkout, so it reads "
+                             f"it: {e}")
+        try:
+            value = E.metrics_value(obj, plan["address"], "the scorer's output on the probe")
+        except E.AddressError as e:
+            return out(True, f"the objective stopped resolving on the perturbed checkout, "
+                             f"so the scorer reads it: {e}")
+        if value != base_value:
+            return out(True, f"{plan['address']} moved {base_value} -> {value} when "
+                             f"{removed} tracked file(s) were taken away")
+        return out(False,
+                   f"the scorer does not read the candidate: with {removed} tracked file(s) "
+                   f"taken out of a throwaway checkout it still returned "
+                   f"{plan['address']} = {value}, the same number the intact checkout gave. "
+                   f"Every attempt of this run would score the baseline. The usual cause is a "
+                   f"scorer named by ABSOLUTE path that resolves the program against its own "
+                   f"directory rather than the working directory it is run in — name the "
+                   f"scorer by a path relative to the repository, and have it import what is "
+                   f"beside it in the checkout it was started in")
+    finally:
+        try:
+            _git(repo, "worktree", "remove", "--force", wt)
+        except E.CruxError:
+            pass
+        shutil.rmtree(wt, ignore_errors=True)
+        shutil.rmtree(ws, ignore_errors=True)
+
+
 def probe_agents(root, plan, repo=None):
     """One row per command of the plan's list: `{command, probe, reachable, seconds, detail}`.
 
@@ -968,8 +1185,10 @@ def probe_agents(root, plan, repo=None):
     The probe is the command with the placeholders taken out plus `agent_probe`, so it sends
     no prompt and therefore spends NO model call: `env=None`, so the child inherits the
     environment and gets no `CRUX_*` variable at all. Reachable means the program STARTED and
-    exited inside the timeout — the exit code is not read, because not every CLI answers
-    `--version` and refusing a plan over that is a check about a flag."""
+    exited inside the timeout with any code but 126 or 127. Other codes are not read, because
+    not every CLI answers `--version` and refusing a plan over that is a check about a flag.
+    126 and 127 are the shell's own "not executable" and "not found": a wrapper — `sh -c`,
+    `env`, `npx` — always starts, and it is the wrapper that reports the agent missing."""
     plan_cwd = repo or plan_repo(root, plan)
     rows = []
     for command in E.auto_command_list(plan):
@@ -998,9 +1217,11 @@ def probe_agents(root, plan, repo=None):
             row["detail"] = (f"the agent command ran past agent_probe_timeout "
                              f"{float(plan['agent_probe_timeout']):g}s: {command}")
         else:
-            row["reachable"] = True
+            row["reachable"] = r.returncode not in AGENT_NOT_RUNNABLE
             row["seconds"] = time.monotonic() - t0
-            row["detail"] = f"exited {r.returncode}"
+            row["detail"] = (f"exited {r.returncode}" if row["reachable"] else
+                             f"the agent command started but exited {r.returncode}, the "
+                             f"shell's code for a program that cannot run: {command}")
         rows.append(row)
     return rows
 
@@ -1011,13 +1232,19 @@ def auto_check(root, path, static=False):
     A flight plan that passes every engine check and then cannot produce a number is a plan
     that fails at attempt one of a hundred and forty. So the default runs the PI's scorer
     ONCE, in the repository, against a throwaway workspace, and writes nothing anywhere —
-    the baseline's own metrics file is the PI's, and a dry run does not get to touch it."""
+    the baseline's own metrics file is the PI's, and a dry run does not get to touch it.
+
+    It runs the scorer a SECOND time, against a deliberately perturbed checkout, because a
+    scorer that produces a number is not yet a scorer that produces the CANDIDATE's number —
+    see `probe_scorer_responds` for the run that was lost to the difference. `responds` is
+    reported alongside `ran` for the same reason `ran` exists: they are two facts and a reader
+    should not have to infer one from the other."""
     res = E.auto_check(root, path)
     if static:
         return res
     res["repo"] = None
     res["scorer"] = {"ran": False, "cmd": None, "cwd": None, "address": None,
-                     "value": None, "seconds": None}
+                     "value": None, "seconds": None, "responds": None}
     res["agents"] = []                  # present on EVERY non-static return, the early ones
                                         # included, so a reader never has to test for the key
     if res["problems"]:
@@ -1030,6 +1257,8 @@ def auto_check(root, path, static=False):
         res["ok"] = False
         return res                      # and no further process of any kind
     res["repo"] = repo
+    res["problems"].extend(writable_problems(root, plan))
+    res["problems"].extend(parent_ref_problems(root, plan))
     res["scorer"].update({"cmd": plan["scorer"], "cwd": repo, "address": plan["address"]})
     ws = tempfile.mkdtemp(prefix="crux_auto_dry_")
     t0 = time.monotonic()
@@ -1056,6 +1285,13 @@ def auto_check(root, path, static=False):
                             f"scorer's output: {e}"})
     finally:
         shutil.rmtree(ws, ignore_errors=True)
+    # Only when there IS a number to compare against: perturbing a checkout to see whether a
+    # scorer that already failed fails differently answers nothing.
+    if res["scorer"]["value"] is not None:
+        probe = probe_scorer_responds(root, plan, res["scorer"]["value"], repo)
+        res["scorer"]["responds"] = probe["responds"]
+        if probe["responds"] is False:
+            res["problems"].append({"check": "scorer-responds", "message": probe["detail"]})
     # The probe runs whether or not the scorer added a problem: two faults in one plan are two
     # findings, and reporting one at a time turns one review into two.
     res["agents"] = probe_agents(root, plan, repo)
@@ -1374,7 +1610,8 @@ def _start_attempt(ctx, island):
     hid = reserve_id(root, qid, island=island, parent=parent)
     st["in_flight"][hid] = {"island": island, "parent": parent, "from": None,
                             "phase": "reserved", "worker_tries": 0, "scorer_tries": 0,
-                            "pid": None, "failure": None, "started": E.now()}
+                            "pid": None, "failure": None, "provider": False,
+                            "started": E.now()}
     _record(ctx, "attempt-reserved", {"attempt": hid, "island": island, "parent": parent})
     _crash(ctx, "reserved")
 
@@ -1395,7 +1632,10 @@ def _start_attempt(ctx, island):
         # attempt on an Explore island builds on the baseline, which sits under the anchor
         w["brief"] = E.auto_brief_text(
             E.auto_brief(root, parent, island=island, islands=list(st["islands"]),
-                         steward=((st.get("steward") or {}).get("guidance") or [])))
+                         steward=((st.get("steward") or {}).get("guidance") or []),
+                         # the run's own counter — the same one `auto_stop` reads, so the
+                         # worker and the stop condition cannot disagree about what is left
+                         budget=st["budget"]["attempts"]))
     except E.CruxError as e:
         _abandon(ctx, hid, "brief")
         _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -1446,9 +1686,67 @@ def _worker_try(ctx, hid):
     _record(ctx, "worker-started", {"attempt": hid, "pid": p.pid, "try": fl["worker_tries"]})
 
 
+def _rescue_commit(ctx, hid):
+    """Commit what the worker left uncommitted in its own worktree, on its behalf. The new
+    head, or None when there was nothing to rescue or the rescue would preserve a cheat.
+
+    A worker that does the work and exits 0 without committing used to lose ALL of it: the
+    attempt failed `no-commit`, retention removed the worktree `--force`, and the changes were
+    gone — while the retention rule that permits the removal reasons that "the commit it held
+    is already in a ref", which is exactly the thing that is not true here. Committing is
+    bookkeeping, not science, and the brief now says so in as many words; where the engine can
+    do the bookkeeping itself rather than hope, it does.
+
+    The two integrity checks are re-run on what is about to be committed, and a rescue that
+    would trip either is REFUSED rather than recorded. A worker that both forgot to commit and
+    touched a frozen path is a double fault, and the safe direction is not to launder it into
+    a scorable commit.
+
+    Built out of PLUMBING — `write-tree`, `commit-tree`, `update-ref` — and never `git
+    commit`. The driver is held to a list of git verbs it may not run (see the purity section
+    of the suite) and the porcelain ones are on it, because a driver that can `commit`,
+    `checkout` or `reset` can rewrite a history it is only supposed to read. None of these
+    three touches a file in the working tree: they write an object and move a detached HEAD,
+    which is the same thing `record_attempt` already does one step later."""
+    root, plan, qid = ctx["root"], ctx["plan"], ctx["qid"]
+    w, fl = _wk(ctx, hid), _fl(ctx, hid)
+    wt = w.get("wt")
+    if w.get("recorded") or not wt or not os.path.isdir(wt):
+        return None
+    if not fl.get("from") or rev_parse(wt, "HEAD") != fl["from"]:
+        return None                      # it committed after all; there is nothing to rescue
+    try:
+        if not _git(wt, "status", "--porcelain"):
+            return None                  # it changed nothing; there is nothing to preserve
+        _git(wt, "add", "-A")
+        tree = _git(wt, "write-tree")
+        head = _git(wt, "commit-tree", tree, "-p", fl["from"], "-m",
+                    f"crux autopilot: work rescued from attempt {hid}, which exited without "
+                    f"recording it")
+        _git(wt, "update-ref", "HEAD", head)
+    except E.CruxError:
+        return None                      # a rescue that cannot happen is not a run-ending fault
+    if head is None or head == fl.get("from"):
+        return None
+    if frozen_violations(root, plan, fl["from"], head):
+        return None
+    if E.auto_manifest_violations(recheck_manifest(root, plan, hid),
+                                  plan["writable"] or [""],
+                                  list(reservations(root, qid))):
+        return None
+    w["head"] = head
+    return head
+
+
 def _fail(ctx, hid, reason, detail):
     """A failure that is the MACHINE's: retried while `retries` and the call budget allow, and
-    otherwise carried into the close as the finding that explains an `invalid-run`."""
+    otherwise carried into the close as the finding that explains an `invalid-run`.
+
+    On the LAST try, whatever the worker left on disk is committed on its behalf before the
+    attempt is carried into the close — see `_rescue_commit`. The failure still stands and the
+    attempt still closes `invalid-run` when it named no hypothesis; what changes is that the
+    program and its number survive, which is the whole of "preserve and measure everything,
+    grade only what carries a claim"."""
     plan, st = ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     _record(ctx, "worker-failed", {"attempt": hid, "reason": reason, "detail": detail,
@@ -1459,12 +1757,20 @@ def _fail(ctx, hid, reason, detail):
     # command and the ledger reads `cooldown` then `failover`, in that order.
     if w.get("command") and E.auto_rate_limited(_log_tail(w["ws"], since=w.get("log_from") or 0)):
         _cool(ctx, E.AUTO_AGENTS[0], w["command"])
+        # ...and this try was lost to the PROVIDER rather than to the worker. Recorded on
+        # `fl`, not on the side-table, so it reaches `state.json` and survives a resume. One
+        # matcher decides the cooldown, the failover and this — a second one would drift.
+        fl["provider"] = True
     if (not w.get("recorded")
             and fl["worker_tries"] <= plan["retries"]
             and st["budget"]["model_calls"]["used"] < st["budget"]["model_calls"]["total"]):
         _record(ctx, "retry", {"attempt": hid, "step": "worker",
                                "try": fl["worker_tries"] + 1, "reason": reason})
         return _worker_try(ctx, hid)
+    # The last try is over, so whatever is on disk is all there will ever be. Rescue it BEFORE
+    # the attempt is carried into the close, because `_step_retire` removes the worktree under
+    # every retention setting and takes an uncommitted program with it.
+    _rescue_commit(ctx, hid)
     fl["failure"] = f"{reason}: {detail}"
     fl["phase"] = "committed"
     w["reason"], w["exhausted"] = reason, True
@@ -1474,8 +1780,9 @@ def _fail(ctx, hid, reason, detail):
 
 
 def _violate(ctx, hid, kind, paths, detail):
-    """A failure that is the WORKER's act — a frozen path, a shared root, a proposal outside
-    the schema. Never retried: the same agent would simply repeat it at cost."""
+    """A failure that is the WORKER's act — a frozen path or a shared root. Never retried: the
+    same agent would simply repeat it at cost. A proposal is never one: its form is repaired or
+    retried, because a reporting fault must not void a measurement."""
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     fl["failure"] = f"{kind}: {detail}"
     fl["phase"] = "committed"
@@ -1510,7 +1817,7 @@ def _worker_checks(ctx, hid, head):
         return _violate(ctx, hid, "frozen", paths,
                         f"the commit touches frozen path(s): {', '.join(paths)}")
     paths = E.auto_manifest_violations(recheck_manifest(root, plan, hid),
-                                       (plan["writable"] or [""])[0],
+                                       plan["writable"] or [""],
                                        list(reservations(root, qid)))
     if paths:
         return _violate(ctx, hid, "manifest",
@@ -1519,17 +1826,72 @@ def _worker_checks(ctx, hid, head):
     raw = _agent_file(os.path.join(w["ws"], PROPOSAL_NAME))
     prop = w["prop"] = E.auto_proposal(raw, plan)
     if not prop["ok"]:
-        if prop["retry"]:
-            return _fail(ctx, hid, prop["reason"], prop["detail"])
-        return _violate(ctx, hid, "proposal", [], prop["detail"])
+        return _fail(ctx, hid, prop["reason"], prop["detail"])
     fl["phase"] = "committed"
-    _record(ctx, "worker-done", dict(attempt=hid, commit=head))
+    _record(ctx, "worker-done",
+            dict(attempt=hid, commit=head, warnings=prop.get("warnings") or []))
     _crash(ctx, "committed")
     _finish(ctx, hid, w.get("stage") or "record")
 
 
 # ---------------------------------------------------------------- S6–S13, and where resume joins
 _FINISH_STEPS = ("record", "file", "score", "close", "post")
+
+
+_UNSCORABLE_KINDS = ("frozen", "manifest", "filing")
+
+
+def _integrity_failed(fl):
+    """Is this a failure whose commit must NOT be measured?
+
+    `frozen` and `manifest` are integrity: the commit exists, but a number taken from it would
+    be a reward for touching frozen data or for writing into ground another attempt shares.
+
+    `filing` is the third and is not integrity — it is a refusal from the engine part-way
+    through the three acts that write the node, so the node is in a state no verdict is a
+    reading of, and the run is already aborting behind it. Measuring it would spend a scorer
+    run to decorate a record nobody will trust.
+
+    Read off `fl["failure"]`, which `_violate` and `_step_file` write as `"<kind>: <detail>"`
+    and which lives in `state.json` — so a resumed attempt reaches the same answer as a fresh
+    one even though the side-table that held the kind died with the driver. That is the whole
+    reason it is read from here and not from `_wk`."""
+    f = fl.get("failure") or ""
+    return any(f.startswith(k + ": ") for k in _UNSCORABLE_KINDS)
+
+
+def _scorable(ctx, hid):
+    """May this attempt's commit be scored?
+
+    The rule, and it is one rule for both halves of the run: PRESERVE AND MEASURE EVERYTHING,
+    GRADE ONLY WHAT CARRIES A CLAIM. A commit exists and it passed both integrity checks, so
+    it gets measured — whatever the worker's REPORT looked like. A faulty report is not a
+    reason to throw away a measurement that was already taken; that is `3751491`'s argument
+    one step later, and it used to cost an attempt its number for a claim one word over a cap.
+
+    The two exclusions are integrity, not form, and they are why this is not simply "is there
+    a commit". An attempt that touched a frozen path or wrote into ground another attempt
+    shares has a commit whose number would be a reward for the cheat, so it is never scored.
+
+    Keyed on the ref rather than on the worktree: the ref is the commit of record, it survives
+    the worktree being thrown away, and it is what makes this answer the same before and after
+    a crash."""
+    if _integrity_failed(_fl(ctx, hid)):
+        return False
+    return rev_parse(ctx["repo"], attempt_ref(ctx["qid"], hid)) is not None
+
+
+def _no_claim(ctx, hid):
+    """Did this attempt report a hypothesis at all?
+
+    Asked of the NODE, not of the driver's side-table. `auto_proposal` hands back a `claim`
+    only when there is a usable one, and `_step_file` writes either that claim or the
+    AUTO_NO_CLAIM placeholder — so the node carries the answer for exactly the four faults
+    that leave nothing to grade (missing, unparseable, absent, over-cap) and for the attempts
+    that never produced a proposal at all. The side-table would answer the same for a FRESH
+    attempt and wrongly for a resumed one, because it is rebuilt from disk and holds no
+    proposal for a worker whose driver has died."""
+    return E.auto_is_no_claim(ctx["root"], hid)
 
 
 def _finish(ctx, hid, stage="record"):
@@ -1542,7 +1904,7 @@ def _finish(ctx, hid, stage="record"):
         _step_record(ctx, hid)
     if k <= 1:
         _step_file(ctx, hid)
-    if k <= 2 and fl["failure"] is None:
+    if k <= 2 and _scorable(ctx, hid):
         _step_score(ctx, hid)
     metrics = E.load_metrics(root, hid)
     value = _address_value(plan, metrics, hid)
@@ -1644,7 +2006,12 @@ def _step_file(ctx, hid):
 def _step_score(ctx, hid):
     """S8. The scorer, retried while it is the MACHINE that failed. A scorer whose output
     parses but whose objective does not resolve is NOT retried: the document is on disk, and
-    the ticks decide from there."""
+    the ticks decide from there.
+
+    Reached now with a failure ALREADY set — an attempt whose report was faulty is still
+    measured — so the first failure is the one kept. It is the one that explains the close,
+    and overwriting "the claim ran to 412 words" with a scorer's message would leave the
+    findings describing the wrong fault."""
     root, plan = ctx["root"], ctx["plan"]
     fl = _fl(ctx, hid)
     fl["phase"] = "scored"
@@ -1659,7 +2026,8 @@ def _step_score(ctx, hid):
                 _record(ctx, "retry", {"attempt": hid, "step": "scorer",
                                        "try": fl["scorer_tries"] + 1, "reason": e.check})
                 continue
-            fl["failure"] = f"{e.check}: {e}"
+            if fl["failure"] is None:
+                fl["failure"] = f"{e.check}: {e}"
             if e.check in E.AUTO_SCORER_RETRY_CHECKS:
                 _wk(ctx, hid)["exhausted"] = True
                 _wk(ctx, hid)["reason"] = e.check
@@ -1773,7 +2141,12 @@ def _step_close(ctx, hid, metrics, value):
     Every closer failure closes the attempt on the ENGINE's own vector, with the fixed-template
     findings and report, and is deliberately NOT `invalid-run` for that reason alone: the run
     happened and the scorer's document is on disk, and a reporting agent's flakiness must not
-    be able to manufacture a streak of invalid runs that trips the `abort` stop."""
+    be able to manufacture a streak of invalid runs that trips the `abort` stop.
+
+    An attempt that reported NO CLAIM is the other half of that rule and cuts the other way.
+    It is measured like any other — the number is on the ledger and the program is at its ref
+    — but the fact that it stated no hypothesis is reported to `cmd_close`, which withholds
+    the reading of the vector. The driver names the fact; the engine still names the verdict."""
     root, plan, st = ctx["root"], ctx["plan"], ctx["state"]
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     fl["phase"] = "closed"
@@ -1798,7 +2171,7 @@ def _step_close(ctx, hid, metrics, value):
     def act():
         _step_report(ctx, hid, report)
         out = E.cmd_close(root, hid, metric=repr(value) if value is not None else None,
-                          findings=findings)
+                          findings=findings, no_claim=_no_claim(ctx, hid))
         tid = None
         if w.get("exhausted"):
             # an attempt that burned every retry is an exception, and an exception belongs in
@@ -1825,9 +2198,22 @@ def _step_counters(ctx, hid, verdict, value):
     Climb toward a bar refutes every attempt until the last one, and a verdict-based rule
     would call that a stall on the second try."""
     plan, st = ctx["plan"], ctx["state"]
-    island = _fl(ctx, hid)["island"]
+    fl = _fl(ctx, hid)
+    island = fl["island"]
     isl = st["islands"][island]
-    st["consecutive_invalid"] = st["consecutive_invalid"] + 1 if verdict == "invalid-run" else 0
+    # An attempt the PROVIDER killed is NEUTRAL to the streak: it neither advances it nor
+    # clears it. `abort_invalid_runs` exists to catch a worker behaving badly, and an outage
+    # or a session limit is not a worker act — the first run of one search ended on this stop
+    # with 25 attempts of budget left, five workers killed by a limit and a run of 529s and
+    # every one of them counted against the worker. Clearing the streak would be the opposite
+    # error: an outage in the middle of three genuinely bad attempts would hide them.
+    #
+    # Only what `auto_rate_limited` positively identifies is excused. A worker that exits
+    # non-zero because the PROGRAM is broken is a worker act and still counts, which is why
+    # `worker-exit` is not excluded wholesale.
+    if not fl.get("provider"):
+        st["consecutive_invalid"] = (st["consecutive_invalid"] + 1
+                                     if verdict == "invalid-run" else 0)
     if verdict != "invalid-run" and E.auto_improves(value, isl["seen_score"],
                                                     plan["direction"]):
         isl["seen_score"], isl["stall"] = value, 0
@@ -1970,7 +2356,7 @@ def _reconcile(ctx):
             st["in_flight"][hid] = {"island": rec.get("island") or qid,
                                     "parent": rec.get("parent"), "from": None,
                                     "phase": "reserved", "worker_tries": 0, "scorer_tries": 0,
-                                    "pid": None, "failure": None,
+                                    "pid": None, "failure": None, "provider": False,
                                     "started": rec.get("at") or E.now()}
         _resume_one(ctx, hid)
 
@@ -1998,7 +2384,13 @@ def _resume_one(ctx, hid):
             return _finish(ctx, hid, "post")                            # R1
         if E.load_metrics(root, hid) is not None:
             return _finish(ctx, hid, "close")                           # R2
-        return _finish(ctx, hid, "close" if fl.get("failure") else "score")   # R3
+        # R3. It enters at `score` unconditionally now, and `_finish`'s own `_scorable` gate
+        # decides. It used to branch on `fl["failure"]`, which was right only while the fresh
+        # path skipped scoring on any failure at all; now that the fresh path measures a
+        # commit whose REPORT was faulty, a resumed attempt branching the old way would be
+        # graded differently from an identical fresh one — and one path for both is the
+        # property `_finish` exists to hold. One rule, read from `state.json`, in both places.
+        return _finish(ctx, hid, "score")                              # R3
     head = rev_parse(repo, attempt_ref(qid, hid))
     if head is not None:                                                # R4
         w["stage"] = "file"
@@ -2089,7 +2481,14 @@ def _base_scorer_check(ctx):
 
     A scorer that cannot produce a number on the commit the run starts from is a run that
     fails at attempt one of a hundred and forty — and the throwaway checkout is what keeps the
-    PI's own working tree clean while finding that out."""
+    PI's own working tree clean while finding that out.
+
+    It then asks the harder question, the one `probe_scorer_responds` exists for: does that
+    number have anything to do with the CANDIDATE? `auto run` gates on the STATIC engine check
+    and never calls `autopilot.auto_check`, so a PI who approves a plan and runs it without
+    ever typing `crux auto check` would otherwise reach this point with the scorer's
+    responsiveness untested — which is exactly how a thirty-attempt run came to score the
+    baseline thirty times. It costs one more scorer run, once, at run open."""
     root, plan = ctx["root"], ctx["plan"]
     remove_worktree(root, plan, BASE_WORKTREE)
     tmp = tempfile.mkdtemp(prefix="crux_auto_base_")
@@ -2097,12 +2496,15 @@ def _base_scorer_check(ctx):
         wt = add_worktree(root, plan, BASE_WORKTREE)
         obj, _s = run_scorer(plan["scorer"], wt, plan["baseline"], tmp,
                              plan["scorer_timeout"], seed=0)
-        E.metrics_value(obj, plan["address"], "the scorer's output at run open")
+        value = E.metrics_value(obj, plan["address"], "the scorer's output at run open")
     except (ScorerError, E.AddressError) as e:
         return str(e)
     finally:
         remove_worktree(root, plan, BASE_WORKTREE)
         shutil.rmtree(tmp, ignore_errors=True)
+    probe = probe_scorer_responds(root, plan, value, ctx["repo"])
+    if probe["responds"] is False:
+        return probe["detail"]
     return None
 
 
@@ -2354,6 +2756,11 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             raise E.CruxError(f"auto run: {rel} was approved again with different content "
                               f"after this run opened, so this run cannot resume under it")
     repo = plan_repo(root, plan)
+    # before the first write of any kind, fresh or resumed: a missing parent is found when the
+    # bandit picks it, and by then an id is reserved and the ledger says the run is open
+    bad = parent_ref_problems(root, plan)
+    if bad:
+        raise E.CruxError(f"auto run: {bad[0]['message']}")
 
     ctx = {"root": root, "qid": qid, "rel": rel, "plan": plan, "repo": repo, "state": None,
            "lock_wait": lock_wait, "crash_at": os.environ.get(CRASH_ENV),
@@ -2395,6 +2802,13 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             # 05.3: the probe FIRST. A misspelled agent is cheaper to find than a scorer run,
             # and the stop happens before any id is reserved — a reserved hypothesis number
             # can never be handed out again.
+            # `auto run` gates on the STATIC check, which cannot see the filesystem — so the
+            # one thing `auto check` learned about the repository has to be re-learned here or
+            # a plan that was never `auto check`ed dies at `make_workspace` instead.
+            bad = writable_problems(root, plan)
+            if bad:
+                _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
+                                "detail": bad[0]["message"]})
             rows = probe_agents(root, plan, ctx["repo"])
             if rows and not any(r["reachable"] for r in rows):
                 _stop_run(ctx, {"reason": "abort", "axis": None, "attempt": None,
@@ -2520,6 +2934,7 @@ def auto_refs(root, qid=None):
 
     Read-only, and read-only all the way down — it creates no directory, no ref and no file,
     because the one question a PI asks after a run is not a reason to write to the vault."""
+    qid = E.auto_qid_arg(qid)
     if qid is None:
         qid = _sole_anchor(root)
     ppath = f"{E.AUTO_DIR}/{qid}/{E.PLAN_FILE}"
@@ -2539,7 +2954,7 @@ def auto_refs(root, qid=None):
     rb = run_branch(qid)
     branches.sort(key=lambda b: (0 if b["name"] == rb else 1, b["name"]))
 
-    base_dir = os.path.join(git_common_dir(repo), WORKTREES_DIR, qid)
+    base_dir = os.path.join(worktrees_root(repo), qid)
     worktrees = []
     for block in _worktree_blocks(repo):
         p = block.get("worktree")

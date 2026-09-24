@@ -4048,7 +4048,22 @@ def cmd_test(root, nid, to=None, run=None):
     refresh(root)
     return target
 
-def cmd_close(root, nid, metric=None, findings=None):
+def cmd_close(root, nid, metric=None, findings=None, no_claim=False):
+    """Close one hypothesis on its pre-registered checks. The verdict is DERIVED here and is
+    never an argument — that is most of what makes a crux verdict worth reading.
+
+    `no_claim` is the autopilot's no-claim path, and it is deliberately a FACT rather than a
+    verdict: the caller reports that this node carries no hypothesis, and the engine decides
+    what that means. A driver still cannot name a verdict, and no value of this argument
+    produces `supported`.
+
+    It exists because an autopilot attempt is now measured even when its REPORT was faulty — a
+    reporting mistake must not destroy a measurement — so a node whose claim is the
+    AUTO_NO_CLAIM placeholder can arrive here carrying a real, fully graded tick vector. That
+    vector would derive `supported`, and the verdict would be a judgment about a hypothesis
+    nobody ever stated. So the measurement is kept, the metric is kept, and the judgment is
+    withheld: `invalid-run` already means "the apparatus ran and the claim cannot be read",
+    which is the honest reading of an attempt that claimed nothing."""
     v = Vault(root)
     n = v.get(nid)
     if n.type != "idea":
@@ -4069,6 +4084,12 @@ def cmd_close(root, nid, metric=None, findings=None):
         verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
     else:
         verdict = derive_verdict(met, unmet, na)
+    # AFTER the derivation, never instead of it: the gap that is checked, the rule that is
+    # read and the refusal on an unclosable node all still happen, so a no-claim attempt is
+    # held to every structural rule its siblings are. Only the reading of the vector is
+    # withheld, because there is no claim for it to be a reading OF.
+    if no_claim:
+        verdict = "invalid-run"
     # `cmd_close` has no status precondition and is reachable straight from `idea`, so a
     # lock taken only at `running` is bypassable by the shortest path the CLI offers. Lock
     # here too, and record that it was never a pre-registration — refusing the close instead
@@ -5839,7 +5860,7 @@ AUTO_CONTROL_KEYS      = ("fails_if", "text")
 AUTO_WORKER_RETRY_REASONS = ("worker-start", "worker-exit", "no-commit", "proposal-missing",
                              "proposal-unparseable", "claim-missing", "claim-over-cap")
 AUTO_SCORER_RETRY_CHECKS  = ("scorer-exit", "scorer-timeout", "scorer-output")
-AUTO_VIOLATION_KINDS   = ("frozen", "manifest", "proposal")
+AUTO_VIOLATION_KINDS   = ("frozen", "manifest")
 AUTO_TASK_CATEGORY     = "autopilot"
 AUTO_TITLE_WORDS       = 15
 AUTO_NO_CLAIM          = "Autopilot attempt {hid} left no usable claim ({reason})."
@@ -5860,10 +5881,31 @@ AUTO_PROBE_DEFAULT         = "--version"   # plan field `agent_probe:`
 AUTO_PROBE_TIMEOUT_DEFAULT = 20.0          # seconds; plan field `agent_probe_timeout:`
 # Ported from the era skill's scaffold/generate.py LIMIT_PATTERNS (MIT — that file carries no
 # licence header and is part of the PI's own MIT-licensed `era` skill; Apache-2.0 and FROZEN
-# belong to futs.py alone, which is a different file). Seven regexes, read case-insensitively.
+# belong to futs.py alone, which is a different file). Read case-insensitively.
+#
+# A LIMIT AND AN OUTAGE ARE ONE FAMILY for every purpose the driver has: both are the provider
+# failing rather than the worker acting, both are waited out rather than retried harder, and
+# neither may be read as a bad attempt. The second row was added after a run died on
+# `abort_invalid_runs` with 25 attempts of budget left — five workers killed by a session limit
+# and a run of 529s, every one of them counted as a worker behaving badly.
 AUTO_RATE_LIMIT_PATTERNS   = (r"5-?hour limit", r"usage limit", r"rate limit",
                               r"limit reached", r"too many requests", r"reset[s]? at",
-                              r"please try again later")
+                              r"please try again later",
+                              r"overloaded", r"service unavailable",
+                              r"internal server error", r"\b529\b", r"api_error",
+                              # The CLI's OWN session limit — the commonest provider failure
+                              # on a workstation, and the one shape no row above caught:
+                              # "You've hit your session limit · resets 9:10pm". It killed the
+                              # first run of a search and then the fourth, and because this
+                              # same predicate also drives the cooldown there was no wait
+                              # either: four attempts burned in thirteen seconds, retrying
+                              # into a wall with hours left on it. Matched as a FAMILY, since
+                              # the wording moves with the surface and the plan — but never on
+                              # the bare word "limit", because a program is entitled to print
+                              # that about its own iteration cap.
+                              r"hit your [^\n]{0,40}limit", r"session limit",
+                              r"reset[s]? (?:at\s+)?\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?",
+                              r"reset[s]? (?:at\s+)?\d{1,2}:\d{2}")
 # ---- the closer
 AUTO_CLOSE_KEYS            = ("ticks", "findings", "report")
 AUTO_TICK_ALPHABET         = ("x", " ", "-")
@@ -5911,6 +5953,25 @@ def flight_plan_path(root, qid):
     """auto/<qid>/plan.md, absolute. One spelling of the convention, so a verb, a test and
     05.2's loop cannot disagree about where a plan lives."""
     return os.path.join(root, AUTO_DIR, qid, PLAN_FILE)
+
+
+def auto_qid_arg(value):
+    """The anchor out of whatever the PI typed: a qid, or the plan path the other verbs take.
+
+    `status` and `refs` are keyed by anchor while `check`, `approve`, `run` and `guide` are
+    keyed by `auto/<qid>/plan.md`, and nothing on the command line says which is which. A PI
+    who has just typed the plan path five times types it a sixth, and `auto status
+    auto/q1/plan.md` then went looking for a run on an anchor literally named
+    `auto/q1/plan.md` — reported as a mangled path, with nothing to say the ARGUMENT was the
+    fault. One verb set, one argument: a path ending in the plan file yields the directory it
+    sits in, and anything else is already a qid and is returned untouched."""
+    if value is None:
+        return None
+    s = str(value).replace(os.sep, "/").rstrip("/")
+    head, _, tail = s.rpartition("/")
+    if tail == PLAN_FILE and head:
+        return head.rpartition("/")[2] or value
+    return value
 
 
 def _auto_text(text):
@@ -6758,13 +6819,20 @@ def auto_proposal(raw, plan):
     `controls` of `{text, fails_if}`.
 
     `retry` is the whole judgment here. A missing, unparseable or over-cap proposal is the
-    machine's failure and is retried; a key outside the schema, or a control carrying its own
-    `[kind]` tag, is the worker's ACT — the same agent would simply repeat it at cost — and is
-    refused once. There is no field in which a worker can express a claim-directed check, so
-    D17 holds by construction rather than by instruction."""
+    machine's failure and is retried. Everything else about the FORM of the document is
+    repaired rather than refused: a key outside the schema is ignored, and a control that is
+    malformed, self-tagged, ungrammatical or duplicated is DROPPED, each with a line in
+    `warnings`. A proposal is a report, not evidence — the commit and the scorer's document
+    are the evidence — so a reporting mistake must not be able to throw away a measurement
+    that was never taken. The integrity checks that DO void an attempt live in the driver:
+    the frozen-path diff and the shared-root manifest.
+
+    There is no field in which a worker can express a claim-directed check, so D17 holds by
+    construction rather than by instruction: a control is tagged by the driver, and one that
+    arrives carrying its own tag is dropped rather than honoured."""
     def out(retry, reason, detail, claim=None):
         return {"ok": False, "retry": retry, "reason": reason, "detail": detail,
-                "claim": claim, "controls": []}
+                "claim": claim, "controls": [], "warnings": []}
 
     if raw is None:
         return out(True, "proposal-missing",
@@ -6782,14 +6850,16 @@ def auto_proposal(raw, plan):
              if isinstance(raw_claim, str) and raw_claim.strip()
              and len(_prose_tokens(raw_claim)) <= PROSE_CAP else None)
 
+    warnings = []
     extra = set(obj) - set(AUTO_PROPOSAL_KEYS)
     if extra:
-        return out(False, "proposal", f"proposal.json carries keys outside "
-                                      f"{', '.join(AUTO_PROPOSAL_KEYS)}: "
-                                      f"{', '.join(sorted(extra))}", claim)
+        warnings.append(f"ignored key(s) outside {', '.join(AUTO_PROPOSAL_KEYS)}: "
+                        f"{', '.join(sorted(extra))}")
     controls = obj.get("controls", [])
     if not isinstance(controls, list):
-        return out(False, "proposal", "proposal.json controls is not a list", claim)
+        warnings.append(f"dropped controls: not a list (got "
+                        f"{type(controls).__name__})")
+        controls = []
     seen = {" ".join(str(c.get("fails_if") or "").lower().split())
             for c in (plan.get("checks") or [])}
     seen.discard("")
@@ -6798,20 +6868,25 @@ def auto_proposal(raw, plan):
         if (not isinstance(c, dict) or set(c) != set(AUTO_CONTROL_KEYS)
                 or not all(isinstance(c.get(k), str) and c.get(k).strip()
                            for k in AUTO_CONTROL_KEYS)):
-            return out(False, "proposal", f"control {i} must be an object with exactly text "
-                                          f"and fails_if, both non-empty strings", claim)
+            warnings.append(f"dropped control {i}: it must be an object with exactly text "
+                            f"and fails_if, both non-empty strings")
+            continue
         tag = _KIND_TAG_RE.match(c["text"])
         if tag:
-            return out(False, "proposal", f"control {i} carries its own [{tag.group(1)}] tag; "
-                                          f"the driver tags every control "
-                                          f"{NEUTRAL_KIND}", claim)
+            warnings.append(f"dropped control {i}: it carries its own [{tag.group(1)}] tag, "
+                            f"and the driver tags every control {NEUTRAL_KIND}")
+            continue
         if auto_check_comparison(c["text"]) is None:
-            return out(False, "proposal", f"control {i} is not a metric comparison: "
-                                          f"{c['text'].strip()}", claim)
+            warnings.append(f"dropped control {i}: not a metric comparison "
+                            f"'<key.path> <op> <number>' with <op> one of "
+                            f"{', '.join(AUTO_COMPARISON_OPS)} (got "
+                            f"'{c['text'].strip()}')")
+            continue
         norm = " ".join(c["fails_if"].lower().split())
         if norm in seen:
-            return out(False, "proposal", f"control {i} repeats an existing failure scenario: "
-                                          f"{c['fails_if'].strip()}", claim)
+            warnings.append(f"dropped control {i}: it repeats an existing failure scenario "
+                            f"'{c['fails_if'].strip()}'")
+            continue
         seen.add(norm)
         clean.append({"text": c["text"].strip(), "fails_if": c["fails_if"].strip()})
 
@@ -6822,7 +6897,27 @@ def auto_proposal(raw, plan):
         return out(True, "claim-over-cap",
                    f"the claim runs to {n} words, over the {PROSE_CAP}-word cap", claim)
     return {"ok": True, "retry": False, "reason": None, "detail": None,
-            "claim": raw_claim.strip(), "controls": clean}
+            "claim": raw_claim.strip(), "controls": clean, "warnings": warnings}
+
+
+def auto_is_no_claim(root, hid):
+    """Does this attempt's node carry the AUTO_NO_CLAIM placeholder instead of a hypothesis?
+
+    The DURABLE answer to "did this attempt report a claim", and the reason it is read from
+    the node rather than from the driver's side-table: that table is rebuilt from disk on
+    resume and holds no proposal for an attempt whose worker ran under a driver that has since
+    died. Asking it there made every RESUMED attempt look claimless, which forced
+    `invalid-run` onto attempts that had stated a perfectly good hypothesis — a resumed
+    attempt and a fresh one grading differently, which is the one thing the finish path
+    exists to prevent.
+
+    `_step_file` always runs before the close and writes either the worker's claim or the
+    placeholder, so by the time anyone asks, the node already knows."""
+    n = Vault(root).nodes.get(hid)
+    if n is None:
+        return True
+    marker = AUTO_NO_CLAIM.split("{")[0].strip()
+    return bool(marker) and marker in _section(n["body"], "Idea / Hypothesis")
 
 
 def auto_claim_title(claim):
@@ -6932,18 +7027,25 @@ def auto_ledger_line(event, fields, at=None):
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
 
 
-def auto_manifest_violations(diff, workspace_root, ids):
+def auto_manifest_violations(diff, workspace_roots, ids):
     """The shared-root paths an attempt touched that belong to NO attempt of this run.
 
     Every path under `<writable>/<some reserved id>/` is somebody's workspace and is therefore
     fine; anything else is a write into ground two attempts share, which is the one thing a
-    parallel run cannot allow."""
-    r = _auto_norm_path(workspace_root)
+    parallel run cannot allow.
+
+    `workspace_roots` is EVERY writable root, not just the first. It used to be the first
+    alone, which made the plan grammar lie about its own list: a PI reading `writable: work/,
+    results/` is told two roots are writable, and a worker that put a checkpoint in the second
+    lost its attempt to a violation it could not have predicted, unretried and unrepairable.
+    One string is still accepted, because that is what every 05.2 caller passes."""
+    roots = [workspace_roots] if isinstance(workspace_roots, str) else list(workspace_roots or [])
+    roots = [_auto_norm_path(r) for r in roots] or [""]
     owned = tuple(ids or ())
     out = set()
     for p in (list((diff or {}).get("added") or []) + list((diff or {}).get("removed") or [])
               + list((diff or {}).get("changed") or [])):
-        if any(p == f"{r}/{h}" or p.startswith(f"{r}/{h}/") for h in owned):
+        if any(p == f"{r}/{h}" or p.startswith(f"{r}/{h}/") for r in roots for h in owned):
             continue
         out.add(p)
     return sorted(out)
@@ -6953,6 +7055,7 @@ def auto_status(root, qid=None):
     """`{anchor, state, events, last_event}` for one run. A PURE READ: no lock, no process,
     and it creates nothing — not even `auto/` — so a vault that never met autopilot reads
     exactly as it did."""
+    qid = auto_qid_arg(qid)
     d = os.path.join(root, AUTO_DIR)
     if qid is None:
         ids = []
@@ -7391,6 +7494,11 @@ AUTO_BRIEF_BUDGET = {"inspirations": 3, "refuted": 5, "guidance": 10, "findings_
                      "steward": 10, "ledger": 40}
 AUTO_BRIEF_CHECKS = ("schema", "budget", "stable", "leakage", "addresses")
 AUTO_CUT_PREFIX   = "Cut to budget:"
+# What a claim is FOR, in words. The cap itself is PROSE_CAP and is the engine's; this is the
+# range a worker should aim at, well under it, so a claim is never close enough to the cap for
+# one more sentence to cost the attempt. An attempt wrote 1126 words into its claim and then
+# 737 on its retry, and lost both — the brief had never said a cap existed.
+AUTO_CLAIM_TARGET     = (150, 250)
 AUTO_NO_REFUTED       = "No refuted attempts on this island yet."
 AUTO_NO_INSPIRATIONS  = "No other supported attempts on this island yet."
 AUTO_NO_OTHER_ISLANDS = "No other islands."
@@ -7409,7 +7517,7 @@ def auto_plan_for(root, v, hid):
     return None, None
 
 
-def auto_brief(root, hid, island=None, islands=None, steward=None):
+def auto_brief(root, hid, island=None, islands=None, steward=None, budget=None):
     """The brief for the next attempt built on `hid`. Byte-stable: no timestamps, every list
     order defined, every number carried as the address it came from.
 
@@ -7425,7 +7533,11 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
     opened. Absent, the plan's own list, byte-identical to 05.2.
 
     `steward` (05.3) is the steward's standing guidance, rendered in its OWN labelled section
-    so a worker can see who said what. Absent or empty, the section says so."""
+    so a worker can see who said what. Absent or empty, the section says so.
+
+    `budget` is the RUN's own `{used, total}` for attempts, straight out of `state.json`.
+    Absent — `crux auto brief` typed by hand — the attempt count falls back to the vault walk
+    it always used. See the comment at the count itself for what that walk gets wrong."""
     v = Vault(root)
     n = v.get(hid)
     # The type check comes FIRST. Plan discovery walks ancestors and excludes the node itself,
@@ -7551,9 +7663,22 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
                           "best": {"id": ob["id"], "claim": claim_of(ob["id"]),
                                    "score": score_or_none(ob["id"])}})
 
-    used = sum(1 for nd in v.nodes.values()
-               if nd.type == "idea" and any(m.id == anchor for m in ancestor_chain(v, nd)))
-    total = plan["fm"].get("budget_attempts")
+    # THE RUN's counter, not the vault's. Counting every `idea` under the anchor counts the
+    # baseline and every attempt every EARLIER run left behind, so a fresh run told its first
+    # worker "16 of 30 used, 14 remaining" while its own `state.json` read `0 of 30` — wrong
+    # from the first attempt and further wrong after every restart. The driver holds the only
+    # honest answer, which is the same number `auto_stop` reads, so a worker and the stop
+    # condition can no longer disagree about how much run is left.
+    #
+    # The vault count survives as the fallback for `crux auto brief` run BY HAND, where there
+    # is no driver to ask. That path reports on a run rather than steering one.
+    if budget:
+        used = int(budget.get("used") or 0)
+        total = budget.get("total")
+    else:
+        used = sum(1 for nd in v.nodes.values()
+                   if nd.type == "idea" and any(m.id == anchor for m in ancestor_chain(v, nd)))
+        total = plan["fm"].get("budget_attempts")
 
     payload = {
         "engine_version": ENGINE_VERSION, "mode": "auto", "plan": plan["path"],
@@ -7582,6 +7707,24 @@ def auto_brief(root, hid, island=None, islands=None, steward=None):
         "steward": steward_lines,
         "budget": {"attempts": {"total": total, "used": used,
                                 "remaining": max((total or 0) - used, 0)}},
+        # The three facts a worker needs in order to SUCCEED, as opposed to the facts it needs
+        # in order to choose. They reached the worker only when a human remembered to append
+        # them with `crux auto guide`, and on 2026-09-21 a run aborted after five invalid
+        # attempts for want of them: three workers tried an interpreter the plan never named,
+        # could not run anything, and concluded execution was forbidden; two wrote a
+        # twenty-key `proposal.json` where `auto_proposal` reads exactly two keys. Two of the
+        # five had in fact measured a program that passed every check. Guidance is a prompt
+        # and a prompt is not a guarantee, so what the engine already KNOWS it now states —
+        # every run, whether or not anybody remembered.
+        "harness": {"scorer": plan["scorer"], "address": address,
+                    "op": auto_direction_op(direction),
+                    "shared": ", ".join(f"`{w}`" for w in plan["writable"]) or "no shared root",
+                    "frozen": ", ".join(f"`{f}`" for f in plan["frozen"]) or "nothing"},
+        "schema": {"keys": list(AUTO_PROPOSAL_KEYS),
+                   "control_keys": list(AUTO_CONTROL_KEYS),
+                   "ops": list(AUTO_COMPARISON_OPS),
+                   "claim_words": PROSE_CAP,
+                   "claim_target": list(AUTO_CLAIM_TARGET)},
         "cut": cut,
     }
 
@@ -7855,6 +7998,61 @@ def auto_brief_text(payload):
     for g in stew:
         out.append(f"- [{g.get('at')}] {g.get('author')}: {g.get('text')}")
     out.append("")
+
+    # ## Harness and ## Output are the engine SPEAKING rather than reporting. Everything above
+    # is what the run has learned; these two are what the worker has to do, and they are here
+    # because a run died when they were only in someone's memory of `crux auto guide`.
+    h = p.get("harness") or {}
+    out += ["## Harness", "",
+            f"You are in a throwaway git checkout of the repository, and it is yours. Edit it,",
+            f"run it, and COMMIT your work there — the commit is the attempt, and an attempt",
+            f"with no commit is discarded. Committing here is authorized even where a standing",
+            f"rule tells you not to commit: this checkout is not the PI's branch and is thrown",
+            f"away after the driver has read it.", "",
+            f"Your own directory for anything bigger than a commit is `$CRUX_WORKSPACE`.",
+            f"`$CRUX_WORKTREE` is the checkout; `$CRUX_PROPOSAL` is the file named below.",
+            f"Other attempts are running beside you and share {h.get('shared')}. Your own",
+            f"workspace under any of those is yours; another attempt's files there are not,",
+            f"and touching them voids your attempt.", "",
+            f"The driver — not you — scores your commit by running, in the checkout:", "",
+            f"    {h.get('scorer')}", "",
+            f"Run that yourself to see where you stand. It is also the interpreter and the",
+            f"entry point this project is known to work under, so prefer it to any other one",
+            f"you might reach for; an interpreter the plan does not name may not be installed.",
+            f"Do NOT write `{RESULTS_DIR}/` — the driver writes the score, from that command's",
+            f"own output, and a number you write there is not evidence. Do not touch",
+            f"{h.get('frozen')}: a commit that does voids the attempt outright.", ""]
+
+    sch = p.get("schema") or {}
+    tgt = list(sch.get("claim_target") or AUTO_CLAIM_TARGET)
+    out += ["## Output", "",
+            f"Write ONE JSON object to `$CRUX_PROPOSAL` with exactly these keys:", "",
+            f"- `claim`: what you changed and why you expected it to help. HARD LIMIT "
+            f"{sch.get('claim_words')} words —",
+            f"  a claim over it costs the whole attempt, after all the work is done, and no",
+            f"  retry gets that work back. Aim at {tgt[0]}–{tgt[1]} words and you will never",
+            f"  be near it. Put NO tables, NO per-case or per-country numbers, NO ablation",
+            f"  sweeps and NO code in there: the driver reads every number from the scorer and",
+            f"  not one from this file, so detail here buys nothing and can cost everything.",
+            f"  What changed, and why you thought it would help. That is all it is for.",
+            f"- `controls`: a list — possibly empty — of "
+            f"{{{', '.join(f'`{k}`' for k in sch.get('control_keys') or [])}}} objects.", "",
+            f"Every `text` must BEGIN with a metric comparison — `<key.path> <op> <number>`,",
+            f"with `<op>` one of {', '.join(sch.get('ops') or [])} — and may carry prose after",
+            f"it. A control points whichever way you mean it to — the example below borrows",
+            f"the objective's own operator only so it reads as something rather than nothing:",
+            "",
+            f"    {{\"text\": \"{h.get('address')} {h.get('op')} {obj.get('bar')} — "
+            f"measured on three seeds\",",
+            f"     \"fails_if\": \"the value moves with the seed rather than with the change\"}}",
+            "",
+            f"A control that is prose alone is DROPPED, not refused, and so is a key outside",
+            f"the two above — the attempt is still scored and still gets a verdict. Your",
+            f"commit is measured either way; what a missing or over-cap `claim` costs is the",
+            f"VERDICT, because a verdict is a judgment about a hypothesis and an attempt that",
+            f"stated none has nothing to judge. The work survives; the answer does not.",
+            f"Do not name a verdict and do not tag a control with a kind; both are the",
+            f"driver's.", ""]
 
     b = (p.get("budget") or {}).get("attempts") or {}
     out += ["## Budget", "",
