@@ -1,5 +1,7 @@
 # Crux
 
+[![downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmehdiforoozandeh%2Fcrux%2Ftraffic%2Fclones.json&query=%24.total&label=downloads&color=blue)](.github/workflows/clone-count.yml)
+
 **A scientific-method lab notebook your AI agent drives.** `crux` keeps a falsifiable
 **question → hypothesis → evidence** tree for your project, so nothing gets silently
 p-hacked or forgotten across dozens of experiments. The agent runs the loop;
