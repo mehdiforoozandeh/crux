@@ -5860,7 +5860,7 @@ AUTO_CONTROL_KEYS      = ("fails_if", "text")
 AUTO_WORKER_RETRY_REASONS = ("worker-start", "worker-exit", "no-commit", "proposal-missing",
                              "proposal-unparseable", "claim-missing", "claim-over-cap")
 AUTO_SCORER_RETRY_CHECKS  = ("scorer-exit", "scorer-timeout", "scorer-output")
-AUTO_VIOLATION_KINDS   = ("frozen", "manifest", "proposal")
+AUTO_VIOLATION_KINDS   = ("frozen", "manifest")
 AUTO_TASK_CATEGORY     = "autopilot"
 AUTO_TITLE_WORDS       = 15
 AUTO_NO_CLAIM          = "Autopilot attempt {hid} left no usable claim ({reason})."

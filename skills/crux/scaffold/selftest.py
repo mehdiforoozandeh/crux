@@ -10471,9 +10471,14 @@ def run_auto_verbs():
                   and all(set(x) == {"id", "path", "commit"} for x in jr["worktrees"])
                   and os.path.realpath(jr["worktrees"][0]["path"]) == os.path.realpath(st["wt0"])
                   and r2.returncode == 0 and "refs/crux/auto/%s/" % qa in r2.stdout
-                  and c1.returncode == 0
+                  # the fixture's "unrecorded attempt" is scored and has no ref, so it is a
+                  # parent the search could pick and never check out — the one problem reported
+                  and c1.returncode == 1
                   and set(jc) >= {"ok", "plan", "anchor", "mode", "problems", "repo", "scorer"}
-                  and jc["ok"] is True and jc["scorer"]["ran"] is True
+                  and jc["ok"] is False
+                  and [p["check"] for p in jc["problems"]] == ["parent-ref"]
+                  and "refs/crux/auto/%s/%s" % (qa, st["h0"]) in jc["problems"][0]["message"]
+                  and jc["scorer"]["ran"] is True
                   and jc["scorer"]["value"] == 0.8
                   and c2.returncode == 0
                   and set(js) == {"ok", "plan", "anchor", "mode", "problems"})))
@@ -11758,7 +11763,10 @@ def run_auto_loop():
         fv, shv = _ev(f, "violation"), _ev(sh, "violation")
         check("arun: a frozen-path commit and a shared-root write each close invalid-run unretried with one violation event naming the path",
               _auto_ok(lambda: (
-                  E.AUTO_VIOLATION_KINDS == ("frozen", "manifest", "proposal")
+                  # two kinds, not three: since a proposal's FORM stopped voiding a measurement
+                  # every proposal failure is retried, so no proposal is ever a violation
+                  E.AUTO_VIOLATION_KINDS == ("frozen", "manifest")
+                  and '"proposal"' not in read(os.path.join(HERE, "autopilot.py"))
                   and len(fv) == 1 and fv[0]["kind"] == "frozen"
                   and fv[0]["paths"] == ["score.py"] and "score.py" in fv[0]["detail"]
                   and len(_ev(f, "worker-started")) == 1 and _ev(f, "retry") == []
@@ -13407,8 +13415,87 @@ def run_auto_probe():
                   and "'one two'" in qout
                   and ("probe: python3 probe.py 'one two' valid guidance --version"
                        in qout))))
+
+        # ------------------------------ 126 and 127 are "could not run", whatever started
+        # A wrapper — `sh -c`, `env`, `npx` — starts every time, and it is the wrapper that
+        # reports the agent missing, by the shell's own convention: 127 not found, 126 not
+        # executable. Any other exit stays reachable, because not every agent CLI answers
+        # `--version` and refusing a plan over that is a check about a flag.
+        nf = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 127'")
+        nfres = _auto_val(lambda: A.auto_check(nf[1], nf[5]), {})
+        ne = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 126'")
+        neres = _auto_val(lambda: A.auto_check(ne[1], ne[5]), {})
+        n3 = _ag_fixture(x0=0, agent_probe_timeout="5", agent="sh -c 'exit 3'")
+        n3res = _auto_val(lambda: A.auto_check(n3[1], n3[5]), {})
+        check("aprobe: a command that starts and exits 127 or 126 is unreachable and fails agent-reach; any other exit stays reachable",
+              _auto_ok(lambda: (
+                  nfres["agents"][0]["reachable"] is False
+                  and "exited 127" in nfres["agents"][0]["detail"]
+                  and "agent-reach" in [p["check"] for p in nfres["problems"]]
+                  and nfres["ok"] is False
+                  and neres["agents"][0]["reachable"] is False
+                  and "exited 126" in neres["agents"][0]["detail"]
+                  and "agent-reach" in [p["check"] for p in neres["problems"]]
+                  and n3res["agents"][0]["reachable"] is True
+                  and n3res["agents"][0]["detail"] == "exited 3"
+                  and "agent-reach" not in [p["check"] for p in n3res["problems"]])))
     except Exception as e:                                   # pragma: no cover - wave-1 guard
         check(f"aprobe: section ran without crashing ({e!r})", False)
+    finally:
+        _auto_sweep()
+
+
+def run_auto_parent_refs():
+    """Every attempt the search may build on has its ref, checked before anything is written.
+
+    A restart that archives the run record and clears `refs/crux/auto/<qid>/*` while the
+    attempts stay in the tree hands the bandit parents it cannot check out. Both gates passed
+    and the driver died at its first reservation — after `run-opened`, with an attempt id
+    already spent. The vault and the repository disagree, and only the PI can say which is
+    right, so this is refused rather than repaired: skipping those attempts would hide it."""
+    print("\n# autopilot — every parent the search may pick has its ref (spec 05)")
+    try:
+        A = _auto_mod()
+        repo, root, qa, isl, hb, rel = _loop_fixture(x0=0)
+        _loop_run("parent-refs-first", root, qa, rel)
+        plan = _auto_val(lambda: E.load_flight_plan(root, rel), {}) or {}
+        scored = [r["id"] for r in (_auto_val(lambda: E.auto_island_attempts(root, plan, qa),
+                                              []) or [])
+                  if r.get("score") is not None and r["id"] != plan.get("baseline")]
+        gone = scored[0] if scored else None
+        refs = {h: _auto_val(lambda h=h: _git(repo, "rev-parse", f"refs/crux/auto/{qa}/{h}"),
+                             "") for h in scored}
+        # the restart recipe as it was written down: record archived, refs cleared, nodes kept
+        for name in (E.AUTO_STATE_FILE, E.AUTO_LEDGER_FILE, A.RESERVED_FILE):
+            p = os.path.join(root, E.AUTO_DIR, qa, name)
+            if os.path.isfile(p):
+                os.remove(p)
+        shutil.rmtree(os.path.join(root, E.AUTO_DIR, qa, A.MANIFESTS_DIR), ignore_errors=True)
+        for h in scored:
+            _auto_val(lambda h=h: _git(repo, "update-ref", "-d", f"refs/crux/auto/{qa}/{h}"))
+        chk = _auto_val(lambda: A.auto_check(root, rel), {}) or {}
+        again = _loop_run("parent-refs-again", root, qa, rel)
+        pr = [p for p in chk.get("problems") or [] if p["check"] == "parent-ref"]
+        check("aref: auto check names every scored attempt in the tree whose ref is gone",
+              _auto_ok(lambda: (
+                  bool(gone) and len(pr) == 1 and chk["ok"] is False
+                  and all(f"refs/crux/auto/{qa}/{h}" in pr[0]["message"] for h in scored))))
+        check("aref: auto run refuses a missing parent ref before it writes anything — no state, no ledger, no reservation",
+              _auto_ok(lambda: (
+                  bool(gone) and f"refs/crux/auto/{qa}/{gone}" in again["error"]
+                  and not os.path.isfile(_loop_state_path(root, qa))
+                  and not os.path.isfile(_loop_ledger_path(root, qa))
+                  and A.reservations(root, qa) == {})))
+        for h, sha in refs.items():
+            _auto_val(lambda h=h, sha=sha: _git(repo, "update-ref", f"refs/crux/auto/{qa}/{h}",
+                                                sha))
+        fixed = _auto_val(lambda: A.auto_check(root, rel), {}) or {}
+        check("aref: restoring the refs is the whole fix — auto check no longer reports parent-ref",
+              _auto_ok(lambda: (
+                  bool(gone) and bool(fixed)
+                  and "parent-ref" not in [p["check"] for p in fixed["problems"]])))
+    except Exception as e:                                   # pragma: no cover - wave-1 guard
+        check(f"aref: section ran without crashing ({e!r})", False)
     finally:
         _auto_sweep()
 
@@ -16207,6 +16294,7 @@ def main():
     run_auto_agents()
     run_auto_cooldown()
     run_auto_probe()
+    run_auto_parent_refs()
     run_auto_closer()
     run_auto_steward()
     run_auto_report()

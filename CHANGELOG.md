@@ -6,6 +6,18 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The autopilot runs unattended end to end** (spec 05; engine **3.4**, unchanged). **No
+  vault-format change.** Twelve mechanical defects, each found by a real run failing and each
+  now enforced in code: worker checkouts moved out of `.git/`; a `writable:` file gated at
+  `auto check` and run open; a scorer that never read the candidate caught by
+  `probe_scorer_responds`; the worker brief states the interpreter, the commit authorization,
+  the proposal schema, the control grammar and the claim cap; a proposal's form can no longer
+  void a measurement; a provider outage or session limit is not a worker failure; the brief's
+  budget line reads the run, not the vault; an agent probe exiting 126 or 127 is unreachable;
+  and a scored attempt with no ref is refused before the run writes anything.
+
 ## [0.8.0] - 2026-09-21
 
 ### Added

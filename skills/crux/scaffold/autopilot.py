@@ -55,6 +55,7 @@ MANIFESTS_DIR          = "manifests"             # <root>/auto/<qid>/manifests/<
 WORKTREES_DIR          = "crux-auto"             # <repo>.crux-auto/<qid>/<hid> — see worktrees_root
 REF_PREFIX             = "refs/crux/auto"
 BRANCH_PREFIX          = "crux/auto"
+AGENT_NOT_RUNNABLE     = (126, 127)              # the shell's "not executable", "not found"
 LOCK_WAIT              = 60.0                    # seconds a caller waits before refusing
 LOCK_STALE             = 900.0                   # seconds after which any lock is stale by age
 LOCK_POLL              = 0.05                    # seconds between attempts
@@ -807,6 +808,33 @@ def writable_problems(root, plan):
     return out
 
 
+def parent_ref_problems(root, plan):
+    """[{check, message}] — one row naming every scored attempt the search may build on whose
+    `refs/crux/auto/<qid>/<hid>` is gone.
+
+    The bandit picks a parent from the TREE, and the worktree is cut from the REPOSITORY. A
+    restart that clears the refs and keeps the nodes makes the two disagree, and the driver
+    died at its first reservation — after `run-opened`, with an id spent. Refused, not
+    repaired: skipping those attempts would hide the disagreement, and only the PI knows
+    whether the node or the missing ref is the mistake."""
+    repo, qid = plan_repo(root, plan), plan["anchor"]
+    gone = []
+    for isl in [qid] + [i for i in (plan.get("islands") or []) if i != qid]:
+        for r in E.auto_island_attempts(root, plan, isl):
+            if (r.get("score") is None or r["id"] == plan["baseline"] or r["id"] in gone
+                    or rev_parse(repo, attempt_ref(qid, r["id"])) is not None):
+                continue
+            gone.append(r["id"])
+    if not gone:
+        return []
+    gone.sort(key=E.natkey)
+    return [{"check": "parent-ref",
+             "message": f"{len(gone)} scored attempt(s) in the tree have no ref, so the search "
+                        f"cannot build on them: "
+                        + ", ".join(attempt_ref(qid, h) for h in gone)
+                        + ". Restore each ref to its commit, or take the node out of the tree"}]
+
+
 def shared_roots(root, plan):
     """Every writable root, absolute, in plan order. Shared because every attempt in flight
     can write into them — which is exactly why they need a manifest."""
@@ -1157,8 +1185,10 @@ def probe_agents(root, plan, repo=None):
     The probe is the command with the placeholders taken out plus `agent_probe`, so it sends
     no prompt and therefore spends NO model call: `env=None`, so the child inherits the
     environment and gets no `CRUX_*` variable at all. Reachable means the program STARTED and
-    exited inside the timeout — the exit code is not read, because not every CLI answers
-    `--version` and refusing a plan over that is a check about a flag."""
+    exited inside the timeout with any code but 126 or 127. Other codes are not read, because
+    not every CLI answers `--version` and refusing a plan over that is a check about a flag.
+    126 and 127 are the shell's own "not executable" and "not found": a wrapper — `sh -c`,
+    `env`, `npx` — always starts, and it is the wrapper that reports the agent missing."""
     plan_cwd = repo or plan_repo(root, plan)
     rows = []
     for command in E.auto_command_list(plan):
@@ -1187,9 +1217,11 @@ def probe_agents(root, plan, repo=None):
             row["detail"] = (f"the agent command ran past agent_probe_timeout "
                              f"{float(plan['agent_probe_timeout']):g}s: {command}")
         else:
-            row["reachable"] = True
+            row["reachable"] = r.returncode not in AGENT_NOT_RUNNABLE
             row["seconds"] = time.monotonic() - t0
-            row["detail"] = f"exited {r.returncode}"
+            row["detail"] = (f"exited {r.returncode}" if row["reachable"] else
+                             f"the agent command started but exited {r.returncode}, the "
+                             f"shell's code for a program that cannot run: {command}")
         rows.append(row)
     return rows
 
@@ -1226,6 +1258,7 @@ def auto_check(root, path, static=False):
         return res                      # and no further process of any kind
     res["repo"] = repo
     res["problems"].extend(writable_problems(root, plan))
+    res["problems"].extend(parent_ref_problems(root, plan))
     res["scorer"].update({"cmd": plan["scorer"], "cwd": repo, "address": plan["address"]})
     ws = tempfile.mkdtemp(prefix="crux_auto_dry_")
     t0 = time.monotonic()
@@ -1747,8 +1780,9 @@ def _fail(ctx, hid, reason, detail):
 
 
 def _violate(ctx, hid, kind, paths, detail):
-    """A failure that is the WORKER's act — a frozen path, a shared root, a proposal outside
-    the schema. Never retried: the same agent would simply repeat it at cost."""
+    """A failure that is the WORKER's act — a frozen path or a shared root. Never retried: the
+    same agent would simply repeat it at cost. A proposal is never one: its form is repaired or
+    retried, because a reporting fault must not void a measurement."""
     fl, w = _fl(ctx, hid), _wk(ctx, hid)
     fl["failure"] = f"{kind}: {detail}"
     fl["phase"] = "committed"
@@ -1792,9 +1826,7 @@ def _worker_checks(ctx, hid, head):
     raw = _agent_file(os.path.join(w["ws"], PROPOSAL_NAME))
     prop = w["prop"] = E.auto_proposal(raw, plan)
     if not prop["ok"]:
-        if prop["retry"]:
-            return _fail(ctx, hid, prop["reason"], prop["detail"])
-        return _violate(ctx, hid, "proposal", [], prop["detail"])
+        return _fail(ctx, hid, prop["reason"], prop["detail"])
     fl["phase"] = "committed"
     _record(ctx, "worker-done",
             dict(attempt=hid, commit=head, warnings=prop.get("warnings") or []))
@@ -2724,6 +2756,11 @@ def auto_run(root, path, max_attempts=None, lock_wait=LOCK_WAIT):
             raise E.CruxError(f"auto run: {rel} was approved again with different content "
                               f"after this run opened, so this run cannot resume under it")
     repo = plan_repo(root, plan)
+    # before the first write of any kind, fresh or resumed: a missing parent is found when the
+    # bandit picks it, and by then an id is reserved and the ledger says the run is open
+    bad = parent_ref_problems(root, plan)
+    if bad:
+        raise E.CruxError(f"auto run: {bad[0]['message']}")
 
     ctx = {"root": root, "qid": qid, "rel": rel, "plan": plan, "repo": repo, "state": None,
            "lock_wait": lock_wait, "crash_at": os.environ.get(CRASH_ENV),
