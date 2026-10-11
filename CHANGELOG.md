@@ -23,6 +23,9 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- **"Try it in 60 seconds" opens `sortlab_vault`**, and the three shipped example vaults are
+  re-stamped to engine **3.5**, so `crux serve` on a fresh clone no longer opens on an
+  engine-drift warning. Node files are untouched.
 - **The flight plan names the workers' `model` and `effort`, and the engine enforces them**
   (spec 05; engine **3.4 → 3.5**). Both fields are required; `effort` is one of
   `low, medium, high, xhigh, max`. Every agent command gets `{model}`/`{effort}` substituted,

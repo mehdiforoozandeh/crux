@@ -55,13 +55,15 @@ example vault from a fresh clone:
 
 ```bash
 git clone https://github.com/mehdiforoozandeh/crux
-cd crux && ./crux serve --dir skills/crux/examples/segssl_vault
+cd crux && ./crux serve --dir skills/crux/examples/sortlab_vault
 ```
 
-That's [segssl_vault](skills/crux/examples/segssl_vault) (**5 questions, 16 hypotheses** —
-the vault behind the screenshots below): pan the status-colored tree, open h1's evidence
-ledger and its rendered **report with figures**, flip to the **Wiki** tab for the literature
-graph. (Port taken? `--port 8890`.)
+That's [sortlab_vault](skills/crux/examples/sortlab_vault) (**35 questions, 108 hypotheses**):
+one person asking which of the sorts they wrote is fastest, and whether they can beat the one
+the language ships. Pan the status-colored tree and open any hypothesis's evidence ledger,
+flip to the **Wiki** tab for the literature graph, and to **Taskhub** for the plans and runs
+behind the results. (Port taken? `--port 8890`.) The screenshots below are
+[segssl_vault](skills/crux/examples/segssl_vault), a lived-in research vault.
 
 ## The cockpit
 
