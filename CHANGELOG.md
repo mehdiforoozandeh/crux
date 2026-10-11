@@ -6,6 +6,8 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-11
+
 ### Fixed
 
 - **The autopilot runs unattended end to end** (spec 05; engine **3.4**, unchanged). **No
