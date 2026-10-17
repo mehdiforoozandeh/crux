@@ -10,13 +10,10 @@ p-hacked or forgotten across dozens of experiments. The agent runs the loop;
 ## What it is
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/crux-chat-dark.gif">
-    <img src="assets/crux-chat-light.gif" width="860" alt="A split screen. On the left, a scientist and an agent talk about an experiment in ordinary language — the scientist states a question and a guess, the agent reports what the nearest prior work did and did not rule out, the scientist names the two outcomes that would settle it and says to run it. On the right, a cockpit fills itself in as they talk: a question, a hypothesis and two checks appear on a tree with their tick boxes still empty, a literature graph of papers and areas, then a task list working through a plan. When the run comes back the agent reports only what the data did — one check green, one red — and the hypothesis is marked refuted only after the scientist says it is dead. Nobody types on the cockpit side; a caption reads 'the agents maintain this notebook, the human only talks science'.">
-  </picture>
+  <img src="assets/crux-triptych.gif" width="860" alt="Three diagrams side by side, each building itself up and then holding. Left, 'knowledge base': three seed papers grow a citation crawl, an LLM compiles it into a wiki graph, and an agent reads WIKI.md and returns an answer. Middle, 'research tree': a project branches into questions; one question branches into two hypotheses, and each hypothesis has two verifiables — the green hypothesis has two ticks, the red one has two crosses. Right, 'automated research loop': an autopilot loop runs agent proposes, edits code, runs, evaluates; below it, a plot of metric against attempt climbs in steps as green points are kept, while a grey point is not.">
 </p>
 
-<p align="center"><sub><em>You talk science; the notebook fills.</em> The conversation never mentions crux. On the right, agents keep the science tree, the literature wiki and the task list in step with the talk — checks written down <em>before</em> the run, so the verdict is derived from the bar you set, not argued from the number that came back. The agent supplies the evidence; the verdict is yours.</sub></p>
+<p align="center"><sub>The three parts of crux at once. <b>Knowledge base:</b> the literature, compiled into a wiki the agent reads. <b>Research tree:</b> questions and falsifiable hypotheses, each judged by verifiables written down <em>before</em> the run. <b>Automated research loop:</b> in autopilot, an agent iterates on the code against a metric. The agent does the legwork; the verdict is yours.</sub></p>
 
 Months in, can you still say what you asked, what you tested, and whether each question is
 settled? `crux` keeps that explicit:
