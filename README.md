@@ -8,7 +8,7 @@
   <img src="assets/crux-triptych.gif" width="860" alt="Three diagrams side by side, each building itself up and then holding. Left, 'knowledge base': three seed papers grow a citation crawl, an LLM compiles it into a wiki graph, and an agent reads WIKI.md and returns an answer. Middle, 'research tree': a project branches into questions; one question branches into two hypotheses, and each hypothesis has two verifiables — the green hypothesis has two ticks, the red one has two crosses. Right, 'automated research loop': an autopilot loop runs agent proposes, edits code, runs, evaluates; below it, a plot of metric against attempt climbs in steps as green points are kept, while a grey point is not.">
 </p>
 
-<p align="center"><sub>Three of the four modules. <b>Knowledge base:</b> literature compiled into a wiki that agents read. <b>Research tree:</b> questions and hypotheses, each evaluated against checks defined before the run. <b>Automated research loop:</b> autopilot iterates on code against a metric.</sub></p>
+<p align="center"><sub>Three of crux's modules. <b>Knowledge base:</b> literature compiled into a wiki that agents read. <b>Research tree:</b> questions and hypotheses, each evaluated against checks defined before the run. <b>Automated research loop:</b> autopilot iterates on code against a metric.</sub></p>
 
 ## Motivation
 
@@ -22,7 +22,7 @@ review it.
 
 `crux` consists of specialized agents and skills, a deterministic engine, and a read-only
 browser interface (the **cockpit**). All state is stored as plain markdown in a vault inside
-the project repository. It has four modules.
+the project repository. It is organized into the modules below.
 
 ### Knowledge base
 
@@ -71,7 +71,7 @@ when a question is answered remain with the researcher (the PI).
 ## Install
 
 Needs Python ≥ 3.8 (the engine is stdlib-only) and `git`; the `npx` path also needs
-Node.js. Install all four crux skills with any [skills.sh](https://www.skills.sh)-compatible
+Node.js. Install the crux skills with any [skills.sh](https://www.skills.sh)-compatible
 agent — Claude Code, Cursor, Codex, Windsurf, Copilot CLI, and others:
 
 ```bash
@@ -88,7 +88,7 @@ cd crux && ./install.sh
 Restart your agent and you're set — `./crux selftest` checks the install. Scopes,
 per-agent notes, updating, and troubleshooting: **[installation guide](INSTALL.md)**.
 
-## Try it in 60 seconds
+## Try it
 
 No agent, no dependencies, nothing to configure — open the cockpit over the bundled
 example vault from a fresh clone:
@@ -98,7 +98,7 @@ git clone https://github.com/mehdiforoozandeh/crux
 cd crux && ./crux serve --dir skills/crux/examples/sortlab_vault
 ```
 
-That's [sortlab_vault](skills/crux/examples/sortlab_vault) (**35 questions, 108 hypotheses**):
+That's [sortlab_vault](skills/crux/examples/sortlab_vault):
 one person asking which of the sorts they wrote is fastest, and whether they can beat the one
 the language ships. Pan the status-colored tree and open any hypothesis's evidence ledger,
 flip to the **Wiki** tab for the literature graph, and to **Taskhub** for the plans and runs
