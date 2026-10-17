@@ -2,28 +2,71 @@
 
 [![downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmehdiforoozandeh%2Fcrux%2Ftraffic%2Fclones.json&query=%24.total&label=downloads&color=blue)](.github/workflows/clone-count.yml)
 
-**A scientific-method lab notebook your AI agent drives.** `crux` keeps a falsifiable
-**question → hypothesis → evidence** tree for your project, so nothing gets silently
-p-hacked or forgotten across dozens of experiments. The agent runs the loop;
-**you make the calls.**
-
-## What it is
+`crux` is an open-source toolbox for computational research with AI agents.
 
 <p align="center">
   <img src="assets/crux-triptych.gif" width="860" alt="Three diagrams side by side, each building itself up and then holding. Left, 'knowledge base': three seed papers grow a citation crawl, an LLM compiles it into a wiki graph, and an agent reads WIKI.md and returns an answer. Middle, 'research tree': a project branches into questions; one question branches into two hypotheses, and each hypothesis has two verifiables — the green hypothesis has two ticks, the red one has two crosses. Right, 'automated research loop': an autopilot loop runs agent proposes, edits code, runs, evaluates; below it, a plot of metric against attempt climbs in steps as green points are kept, while a grey point is not.">
 </p>
 
-<p align="center"><sub>The three parts of crux at once. <b>Knowledge base:</b> the literature, compiled into a wiki the agent reads. <b>Research tree:</b> questions and falsifiable hypotheses, each judged by verifiables written down <em>before</em> the run. <b>Automated research loop:</b> in autopilot, an agent iterates on the code against a metric. The agent does the legwork; the verdict is yours.</sub></p>
+<p align="center"><sub>Three of the four modules. <b>Knowledge base:</b> literature compiled into a wiki that agents read. <b>Research tree:</b> questions and hypotheses, each evaluated against checks defined before the run. <b>Automated research loop:</b> autopilot iterates on code against a metric.</sub></p>
 
-Months in, can you still say what you asked, what you tested, and whether each question is
-settled? `crux` keeps that explicit:
+## Motivation
 
-- **Questions** — what you don't know. They carry no answer of their own; they resolve by aggregating the findings beneath them, and they nest.
-- **Hypotheses** — falsifiable leaves under a question, each with **pre-registered verifiables** (pass/fail checks written down *before* running: *"ADE20K val mIoU ≥ supervised + 2.0, 3-seed mean"*), its findings, and the report and figures the run produced. Only hypotheses are tested.
-- A plain-Python **engine** does the bookkeeping: IDs, tree consistency, evidence tallied upward, a human **review gate**, a regenerated `META.md` + `EXPERIMENTS.md`.
-- An **LLM agent** drives it; **you (the PI)** make the calls — which questions matter, where the bar sits, when a question is answered.
+AI coding agents can write code, run experiments and summarize results faster than a
+researcher can follow. Over weeks and months, it becomes hard to track which questions a
+project asked, what was tested, what the evidence showed, and which decisions the researcher
+made. `crux` gives agents a shared structure for this work and gives the researcher a way to
+review it.
 
-Nothing counts until you sign off.
+## What crux provides
+
+`crux` consists of specialized agents and skills, a deterministic engine, and a read-only
+browser interface (the **cockpit**). All state is stored as plain markdown in a vault inside
+the project repository. It has four modules.
+
+### Knowledge base
+
+A literature wiki that agents consult for background, baselines and metrics. Following
+[Karpathy's LLM-wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f),
+sources are compiled into cross-linked markdown pages. A citation crawl over
+[OpenAlex](https://openalex.org) starts from seed papers chosen by the researcher and ranks
+related work that is not yet in the wiki. The wiki contains published work only; project
+results are kept in the research tree. Skills: `crux-wiki`, `crux-litsearch`.
+
+### Research tree
+
+A tree of research questions and the hypotheses that test them.
+
+- **Questions** can nest. The researcher closes a question when the evidence beneath it is sufficient.
+- **Hypotheses** each have a **null** and **pass/fail checks (verifiables) defined before the
+  run**, e.g. *"ADE20K val mIoU ≥ supervised + 2.0, 3-seed mean"*. The engine derives the
+  verdict from these checks.
+
+Agents add and update the nodes; the researcher approves the decisions.
+
+### Taskhub
+
+A task list for work that is not a claim, such as downloading data, writing a scorer or
+launching a run. Each task declares the tasks that block it, and a task can only be marked
+done with a link to its output. Completing an experiment — a task whose output is evidence
+about a hypothesis — requires the researcher's acceptance (`crux task accept`).
+
+### Autopilot
+
+An optimization loop for questions with a single metric, such as a loss or a runtime. It
+extends [autoresearch](https://github.com/karpathy/autoresearch). The researcher and the
+agent first write a flight plan with the objective, baselines, limits and guidance. In each
+attempt, an agent changes the code, the program is run and scored, and the attempt is
+recorded in the research tree as a hypothesis with a verdict. The next attempt is selected
+with the tree-search rule from Google's [ERA](https://www.nature.com/articles/s41586-026-10658-6),
+which balances refining the best attempt against exploring less-visited ones. Skill:
+`crux-autopilot`; command: `crux auto`.
+
+### Engine
+
+A stdlib-only Python engine handles IDs, tree consistency, the roll-up of evidence, and a
+review gate. Agents drive the engine through its CLI. Decisions on direction, thresholds, and
+when a question is answered remain with the researcher (the PI).
 
 ## Install
 
@@ -65,8 +108,9 @@ behind the results. (Port taken? `--port 8890`.) The screenshots below are
 ## The cockpit
 
 Your vault opens in **Obsidian**, but crux has a purpose-built home for it. **`crux serve`**
-is a dependency-free, **read-only** browser **cockpit**: pan / zoom / search the live tree,
-focus one question, watch the review gate, read any node's evidence ledger, and open a
+is a dependency-free, **read-only** browser **cockpit** with one tab per module — **Tree**,
+**Wiki**, **Taskhub** and **Autopilot**. On the Tree tab you pan / zoom / search the live
+tree, focus one question, watch the review gate, read any node's evidence ledger, and open a
 hypothesis's **report — rendered markdown, figures and all — beside the tree**. Edits still
 go through your agent or the CLI.
 
@@ -79,11 +123,8 @@ go through your agent or the CLI.
 
 <p align="center"><sub>The <b>cockpit</b> over the <a href="skills/crux/examples/segssl_vault">segssl_vault</a> example — the status-colored tree (branches collapse/expand) and a hypothesis's <b>evidence ledger</b> (verifiables · metric · run link · finding). Read-only; every edit goes through your agent or the <code>crux</code> CLI. <em>(Real screenshot; it matches your GitHub light/dark theme.)</em></sub></p>
 
-The **literature wiki** gets its own view too. The `crux-wiki` skill — inspired by
-[Karpathy's LLM-wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) —
-compiles PI-curated sources into a knowledge base, drawn here as a graph **colored by
-category, sized by links, cross-linked into the question tree**, flowing one way:
-literature → wiki → tree.
+The Wiki tab draws the **knowledge base** as a graph **colored by category, sized by links,
+cross-linked into the question tree**, flowing one way: literature → wiki → tree.
 
 <p align="center">
   <picture>
@@ -93,6 +134,10 @@ literature → wiki → tree.
 </p>
 
 <p align="center"><sub>The <b>literature wiki</b> as crux's own knowledge graph — pages by category, sized by links, cross-linked with the question tree. Compiled by the <code>crux-wiki</code> skill from PI-curated sources.</sub></p>
+
+## Contributing
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
