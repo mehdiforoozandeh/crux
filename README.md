@@ -1,6 +1,7 @@
 # Crux
 
 [![downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmehdiforoozandeh%2Fcrux%2Ftraffic%2Fclones.json&query=%24.total&label=downloads&color=blue)](.github/workflows/clone-count.yml)
+[![blog post](https://img.shields.io/badge/blog%20post-Agents%20on%20leash-FF6719?logo=substack&logoColor=white)](https://mforoozz.substack.com/p/agents-on-leash)
 
 `crux` is an open-source toolbox for computational research with AI agents.
 
