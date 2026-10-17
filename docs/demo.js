@@ -18,6 +18,10 @@
    46-second loop but it is the sharpest proof of "you stay the lead
    scientist", so the page keeps it.
 
+   Then «question 2» turns out to be a one-metric question and goes to the
+   autopilot (strategy/autopilot-in-launch-2026-10-11.md): a plan approved
+   first, the search on its own tab, every attempt filed on the tree.
+
    State is declarative: for a scroll position we compute (beat, fraction)
    and *set* the stage. Scrolling backwards works for free.
    ========================================================================== */
@@ -37,7 +41,13 @@ const NODES = [
   {id:'v2',   kind:'v',    label:'Verifiable 2', col:3, row: 0.50, p:'h1'},
   {id:'h2',   kind:'h',    label:'Hypothesis 2', col:2, row: 1.80, p:'q1'},
   {id:'v3',   kind:'v',    label:'Verifiable 3', col:3, row: 1.80, p:'h2'},
-  {id:'q2',   kind:'q',    label:'Question 2',   col:1, row: 3.00},
+  {id:'q2',   kind:'q',    label:'Question 2',   col:1, row: 3.80},
+  /* the autopilot's attempts: each one a hypothesis under the question it searches */
+  {id:'a1',   kind:'h',    label:'Attempt 1',    col:2, row: 2.80, p:'q2'},
+  {id:'a2',   kind:'h',    label:'Attempt 2',    col:2, row: 3.30, p:'q2'},
+  {id:'a3',   kind:'h',    label:'Attempt 3',    col:2, row: 3.80, p:'q2'},
+  {id:'a4',   kind:'h',    label:'Attempt 4',    col:2, row: 4.30, p:'q2'},
+  {id:'a5',   kind:'h',    label:'Attempt 5',    col:2, row: 4.80, p:'q2'},
 ];
 NODES.forEach(n => { if (!n.p && n.id !== 'root') n.p = 'root'; });
 
@@ -112,6 +122,15 @@ const TASKS = [
   {id:'t2', title:'Task 2', p:'plan'},
   {id:'t3', title:'Task 3', p:'plan'},
 ];
+
+/* the autopilot run — placeholder scores, higher is better. An attempt that
+   beats the best so far closes supported; one that does not closes refuted. */
+const AUTO_BASE = 50;
+const ATTEMPTS = [54, 51, 59, 57, 63];
+const AUTO_ST = (() => {
+  let best = AUTO_BASE;
+  return ATTEMPTS.map(v => (v > best ? (best = v, 'supported') : 'refuted'));
+})();
 
 /* ── the beats ──────────────────────────────────────────────────────────── */
 const BEATS = [
@@ -202,11 +221,48 @@ const BEATS = [
     ],
   },
   {
-    rail:'refuse', readout:'you stay in the science',
-    cap:'You can work for weeks without noticing.',
-    sub:'The tree, the wiki and the task list fill in silence — so months later, the why is still there. You stay the lead scientist.',
+    rail:'autopilot', readout:'a plan, approved first',
+    cap:'Some questions come down to one number.',
+    sub:'For those, autopilot runs the search. You and the agent agree a flight plan first — the objective, the baseline, the limits and your own guidance. Nothing runs until you approve it.',
+    view:'tree',
+    show:{root:'open', q1:'open', h1:'refuted', v1:'supported', v2:'refuted', h2:'supported', v3:'supported', q2:'running'},
+    weight:1.5,
+    lines:[
+      {w:HUM, t:'«question 2» comes down to one number — «metric 1». search it: beat «baseline 1», stay inside «limit 1», and try «idea 1» first.'},
+      {w:AGT, t:'Set up: «metric 1» against «baseline 1», inside «limit 1», «idea 1» first. It starts when you say go.'},
+      {w:HUM, t:'go.'},
+    ],
+  },
+  {
+    rail:'autopilot', readout:'the search',
+    cap:'The agents run the search.',
+    sub:'Each attempt edits the code, runs it and scores it. The next one weighs building on the best so far against exploring the rest — the search rule from Google’s <a href="https://www.nature.com/articles/s41586-026-10658-6" target="_blank" rel="noopener">ERA</a>.',
+    view:'auto',
+    show:{root:'open', q1:'open', h1:'refuted', v1:'supported', v2:'refuted', h2:'supported', v3:'supported', q2:'running'},
+    attempts:'grow', weight:2,
+    lines:[
+      {w:AGT, t:'«attempt 1» beat «baseline 1». «attempt 2» didn\'t.'},
+      {w:AGT, t:'«attempt 5» is the best so far — clear of «baseline 1», inside «limit 1».'},
+    ],
+  },
+  {
+    rail:'autopilot', readout:'every attempt on the tree',
+    cap:'Every attempt is filed.',
+    sub:'Each attempt is a hypothesis under the question, closed supported or refuted — the dead ends too. The search proposes; you decide which attempt counts.',
     view:'tree',
     show:{root:'open', q1:'open', h1:'refuted', v1:'supported', v2:'refuted', h2:'supported', v3:'supported', q2:'open'},
+    attempts:ATTEMPTS.length, focus:['q2','a1','a2','a3','a4','a5'], weight:1.5,
+    lines:[
+      {w:HUM, t:'«attempt 5» it is. keep «attempt 2» in view too — I want to know why it lost.'},
+    ],
+  },
+  {
+    rail:'autopilot', readout:'you stay in the science',
+    cap:'You can work for weeks without noticing.',
+    sub:'The tree, the wiki, the task list and the search fill in silence — so months later, the why is still there. You stay the lead scientist.',
+    view:'tree',
+    show:{root:'open', q1:'open', h1:'refuted', v1:'supported', v2:'refuted', h2:'supported', v3:'supported', q2:'open'},
+    attempts:ATTEMPTS.length,
     weight:1.3,
     lines:[
       {w:HUM, t:'keep going — I\'ll look again when there\'s a result worth arguing about.'},
@@ -214,7 +270,8 @@ const BEATS = [
   },
 ];
 
-const RAIL = ['question','literature','check','work','finding','verdict','refuse'];
+const RAIL = ['question','literature','check','work','finding','verdict','refuse','autopilot'];
+const FIRST_AUTO = BEATS.findIndex(b => b.view === 'auto');
 
 /* ── build the stage DOM once ───────────────────────────────────────────── */
 const cliBody   = document.getElementById('cliBody');
@@ -230,6 +287,10 @@ const cockpit   = document.getElementById('cockpit');
 const tabTree   = document.getElementById('tabTree');
 const tabWiki   = document.getElementById('tabWiki');
 const tabTask   = document.getElementById('tabTaskhub');
+const tabAuto   = document.getElementById('tabAuto');
+const autoChip  = document.getElementById('autoChip');
+const autoChart = document.getElementById('autoChart');
+const autoLed   = document.getElementById('autoLedger');
 const progEl    = document.getElementById('prog');
 const tfm       = document.getElementById('tfm');
 
@@ -385,6 +446,9 @@ function render(beatIdx, frac) {
     tabTree.classList.toggle('on', b.view === 'tree');
     tabWiki.classList.toggle('on', b.view === 'wiki');
     tabTask.classList.toggle('on', b.view === 'taskhub');
+    tabAuto.classList.toggle('on', b.view === 'auto');
+    /* the real cockpit shows this tab only once a run exists */
+    tabAuto.hidden = beatIdx < FIRST_AUTO;
     curBeat = beatIdx;
   }
 
@@ -408,14 +472,20 @@ function render(beatIdx, frac) {
   cliBody.scrollTop = cliBody.scrollHeight;
 
   /* ---- the cockpit ---- */
-  lastShow = b.show;
+  const k = b.attempts === 'grow'
+    ? Math.min(ATTEMPTS.length, Math.floor(frac * ATTEMPTS.length / 0.85) + 1)
+    : (b.attempts || 0);
+  const show = Object.assign({}, b.show);
+  for (let i = 0; i < k; i++) show['a' + (i + 1)] = AUTO_ST[i];
+  lastShow = show;
   NODES.forEach(nd => {
-    const st = b.show[nd.id], el = nodeEls[nd.id];
+    const st = show[nd.id], el = nodeEls[nd.id];
     el.classList.toggle('on', !!st);
     el.dataset.st = st || '';
   });
   paintEdges();
-  if (b.view === 'tree') fit(b.show, b.focus);
+  if (b.view === 'tree') fit(show, b.focus);
+  if (b.view === 'auto') renderAuto(k);
 
   TASKS.forEach(tk => {
     const st = (b.tasks || {})[tk.id];
@@ -430,6 +500,37 @@ function render(beatIdx, frac) {
   });
 
   progEl.style.transform = 'scaleX(' + (((beatIdx ? CUM[beatIdx-1] : 0) + frac * W[beatIdx]) / TOTAL_W) + ')';
+}
+
+/* the autopilot tab: score against attempt, best-so-far as a step line */
+function renderAuto(k) {
+  autoChip.textContent = 'Autopilot · climb · ' + k + '/' + ATTEMPTS.length + ' · Question 2';
+  const X0 = 34, X1 = 306, Y0 = 128, Y1 = 12, LO = 45, HI = 66;
+  const x = i => X0 + (i + 0.5) * (X1 - X0) / ATTEMPTS.length;
+  const y = v => Y0 - (v - LO) / (HI - LO) * (Y0 - Y1);
+  let g = '<line class="ax" x1="' + X0 + '" y1="' + Y1 + '" x2="' + X0 + '" y2="' + Y0 + '"/>' +
+          '<line class="ax" x1="' + X0 + '" y1="' + Y0 + '" x2="' + X1 + '" y2="' + Y0 + '"/>' +
+          '<text x="' + (X0 - 6) + '" y="' + (Y1 + 3) + '" text-anchor="end">score</text>' +
+          '<text x="' + X1 + '" y="' + (Y0 + 14) + '" text-anchor="end">attempt</text>' +
+          '<line class="base" x1="' + X0 + '" y1="' + y(AUTO_BASE) + '" x2="' + X1 + '" y2="' + y(AUTO_BASE) + '"/>' +
+          '<text x="' + (X1 - 2) + '" y="' + (y(AUTO_BASE) - 4) + '" text-anchor="end">baseline</text>';
+  let best = AUTO_BASE, path = 'M' + X0 + ',' + y(AUTO_BASE);
+  for (let i = 0; i < k; i++) {
+    if (ATTEMPTS[i] > best) { path += ' H' + x(i).toFixed(1) + ' V' + y(ATTEMPTS[i]).toFixed(1); best = ATTEMPTS[i]; }
+  }
+  if (k) path += ' H' + x(k - 1).toFixed(1);
+  g += '<path class="best" d="' + path + '"/>';
+  for (let i = 0; i < k; i++) {
+    g += '<circle class="pt ' + (AUTO_ST[i] === 'supported' ? 'best' : 'lose') + '" cx="' + x(i).toFixed(1) +
+         '" cy="' + y(ATTEMPTS[i]).toFixed(1) + '" r="4.5"/>';
+  }
+  autoChart.innerHTML = g;
+  let led = '';
+  for (let i = k - 1; i >= Math.max(0, k - 3); i--) {
+    led += '<div class="au-row"><b>Attempt ' + (i + 1) + '</b>' +
+      (AUTO_ST[i] === 'supported' ? '<span class="ok">new best</span>' : '<span class="no">no gain</span>') + '</div>';
+  }
+  autoLed.innerHTML = led;
 }
 
 function line(l, text, extra) {
