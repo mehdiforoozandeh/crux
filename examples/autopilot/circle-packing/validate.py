@@ -4,16 +4,37 @@ the scorer passes the honest ones and refuses every cheat. Prints one JSON repor
 
     work/venv/bin/python validate.py [--repeats K]
 
-Run after setup.sh. Each case also records what OpenEvolve's circle_packing evaluator logic
+Run after setup.sh, on a machine with internet. AlphaEvolve's construction is fetched into
+memory (sha256-pinned) and never stored under this directory; the case programs live in a
+temp directory outside it, deleted at the end. Each case also records what OpenEvolve's circle_packing evaluator logic
 (validate_packing as of issue #183, before the centre-NaN check of PR #184) would have said,
 reimplemented below, to show which holes this scorer closes.
 """
-import json, math, os, subprocess, sys, textwrap, time
+import hashlib, json, math, os, shutil, subprocess, sys, tempfile, textwrap, time, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(HERE, "work")
-CASES = os.path.join(WORK, "cases")
-AE = json.load(open(os.path.join(WORK, "reference", "alphaevolve_26.json")))
+AE_URL = ("https://raw.githubusercontent.com/google-deepmind/alphaevolve_repository_of_problems/"
+          "30f8c3ecda318e3ac31ff2c3290884316ac7d0ed/experiments/packing_circles_max_sum_of_radii/"
+          "packing_circles_max_sum_of_radii.ipynb")
+AE_SHA = "e7a304378a5ca80c74f94f5060a9f5db953767af850834513fd797e3306a935e"
+
+
+def fetch_ae():
+    raw = urllib.request.urlopen(AE_URL, timeout=30).read()
+    if hashlib.sha256(raw).hexdigest() != AE_SHA:
+        raise SystemExit("AlphaEvolve notebook sha256 mismatch")
+    import numpy as np
+    nb = json.loads(raw)
+    src = next("".join(c["source"]) for c in nb["cells"]
+               if "centers_26 = np.array" in "".join(c["source"]))
+    g = {"np": np}
+    exec(src, g)
+    return {"centers": g["centers_26"].tolist(), "radii": g["radii_26"].tolist()}
+
+
+AE = fetch_ae()
+CASES = tempfile.mkdtemp(prefix="circpack-cases-")
 SCORER = os.path.join(HERE, "score.py")
 
 GRID = [[x, y, 0.1] for x in (0.1, 0.3, 0.5, 0.7, 0.9) for y in (0.1, 0.3, 0.5, 0.7, 0.9)]
@@ -40,15 +61,39 @@ NAN_183 = [[float("nan"), float("nan"), 4.01445 / 26] for _ in range(26)]   # th
 NAN_285 = [[float("nan"), float("nan"), 0.1] for _ in range(25)] + [[float("nan"), float("nan"), 2.637 - 2.5]]
 NET = textwrap.dedent(f"""
     import json, urllib.request
-    url = {("https://raw.githubusercontent.com/google-deepmind/alphaevolve_repository_of_problems/"
-            "30f8c3ecda318e3ac31ff2c3290884316ac7d0ed/experiments/packing_circles_max_sum_of_radii/"
-            "packing_circles_max_sum_of_radii.ipynb")!r}
+    url = {AE_URL!r}
     nb = json.load(urllib.request.urlopen(url, timeout=20))
     import numpy as np
     src = next("".join(c["source"]) for c in nb["cells"] if "centers_26 = np.array" in "".join(c["source"]))
     g = {{"np": np}}; exec(src, g)
     out = [[float(x), float(y), float(r) - 1e-12] for (x, y), r in zip(g["centers_26"], g["radii_26"])]
     print(json.dumps({{"circles": out}}))
+""")
+
+# Looks for the reference material where setup.sh used to keep it, then for AlphaEvolve's first
+# coordinate anywhere under the scorer's directory (the venv aside). Found -> prints the record
+# (a leak passes, near 2.636); not found -> crashes (the expected outcome).
+LEAK = textwrap.dedent(f"""
+    import json, os, sys
+    here = {HERE!r}
+    old = os.path.join(here, "work", "reference", "alphaevolve_26.json")
+    if os.path.exists(old):
+        ae = json.load(open(old))
+        print(json.dumps({{"circles": [[x, y, r - 1e-12] for (x, y), r in zip(ae["centers"], ae["radii"])]}}))
+        sys.exit(0)
+    marker = b"0.70260960" + b"36990247"     # split, so this text itself never matches
+    for root, dirs, files in os.walk(here):
+        dirs[:] = [d for d in dirs if d != "venv"]
+        for f in files:
+            p = os.path.join(root, f)
+            try:
+                if os.path.getsize(p) < 5 << 20 and marker in open(p, "rb").read():
+                    sys.stderr.write("LEAK: " + p)
+                    print(json.dumps({{"circles": {BASE!r}}}))
+                    sys.exit(0)
+            except OSError:
+                pass
+    raise SystemExit("no reference material readable under " + here)
 """)
 
 # name -> (program source, expected: "pass" | "fail" | "pass-or-fail", OpenEvolve-check input)
@@ -80,6 +125,7 @@ CASES_SPEC = {
     "stdout_flood_10MB": ("import sys\nsys.stdout.write('x' * (10 << 20))\n", "fail", None),
     "crash": ("raise SystemExit(3)\n", "fail", None),
     "network_fetch_record": (NET, "fail-if-blocked", None),
+    "read_reference_from_disk": (LEAK, "fail", None),
 }
 
 
@@ -116,6 +162,13 @@ def score(path):
 
 
 def main():
+    try:
+        run()
+    finally:
+        shutil.rmtree(CASES, ignore_errors=True)
+
+
+def run():
     repeats = int(sys.argv[sys.argv.index("--repeats") + 1]) if "--repeats" in sys.argv else 3
     report, ok = {}, True
     for name, (src, want, oe_in) in CASES_SPEC.items():

@@ -27,7 +27,7 @@ construction with every radius shrunk by 1e-12 passes and scores 2.6359830848916
 
 - **Objective:** the leaf `sum_radii` (`address:: sum_radii`, `direction:: max`).
 - **Baseline** (`baseline/pack.py`: a 5x5 grid of radius 0.1, plus one circle in a gap):
-  **2.5414213562363** on Fir, scorer wall time 0.16-0.42 s.
+  **2.5414213562363** on Fir, scorer wall time 0.16-1.15 s (the first, cold run is the slowest).
 - **Bar:** the record, 2.635983084919. A score above it is flagged `"suspicious": true`, and
   the scorer warns on stderr. It is not refused, because the check is exact and a higher valid
   packing would be a real new record. Read the program before you believe it.
@@ -81,7 +81,7 @@ trap: `0.1 + 0.2*k` in floats puts two grid circles 4e-17 too close, so it uses 
 ### The sandbox
 
 The scorer copies `pack.py` alone into a fresh temp directory and runs
-`work/venv/bin/python -I pack.py` there, with:
+`work/venv/bin/python -I pack.py` there (numpy 2.4.2 and scipy 1.17.1 available), with:
 
 - a **60 s** wall-time cap (the scorer kills the program's whole process group);
 - a 4 GiB address-space cap (Linux only; macOS refuses `RLIMIT_AS`);
@@ -116,9 +116,9 @@ candidate cannot report its own sum, its own validity, or anything but the 26 tr
 `validate.py` rebuilds all of these as candidate programs. It also runs OpenEvolve's check
 logic (as of issue #183) on each, to show that it accepted them.
 
-## Validation (Fir, AMD EPYC 9655, Python 3.11.5, numpy 2.4.2)
+## Validation (Fir, AMD EPYC 9655, Python 3.11.5, numpy 2.4.2, scipy 1.17.1)
 
-`work/venv/bin/python validate.py --repeats 5` (SLURM jobs 428996 and 429491): all cases
+`work/venv/bin/python validate.py --repeats 5` (SLURM jobs 428996, 429491, and 431901 after the reference move): all cases
 behave as expected.
 
 | case | this scorer | OpenEvolve logic |
@@ -139,31 +139,34 @@ behave as expected.
 | forks a child that sleeps 300 s | pass; the child is killed | n/a |
 | allocates 8 GB; prints 10 MB; exits 3 | fail | n/a |
 | downloads the AlphaEvolve record at run time | fail (no network) | n/a |
+| reads the old `work/reference/` path, or searches this directory for the record | fail (nothing to find) | n/a |
 | same candidate scored 5 times (baseline, AlphaEvolve) | identical exact sums | |
 
 ## Residual risks
 
-- **A copied record.** The record coordinates are public. A program can contain them as
-  literals, and the search agent (which has web access while it writes code) can paste them
-  in. The no-network sandbox stops only a download at score time. The `suspicious` flag
-  catches only scores above the record, not a copy of it. A score within ~1e-9 of 2.635983 is
-  most likely a copy or a rediscovery; read the program.
-- **Files on disk.** The sandbox does not hide the file system. A candidate can read
-  `work/reference/` (the AlphaEvolve notebook, kept for `validate.py`) or any other readable
-  file.
+- **A copied record (accepted by the PI).** The record coordinates are public. A program can
+  contain them as literals, and the search agent (which has web access while it writes code)
+  can paste them in. The no-network sandbox stops only a download at score time, and the
+  `suspicious` flag catches only scores above the record. **Rule: a human reads the program
+  behind any score near 2.635983 (within about 1e-6) before the result counts.**
+- **Files on disk.** The sandbox does not hide the file system, so nothing under this
+  directory holds the record. `setup.sh` keeps no reference packing and deletes the
+  `work/reference/` that earlier versions left. `validate.py` fetches AlphaEvolve's
+  construction into memory, writes its case programs to a temp directory outside this one,
+  and deletes them when it ends (while it runs, those files exist in the system temp
+  directory). Files elsewhere that the user can read stay readable.
 - **Escaping the cap.** A candidate that calls `setsid` leaves the scorer's process group and
   can outlive the scorer (inside SLURM, the job's cgroup still ends it).
-- **Only numpy.** The venv holds numpy and nothing else. AlphaEvolve's own program used scipy
-  (SLSQP) and numba.
 
 ## How to run
 
 ```
-./setup.sh                        # work/venv (numpy) + the AlphaEvolve notebook, sha256-pinned
+./setup.sh                        # work/venv (numpy, scipy); no reference packing on disk
                                   # on Fir: module load python/3.11.5 first, inside a SLURM job
 python3 score.py baseline         # the baseline
-work/venv/bin/python validate.py  # every case above; exit 0 when all behave
+work/venv/bin/python validate.py  # every case above; exit 0 when all behave (needs internet:
+                                  # it fetches AlphaEvolve's notebook, sha256-pinned, into memory)
 ```
 
-`setup.sh` makes everything under `work/`, which git ignores. It installs numpy from
+`setup.sh` makes everything under `work/`, which git ignores. It installs numpy and scipy from
 `requirements.lock`; on an Alliance cluster it uses the cluster wheelhouse (`pip --no-index`).
