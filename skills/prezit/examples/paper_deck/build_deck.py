@@ -22,7 +22,7 @@ read = []                                       # every file the build reads, in
 def load(rel):
     p = VAULT / rel
     read.append(p)
-    return json.loads(p.read_text())
+    return json.loads(p.read_bytes().decode("utf-8"))
 
 
 def gap(leaf, a=None):
@@ -44,18 +44,24 @@ data = {
     "hard": {"own": gap(h3["equal_data"], 1), "eqc": gap(h3["equal_compute"])},
 }
 
+def in_vault(p):
+    """p's vault-relative POSIX path, or None when p lies outside the vault."""
+    try:
+        return p.relative_to(VAULT).as_posix()
+    except ValueError:
+        return None
+
+
 # the manifest: every file read, plus this script and the source page when they live in
 # the vault (in a real vault they do; this shipped example lives outside it)
 src_path = HERE / "deck_src.html"
-for p in (pathlib.Path(__file__).resolve(), src_path):
-    if p.is_relative_to(VAULT):
-        read.append(p)
-sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
-sources = {p.relative_to(VAULT).as_posix(): sha(p) for p in read}
+read += [p for p in (pathlib.Path(__file__).resolve(), src_path) if in_vault(p)]
+sources = {in_vault(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in read}
 
-src = src_path.read_text()
+# bytes in, bytes out: UTF-8 and "\n" on every platform, so the build is byte-stable
+src = src_path.read_bytes().decode("utf-8")
 assert src.count("__DATA__") == 1 and src.count("__SOURCES__") == 1
 out = src.replace("__SOURCES__", json.dumps(sources, sort_keys=True))
 out = out.replace("__DATA__", json.dumps(data, separators=(",", ":")))
-(HERE / "index.html").write_text(out)
+(HERE / "index.html").write_bytes(out.encode("utf-8"))
 print(f"wrote {HERE / 'index.html'}: {len(sources)} source file(s)")

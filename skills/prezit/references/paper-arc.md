@@ -88,14 +88,15 @@ const DATA = __DATA__;
 ```python
 read = []                                  # every file the build opens, via load()
 def load(rel):
-    p = VAULT / rel; read.append(p); return json.loads(p.read_text())
+    p = VAULT / rel; read.append(p); return json.loads(p.read_bytes().decode("utf-8"))
 # ... reduce into `data` here, never in the HTML ...
-read += [p for p in (pathlib.Path(__file__).resolve(), HERE / "deck_src.html")
-         if p.is_relative_to(VAULT)]       # the build and the page are sources too
+read += [HERE / "build_deck.py", HERE / "deck_src.html"]   # the build and the page too
 sources = {p.relative_to(VAULT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-           for p in read}
+           for p in read}                  # POSIX paths: the same manifest on every OS
+src = (HERE / "deck_src.html").read_bytes().decode("utf-8")
 out = src.replace("__SOURCES__", json.dumps(sources, sort_keys=True))
 out = out.replace("__DATA__", json.dumps(data, separators=(",", ":")))
+(HERE / "index.html").write_bytes(out.encode("utf-8"))      # UTF-8 and "\n" everywhere
 ```
 
 `crux deck --verify index.html` re-reads every manifest file and checks it:
