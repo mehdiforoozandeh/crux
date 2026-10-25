@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prezit-arc" content="paper">
+<title>More Data or a Better Model</title>
+
+<!--
+  prezit worked example · the PAPER ARC (the default) · built on scaling_vault q1.
+
+  arc      motivation -> method -> results -> discussion (references/paper-arc.md)
+  build    python build_deck.py [VAULT]  ->  index.html beside this file
+  numbers  every measured number comes from DATA, which build_deck.py reads from
+           results/h1, results/h2 and results/h3 (metrics.json). None is typed here.
+           The deck-sources manifest records the sha256 of every file the build read;
+           `crux deck --verify` re-reads each one. Typed: nothing but panel letters.
+  notes    every slide carries speaker notes (press n).
+-->
+<script type="application/json" id="deck-sources">{"results/h1/metrics.json": "ef296c458224df78201425d9f0d4adecf6569dbf95704537f1cb76a969dcbf9b", "results/h2/metrics.json": "7dbb8cb72eb07e534389b78c80c1e538615cdc53a1120f44f77e9b25c486a928", "results/h3/metrics.json": "08a035810b3d8a163629aa428eb4db0aee708524df93690e989c1b1579d5ba03"}</script>
+
+<style>
+  :root{
+    /* --- chrome ------------------------------------------------------- */
+    --paper:#faf9f7;
+    --ink:#1a1a1a;
+    --muted:#77736c;
+    --faint:#a6a29a;
+    --hair:#e6e3dd;
+    --accent:#b5462e;
+
+    /* --- semantic series colours -------------------------------------- */
+    /* One colour per arm, reused identically in chart, legend and bullets.
+       Rename the tokens to your arms; never colour by chart. */
+    --baseline:#8d8f98;
+    --arm-a:#3f7d7a;
+    --arm-b:#b5462e;
+
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    overflow:hidden;
+  }
+
+  #progress{position:fixed;top:0;left:0;height:2px;background:var(--accent);
+    width:0;transition:width .5s ease;z-index:50}
+
+  #deck{position:fixed;inset:0}
+  .slide{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:5.5vh 8vw 8.5vh;   /* bottom pad clears the fixed foot / counter / nav */
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .6s ease,visibility .6s ease;   /* fade only — no slide, no zoom */
+  }
+  .slide.active{opacity:1;visibility:visible;pointer-events:auto}
+  @media (prefers-reduced-motion:reduce){.slide{transition:none}}
+
+  .wrap{width:100%;max-width:1160px;margin:0 auto}
+
+  /* --- typography ----------------------------------------------------- */
+  .kicker{font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;margin-bottom:22px}
+  h1{font-family:var(--serif);font-weight:400;line-height:1.12;
+    font-size:clamp(30px,4.6vw,58px);letter-spacing:-.01em}
+  h2{font-weight:600;line-height:1.14;font-size:clamp(24px,3.4vw,42px);
+    letter-spacing:-.015em;margin-bottom:26px}
+  .lead{font-family:var(--serif);font-weight:400;line-height:1.32;
+    font-size:clamp(22px,2.9vw,36px);letter-spacing:-.005em}
+  .sub{color:var(--muted);font-size:clamp(15px,1.5vw,19px);line-height:1.5;
+    margin-top:22px;max-width:56ch}
+  .note{color:var(--faint);font-size:13px;line-height:1.5;margin-top:26px}
+
+  ul.pts{list-style:none;margin-top:26px;max-width:70ch}
+  ul.pts li{position:relative;padding-left:26px;margin:14px 0;
+    font-size:clamp(15px,1.55vw,19px);line-height:1.5;color:#333}
+  ul.pts li::before{content:"";position:absolute;left:2px;top:.62em;
+    width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  ul.pts li b{color:var(--ink);font-weight:600}
+  .em{color:var(--accent);font-weight:600}
+
+  ul.pts.lg li{font-size:clamp(16px,1.65vw,21px);margin:11px 0}
+  ul.pts.cols{display:grid;grid-template-columns:1fr 1fr;gap:2px 48px;
+    max-width:none;margin-top:18px}
+  @media (max-width:900px){ul.pts.cols{grid-template-columns:1fr}}
+
+  /* numbers the vault owns render in tabular figures so a --refresh that
+     changes a digit does not reflow the sentence around it */
+  [data-src],[data-derived]{font-variant-numeric:tabular-nums;font-weight:600}
+
+  /* --- lineage chain -------------------------------------------------- */
+  .chain{display:flex;align-items:stretch;gap:0;margin-top:34px;flex-wrap:wrap}
+  .node{flex:1;min-width:180px;border:1px solid var(--hair);border-radius:10px;
+    padding:18px 20px;background:#fff}
+  .node .lab{font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:8px}
+  .node .txt{font-size:15px;line-height:1.4;color:#2a2a2a}
+  .node.now{border-color:var(--accent);box-shadow:0 1px 0 var(--accent)}
+  .node.now .lab{color:var(--accent)}
+  .arrow{display:flex;align-items:center;padding:0 12px;color:var(--faint);font-size:20px}
+
+  /* --- method pipeline ------------------------------------------------ */
+  .pipe{display:flex;align-items:flex-start;gap:0;margin-top:22px;flex-wrap:wrap}
+  .step{flex:1;min-width:150px;padding:14px 16px;text-align:left}
+  .step .n{font-family:var(--serif);font-size:22px;color:var(--accent);line-height:1}
+  .step .t{font-size:14.5px;line-height:1.4;color:#2a2a2a;margin-top:8px}
+  .psep{color:var(--faint);font-size:18px;padding:24px 4px 0}
+
+  /* --- target callout ------------------------------------------------- */
+  .target{border-left:3px solid var(--accent);background:#fff;border-radius:0 8px 8px 0;
+    padding:16px 22px;margin-top:6px}
+  .target .tlab{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;margin-bottom:8px}
+  .target .ttxt{font-size:clamp(15px,1.55vw,19px);line-height:1.5;color:#333}
+  .target .ttxt b{color:var(--ink);font-weight:600}
+
+  .cols2{display:grid;grid-template-columns:1fr 1.05fr;gap:44px;margin-top:26px;
+    align-items:start}
+  @media (max-width:900px){.cols2{grid-template-columns:1fr}}
+  .blk .blab{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--faint);font-weight:600;margin-bottom:14px}
+
+  /* --- chips: a short fixed list, when a table would be overkill ------ */
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{border:1px solid var(--hair);background:#fff;border-radius:8px;padding:10px 14px;line-height:1.2}
+  .chip .cn{font-size:15px;font-weight:600;color:var(--ink)}
+  .chip .cc{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px}
+
+  /* --- tables --------------------------------------------------------- */
+  table.dtable{border-collapse:collapse;width:100%;font-size:15px}
+  table.dtable th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--faint);font-weight:600;text-align:left;padding:0 14px 10px 0;
+    border-bottom:1px solid var(--hair)}
+  table.dtable td{padding:11px 14px 11px 0;border-bottom:1px solid var(--hair);
+    color:#333;line-height:1.35}
+  table.dtable td:first-child{font-weight:600;color:var(--ink);white-space:nowrap}
+  table.dtable td.num{font-variant-numeric:tabular-nums}
+  table.dtable td .role{color:var(--muted);font-size:13px}
+
+  /* --- chart ---------------------------------------------------------- */
+  .chartbox{margin:8px 0}
+  .fig{display:flex;justify-content:center}
+  /* Cap chart height so a tall figure can never crowd out its caption bullets.
+     A full-width chart + a legend + four two-line bullets + a footnote is the
+     ceiling for one slide — check the fit after every content edit. */
+  .fig svg{width:100%;height:auto;max-height:44vh;display:block}
+  .fig.wide svg{max-width:1160px}
+  .fig.mid svg{max-width:960px}
+  .legend{display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;justify-content:center;
+    font-size:15px;color:var(--muted)}
+  .legend.big{font-size:16px;gap:30px}
+  .legend .item{display:flex;align-items:center;gap:9px}
+  .legend .sw{width:16px;height:16px;border-radius:3px;flex:none}
+
+  /* SVG text lives in viewBox units and gets scaled DOWN when the svg is placed
+     in a column — so everything here is sized for a projector, ~1.5x what looks
+     right on a laptop. Do not shrink these to taste. */
+  .axlbl{font:500 17px var(--sans);fill:#3a3a3a}
+  .ptitle{font:600 22px var(--sans);fill:#1a1a1a;letter-spacing:.02em}
+  .psub{font:400 14px var(--sans);fill:#8a8a8a}
+  .tick{font:400 15px var(--sans);fill:#9a9a9a}
+  .val{font:600 16px var(--sans)}
+  .cap{font:400 14px var(--sans);fill:#9a9a9a}
+  .grid{stroke:#ececea;stroke-width:1}
+  .axis{stroke:#cfccc6;stroke-width:1.2}
+  .zero{stroke:#bbb;stroke-width:1.6;stroke-dasharray:5 4}
+  .sep{stroke:#e6e3dd;stroke-width:1}
+  .barval{font:600 20px var(--sans)}
+  .mult{font:600 19px var(--sans);fill:#1a1a1a}
+  .xlab{font:600 22px var(--sans);fill:#1a1a1a}
+  .xsub{font:400 15px var(--sans);fill:#8a8a8a}
+  .ylab{font:500 18px var(--sans);fill:#8a8a8a}
+
+  /* --- chrome --------------------------------------------------------- */
+  .foot{position:fixed;bottom:20px;left:8vw;font-size:11px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--faint)}
+  .count{position:fixed;bottom:20px;right:8vw;font-size:12px;color:var(--faint);
+    font-variant-numeric:tabular-nums}
+  .nav{position:fixed;bottom:16px;right:calc(8vw + 64px);display:flex;gap:6px}
+  .nav button{border:1px solid var(--hair);background:#fff;color:var(--muted);
+    width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:14px;line-height:1;
+    transition:border-color .2s,color .2s}
+  .nav button:hover{border-color:var(--accent);color:var(--accent)}
+  .hint{margin-top:40px;font-size:12px;color:var(--faint)}
+  kbd{font-family:var(--sans);border:1px solid var(--hair);border-bottom-width:2px;
+    border-radius:4px;padding:1px 6px;font-size:11px;color:var(--muted);background:#fff}
+
+  /* --- speaker notes ---------------------------------------------------
+     Optional: an <aside class="notes"> inside a slide, written in <p> (an <li>
+     there counts toward the slide's 7 units). Hidden; `n` overlays the active
+     slide's notes; print puts them under each slide. A deck without notes is
+     unaffected. */
+  aside.notes{display:none}
+  body.shownotes .slide.active aside.notes{display:block;position:fixed;left:7vw;right:7vw;
+    bottom:58px;max-height:52vh;overflow:auto;background:#fff;border:1px solid var(--hair);
+    border-left:4px solid var(--accent);border-radius:10px;padding:16px 22px;font-size:16.5px;
+    line-height:1.55;color:#333;z-index:60;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  aside.notes::before{content:"Speaker notes · n to close";display:block;font-size:11px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px}
+  aside.notes p{margin:0 0 6px}
+
+  @media print{
+    body{overflow:visible}
+    #progress,.nav,.count,.hint{display:none}
+    .slide{position:relative;opacity:1;visibility:visible;page-break-after:always;
+      height:100vh;transition:none}
+    aside.notes{display:block;margin-top:18px;border-top:1px solid #bbb;padding-top:10px;
+      font-size:12.5px;line-height:1.5;color:#333}
+  }
+
+  /* --- paper arc ------------------------------------------------------ */
+  :root{--own:#3f7d7a;--eqc:#b5462e;--data:#3f7d7a;--model:#8d8f98;--noise:#a6a29a}
+  .kicker .sec{display:inline-block;background:var(--accent);color:#fff;padding:3px 9px;
+    border-radius:4px;margin-right:12px;letter-spacing:.14em}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:22px}
+  @media (max-width:900px){.cards{grid-template-columns:1fr}}
+  .card{border:1px solid var(--hair);border-top:3px solid var(--c,var(--accent));background:#fff;
+    border-radius:8px;padding:16px 18px}
+  .card .rl{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--c,var(--accent));
+    font-weight:700;margin-bottom:8px}
+  .card p{font-size:clamp(14px,1.4vw,17px);line-height:1.45;color:#333}
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .panels>div{padding:0 14px}
+  .panels .fig svg{max-height:40vh}
+  .panels>div+div{border-left:1px solid var(--hair)}
+  @media (max-width:900px){.panels{grid-template-columns:1fr}.panels>div+div{border-left:0;border-top:1px solid var(--hair)}}
+  table.dtable td.run{color:var(--own);font-weight:600}
+  table.dtable td.off{color:var(--faint)}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="deck">
+
+  <!-- 1 · TITLE
+       job      the question as a headline, and the scope in one line
+       source   DATA.design (from results/h1/metrics.json)
+       numbers  seed count only, from DATA
+       cut      the nav hint -->
+  <section class="slide active">
+    <div class="wrap">
+      <div class="kicker">scaling study · lab meeting</div>
+      <h1>Does more data beat a better model, once both get the same budget?</h1>
+      <p class="sub">Three experiments, two tasks, every arm run with <span id="tSeeds"></span> seeds and scored twice: once at each arm's own cost, once at equal training compute.</p>
+      <p class="hint">Navigate with <kbd>&rarr;</kbd> <kbd>&larr;</kbd> or <kbd>space</kbd> &nbsp;·&nbsp; <kbd>n</kbd> shows the speaker notes</p>
+      <aside class="notes"><p>This deck follows the paper arc: why we ran this, how, what we found, and what it rules in or out. Every number on the slides is read from the result files when the deck is built.</p></aside>
+    </div>
+  </section>
+
+  <!-- 2 · MOTIVATION · the problem
+       job      why this experiment: the usual comparison is confounded by budget
+       source   q1 Question section (no result file)
+       numbers  none
+       cut      the second card -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Motivation</span>the problem</div>
+      <h2>The usual comparison lets each arm spend what it likes, so data and budget move together</h2>
+      <div class="fig mid" id="figConfound"></div>
+      <aside class="notes"><p>Doubling the training set also doubles training compute. A win for the data arm is then a win for more data and a win for more budget at once, and the comparison cannot tell them apart.</p></aside>
+    </div>
+  </section>
+
+  <!-- 3 · MOTIVATION · the question
+       job      narrow to the exact ask
+       source   q1 Question and Protocol sections
+       numbers  none
+       cut      the note -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Motivation</span>the question</div>
+      <p class="lead">If we can afford either twice the data or a bigger model, which one buys more accuracy, when both arms spend the same compute?</p>
+      <p class="note">Fixed before any run: the model families, the training recipe, the seed count, and running every comparison at both budgets.</p>
+      <aside class="notes"><p>The rules were locked before the first run, so no budget choice was made after seeing a result.</p></aside>
+    </div>
+  </section>
+
+  <!-- 4 · METHOD · the grid of arms (the deck's one table)
+       job      which comparisons ran, at which budget
+       source   DATA.design (training-set sizes, held-out size)
+       numbers  design constants from DATA
+       cut      the note -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Method</span>the grid of arms</div>
+      <h2>Two arms, compared on two tasks, each at two budgets</h2>
+      <table class="dtable">
+        <thead><tr><th>comparison</th><th>each arm at its own cost</th><th>equal training compute</th></tr></thead>
+        <tbody>
+          <tr><td>First task</td><td class="run">run</td><td class="run">run</td></tr>
+          <tr><td>Second task</td><td class="run">run</td><td class="off">not run</td></tr>
+          <tr><td>Harder task</td><td class="run">run</td><td class="run">run</td></tr>
+        </tbody>
+      </table>
+      <p class="note">The data arm: a smaller model on <span id="tTrainData"></span> examples. The model arm: a larger model on <span id="tTrainBase"></span> examples. Scored on <span id="tHeldout"></span> held-out examples.</p>
+      <aside class="notes"><p>Each row is one comparison between the two arms. A run at equal training compute shortens the data arm's training until both arms spend the same compute.</p></aside>
+    </div>
+  </section>
+
+  <!-- 5 · METHOD · what we score, and the noise rule
+       job      the score as a schematic, and when a gap counts
+       source   q1 Protocol; the interval comes from the seeds
+       numbers  none
+       cut      the note -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Method</span>what we score</div>
+      <h2>The score is the data arm's accuracy minus the model arm's, with its interval over seeds</h2>
+      <div class="fig mid" id="figScore"></div>
+      <p class="note">A gap counts only when its interval clears zero. A gap whose interval crosses zero is labelled within noise, and stays on the slide.</p>
+      <aside class="notes"><p>Above zero, the data arm wins. Below zero, the model arm wins. The bar shows the spread over seeds, so a gap smaller than that spread is not a gap.</p></aside>
+    </div>
+  </section>
+
+  <!-- 6 · RESULTS · (a) at its own cost, more data wins
+       job      one claim, one figure as its evidence, one caveat
+       claim    at each arm's own cost, twice the data beats the better model on both tasks, and the gain replicates
+       source   results/h1/metrics.json (task_a, task_b), results/h2/metrics.json (equal_data)
+       numbers  DATA.own
+       cut      the second bullet -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Results</span>(a) each arm at its own cost</div>
+      <h2>At its own cost, twice the data beats the better model, and the gain replicates</h2>
+      <div class="chartbox fig wide" id="figOwn"></div>
+      <ul class="pts lg">
+        <li>The data arm leads on the first task by <span id="tOwnA"></span> points (<span id="tOwnData"></span> against <span id="tOwnModel"></span>).</li>
+        <li>This is the comparison most papers report, and it has not yet matched the budget.</li>
+      </ul>
+      <aside class="notes"><p>All three intervals clear zero. The replication is a second, independent run of the first-task comparison.</p></aside>
+    </div>
+  </section>
+
+  <!-- 7 · RESULTS · (b) at equal compute, it reverses
+       job      one claim, one figure as its evidence, one caveat
+       claim    matched on training compute, the data arm loses on both tasks
+       source   results/h1, results/h2 (equal_compute), results/h3 (equal_data, equal_compute)
+       numbers  DATA.own, DATA.eqc, DATA.hard
+       cut      the bullet -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Results</span>(b) equal training compute</div>
+      <h2>Matched on training compute, the advantage reverses on both tasks</h2>
+      <div class="chartbox panels"><div class="fig" id="figEqA"></div><div class="fig" id="figEqB"></div></div>
+      <ul class="pts lg">
+        <li>On the first task the gap moves from <span id="tSwingFrom"></span> to <span id="tSwingTo"></span> points once compute is matched.</li>
+      </ul>
+      <aside class="notes"><p>Panel (a) is the first task and panel (b) is the harder task. In each panel the upper row is each arm at its own cost and the lower row is equal training compute.</p></aside>
+    </div>
+  </section>
+
+  <!-- 8 · RESULTS · (c) on a harder task, the edge is gone before matching
+       job      one claim, one figure as its evidence, one caveat
+       claim    on the harder task the data arm does not lead even at its own cost
+       source   results/h3/metrics.json (equal_data)
+       numbers  DATA.hard
+       cut      the second bullet -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Results</span>(c) the harder task</div>
+      <h2>On the harder task the data arm does not lead, even at its own cost</h2>
+      <div class="chartbox fig mid" id="figHard"></div>
+      <ul class="pts lg">
+        <li>The gap is <span id="tHard"></span> points, and its interval (<span id="tHardCi"></span>) <span id="tHardNoise"></span>.</li>
+        <li>This negative is kept: it rules out reading the first task as the general case.</li>
+      </ul>
+      <aside class="notes"><p>Accuracy is lower for both arms on this task. The interval decides whether the gap counts, not the sign of the point estimate.</p></aside>
+    </div>
+  </section>
+
+  <!-- 9 · DISCUSSION · what this rules in and out, and the doubts
+       job      readings restated as what they rule in and out; the doubts kept honest
+       source   restated from results (a) to (c)
+       numbers  none new
+       cut      the doubts card -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Discussion</span>what this rules in and out</div>
+      <h2>Most of the data advantage was the extra budget</h2>
+      <div class="cards">
+        <div class="card" style="--c:var(--eqc)"><div class="rl">Ruled out</div><p>More data beats a better model in general: it reverses at equal compute, on both tasks.</p></div>
+        <div class="card" style="--c:var(--own)"><div class="rl">Ruled in</div><p>At each arm's own cost the data arm wins on the first task, and that result replicates.</p></div>
+        <div class="card" style="--c:var(--noise)"><div class="rl">Doubts</div><p>Two tasks and one pair of model families. Matching compute shortens the data arm's training, which may not be the only fair match.</p></div>
+      </div>
+      <aside class="notes"><p>The discussion adds no number of its own. Each card restates a result slide.</p></aside>
+    </div>
+  </section>
+
+  <!-- 10 · DISCUSSION · options for the next phase
+       job      labelled options for the PI to choose from; no recommendation
+       source   the doubts on the previous slide
+       numbers  none
+       cut      the third option -->
+  <section class="slide">
+    <div class="wrap">
+      <div class="kicker"><span class="sec">Discussion</span>options for the next phase</div>
+      <h2>Options for the next phase</h2>
+      <div class="cards">
+        <div class="card"><div class="rl">Option A</div><p>Find the data floor: how little data still matches the better model. Cheap; teaches where the curve bends.</p></div>
+        <div class="card"><div class="rl">Option B</div><p>Match compute a second way, by growing the model arm instead. Medium cost; tests the matching rule itself.</p></div>
+        <div class="card"><div class="rl">Option C</div><p>Repeat on data from another source. Costly; tests whether any of this transfers.</p></div>
+      </div>
+      <aside class="notes"><p>These are options, not recommendations. Each card says what it costs and what it would teach.</p></aside>
+    </div>
+  </section>
+
+</div>
+
+<div class="foot">scaling study · more data or a better model</div>
+<div class="nav"><button id="prev" aria-label="previous">&larr;</button><button id="next" aria-label="next">&rarr;</button></div>
+<div class="count"><span id="cur"></span> / <span id="tot"></span></div>
+
+<script>
+/* Every measured number below comes from DATA, which build_deck.py embeds from the
+   result files. Comparisons (a swing, "within noise") are computed here, never typed. */
+const DATA = {"design":{"seeds":3,"heldout_n":50000,"train_base":"1.20M","train_data":"2.40M"},"own":{"a":{"v":3.3,"lo":1.9,"hi":4.7,"data":49.6,"model":46.3},"b":{"v":1.5,"lo":0.3,"hi":2.7},"rep":{"v":1.8,"lo":0.5,"hi":3.1}},"eqc":{"a":{"v":-4.6,"lo":-6.0,"hi":-3.2}},"hard":{"own":{"v":-1.3,"lo":-2.8,"hi":0.2,"data":30.5,"model":31.8},"eqc":{"v":-5.1,"lo":-6.7,"hi":-3.5}}};
+const put=(id,html)=>{const e=document.getElementById(id); if(e) e.innerHTML=html;};
+const sgn=v=>(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(1);
+const noise=r=>r.lo<=0 && r.hi>=0;
+
+/* forest panel: rows {lab, v, lo, hi, col}; title names the panel and the budget */
+function forest(title, rows, dmin, dmax, W=980, Lg=330){
+  const H=110+rows.length*86,R=40,top=78,bottom=56;
+  const pW=W-Lg-R, pB=H-bottom, xx=v=>Lg+(v-dmin)/(dmax-dmin)*pW;
+  const y=i=>top+(pB-top)*((i+0.5)/rows.length);
+  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  s+=`<text x="16" y="34" class="ptitle">${title}</text>`;
+  for(let t=Math.ceil(dmin/2)*2;t<=dmax;t+=2){
+    s+=`<line x1="${xx(t)}" y1="${top-8}" x2="${xx(t)}" y2="${pB}" class="grid"/>`;
+    s+=`<text x="${xx(t)}" y="${pB+26}" text-anchor="middle" class="tick">${t>0?'+':''}${t}</text>`;
+  }
+  s+=`<line x1="${xx(0)}" y1="${top-12}" x2="${xx(0)}" y2="${pB}" class="zero"/>`;
+  rows.forEach((r,i)=>{
+    s+=`<text x="${Lg-20}" y="${y(i)+6}" text-anchor="end" class="axlbl">${r.lab}</text>`;
+    s+=`<line x1="${xx(r.lo)}" y1="${y(i)}" x2="${xx(r.hi)}" y2="${y(i)}" stroke="${r.col}" stroke-width="3.4" stroke-linecap="round"/>`;
+    s+=`<circle cx="${xx(r.v)}" cy="${y(i)}" r="6" fill="${r.col}"/>`;
+    s+=`<text x="${xx(r.v)}" y="${y(i)-14}" text-anchor="middle" class="val" fill="${r.col}">${sgn(r.v)}${noise(r)?' · within noise':''}</text>`;
+  });
+  s+=`<text x="${Lg+pW}" y="${H-8}" text-anchor="end" class="cap">${W<900?'data arm minus model arm (points)':'accuracy difference, data arm minus model arm (points), interval over seeds'}</text>`;
+  return s+`</svg>`;
+}
+const OWN='var(--own)', EQC='var(--eqc)';
+put('figOwn', forest('(a) Each arm at its own cost', [
+  {lab:'First task', ...DATA.own.a, col:OWN},
+  {lab:'Second task', ...DATA.own.b, col:OWN},
+  {lab:'First task, replication', ...DATA.own.rep, col:OWN}], -2, 6));
+put('figEqA', forest('(a) First task', [
+  {lab:'Own cost', ...DATA.own.a, col:OWN},
+  {lab:'Equal compute', ...DATA.eqc.a, col:EQC}], -8, 6, 600, 200));
+put('figEqB', forest('(b) Harder task', [
+  {lab:'Own cost', ...DATA.hard.own, col:OWN},
+  {lab:'Equal compute', ...DATA.hard.eqc, col:EQC}], -8, 6, 600, 200));
+
+/* bars: the two arms' accuracy on the harder task, each arm at its own cost */
+(function(){
+  const h=DATA.hard.own, W=900,H=360,top=70,bottom=60,left=80, yMax=Math.ceil(Math.max(h.data,h.model)/10)*10+10;
+  const yy=v=>top+(H-top-bottom)*(1-v/yMax), pB=H-bottom;
+  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  s+=`<text x="16" y="34" class="ptitle">Harder task · each arm at its own cost</text>`;
+  [['Data arm',h.data,'var(--data)',260],['Model arm',h.model,'var(--model)',520]].forEach(([l,v,c,x])=>{
+    s+=`<rect x="${x}" y="${yy(v)}" width="120" height="${pB-yy(v)}" fill="${c}" rx="2"/>`;
+    s+=`<text x="${x+60}" y="${yy(v)-10}" text-anchor="middle" class="barval" fill="${c}">${v.toFixed(1)}</text>`;
+    s+=`<text x="${x+60}" y="${pB+30}" text-anchor="middle" class="xlab">${l}</text>`;
+  });
+  s+=`<text x="${(260+640)/2}" y="${top-8}" text-anchor="middle" class="mult">${sgn(h.data-h.model)}${noise(h)?' · within noise':''}</text>`;
+  s+=`<line x1="${left}" y1="${pB}" x2="${W-40}" y2="${pB}" class="axis"/>`;
+  s+=`<text transform="translate(30,${(top+pB)/2}) rotate(-90)" text-anchor="middle" class="ylab">accuracy</text>`;
+  put('figHard', s+`</svg>`);
+})();
+
+/* schematics: the confound, and the score */
+put('figConfound', `<svg viewBox="0 0 960 300" preserveAspectRatio="xMidYMid meet">
+  <text x="16" y="34" class="ptitle">What a win for the data arm can mean</text>
+  <rect x="40" y="70" width="250" height="90" rx="10" fill="none" stroke="var(--data)" stroke-width="2.4"/>
+  <text x="165" y="110" text-anchor="middle" class="xlab">Twice the data</text>
+  <text x="165" y="138" text-anchor="middle" class="xsub">also twice the compute</text>
+  <rect x="40" y="185" width="250" height="90" rx="10" fill="none" stroke="var(--model)" stroke-width="2.4"/>
+  <text x="165" y="225" text-anchor="middle" class="xlab">A better model</text>
+  <text x="165" y="253" text-anchor="middle" class="xsub">its own compute</text>
+  <line x1="300" y1="172" x2="440" y2="172" class="axis" marker-end="url(#ar)"/>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#cfccc6"/></marker></defs>
+  <rect x="450" y="120" width="210" height="104" rx="10" fill="#fff" stroke="var(--hair)"/>
+  <text x="555" y="166" text-anchor="middle" class="xlab">data arm wins</text>
+  <text x="555" y="194" text-anchor="middle" class="xsub">but why?</text>
+  <line x1="670" y1="150" x2="740" y2="110" class="axis" marker-end="url(#ar)"/>
+  <line x1="670" y1="196" x2="740" y2="236" class="axis" marker-end="url(#ar)"/>
+  <text x="752" y="116" class="xlab" fill="var(--data)">more data</text>
+  <text x="752" y="242" class="xlab" fill="var(--eqc)">more budget</text>
+</svg>`);
+put('figScore', `<svg viewBox="0 0 960 250" preserveAspectRatio="xMidYMid meet">
+  <line x1="80" y1="150" x2="880" y2="150" class="axis"/>
+  <line x1="480" y1="70" x2="480" y2="200" class="zero"/>
+  <text x="480" y="56" text-anchor="middle" class="psub">no difference</text>
+  <text x="840" y="230" text-anchor="end" class="xsub">data arm wins →</text>
+  <text x="120" y="230" class="xsub">← model arm wins</text>
+  <line x1="600" y1="110" x2="760" y2="110" stroke="var(--own)" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="680" cy="110" r="6" fill="var(--own)"/>
+  <text x="680" y="92" text-anchor="middle" class="val" fill="var(--own)">counts: clears zero</text>
+  <line x1="380" y1="180" x2="520" y2="180" stroke="var(--noise)" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="440" cy="180" r="6" fill="var(--noise)"/>
+  <text x="300" y="186" text-anchor="end" class="val" fill="var(--noise)">within noise</text>
+</svg>`);
+
+/* prose numbers */
+put('tSeeds', DATA.design.seeds);
+put('tTrainData', DATA.design.train_data); put('tTrainBase', DATA.design.train_base);
+put('tHeldout', DATA.design.heldout_n.toLocaleString('en-US'));
+put('tOwnA', sgn(DATA.own.a.v)); put('tOwnData', DATA.own.a.data.toFixed(1)); put('tOwnModel', DATA.own.a.model.toFixed(1));
+put('tSwingFrom', sgn(DATA.own.a.v)); put('tSwingTo', sgn(DATA.eqc.a.v));
+put('tHard', sgn(DATA.hard.own.v));
+put('tHardCi', `${sgn(DATA.hard.own.lo)} to ${sgn(DATA.hard.own.hi)}`);
+put('tHardNoise', noise(DATA.hard.own) ? 'crosses zero, so it is within noise' : 'clears zero');
+
+/* navigation and speaker notes — as in assets/deck.html */
+const slides=[...document.querySelectorAll('.slide')];
+const tot=slides.length; let cur=0;
+document.getElementById('tot').textContent=tot;
+function show(i){
+  cur=Math.max(0,Math.min(tot-1,i));
+  slides.forEach((s,k)=>s.classList.toggle('active',k===cur));
+  document.getElementById('cur').textContent=cur+1;
+  document.getElementById('progress').style.width=((cur+1)/tot*100)+'%';
+}
+const next=()=>show(cur+1), prev=()=>show(cur-1);
+document.getElementById('next').onclick=next;
+document.getElementById('prev').onclick=prev;
+window.addEventListener('keydown',e=>{
+  if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();next();}
+  else if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();prev();}
+  else if(e.key==='Home'){show(0);}
+  else if(e.key==='End'){show(tot-1);}
+  else if(e.key==='n'||e.key==='N'){e.preventDefault();document.body.classList.toggle('shownotes');}
+  else if(e.key==='Escape'){document.body.classList.remove('shownotes');}
+});
+show(0);
+</script>
+</body>
+</html>

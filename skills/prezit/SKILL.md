@@ -3,14 +3,14 @@ name: prezit
 description: >-
   Turn one crux anchor node and everything under it into a minimal, professional,
   self-contained HTML slide deck — the "here's what we found" update a research group gives —
-  where every number on a slide is an address into the vault, not a photocopy of one, and
-  `crux deck --verify` can prove it still matches. Drives the engine's `crux deck` verbs
-  (--json harvest, --verify, --refresh, --lint), fills the shipped template, and runs the
-  refinement loop with the PI. Two arcs: the tree arc (default) and the lab arc (motivation →
-  method → results → discussion, for an experiment's lab-meeting deck). Use when a crux user
-  wants slides from their vault. Triggers: "make a deck from q…", "present this subtree",
-  "slides for the group meeting", "lab deck for this experiment", "update my deck", prezit,
-  crux presentation, crux slides.
+  where every number on a slide traces to the vault — a hashed result file or a metrics
+  address — and `crux deck --verify` can prove it still matches. Drives the engine's `crux
+  deck` verbs (--json harvest, --verify, --refresh, --lint), fills the shipped template or
+  build, and runs the refinement loop with the PI. Two arcs: the paper arc (default:
+  motivation → method → results → discussion) and the tree arc (built from the crux tree).
+  Use when a crux user wants slides from their vault. Triggers: "make a deck from q…",
+  "present this subtree", "slides for the group meeting", "a deck for the lab meeting",
+  "update my deck", prezit, crux presentation, crux slides.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
@@ -30,23 +30,24 @@ this week" is answered by choosing the anchor whose subtree moved.
 | part | who | what |
 |---|---|---|
 | `crux deck <anchor> --json` | engine | the entire story material, assembled deterministically |
-| `assets/deck.html` | this skill's template | all chrome: palette, fade, keyboard nav, progress, DOM-derived count |
+| `assets/deck.html`, `examples/paper_deck/` | this skill's template and paper-arc build | all chrome: palette, fade, keyboard nav, progress, DOM-derived count, speaker notes |
 | the deck's prose + charts | **you, the agent** | narrative selection, the hero figures, the bullets |
-| `crux deck --verify/--refresh/--lint` | engine | proves numbers match; repairs values; checks the slide contract |
+| `crux deck --verify/--refresh/--lint` | engine | proves numbers and sources match; repairs addressed values; checks the slide contract |
 
 You never retype the chrome (copy the template), and you never let the engine author a
 sentence — selection and phrasing are your whole job.
 
-## Two arcs — the PI picks one
+## Two arcs — the paper arc is the default
 
-| arc | shape | numbers proved by | use it for |
+| arc | shape | numbers proved by | start from |
 |---|---|---|---|
-| **tree arc** (default) | title → lineage → question → method → results → verdict, built from the tree as mapped below | `metrics.json` addresses and `crux deck --verify` | a subtree with hypotheses, findings and addresses |
-| **lab arc** | motivation → method → results → discussion | a `build_deck.py` that embeds result files as DATA (plus `--verify` for any addressed number) | one experiment or a family of them, at a lab meeting, often exploratory |
+| **paper arc** (default) | motivation → method → results → discussion | `build_deck.py` embeds result files as DATA and records each file's sha256; `--verify` re-reads them | `examples/paper_deck/` |
+| **tree arc** (the PI picks it) | title → lineage → question → method → results → verdict, built from the tree as mapped below | `metrics.json` addresses, each checked by `--verify` | `assets/deck.html`, `examples/q1_scaling_deck.html` |
 
-When the PI picks the lab arc, read [`references/lab-arc.md`](references/lab-arc.md) before
-drafting: its slide roles and style rules replace the tree-arc defaults below (the mapping,
-numbers by role, no future-work slide). Everything else in this file applies to both arcs.
+For the paper arc, read [`references/paper-arc.md`](references/paper-arc.md) before
+drafting: its slide roles, style rules and build replace the tree-arc defaults below (the
+mapping, numbers by role, no future-work slide). Everything else in this file applies to
+both arcs.
 
 ## The mapping — what each crux object becomes (tree arc)
 
@@ -73,28 +74,34 @@ Shorthand: intro = wiki, methods = design (not implementation legwork), results 
 2. **Read end to end.** Every linked report under `results/<hid>/`, every finding, the
    approved synthesis. Inventory the figures and the `metrics.json` addresses.
 3. **Agree the arc with the PI before drafting.** Structured questions, each with a
-   recommended default: tree arc vs lab arc (recommend the lab arc for an experiment's
-   lab-meeting deck, or when the numbers have no `metrics.json` addresses yet); single arc
-   vs mini-arc per sub-question; redesign figures from
-   `metrics.json` vs reuse; which 1–3 findings get a slide. Trivia (output path, framework)
+   recommended default: paper arc (default) vs tree arc (offer it for a vault update built
+   from a resolved subtree whose numbers carry `metrics.json` addresses); single arc vs
+   mini-arc per sub-question; redesign figures from the result files vs reuse; which 1–3
+   findings get a slide. Trivia (output path, framework)
    is stated, not asked.
-4. **Draft.** Copy `assets/deck.html` to `<vault>/presentations/<anchor-id>/index.html` and
-   fill the stubs. Study `examples/q1_scaling_deck.html` — it is the worked example, built
-   on `skills/crux/examples/scaling_vault` q1, verify-green and lint-clean.
+4. **Draft.** Paper arc: copy `examples/paper_deck/deck_src.html` and `build_deck.py` to
+   `<vault>/presentations/<anchor-id>/`, write the slides and the DATA reduction, and run
+   the build. Tree arc: copy `assets/deck.html` to `<vault>/presentations/<anchor-id>/index.html`
+   and fill the stubs (worked example: `examples/q1_scaling_deck.html`). Both worked
+   examples are built on `skills/crux/examples/scaling_vault` q1, verify-green and lint-clean.
 5. **Check.** `crux deck --verify <deck> --strict` and `crux deck --lint <deck>` until both
-   are green. Then the manual pass: open from `file://`, walk every slide at 16:9, confirm
+   are green (for the paper arc, `<deck>` is the built `index.html`). Then the manual pass: open from `file://`, walk every slide at 16:9, confirm
    nothing collides with the fixed footer and in-SVG text is room-legible.
 6. **Refine with the PI.** Deck-building is a refinement loop by nature — "split that
    slide", "drop that model everywhere", "enlarge the figures" each must be a small local
    edit. That is why this is a skill, not a fire-and-forget agent.
-7. **Re-presenting later:** `crux deck --refresh <deck>`, then **re-read the prose around
-   every changed number** — refresh fixes values; only a human fixes the sentence that
+7. **Re-presenting later:** rerun `build_deck.py` (paper arc) or `crux deck --refresh <deck>`
+   (tree arc), then **re-read the prose around every changed number** — refresh fixes values; only a human fixes the sentence that
    interprets them ("clears the floor by +0.05" can be silently falsified by a correct
    refresh). `validate --check=decks` reports stale decks from the vault side.
 
 ## The addressing contract (non-negotiable)
 
-Every number the vault owns carries **both** the cached value it renders and the address it
+Every number on a slide traces to the vault. In the paper arc the trace is the build: the
+number is read from a result file whose sha256 the deck-sources manifest records
+([`references/paper-arc.md`](references/paper-arc.md)). An address, below, is the other
+trace; the tree arc uses it for every number, and the paper arc may use it too.
+An addressed number carries **both** the cached value it renders and the address it
 came from:
 
 ```js
@@ -163,7 +170,8 @@ checklist.
 
 ## Technical spec (already encoded in the template — do not regress it)
 
-One self-contained HTML file: no CDN, no framework, no build step, opens by double-click
+One self-contained HTML file (in the paper arc, the built `index.html`): no CDN, no
+framework, nothing for the viewer to build, opens by double-click
 from `file://` and survives being emailed. Fade-only transitions with
 `prefers-reduced-motion` honored; keyboard nav (`→ ← space Home End`); thin progress bar;
 slide counter derived from the DOM; print stylesheet gives page-per-slide PDF via the

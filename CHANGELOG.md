@@ -8,15 +8,21 @@ verdict/roll-up/view logic changes.
 
 ### Added
 
-- **prezit gains a second arc, the lab arc** (spec 11; prezit skill **1.0 → 1.1**; engine
-  unchanged, no vault-format change). Motivation → method → results → discussion, for an
-  experiment's lab-meeting deck, taken from a family of decks a PI approved slide by slide.
-  The tree arc stays the default; the PI picks the arc at the arc-agreement step, and the lab
-  arc's slide roles and style rules live in `skills/prezit/references/lab-arc.md`. In an
-  exploratory study with no `metrics.json`, a `build_deck.py` embeds every number from the
-  result files as DATA. The template gains optional speaker notes (`n`); a deck without notes
-  is unchanged. Two rules now hold for both arcs: plain names on slides, and a project's
-  mandatory metric decomposition shown with every value.
+- **prezit's default arc is now the paper arc, and `crux deck --verify` proves built decks**
+  (spec 11; prezit skill **1.0 → 1.1**; engine **3.5**, unchanged; no vault-format change).
+  The paper arc runs motivation → method → results → discussion, the style a PI approved
+  slide by slide for a family of experiment decks. Its slide roles, style rules and build
+  live in `skills/prezit/references/paper-arc.md`, with a worked example in
+  `skills/prezit/examples/paper_deck/`. The tree arc stays available and the PI picks it
+  at the arc step. A paper deck is built: `build_deck.py` embeds result-file numbers as DATA
+  and writes a deck-sources manifest (vault path → sha256). `crux deck --verify` re-reads
+  every listed file: a changed file is a mismatch, a missing one is unresolvable, and an
+  unbuilt `deck_src.html` is refused and skipped by `validate --check=decks`. `crux deck
+  --lint` requires speaker notes on every paper-arc slide, and `--refresh` tells you to
+  rebuild. A deck that declares no arc and carries no manifest (every tree deck) takes the
+  old path, and its report keeps the same keys. The template gains optional speaker notes
+  (`n`). Two rules now hold for both arcs: plain names on slides, and a project's mandatory
+  metric decomposition shown with every value.
 
 ## [0.9.0] - 2026-10-11
 
