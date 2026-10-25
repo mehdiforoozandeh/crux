@@ -38,7 +38,8 @@ mkdir -p "$WORK/data"
 if [ ! -f "$JASPAR" ]; then
   curl -sSfL -o "$JASPAR.part" "$JASPAR_URL" && mv "$JASPAR.part" "$JASPAR"
 fi
-got="$(shasum -a 256 "$JASPAR" | cut -d' ' -f1)"
+if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
+got="$($SHA "$JASPAR" | cut -d' ' -f1)"
 if [ "$got" != "$JASPAR_SHA" ]; then
   echo "JASPAR sha256 mismatch: got $got, want $JASPAR_SHA" >&2; exit 1
 fi
@@ -46,7 +47,12 @@ fi
 if [ ! -x "$WORK/venv/bin/python" ]; then
   "$PY" -m venv "$WORK/venv"
 fi
+# Alliance clusters (Fir, Nibi) set CC_CLUSTER. Their Python refuses PyPI manylinux wheels and
+# pip there reads only the cluster wheelhouse, which lacks three of the PyPI pins; those
+# clusters use requirements.alliance.lock instead.
+LOCK="$HERE/requirements.lock"
+if [ -n "${CC_CLUSTER:-}" ]; then LOCK="$HERE/requirements.alliance.lock"; fi
 "$WORK/venv/bin/python" -m pip install --quiet --upgrade pip
-"$WORK/venv/bin/python" -m pip install --quiet --only-binary=:all: -r "$HERE/requirements.lock"
+"$WORK/venv/bin/python" -m pip install --quiet --only-binary=:all: -r "$LOCK"
 { "$WORK/venv/bin/python" --version; "$WORK/venv/bin/python" -m pip freeze; } > "$WORK/versions.txt"
 echo "ready: $WORK  (versions in work/versions.txt)"

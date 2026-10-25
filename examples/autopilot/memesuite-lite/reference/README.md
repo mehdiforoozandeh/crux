@@ -22,6 +22,8 @@ python3 score.py --make-reference
 This runs the pinned pre-PR-#21 code (`dd413f6`, in `work/cand-baseline`) through the same
 worker that scores a candidate. It takes about 3 minutes. The run used Python 3.11.5 on an Apple M1. Two runs gave
 identical hashes for the cases; the JASPAR hashes come from one run, and PR #21 reproduces them.
+A Fir compute node (AMD EPYC 9655, `requirements.alliance.lock`, SLURM job 342272) made
+the reference again and got identical hashes for every case and every JASPAR run.
 
 The cases are:
 

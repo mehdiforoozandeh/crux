@@ -18,12 +18,17 @@ from 5.455 s to 0.7004 s (7.8x), with bit-identical output.
 - **Metric:** the median wall time, in seconds, of 5 timed calls. Each timed call uses the
   same motifs in a different seeded order, so a candidate cannot replay a cached answer.
 - **Direction:** lower is better.
-- **Baseline** (the pinned code, this machine): **9.11 s** (median of 5 scorer runs; medians 8.98-9.17 s)
-- **Bar** (PR #21 as a candidate, this machine): **2.32 s** (median of 4 scorer runs; medians 2.30-2.43 s), so 3.9x faster
+- **Baseline** (the pinned code, Fir): **6.02 s** (median of 5 scorer runs; medians
+  5.92-6.06 s)
+- **Bar** (PR #21 as a candidate, Fir): **1.62 s** (median of 4 scorer runs; medians
+  1.617-1.624 s), so 3.7x faster
 
-The numbers above come from an Apple M1 with Python 3.11.5. The PR measured 7.8x on an AMD
-EPYC 9575F, and its kernels were tuned on that CPU. Times on other machines differ, so score
-the baseline again on the machine that runs the search.
+These numbers come from a Fir compute node (AMD EPYC 9655, Zen 5), 8 CPUs, not exclusive,
+Python 3.11.5, SLURM job 342272. An Apple M1 gave 9.11 s and 2.32 s (3.9x). The PR measured
+5.455 s and 0.7004 s (7.8x) on an AMD EPYC 9575F. The baseline on Fir is close to the PR's
+baseline, but PR #21 on Fir is 2.3x slower than the PR's own number, and we do not know why.
+Times differ between machines, so score the baseline again on the machine that runs the
+search.
 
 ## What the agent may edit, and what is frozen
 
@@ -63,7 +68,8 @@ python3 score.py CANDIDATE                  # or: CRUX_CANDIDATE=CANDIDATE pytho
      call, and every timed call.
   3. The candidate returns where the pinned code raised, or raises where the pinned code
      returned. The exception type does not have to match.
-- **Runtime:** about 140 s for the baseline and 175 s for PR #21 on the M1. Numba compiles the candidate with an empty cache each run, which
+- **Runtime:** about 115-120 s for the baseline and 135 s for PR #21 on Fir (140 s and
+  175 s on the M1). Numba compiles the candidate with an empty cache each run, which
   takes most of the time that is not the 5 timed calls. The scorer stops itself after 290 s.
 
 How the scorer protects the number:
@@ -79,24 +85,37 @@ How the scorer protects the number:
 
 ```
 ./setup.sh                                  # clone at dd413f6, build work/venv
+                                            # on Fir: module load python/3.11.5 first, and
+                                            # run setup and scorer inside a SLURM job
 python3 score.py work/cand-baseline         # the baseline
 python3 score.py work/cand-pr21             # the known answer (PR #21 merged)
 ```
 
 `setup.sh` makes everything under `work/`, which git ignores: the clone, the frozen export,
 two candidate checkouts, and a venv with the exact versions in `requirements.lock`
-(taken from the repo's own `uv.lock`). It installs nothing outside `work/`. It records the
+(taken from the repo's own `uv.lock`). On an Alliance cluster (`CC_CLUSTER` set), it uses
+`requirements.alliance.lock`: the cluster's Python refuses PyPI wheels, and its wheelhouse
+lacks three of the pins, so numpy 2.4.2, pandas 3.0.5 and pytest 9.0.2 replace them. The
+outputs on Fir were bit-identical to the reference made on the Mac. It installs nothing outside `work/`. It records the
 versions in `work/versions.txt`.
 
 ## Noise
 
-Measured on the M1:
+Measured on Fir (EPYC 9655, 8 CPUs, `--cpus-per-task=8`):
 
-- Baseline, 5 scorer runs: medians 8.98-9.17 s (2.1%). Two single calls were slow
-  outliers (9.53 s and 10.34 s); the median absorbed both.
-- PR #21, 4 scorer runs: medians 2.30-2.43 s (5.6%). One run had a 3.05 s first call.
-- A candidate that sleeps 0.3 s per call scored 9.47 s, worse than every baseline run.
+| | not exclusive (job 342272) | `--exclusive` (job 342273) |
+|---|---|---|
+| baseline, 5 scorer runs | medians 5.92-6.06 s (2.3%) | medians 5.93-6.01 s (1.3%) |
+| baseline, spread inside one run | 0.3-3.1% | 0.3-0.8% |
+| PR #21, 4 scorer runs | medians 1.617-1.624 s (0.4%) | medians 1.600-1.609 s (0.6%) |
 
-The scorer uses 5 repeats: a sixth call costs 2-9 s more and does not remove a slow run.
-Treat a change under about 6% as noise, and confirm a small gain with a second scorer run.
+- Sharing the node roughly doubled the noise of the baseline, but the effect is small. An
+  exclusive node costs a whole 192-core node for a one-thread benchmark.
+- Another node, in a separate job (345325), timed the baseline at about 6.4 s per call. Compare
+  candidates on the same node, or score the baseline again in the same job.
+- A candidate that sleeps 0.3 s per call scored 6.36 s, worse than every baseline run.
+- On the M1, the baseline medians spread 2.1% and the PR #21 medians 5.6%.
 
+The scorer uses 5 repeats: a sixth call costs 2-6 s more and does not remove a slow run.
+Treat a change under about 3% on one node as noise, and confirm a small gain with a second
+scorer run.
