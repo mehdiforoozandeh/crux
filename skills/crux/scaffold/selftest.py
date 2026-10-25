@@ -1899,7 +1899,8 @@ def run_economy():
     check("economy: snapshot exposes tldr on an idea", "tldr" in snap["nodes"][h1])
     check("economy: an unwritten summary reads empty, not as the placeholder",
           snap["nodes"][q1]["eli5"] == "")
-    edit(node_path(root, q1), "_(one sentence, plain language, no jargon)_",
+    edit(node_path(root, q1), "_(one sentence a science undergraduate follows — standard terms, "
+                              "subfield jargon glossed)_",
          "Whether short nodes stay short.")
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
@@ -5042,7 +5043,7 @@ def run_brief():
 
 
 def run_null():
-    """Spec 09 PRD 09.1 — `## Null`, the boring explanation, PI-gated.
+    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis, PI-gated.
 
     The brief removes the parent's authored prompt, but one leak cannot be engineered away:
     the hypothesis TITLE is directional. "masked-token beats masked-stem" presumes a winner.
@@ -5358,7 +5359,7 @@ def run_migrate():
           all(E.node_schema(n) == 0 for n in v.nodes.values() if n.type in ("question", "idea")))
     check("evmig: migrate writes no evidence field",
           all(f not in n["fm"] for n in v.nodes.values() for f in E.MIGRATE_FORBIDDEN))
-    check("evmig: the Null it adds is EMPTY — naming the boring explanation is a scientific act",
+    check("evmig: the Null it adds is EMPTY — naming the null hypothesis is a scientific act",
           E._null_text(v.get("h1")) is None)
     check("evmig: migrate changes no recorded verdict",
           fingerprint(root)[1] == before_verdicts and fingerprint(root)[2] == before_status)
@@ -5575,10 +5576,12 @@ def run_agent_roster():
 
     # PRD-3. The shas were read off disk at the base commit of this slice. A literal here is
     # the point: `git diff --stat` proves nothing to a reader six months from now, and these
-    # four files are the ones the slice is most tempted to edit.
+    # four files are the ones the slice is most tempted to edit. crux-null was re-pinned on
+    # 2026-10-25, deliberately: "the boring explanation" became "the null hypothesis" when the
+    # register moved to a science undergraduate's (CHANGELOG, Unreleased).
     REUSED_SHA = {
         "crux-close": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
-        "crux-null": "26f1c5ee36bb6a2fbcdaa438d1c524017ab512c0b1a547200b19665cc07507d6",
+        "crux-null": "fc4e5fb06fb0f4fdb1158e1986ed96e8374bff7a6638e380ba46cf42c340c832",
         "crux-verifiables": "307daa3e363358ea26b3a037596345fb0b2e6cc55219c862bd999fb18c0f7d2a",
         "crux-design": "01a9d2d7bb4f92e21aac04800a3f6edfc99b914b027458fd49fa2b6d3c9a5584"}
     drifted = sorted(
@@ -7518,11 +7521,16 @@ def run_science_voice():
           all(E.is_crux_term(t) for t in
               ("verifiable", "verifiables", "review gate", "synthesis", "verdict", "taskhub",
                "vault", "node", "cockpit", "roll-up", "outcome-neutral", "invalid-run",
-               "situate", "null", "ledger", "glossary", "RD", "seed file", "META.md")))
-    check("voice: plain science words are free — a grad student owes no gloss for 'hypothesis'",
+               "situate", "ledger", "glossary", "RD", "seed file", "META.md")))
+    check("voice: standard science words are free — a grad student owes no gloss for 'hypothesis'",
           not any(E.is_crux_term(t) for t in
                   ("question", "hypothesis", "evidence", "finding", "experiment", "check",
-                   "result", "supported", "refuted", "inconclusive", "baseline")))
+                   "result", "supported", "refuted", "inconclusive", "baseline",
+                   "null", "null hypothesis", "confound", "control")))
+    check("voice: 'null hypothesis' in chat is science, not a leak — the register is a science "
+          "undergraduate's, so the standard term must never be what the lint pushes against",
+          E.voice_lint([("agent", "The null hypothesis is that seed noise alone explains "
+                                  "the gain.")]) == [])
     check("voice: and the words measured to collide with real science prose stay out",
           not any(E.is_crux_term(t) for t in
                   ("seed", "partial", "anchor", "idea", "brief", "pursue", "parent")))
@@ -10635,7 +10643,7 @@ HAND_CLOSE_GOLDEN = "\n".join((
     '',
     '## ELI5',
     '',
-    '_(one sentence, plain language, no jargon)_',
+    '_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_',
     '',
     '## TL;DR',
     '',

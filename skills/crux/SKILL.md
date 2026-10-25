@@ -42,7 +42,7 @@ A hypothesis's `## Findings` can spawn **new** child questions — that's the lo
 The tree is the `Parent:: [[…]]` wikilink in each file; `META.md`/`EXPERIMENTS.md` are
 generated views (never hand-edit).
 
-**Every question and hypothesis opens with `## ELI5` (one sentence, no jargon) and `## TL;DR`
+**Every question and hypothesis opens with `## ELI5` (one sentence a science undergraduate follows) and `## TL;DR`
 (one paragraph: what it asks or claims, and what would settle it).** Write both when you
 create the node. They are what the PI reads first in the cockpit, and they are the node's
 job description — if you can't write the TL;DR, the node isn't ready to exist yet.
@@ -128,10 +128,13 @@ crux is running.
 
 **1 · The mirror rule.** You never introduce crux's own vocabulary into chat. That covers
 **node ids** (`q19`, `h72`, `t91`, `s1`) and **process terms** — review gate, verifiable,
-null, synthesis, verdict, taskhub, vault, node, seed file, RD, cockpit, ledger, roll-up,
+synthesis, verdict, taskhub, vault, node, seed file, RD, cockpit, ledger, roll-up,
 outcome-neutral, invalid-run, and the rest of it. A term or id **the PI uses first licenses
-it back to you**: that is the mirror rule. Plain science words are free and always were —
-question, hypothesis, evidence, finding, experiment, check, result, supported, refuted.
+it back to you**: that is the mirror rule. Standard scientific vocabulary is free — null
+hypothesis, confound, control, effect size, confidence interval, supported, refuted.
+**The register is a science-major undergraduate's**: never swap a standard term for a
+homemade simplification ("the boring explanation" for the null hypothesis), and gloss a
+term specific to this subfield in the same breath.
 
 The two halves go stale differently, so the licence differs. **Ids are licensed for the
 current conversation only**: "the PI knew what q19 was in March" will not be true in April.
