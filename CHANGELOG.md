@@ -6,6 +6,14 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The register is a science-major undergraduate's** (engine **3.5**, unchanged; no
+  vault-format change). Agents, templates, CLI help and the cockpit now say "null hypothesis"
+  where they said "the boring explanation", and the ELI5 slot asks for one sentence a science
+  undergraduate follows rather than "no jargon". The voice lint no longer counts `null` as
+  crux vocabulary, so "null hypothesis" in chat is no longer flagged as a leak. Old template
+  placeholders still read as unwritten.
 ### Added
 
 - **prezit's default arc is now the paper arc, and `crux deck --verify` proves built decks**

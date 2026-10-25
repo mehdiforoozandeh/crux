@@ -233,8 +233,9 @@ TERMINAL_QUESTION= "resolved"
 # The NULL (spec 09). The brief removes the parent's authored prompt, but one leak cannot be
 # engineered away: the hypothesis TITLE is directional — "masked-token beats masked-stem"
 # presumes a winner, and a fresh agent still knows which way the room leans. The answer is
-# not to neutralise the title but to push against it. The null is the BORING EXPLANATION:
-# the cheapest way this result could be trivially true. The checks must then discriminate
+# not to neutralise the title but to push against it. The null is the NULL HYPOTHESIS, stated
+# as the most parsimonious alternative explanation: the confound or artifact under which the
+# predicted result appears although the claim is false. The checks must then discriminate
 # between the claim and that null.
 #
 # Three goalposts, all in code. Instructions will not hold this and the proof is on the
@@ -381,7 +382,7 @@ MIGRATE_FORBIDDEN = frozenset({"schema", RULE_FIELD, RULE_M_FIELD, LOCK_FIELD,
                                NULL_APPROVED, "null_hash"})
 # Sections it may CREATE (empty) but never FILL. An empty `## Null` is inert — the null gate
 # is stamp-gated, so a pre-15 node is never asked for one — but a *filled* null would be the
-# engine inventing the boring explanation on the PI's behalf.
+# engine inventing the null hypothesis on the PI's behalf.
 MIGRATE_SECTIONS = {"idea":     ("ELI5", "TL;DR", "Null", "Artifacts"),
                     "question": ("ELI5", "TL;DR", "Protocol")}
 
@@ -1401,12 +1402,14 @@ def null_problem(text, schema=1):
         return None
     lines = [l for l in (text or "").splitlines() if l.strip()]
     if not lines:
-        return (f"no null declared. Name the BORING explanation — the cheapest way this "
-                f"result could be trivially true — as one line naming a family from: "
+        return (f"no null declared. Name the null hypothesis — the most parsimonious "
+                f"alternative explanation of a positive result — as one line naming a family "
+                f"from: "
                 f"{', '.join(CONFOUND_FAMILIES)}.")
     if len(lines) > 1:
         return (f"{len(lines)} nulls declared; there is exactly one. The null is the single "
-                f"cheapest boring explanation, not a list of everything that could go wrong.")
+                f"most parsimonious alternative explanation, not a list of every threat to "
+                f"validity.")
     one = lines[0].strip()
     words = len(one.split())
     if words > NULL_MAX_WORDS:
@@ -1455,7 +1458,7 @@ def scenario_gap(n):
         return (f"hypothesis '{n.id}': no verifiable discriminates against the declared null. "
                 f"Mark the one that does with a `discriminates:: true` line under it "
                 f"(`--discriminates` at creation) — "
-                f"without it the checks can all pass while the boring explanation is the true "
+                f"without it the checks can all pass while the null hypothesis is the true "
                 f"one, which is the whole failure the null exists to catch.")
     return None
 
@@ -1469,8 +1472,8 @@ def null_gap(n):
         return f"hypothesis '{n.id}': {p}"
     if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") != _null_hash(n):
         return (f"hypothesis '{n.id}': the null was EDITED after approval, so the approval no "
-                f"longer stands. A different null is a different claim about what would be "
-                f"boring, and checks written against the old one discriminate against "
+                f"longer stands. A different null is a different alternative "
+                f"explanation, and checks written against the old one discriminate against "
                 f"nothing. Re-approve with `crux approve-null {n.id}`.")
     if not str(n["fm"].get(NULL_APPROVED) or "").strip():
         return (f"hypothesis '{n.id}': the null is declared but not approved. The null IS the "
@@ -2076,17 +2079,19 @@ NODE_ID_RE = re.compile(r"\b[qhts]\d+\b")
 #: `seed` (19 hits, random seeds), `partial` (5), `anchor` (4), `idea` (4), `parent` (2).
 #: `brief` and `pursue` are out as plain English on their face.
 #:
-#: What is deliberately ABSENT is the other half of the rule: plain science words — question,
-#: hypothesis, evidence, finding, experiment, check, result, supported, refuted,
-#: inconclusive, baseline — are standard scientific language, not crux coinage. The grad
-#: student does not owe their advisor a gloss for "hypothesis".
+#: What is deliberately ABSENT is the other half of the rule: standard scientific vocabulary —
+#: question, hypothesis, null hypothesis, confound, control, evidence, finding, experiment,
+#: check, result, supported, refuted, inconclusive, baseline — is not crux coinage. The grad
+#: student does not owe their advisor a gloss for "hypothesis". `null` is out for the same
+#: reason: "the null" is statistics, and keeping it in would flag "null hypothesis", the very
+#: term the voice rule wants used instead of a homemade paraphrase.
 CRUX_LEXICON = frozenset(glossary_key(t) for t in (
     # the notebook and its parts
     "crux", "cruxvault", "vault", "notebook", "node", "node id", "subtree", "tree",
     "cockpit", "wiki", "wikilink", "glossary", "ledger", "evidence ledger",
     "META.md", "EXPERIMENTS.md", "TASKHUB.md", "WIKI.md", "RD.md",
     # the process
-    "verifiable", "verdict", "synthesis", "synthesize", "null", "review gate", "gate",
+    "verifiable", "verdict", "synthesis", "synthesize", "review gate", "gate",
     "taskhub", "situate", "roll-up", "seed file", "seed outline", "prose cap",
     "outcome-neutral", "combination rule", "invalid-run", "commitment drift",
     "rd", "requirements document",
@@ -2105,7 +2110,7 @@ _LEXICON_PATTERNS = tuple((k, term_pattern(k)) for k in sorted(CRUX_LEXICON))
 
 
 def is_crux_term(term):
-    """True when `term` is crux's own vocabulary rather than plain science."""
+    """True when `term` is crux's own vocabulary rather than standard science."""
     return glossary_key(term) in CRUX_LEXICON
 
 
@@ -4148,7 +4153,7 @@ def cmd_approve_null(root, hid):
     Idempotent: the first approval's timestamp is the record.
 
     The approval stores a hash of what was approved, so EDITING the null silently clears it.
-    That is not bookkeeping: a different null is a different claim about what would be boring,
+    That is not bookkeeping: a different null is a different alternative explanation,
     and checks written against the old one no longer discriminate against anything."""
     v = Vault(root)
     n = v.get(hid)
@@ -4315,10 +4320,10 @@ def boundary_info(v):
     return out
 
 def _section_placeholder(name):
-    return {"ELI5":     "_(one sentence, plain language, no jargon)_",
+    return {"ELI5":     "_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_",
             "TL;DR":    "_(one paragraph: what this claims, and what would settle it)_",
-            "Null":     "_(one line: the cheapest way this result could be trivially true — "
-                        "name a family from " + ", ".join(CONFOUND_FAMILIES) + ")_",
+            "Null":     "_(one line: the null hypothesis, the most parsimonious alternative "
+                        "explanation — name a family from " + ", ".join(CONFOUND_FAMILIES) + ")_",
             "Artifacts": "_(none yet)_",
             "Protocol": "_(optional: the pre-registered rules — endpoints, thresholds, "
                         "scope — locked before any run)_"}.get(name, "_(not written)_")
@@ -4665,7 +4670,7 @@ def _summary(body, heading):
     """An `## ELI5` / `## TL;DR` section for the cockpit. Returns '' both when the section is
     absent (a pre-1.3 node) and when it still holds nothing but the template placeholder — a
     summary nobody has written should read as empty, not lead the detail pane with
-    `_(one sentence, plain language, no jargon)_`."""
+    `_(one sentence a science undergraduate follows …)_`."""
     text = _section(body, heading)
     return "" if not _prose_tokens(text) else text
 
@@ -5257,8 +5262,8 @@ def situate_lint(text, anchors=()):
     if n_eli5 > SITUATE_BUDGET["eli5_words"]:
         out.append(("situate:eli5-shape",
                     f"the ELI5 paragraph runs {n_eli5} words (max "
-                    f"{SITUATE_BUDGET['eli5_words']}). It is the one sentence someone outside "
-                    f"the field could repeat back, not a second TL;DR."))
+                    f"{SITUATE_BUDGET['eli5_words']}). It is the one-sentence gist a science "
+                    f"undergraduate could repeat back, not a second TL;DR."))
     if len(paras) - 1 != SITUATE_BUDGET["tldr_paragraphs"]:
         out.append(("situate:tldr-shape",
                     f"{len(paras) - 1} TL;DR paragraph(s) after the ELI5; the shape is "

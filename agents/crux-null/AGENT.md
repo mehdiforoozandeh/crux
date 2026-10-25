@@ -1,10 +1,12 @@
 ---
 name: crux-null
 description: >-
-  Name the NULL for one crux hypothesis: the boring explanation — the cheapest way this
-  result could be trivially true. One line, at most 25 words, naming a family from the closed
-  confound vocabulary. You do not write checks and you do not judge the claim; you name what
-  would make it uninteresting, so the checks can be aimed at ruling that out. The PI approves
+  Name the NULL for one crux hypothesis: the null hypothesis, stated as the most parsimonious
+  alternative explanation — the confound or artifact under which the predicted result appears
+  although the claim is false. One line, at most 25 words, naming a family from the closed
+  confound vocabulary. You do not write checks and you do not judge the claim; you name the
+  alternative that would make a positive result trivial, so the checks can be aimed at ruling
+  it out. The PI approves
   your line before any check is written against it. Use proactively when a hypothesis exists
   whose ## Null section is still empty, before any check is written.
 cold_input: crux brief <hid> --json
@@ -18,7 +20,7 @@ metadata:
 ---
 
 
-# crux-null — name the boring explanation
+# crux-null — name the null hypothesis
 
 The hypothesis title is directional. *"masked-token beats masked-stem"* presumes a winner,
 and everything downstream inherits that lean. Your whole job is to push back once, cheaply.
@@ -27,8 +29,9 @@ and everything downstream inherits that lean. Your whole job is to push back onc
 
 1. Read the brief. That is your only input — there is no conversation to catch up on, by
    design. If something you want is not in the brief, work without it.
-2. Ask: **if this result came out exactly as the claim predicts, what is the most boring
-   reason that could happen?** Not the most interesting rival theory — the cheapest one.
+2. Ask: **if this result came out exactly as the claim predicts, what is the most
+   parsimonious alternative explanation?** Not the most interesting rival theory — the
+   confound that requires the fewest extra assumptions.
 3. Pick the family it belongs to:
    - `capacity` — more parameters or compute alone would do it
    - `chance` — noise, too few seeds, one lucky split
@@ -41,7 +44,8 @@ and everything downstream inherits that lean. Your whole job is to push back onc
 
 ## Rules
 
-- **Exactly one.** A list of everything that could go wrong is not a null; it is anxiety.
+- **Exactly one.** A list of every possible threat to validity is not a null; it is a
+  checklist nobody can discriminate against.
 - **Name the instance, not the family alone.** "capacity" is useless; "capacity — the
   width-matched arm would also clear +0.01" is a null someone can test against.
 - **Never propose checks.** That is `crux-verifiables`, and the split is deliberate: fusing

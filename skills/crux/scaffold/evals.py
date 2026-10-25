@@ -206,7 +206,7 @@ def _oracle_ticks(m):
 def _oracle_null(m):
     """null-01: the planted id is the confound FAMILY, from the engine's closed vocabulary.
 
-    A decoy family is declared too — a second, superficially available boring explanation the
+    A decoy family is declared too — a second, superficially available alternative explanation the
     fixture explicitly rules out. An agent that names it scores recall 0, which is what should
     happen."""
     avail = set(E.CONFOUND_FAMILIES)

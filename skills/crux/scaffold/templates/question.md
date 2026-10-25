@@ -16,7 +16,7 @@ Parent:: [[<<parent_basename>>]]
 
 ## ELI5
 
-_(one sentence, plain language, no jargon)_
+_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_
 
 ## TL;DR
 

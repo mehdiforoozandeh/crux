@@ -142,7 +142,9 @@ own. Fallback ladder, in order:
   in a sentence does not exist. Deck length is elastic; only the results section grows.
 - **Keep the negatives.** An honest "this did not work, and here is the number" is often
   the most valuable slide. Never spun, never dropped.
-- **Dual register**: a plain-language lead a non-specialist grasps in one read, backed by
+- **Dual register**: a lead a science-major undergraduate grasps in one read — standard
+  scientific terms (null hypothesis, confound, effect size, confidence interval) used as is,
+  never swapped for a folksy paraphrase, subfield jargon glossed in the same line — backed by
   exact numbers a specialist can check.
 - **Quantify → interpret → caveat.** Not "more data helps" but "+3.3 points, CI clear of
   zero — because the extra data lands where the model was thinnest — but at 1.4× the

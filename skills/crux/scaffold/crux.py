@@ -149,8 +149,8 @@ def main(argv=None):
                    default=[], help="mark the preceding --fails-if as the one that "
                                     "discriminates against the declared null (at least one must)")
     s.add_argument("--null", default=None,
-                   help="the BORING explanation: the cheapest way this result could be trivially "
-                        "true. One line, <=25 words, naming a confound family (capacity, chance, "
+                   help="the null hypothesis: the most parsimonious alternative explanation of a "
+                        "positive result. One line, <=25 words, naming a confound family (capacity, chance, "
                         "leakage, selection, normalization, instrumentation). The PI approves it "
                         "with `crux approve-null` BEFORE checks are written against it.")
     s.add_argument("--rule", default=None, choices=None,
@@ -267,7 +267,7 @@ def main(argv=None):
 
     s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
                                  help="the PI's sign-off on a hypothesis' null — the gate between "
-                                      "naming the boring explanation and writing checks against it"))
+                                      "naming the null hypothesis and writing checks against it"))
     s.add_argument("id")
 
     s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
