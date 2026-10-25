@@ -5587,12 +5587,100 @@ def _deck_addresses(text):
         out.append(entry)
     return out
 
+# --- built decks (the paper arc) ---------------------------------------------------
+# A paper-arc deck is BUILT: build_deck.py reads result files, embeds what it reduces as
+# DATA, and the render code fills every numeral from DATA. There is often no metrics.json
+# address to prove, so the proof moves to the inputs: the build writes a manifest of every
+# file it read (vault-relative path -> sha256 of its bytes), and --verify re-reads each one.
+# A changed file is a mismatch (the deck is stale: rebuild); a missing one is unresolvable.
+# The engine never runs the build script — it checks that the deck was built from the
+# files as they are now. Both markers are opt-in, so a deck carrying neither (every tree
+# deck) takes the old path unchanged, byte for byte in its report.
+#
+#   <meta name="prezit-arc" content="paper">
+#   <script type="application/json" id="deck-sources">{"results/h1/metrics.json": "<sha256>"}</script>
+DECK_ARCS = ("paper", "tree")
+_DECK_ARC_RE = re.compile(r'<meta\s+name="prezit-arc"\s+content="([^"]*)"\s*/?>')
+_DECK_SOURCES_RE = re.compile(
+    r'<script\s+type="application/json"\s+id="deck-sources"\s*>(.*?)</script>', re.S)
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+def _uncommented(text):
+    """The deck with HTML comments blanked: a marker quoted in an editing note is not one."""
+    return re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+
+def deck_arc(text):
+    """The arc a deck declares, or None when it declares none (read as the tree arc)."""
+    m = _DECK_ARC_RE.search(_uncommented(text))
+    return m.group(1).strip() if m else None
+
+def _deck_built(text):
+    """True when the deck opts into the built-deck checks: it declares an arc or carries a
+    deck-sources manifest (outside comments)."""
+    return deck_arc(text) is not None or bool(_DECK_SOURCES_RE.search(_uncommented(text)))
+
+def _deck_sources(root, text, rep):
+    """Check a built deck's sources manifest into `rep` (mismatch / unresolvable entries
+    at slide 0, plus rep['sources'] for the files that still match). Called only when the
+    deck declares an arc or carries a manifest."""
+    rep["sources"] = []
+    def bad(kind, msg):
+        rep["unresolvable"].append({"addr": "deck-sources", "slide": 0, "kind": kind, "msg": msg})
+    arc = deck_arc(text)
+    if arc is not None and arc not in DECK_ARCS:
+        bad("bad-arc", f"unknown prezit-arc '{arc}' (expected one of {', '.join(DECK_ARCS)})")
+    m = _DECK_SOURCES_RE.search(_uncommented(text))
+    if not m:
+        if arc == "paper":
+            bad("no-manifest", "paper-arc deck carries no deck-sources manifest — build it "
+                               "with its build_deck.py, which records every file it read")
+        return
+    body = m.group(1).strip()
+    if body == "__SOURCES__":
+        rep["unbuilt"] = True
+        bad("unbuilt", "unbuilt deck source (__SOURCES__ still in place) — verify the "
+                       "index.html that build_deck.py writes, not deck_src.html")
+        return
+    try:
+        man = json.loads(body)
+    except ValueError as e:
+        bad("bad-manifest", f"deck-sources manifest is not JSON: {e}")
+        return
+    if not isinstance(man, dict) or not man:
+        bad("bad-manifest", "deck-sources manifest must be a non-empty object {path: sha256}")
+        return
+    for rel, want in sorted(man.items()):
+        parts = str(rel).split("/")
+        if (not rel or "\\" in rel or os.path.isabs(rel) or re.match(r"[A-Za-z]:", rel)
+                or any(x in ("", ".", "..") for x in parts)):
+            bad("bad-path", f"deck-sources path '{rel}' must be vault-relative, with no '..'")
+            continue
+        if not (isinstance(want, str) and _SHA256_RE.fullmatch(want)):
+            bad("bad-manifest", f"deck-sources '{rel}': hash must be 64 lowercase hex (sha256)")
+            continue
+        fp = os.path.join(root, *parts)
+        if not os.path.isfile(fp):
+            bad("missing-file", f"deck source '{rel}' does not exist in this vault")
+            continue
+        with open(fp, "rb") as fh:
+            got = hashlib.sha256(fh.read()).hexdigest()
+        if got != want:
+            rep["mismatch"].append({"addr": rel, "slide": 0, "field": "sha256",
+                                    "msg": f"deck source '{rel}' changed since the deck was "
+                                           f"built — rerun its build_deck.py"})
+        else:
+            rep["sources"].append(rel)
+
 def deck_verify(root, path):
     """Walk every src / data-src / data-derived in the deck file and compare its cached
     value against the vault. Returns the full findings dict; the CLI decides exit codes
-    (mismatch/unresolvable always fail; unsourced fails only under --strict)."""
+    (mismatch/unresolvable always fail; unsourced fails only under --strict). A built deck
+    (one declaring an arc or carrying a deck-sources manifest) also has every source file
+    re-read against its recorded sha256."""
     text = read(path)
     rep = {"mismatch": [], "unresolvable": [], "derived": [], "literal": [], "unsourced": []}
+    if _deck_built(text):
+        _deck_sources(root, text, rep)
     starts = [m.start() for m in _slide_sections(text)]
 
     def _resolve(addr, slide):
@@ -5705,8 +5793,11 @@ def deck_refresh(root, path):
         text = text[:s0] + new + text[s1:]
     if changes:
         write_if_changed(path, text)
-    return {"changes": changes, "slides": sorted({c["slide"] for c in changes}),
-            "unresolvable": unresolvable}
+    res = {"changes": changes, "slides": sorted({c["slide"] for c in changes}),
+           "unresolvable": unresolvable}
+    if _deck_built(text):
+        res["rebuild"] = True       # its DATA comes from the build script, not from refresh
+    return res
 
 # --- contract lint (spec 11 work item; PI ruling #8) -------------------------------
 # Every <section class="slide"> must carry a contract-header comment (job / source /
@@ -5736,6 +5827,7 @@ def deck_lint(path):
     secs = _slide_sections(text)
     if not secs:
         return [(0, 'no <section class="slide"> found')]
+    paper = deck_arc(text) == "paper"
     for i, sm in enumerate(secs, 1):
         # the header is the last comment in the gap between the previous section's end and
         # this one's start — comments inside a section's own markup never masquerade as one
@@ -5753,6 +5845,9 @@ def deck_lint(path):
         if units > DECK_UNITS_MAX:
             problems.append((i, f"slide {i}: {units} content units, over the "
                                 f"{DECK_UNITS_MAX}-unit cap"))
+        if paper and not re.search(r'<aside\s+class="notes\b', seg):
+            problems.append((i, f"slide {i}: paper arc: no speaker notes "
+                                f'(<aside class="notes">)'))
     return problems
 
 def deck_warnings(root):
@@ -5771,6 +5866,8 @@ def deck_warnings(root):
                 continue
             rel = _rel(root, os.path.join(dirpath, fn))
             rep = deck_verify(root, os.path.join(dirpath, fn))
+            if rep.get("unbuilt"):
+                continue        # a build script's deck_src.html: its built index.html is checked
             for bucket in ("mismatch", "unresolvable"):
                 for f in rep[bucket]:
                     out.append((f"deck:{rel}", f"deck '{rel}': {bucket} — {f['msg']}"))
