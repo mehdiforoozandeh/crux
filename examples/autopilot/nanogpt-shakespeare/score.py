@@ -20,9 +20,9 @@ On a wrong candidate, exit 1; stdout is {"passed": false, "reason": ...} with no
 leaf, and the reason is also on stderr.
 
 The parent (this file, stdlib only, any python3) never imports or executes the candidate. It
-parses the config, checks every key, and starts SEEDS worker processes in work/venv. Each
-worker builds the frozen model.py GPT from the checked numbers, trains it for the step count
-the FLOP budget allows, and measures the loss itself.
+parses the config, checks every key, and runs SEEDS worker processes in work/venv, one after
+another. Each worker builds the frozen model.py GPT from the checked numbers, trains it
+for the step count the FLOP budget allows, and measures the loss itself.
 
 Measurement-only flags (never used by crux; they exist to produce the README's numbers):
     --seeds N   run N seeds instead of SEEDS       --seed-base B   first seed (default 0)

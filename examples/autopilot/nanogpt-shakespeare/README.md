@@ -25,7 +25,41 @@ parameters), context 256, batch 64, dropout 0.2, learning rate 1e-3, 5000 steps.
   0.2 higher than `val_loss` for every config measured.
 - **Direction:** lower is better. Plan: `address:: val_loss`, `direction:: min`.
 
-NUMBERS_PLACEHOLDER
+## Numbers (Fir, H100 MIG 3g.40gb slice, deterministic kernels, 2 seeds per call)
+
+| candidate | `val_loss` (median of 2 seeds) | `holdout_loss` | scorer wall |
+|---|---|---|---|
+| baseline, `CRUX_SEED` 0 / 1 / 2 | 1.5848 / 1.5920 / 1.5946 | 1.789 / 1.806 / 1.789 | 233 / 170 / 180 s |
+| `dropout = 0.3`, `CRUX_SEED` 0 / 1 | **1.4108 / 1.4089** | 1.602 / 1.595 | 170 / 177 s |
+| model.py, train.py and val.bin of the candidate edited | 1.58481 (bit-identical to the baseline) | 1.78929 | 171 s |
+| `learning_rate = 1e-2, min_lr = 1e-3`, `CRUX_SEED` 0 | 1.4829 (seeds: 1.4009, 1.5650) | 1.665 | 172 s |
+| over-long config (1 layer, 16 wide, context 8, batch 1: 27e9 steps allowed) | fails: wall-time cap at step 78,700 | | 139 s |
+
+- **The baseline overfits.** It reaches a train loss of about 0.83 and a final val loss of
+  about 1.59; nanoGPT's README reports 1.47 because `train.py` keeps the best checkpoint.
+  The scorer measures the final model, so regularization is the first lever a search finds
+  (`dropout = 0.3` gains 0.18).
+- **A 10x learning rate is not a bad config here.** It trains worse (train loss 1.2-1.7
+  instead of 0.83) and so overfits less: per seed it scored 1.40, 1.56 (3g slice) and 1.38,
+  1.48 (1g slice), better than the baseline, but 1.68 on one more 1g seed, worse. It is a
+  high-variance config, and the scorer's 2 seeds do not always show that.
+- **Noise.** Six baseline seeds on the 3g slice, deterministic: 1.5833-1.6011, SD 0.0068.
+  Six seeds on a 1g slice with default (non-deterministic) kernels: SD 0.0084. With 2 seeds
+  per call, two scores differ by noise alone by up to about 0.015 (2 SD); treat a smaller
+  gain as noise until crux's confirmation repeats it at new seeds.
+- **Determinism.** With default CUDA kernels, the same seed on the same slice type gave
+  losses 0.001-0.004 apart. The scorer forces `torch.use_deterministic_algorithms(True)`
+  (with `CUBLAS_WORKSPACE_CONFIG=:4096:8`): the same seed then gives the same loss to the
+  last digit, it costs about 4% of training time, and it is what lets the scorer prove that
+  edits outside the config change nothing. It is deterministic per GPU type only: seed 0 of
+  the baseline gives 1.5833 on a 3g slice, 1.5922 on a 1g slice and 1.5937 on a full H100.
+  **Score the baseline and every candidate of one search on the same GPU type.**
+- **Time per seed** (5000 steps of the baseline): 1g.10gb slice 219-238 s; 3g.40gb slice
+  72-99 s; full H100 58 s. Two seeds on one GPU in parallel are no faster than in sequence
+  (three in parallel on a 1g slice took 703 s each), so the scorer runs seeds one after
+  another. With 2 seeds, one scorer call takes 170-233 s on the 3g slice. The per-seed
+  wall-time cap (`TRAIN_CAP_S` = 130 s) leaves a candidate about 1.5x the baseline's time
+  on that slice.
 
 ## The compute budget
 
@@ -104,3 +138,20 @@ python3 score.py work/cand-baseline          # inside a GPU job
 (`model.py` and the encoded data), the baseline candidate and a venv built from the Alliance
 wheelhouse with the versions in `requirements.lock` (resolved set in `work/versions.txt`).
 It installs nothing outside `work/`.
+
+The driver's job must ask for the GPU type the baseline was scored on, here
+`--gres=gpu:nvidia_h100_80gb_hbm3_3g.40gb:1`. A 1g.10gb slice is too slow for 2 seeds in
+5 minutes (one seed takes 219-238 s); a full H100 (58 s per seed) would allow 3-4 seeds.
+One Fir node (`fc10713`) failed every job with `CUDA-capable device(s) is/are busy or
+unavailable`; the scorer reports that as a failed worker, which crux retries as a machine
+fault.
+
+## Cheat candidates (all on the 3g slice unless noted)
+
+- `max_iters = 20000`, `eval_iters = 1`, `dataset = 'openwebtext'`, `device = 'cpu'`: refused,
+  "fixed by the scorer". `data_dir = '/tmp/mydata'`: refused, unknown key. `import os` with
+  `learning_rate = float(os.environ[...])`: refused, not `name = literal`.
+- `model.py` patched to return a zero loss, `train.py` replaced and `data/.../val.bin`
+  zeroed: ignored; the score is bit-identical to the baseline (1.58481, 1.78929).
+- 24 layers x 768 wide (170M parameters): refused, over the size cap. `batch_size = 512`:
+  refused, over the token cap. The over-long tiny config: fails at the wall-time cap.
