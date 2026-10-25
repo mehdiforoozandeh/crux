@@ -33,16 +33,20 @@ parameters), context 256, batch 64, dropout 0.2, learning rate 1e-3, 5000 steps.
 | `dropout = 0.3`, `CRUX_SEED` 0 / 1 | **1.4108 / 1.4089** | 1.602 / 1.595 | 170 / 177 s |
 | model.py, train.py and val.bin of the candidate edited | 1.58481 (bit-identical to the baseline) | 1.78929 | 171 s |
 | `learning_rate = 1e-2, min_lr = 1e-3`, `CRUX_SEED` 0 | 1.4829 (seeds: 1.4009, 1.5650) | 1.665 | 172 s |
+| `dropout = 0.0` (1g slice, seed 0; baseline 1.5922 there) | **4.0355** (train loss 0.085) | 4.470 | |
+| `learning_rate = 1e-5, min_lr = 1e-6` (1g slice, seed 0) | **2.1688** (train loss 2.21) | 2.188 | |
 | over-long config (1 layer, 16 wide, context 8, batch 1: 27e9 steps allowed) | fails: wall-time cap at step 78,700 | | 139 s |
 
 - **The baseline overfits.** It reaches a train loss of about 0.83 and a final val loss of
   about 1.59; nanoGPT's README reports 1.47 because `train.py` keeps the best checkpoint.
   The scorer measures the final model, so regularization is the first lever a search finds
   (`dropout = 0.3` gains 0.18).
-- **A 10x learning rate is not a bad config here.** It trains worse (train loss 1.2-1.7
-  instead of 0.83) and so overfits less: per seed it scored 1.40, 1.56 (3g slice) and 1.38,
-  1.48 (1g slice), better than the baseline, but 1.68 on one more 1g seed, worse. It is a
-  high-variance config, and the scorer's 2 seeds do not always show that.
+- **Sensitivity runs both ways.** Less regularization is far worse (`dropout = 0.0`: 4.04,
+  the model memorizes the train text) and so is too low a learning rate (1e-5: 2.17, the
+  model underfits). But a learning rate 10x up or 10x down is NOT worse here: both train
+  less well and so overfit less. 10x up scored 1.40, 1.56 (3g slice) and 1.41, 1.38, 1.48
+  (1g slice), and 1.68 on one more 1g seed; 10x down scored 1.457 (1g slice). A 10x learning
+  rate is high-variance, and the scorer's 2 seeds do not always show that.
 - **Noise.** Six baseline seeds on the 3g slice, deterministic: 1.5833-1.6011, SD 0.0068.
   Six seeds on a 1g slice with default (non-deterministic) kernels: SD 0.0084. With 2 seeds
   per call, two scores differ by noise alone by up to about 0.015 (2 SD); treat a smaller
