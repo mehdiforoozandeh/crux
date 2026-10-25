@@ -17,9 +17,11 @@ The program runs twice: once on each series minus its last 13 values (the `val_o
 once on the full train series (the `owa` run, scored against the official M4 test file).
 
 Output (crux `run_scorer` contract): stdout is exactly one JSON object. On success, exit 0;
-the objective is the leaf `owa` (LOWER IS BETTER; Naive2 = 1.000 by definition), so the plan
-uses `address:: owa` and `direction:: min`. On a wrong candidate, exit 1; stdout is
-{"passed": false, "reason": ...} with no `owa` leaf, and the reason is also on stderr.
+the search objective is the leaf `val_owa` (LOWER IS BETTER; Naive2 = 1.000 by definition),
+so the plan uses `address:: val_owa` and `direction:: min`. The leaf `owa` (the official M4
+test set) is in the same object and is read once, at the end of a search, never steered on.
+On a wrong candidate, exit 1; stdout is {"passed": false, "reason": ...} with no metric
+leaves, and the reason is also on stderr.
 
 The parent (this file) is stdlib-only and never imports the candidate. It reads the test file
 only after both candidate runs have ended. The candidate runs under bubblewrap: no network,

@@ -1,8 +1,9 @@
 # M4 Weekly: an autopilot benchmark where whole forecasting programs compete
 
 **Task.** Write one program that forecasts the next 13 weeks of each of the 359 M4 Weekly
-series. Any method family may compete: statistical, tree-based or neural. The score is M4's
-official OWA against the held-out M4 test values. Lower is better.
+series. Any method family may compete: statistical, tree-based or neural. The search
+objective is `val_owa`: M4's official OWA on each train series minus its last 13 weeks.
+The OWA against the held-out M4 test values (`owa`) is read once, at the end. Lower is better.
 
 This is an Explore problem in the style of Google's ERA: the search agent writes the whole
 program. The data and every published forecast come from
@@ -45,7 +46,8 @@ rounded to 3 decimals. Other published Weekly OWAs: 036 Petropoulos & Svetunkov 
 (Makridakis et al. 2020, IJF; the publisher returned 403), so we did not check its table
 directly. The spreadsheet is the organisers' own file.
 
-**Bar.** 0.739 (235, best on Weekly). Smyl, who won M4 overall, scored 0.851 on Weekly.
+**Bar** (on `owa`, read once at the end). 0.739 (235, best on Weekly). Smyl, who won M4
+overall, scored 0.851 on Weekly.
 
 ## Candidate contract
 
@@ -81,10 +83,14 @@ mostly do not fit.
 
 ## Output
 
-- **Pass:** exit 0. stdout is one JSON object: `owa` (the objective: `value`, `smape`,
-  `mase`, and the Naive2 terms), `val_owa` (the same fields), `passed`, `workload`, `bar`,
-  `checks` (copy shares, sandbox), `runs` (seconds per run), `candidate`, `scorer_wall_s`.
-  Plan: `address:: owa`, `direction:: min`.
+- **Pass:** exit 0. stdout is one JSON object: `val_owa` (the search objective: `value`,
+  `smape`, `mase`, and the Naive2 terms), `owa` (the same fields, on the M4 test set),
+  `passed`, `workload`, `bar`, `checks` (copy shares, sandbox), `runs` (seconds per run),
+  `candidate`, `scorer_wall_s`. Plan: **`address:: val_owa`**, `direction:: min`.
+- **`owa` is read once.** The PI ruled that the search steers on `val_owa` only. The scorer
+  still computes `owa` on every call, because the test run is cheap (0.1-4 s for the shipped
+  candidates) and it checks the format of the full-data forecasts too. Nobody reads `owa`
+  until the search ends; then the winner's `owa` is compared with the bar.
 - **Fail:** exit 1. stdout is `{"passed": false, "reason": ...}`, and the reason also goes
   to stderr. crux treats `scorer-exit` as a machine fault and retries it `retries:` times.
 - **Candidate:** a path argument, else `CRUX_CANDIDATE`, else the working directory, but only
@@ -108,16 +114,18 @@ mostly do not fit.
 4. **Anonymised ids.** The ids are anonymised, so a program cannot look up a downloaded
    answer by its M4 id.
 
-**Residual risk (cannot be blocked here).** The test set and every published forecast are
-public on GitHub. An agent that has web access *while it writes* the program can download
-them and put a perturbed copy into the program (for example, Smyl's forecasts times 1.001).
-The replay check catches exact copies only. That route is closed only when the search
-workers have no web access. A second, statistical concern: a long search that reads `owa`
-after every attempt adapts to the test set, which M4 entrants never saw. `val_owa` is a
-held-out-in-time signal; choose `address:: val_owa` to search without reading the test, and
-read `owa` once at the end.
+**Requirement on the run: search workers have no web access.** The test set and every
+published forecast are public on GitHub. An agent with web access *while it writes* the
+program could download them and put a perturbed copy into the program (for example, Smyl's
+forecasts times 1.001); the replay check catches exact copies only. The scorer cannot block
+this route. The engine denies the workers web access; a run without that rule is not valid.
 
-## Validation (Fir, `selfcheck.py`, jobs 429125 and 431252, 4 CPUs)
+**Why the objective is `val_owa`.** A long search that read `owa` after every attempt would
+adapt to the test set, which M4 entrants never saw. `val_owa` is held out in time from the
+same series, so the search never looks at the test set, and `owa` stays a single, honest read
+against the bar.
+
+## Validation (Fir, `selfcheck.py`, jobs 429125, 431252 and 433556, 4 CPUs)
 
 | candidate | expected | result |
 |---|---|---|
