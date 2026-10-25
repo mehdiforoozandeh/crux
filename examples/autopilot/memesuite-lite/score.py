@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Frozen scorer: wall time of memesuite-lite's tomtom on a fixed all-vs-all workload.
 
-    python3 score.py CANDIDATE          # or: CRUX_CANDIDATE=CANDIDATE python3 score.py
+    python3 score.py CANDIDATE        # explicit path
+    CRUX_CANDIDATE=CANDIDATE python3 score.py
+    python3 score.py                  # under crux auto: CANDIDATE is the cwd (CRUX_WORKSPACE set)
 
 CANDIDATE is a memesuite-lite checkout. Only CANDIDATE/memelite/tomtom.py is read from it;
 every other file (the rest of the package, the tests, this scorer, reference/) is frozen.
 
-Success: exit 0, and the last stdout line is one number, the median seconds of REPEATS timed
-runs. LOWER IS BETTER. Failure: exit 1, nothing on stdout, the reason on stderr. A candidate
-fails when the frozen pytest suite fails, or when any output differs by one bit from the
-reference made by the pinned pre-PR-#21 code (reference/expected.json), or when it returns
-where the reference raised (or the other way round).
+Output (crux `run_scorer` contract): stdout is exactly one JSON object. On success, exit 0 and
+the objective is the leaf `seconds` ({"value": median seconds of REPEATS timed runs, ...});
+LOWER IS BETTER, so the plan uses `address:: seconds` and `direction:: min`. On a wrong
+candidate, exit 1; stdout is {"passed": false, "reason": ...} with no `seconds` leaf, and the
+reason is also on stderr. A candidate fails when the frozen pytest suite fails, or when any
+output differs by one bit from the reference made by the pinned pre-PR-#21 code
+(reference/expected.json), or when it returns where the reference raised (or the reverse).
 
 The parent (this file, stdlib only, any python3) never imports the candidate. A child worker
 in work/venv runs the candidate and writes every output to .npy; the parent hashes those files
@@ -28,11 +32,13 @@ FROZEN = os.path.join(WORK, "frozen")
 VENV_PY = os.path.join(WORK, "venv", "bin", "python")
 REFERENCE = os.path.join(HERE, "reference", "expected.json")
 
-N_MOTIFS = 1000          # all-vs-all, query set == target set (as PR #21's JASPAR benchmark)
+JASPAR = os.path.join(WORK, "data", "JASPAR2024_CORE_non-redundant_pfms_meme.txt")
+JASPAR_SHA256 = "9edfb03b9415171a79e2911a84002320232394d34b97952b69bbbbd56b89933d"
+WORKLOAD = "jaspar2024-core-nonredundant-all-vs-all-n_jobs1"
 REPEATS = 5              # timed runs; the median is the score (see README for the noise data)
-WARM_SEED = 100          # one untimed full-size run first, so every numba kernel is compiled
-BENCH_SEEDS = list(range(REPEATS))
-REF_SEEDS = list(range(10))   # reference covers up to 10 repeats
+WARM_SEED = "file"       # one untimed run in file order first, so every kernel is compiled
+BENCH_SEEDS = list(range(REPEATS))   # each timed run: all-vs-all on a seeded motif order
+REF_SEEDS = list(range(10))          # reference covers up to 10 repeats
 CASE_THREADS = (1, 4)    # golden/edge cases must be identical at both thread counts
 TIMEOUT = 290            # seconds, whole scorer
 
@@ -40,17 +46,13 @@ TIMEOUT = 290            # seconds, whole scorer
 # Runs inside work/venv with the staged package on sys.path. Its own stdout is the
 # protocol channel; anything the candidate prints is sent to stderr.
 
-def _motifs(n, seed):
-    """JASPAR-like count matrices: widths 6-17, 10-59 sites per column, so columns repeat."""
+def _jaspar(motifs, seed):
+    """All JASPAR motifs, in file order or in a seeded permutation. A new order per timed run
+    means a candidate cannot replay a cached answer; the work is the same."""
     import numpy
-    s = numpy.random.RandomState(seed)
-    out = []
-    for _ in range(n):
-        w = s.randint(6, 18); k = s.randint(10, 60)
-        P = s.dirichlet(numpy.full(4, 0.4), size=w)
-        C = numpy.array([s.multinomial(k, p) for p in P], dtype="float64")
-        out.append(numpy.ascontiguousarray((C / k).T))
-    return out
+    if seed == WARM_SEED:
+        return list(motifs)
+    return [motifs[i] for i in numpy.random.RandomState(seed).permutation(len(motifs))]
 
 
 def _edge_cases():
@@ -117,12 +119,14 @@ def worker(stage, outdir):
                 continue
             emit(case=name, threads=nj, file=save(f"{name}@{nj}", out))
 
-    X = _motifs(N_MOTIFS, WARM_SEED)
+    from memelite.io import read_meme                # frozen file, not the candidate's
+    motifs = list(read_meme(JASPAR).values())
+    X = _jaspar(motifs, WARM_SEED)
     emit(warm=WARM_SEED, file=save("warm", mod.tomtom(X, X, n_jobs=1)))
     for line in sys.stdin:                          # "gen SEED" then "go"
         cmd = line.split()
         if cmd[0] == "gen":
-            seed = int(cmd[1]); X = _motifs(N_MOTIFS, seed)
+            seed = int(cmd[1]); X = _jaspar(motifs, seed)
             emit(ready=seed)
         elif cmd[0] == "go":
             out = mod.tomtom(X, X, n_jobs=1)
@@ -142,6 +146,8 @@ def fail(msg):
         if p.poll() is None:
             p.kill()
     sys.stderr.write(f"FAIL: {msg}\n")
+    sys.stdout.write(json.dumps({"passed": False, "reason": msg[:2000],
+                                 "workload": WORKLOAD}) + "\n")
     sys.exit(1)
 
 
@@ -201,7 +207,7 @@ def check_bench(bench, ref_bench):
     reference)."""
     for k, v in (bench.items() if ref_bench else ()):
         if ref_bench[k] != v:
-            fail(f"benchmark seed {k}: output is not bit-identical to the reference")
+            fail(f"JASPAR run (motif order {k}): output is not bit-identical to the reference")
 
 
 def run_worker(stage, tmp, env, seeds, ref_bench=None):
@@ -252,20 +258,29 @@ def main():
     if args[:1] == ["--worker"]:
         return worker(args[1], args[2])
     make_ref = args[:1] == ["--make-reference"]
+    workspace = os.environ.get("CRUX_WORKSPACE") or None
     if make_ref:
         cand = os.path.join(WORK, "cand-baseline")
     else:
-        cand = (args[0] if args else "") or os.environ.get("CRUX_CANDIDATE")
+        # An argument, else CRUX_CANDIDATE, else -- only when crux auto started us, which it
+        # marks by setting CRUX_WORKSPACE -- the cwd, which run_scorer sets to the worktree.
+        cand = ((args[0] if args else "") or os.environ.get("CRUX_CANDIDATE")
+                or (os.getcwd() if workspace else ""))
         if not cand:
-            fail("no candidate: pass a path, or set CRUX_CANDIDATE")
+            fail("no candidate: pass a path, set CRUX_CANDIDATE, or run under crux auto")
     cand = os.path.abspath(cand)
     if not os.path.exists(VENV_PY):
         fail("work/venv missing: run setup.sh first")
+    if not os.path.isfile(JASPAR) or sha(JASPAR) != JASPAR_SHA256:
+        fail(f"JASPAR file missing or its sha256 differs from {JASPAR_SHA256}: run setup.sh")
 
-    signal.signal(signal.SIGALRM, lambda *_: fail(f"scorer timed out after {TIMEOUT}s"))
-    signal.alarm(TIMEOUT)
+    if not make_ref:     # the reference run times 10 orders and may take longer
+        signal.signal(signal.SIGALRM, lambda *_: fail(f"scorer timed out after {TIMEOUT}s"))
+        signal.alarm(TIMEOUT)
     started = time.perf_counter()
-    tmp = tempfile.mkdtemp(prefix="msl_score_")
+    if workspace:
+        os.makedirs(workspace, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix="msl_score_", dir=workspace)
     try:
         frozen = tree_digest(FROZEN)
         if not make_ref:
@@ -284,7 +299,8 @@ def main():
 
     if make_ref:
         doc = {"pinned_commit": "dd413f654eb9fb9b095fe61edd69b37c53962367",
-               "frozen_tree": frozen, "n_motifs": N_MOTIFS, "case_threads": CASE_THREADS,
+               "frozen_tree": frozen, "workload": WORKLOAD,
+               "jaspar_sha256": JASPAR_SHA256, "case_threads": CASE_THREADS,
                "versions": open(os.path.join(WORK, "versions.txt")).read().split("\n"),
                "cases": cases, "bench": bench,
                "baseline_seconds": {str(s): round(t, 4) for s, t in zip(seeds, times)}}
@@ -301,11 +317,28 @@ def main():
             fail(f"{k}: candidate does not {want}")
     for k, v in bench.items():
         if ref["bench"][k] != v:
-            fail(f"benchmark seed {k}: output is not bit-identical to the reference")
+            fail(f"JASPAR run (motif order {k}): output is not bit-identical to the reference")
     med = statistics.median(times)
+    wall = time.perf_counter() - started
     sys.stderr.write(f"times {[round(t, 4) for t in times]}  median {med:.4f}s  "
-                     f"scorer wall {time.perf_counter() - started:.1f}s\n")
-    print(f"{med:.6f}")
+                     f"scorer wall {wall:.1f}s\n")
+    doc = {
+        "seconds": {"value": round(med, 6), "direction": "min", "unit": "s",
+                    "statistic": f"median of {len(times)} timed runs",
+                    "repeats": [round(t, 6) for t in times],
+                    "min": round(min(times), 6), "max": round(max(times), 6),
+                    "spread_pct": round(100 * (max(times) - min(times)) / med, 2)},
+        "passed": True,
+        "workload": {"id": WORKLOAD, "file": os.path.basename(JASPAR),
+                     "sha256": JASPAR_SHA256, "n_motifs": 2346, "n_jobs": 1,
+                     "orders": BENCH_SEEDS},
+        "checks": {"frozen_tests": "pass", "golden_and_edge_cases": len(cases),
+                   "bit_identical_runs": len(bench)},
+        "candidate": {"path": cand, "tomtom_sha256": sha(os.path.join(cand, "memelite",
+                                                                     "tomtom.py"))},
+        "scorer_wall_s": round(wall, 1),
+    }
+    sys.stdout.write(json.dumps(doc) + "\n")
 
 
 if __name__ == "__main__":

@@ -11,20 +11,19 @@ from 5.455 s to 0.7004 s (7.8x), with bit-identical output.
 
 ## Metric
 
-- **Metric:** the median wall time, in seconds, of 5 timed calls of
-  `tomtom(X, X, n_jobs=1)`. `X` is 1,000 synthetic motifs, and each call uses a new seed.
+- **Workload:** the PR's own benchmark. `tomtom(X, X, n_jobs=1)`, with `X` all 2,346 motifs
+  of JASPAR 2024 CORE non-redundant (`JASPAR2024_CORE_non-redundant_pfms_meme.txt`, the file
+  memelite's CLI downloads). `setup.sh` downloads it into `work/data/` and checks a pinned
+  sha256. The scorer refuses to run when the file is missing or its hash differs.
+- **Metric:** the median wall time, in seconds, of 5 timed calls. Each timed call uses the
+  same motifs in a different seeded order, so a candidate cannot replay a cached answer.
 - **Direction:** lower is better.
-- **Baseline** (the pinned code, this machine): **2.68 s** (median of 6 scorer runs; range 2.65-2.87 s)
-- **Bar** (PR #21 as a candidate, this machine): **0.978 s** (median of 4 scorer runs; range 0.975-0.981 s), so 2.74x faster
+- **Baseline** (the pinned code, this machine): **9.11 s** (median of 5 scorer runs; medians 8.98-9.17 s)
+- **Bar** (PR #21 as a candidate, this machine): **2.32 s** (median of 4 scorer runs; medians 2.30-2.43 s), so 3.9x faster
 
-The numbers above come from an Apple M1 with Python 3.11.5. Times on other machines differ.
-Score the baseline again on the machine that runs the search.
-
-The motifs are synthetic count matrices: widths 6-17, and 10-59 sites per column, so some
-columns repeat, as in JASPAR. The benchmark does not use JASPAR itself: setup downloads no data
-set, so the workload is generated from fixed seeds. On this workload PR #21 is about 2.7x faster, not 7.8x. The PR reports
-smaller gains on synthetic motifs too (about 5x), and its kernels were tuned on a different
-CPU.
+The numbers above come from an Apple M1 with Python 3.11.5. The PR measured 7.8x on an AMD
+EPYC 9575F, and its kernels were tuned on that CPU. Times on other machines differ, so score
+the baseline again on the machine that runs the search.
 
 ## What the agent may edit, and what is frozen
 
@@ -42,9 +41,21 @@ python3 score.py CANDIDATE                  # or: CRUX_CANDIDATE=CANDIDATE pytho
 ```
 
 - `CANDIDATE` is a memesuite-lite checkout. The scorer has no default path.
-- **Pass:** exit 0, and the last stdout line is one number (seconds; lower is better).
-- **Fail:** exit 1, no number, and the reason on stderr. The candidate fails when one of
-  these is true:
+- **Candidate:** a path argument, else `CRUX_CANDIDATE`, else the working directory, but
+  only when `CRUX_WORKSPACE` is set. crux's `run_scorer` sets the working directory to the
+  attempt's worktree and sets `CRUX_WORKSPACE`, so the plan needs no adapter:
+  `scorer: python3 <abs path>/score.py`. The scorer stages its temp files inside
+  `CRUX_WORKSPACE` when it is set.
+- **Pass:** exit 0, and stdout is exactly one JSON object. The objective is the leaf
+  `seconds`, so the plan sets `address:: seconds` and `direction:: min`. Example:
+  `{"seconds": {"value": 2.33, "direction": "min", "unit": "s", "repeats": [...], "min": ...,
+  "max": ..., "spread_pct": ...}, "passed": true, "workload": {...}, "checks": {...},
+  "candidate": {...}, "scorer_wall_s": ...}`.
+- **Fail:** exit 1. stdout is `{"passed": false, "reason": "..."}` with no `seconds` leaf,
+  and the reason is also on stderr. `run_scorer` reports this as `scorer-exit` with the tail
+  of stderr. Note that the driver treats `scorer-exit` as a machine fault and retries it up
+  to `retries:` times, so a wrong candidate costs `1 + retries` scorer runs before it is
+  recorded as failed. The candidate fails when one of these is true:
   1. The repo's frozen pytest suite fails. (`tests/test_cli.py` is skipped: it needs the
      `ttl` console script, and the scorer does not install the package.)
   2. Any output is not bit-identical to `reference/expected.json`. The scorer checks the 36
@@ -52,8 +63,8 @@ python3 score.py CANDIDATE                  # or: CRUX_CANDIDATE=CANDIDATE pytho
      call, and every timed call.
   3. The candidate returns where the pinned code raised, or raises where the pinned code
      returned. The exception type does not have to match.
-- **Runtime:** about 1.5 to 2 minutes. Most of it is numba compiling the candidate with an
-  empty cache. The scorer stops itself after 290 s.
+- **Runtime:** about 140 s for the baseline and 175 s for PR #21 on the M1. Numba compiles the candidate with an empty cache each run, which
+  takes most of the time that is not the 5 timed calls. The scorer stops itself after 290 s.
 
 How the scorer protects the number:
 
@@ -61,7 +72,7 @@ How the scorer protects the number:
 - A worker process in `work/venv` runs the candidate. It writes each output to an `.npy`
   file, and the parent hashes the file. The candidate cannot change the hash.
 - The parent times each call with its own clock. The candidate cannot patch it.
-- Each timed call uses a new input, and the parent checks each output. A candidate that
+- Each timed call uses a new motif order, and the parent checks each output. A candidate that
   caches results, or that returns early, fails.
 
 ## How to run
@@ -79,14 +90,13 @@ versions in `work/versions.txt`.
 
 ## Noise
 
-Measured on the M1, with the baseline:
+Measured on the M1:
 
-- Inside one scorer run, the 5 timed calls differ by about 3% (largest over smallest).
-- Over 6 scorer runs, 5 medians fell inside 2.65-2.68 s (1%). One fell at 2.87 s (+7%). In
-  that run all 5 calls were slow, so the cause was the machine, not the input.
-- For PR #21, 4 scorer runs fell inside 0.975-0.981 s (0.6%).
-- A candidate that sleeps 0.3 s per call scored 2.98 s, worse than every baseline run.
+- Baseline, 5 scorer runs: medians 8.98-9.17 s (2.1%). Two single calls were slow
+  outliers (9.53 s and 10.34 s); the median absorbed both.
+- PR #21, 4 scorer runs: medians 2.30-2.43 s (5.6%). One run had a 3.05 s first call.
+- A candidate that sleeps 0.3 s per call scored 9.47 s, worse than every baseline run.
 
-The scorer uses 5 repeats. More calls in one run do not remove a slow run, and they cost
-time. So treat a change under about 8% as noise, and confirm a small gain with a second
-scorer run.
+The scorer uses 5 repeats: a sixth call costs 2-9 s more and does not remove a slow run.
+Treat a change under about 6% as noise, and confirm a small gain with a second scorer run.
+

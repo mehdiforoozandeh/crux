@@ -29,6 +29,20 @@ for name in baseline:$PIN pr21:$POST; do
   git -C "$WORK/memesuite-lite" archive "$sha" memelite | tar -x -C "$dir"
 done
 
+# The benchmark workload: JASPAR 2024 CORE non-redundant (2,346 motifs), the set PR #21 timed
+# and the file memelite's own CLI downloads. Pinned by sha256; the scorer checks it again.
+JASPAR_URL=https://jaspar.elixir.no/download/data/2024/CORE/JASPAR2024_CORE_non-redundant_pfms_meme.txt
+JASPAR_SHA=9edfb03b9415171a79e2911a84002320232394d34b97952b69bbbbd56b89933d
+JASPAR="$WORK/data/JASPAR2024_CORE_non-redundant_pfms_meme.txt"
+mkdir -p "$WORK/data"
+if [ ! -f "$JASPAR" ]; then
+  curl -sSfL -o "$JASPAR.part" "$JASPAR_URL" && mv "$JASPAR.part" "$JASPAR"
+fi
+got="$(shasum -a 256 "$JASPAR" | cut -d' ' -f1)"
+if [ "$got" != "$JASPAR_SHA" ]; then
+  echo "JASPAR sha256 mismatch: got $got, want $JASPAR_SHA" >&2; exit 1
+fi
+
 if [ ! -x "$WORK/venv/bin/python" ]; then
   "$PY" -m venv "$WORK/venv"
 fi
