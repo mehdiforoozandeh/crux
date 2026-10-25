@@ -15,48 +15,63 @@ parameters), context 256, batch 64, dropout 0.2, learning rate 1e-3, 5000 steps.
   by sha256 and encoded exactly as `prepare.py` does: 65 characters, the first 90% train,
   the last 10% val. `reference/pins.json` holds the sha256 of the text, of `train.bin`,
   `val.bin` and of the frozen `model.py`; the scorer refuses to run when one differs.
-- **Metric `val_loss`:** the mean next-character cross-entropy (nats per character) of the
-  FINAL model on the first half of `val.bin` (55,770 characters). The scorer computes it
-  itself, in fp32, over every character, with non-overlapping windows of the candidate's
-  `block_size`. There is no early stopping and no checkpoint selection. The score is the
-  median over `SEEDS` training runs.
-- **`holdout_loss`:** the same measurement on the second half of `val.bin`. The scorer
-  reports it and never uses it as the objective. That half is harder text: its loss is about
-  0.2 higher than `val_loss` for every config measured.
+- **Metric `val_loss`:** the BEST mean next-character cross-entropy (nats per character)
+  on the first half of `val.bin` (55,770 characters) over 20 evaluations during training,
+  one after every 1/20 of the candidate's steps (every 250 steps for the baseline, nanoGPT's
+  `eval_interval` for this config). This is what nanoGPT's `train.py` reports, since it keeps
+  the best checkpoint. Each evaluation reads the whole half, in fp32, with no dropout and
+  non-overlapping windows of the candidate's `block_size`, so it uses no random numbers and
+  does not change the training run. The number of evaluations is the same for every
+  candidate, so no config buys more chances at a low minimum. The score is the median over
+  `SEEDS` training runs of each run's best.
+- **`holdout_loss`:** the same measurement on the second half of `val.bin`, at the step where
+  that run's `val_loss` was best. The scorer reports it and never uses it as the objective.
+  That half is harder text: its loss is about 0.15-0.2 higher than `val_loss`.
+- **Also reported:** `best_step`, `final_val_loss` (the loss at the last step) and, per run,
+  the whole curve.
 - **Direction:** lower is better. Plan: `address:: val_loss`, `direction:: min`.
 
 ## Numbers (Fir, H100 MIG 3g.40gb slice, deterministic kernels, 2 seeds per call)
 
-| candidate | `val_loss` (median of 2 seeds) | `holdout_loss` | scorer wall |
-|---|---|---|---|
-| baseline, `CRUX_SEED` 0 / 1 / 2 | 1.5848 / 1.5920 / 1.5946 | 1.789 / 1.806 / 1.789 | 233 / 170 / 180 s |
-| `dropout = 0.3`, `CRUX_SEED` 0 / 1 | **1.4108 / 1.4089** | 1.602 / 1.595 | 170 / 177 s |
-| model.py, train.py and val.bin of the candidate edited | 1.58481 (bit-identical to the baseline) | 1.78929 | 171 s |
-| `learning_rate = 1e-2, min_lr = 1e-3`, `CRUX_SEED` 0 | 1.4829 (seeds: 1.4009, 1.5650) | 1.665 | 172 s |
-| `dropout = 0.0` (1g slice, seed 0; baseline 1.5922 there) | **4.0355** (train loss 0.085) | 4.470 | |
-| `learning_rate = 1e-5, min_lr = 1e-6` (1g slice, seed 0) | **2.1688** (train loss 2.21) | 2.188 | |
-| over-long config (1 layer, 16 wide, context 8, batch 1: 27e9 steps allowed) | fails: wall-time cap at step 78,700 | | 139 s |
+All rows are one scorer call each (median of 2 seeds; the 2 seeds in brackets), run as crux
+runs it: cwd = candidate, `CRUX_WORKSPACE` and `CRUX_SEED` set. Jobs 428648, 428649, 442266.
 
-- **The baseline overfits.** It reaches a train loss of about 0.83 and a final val loss of
-  about 1.59; nanoGPT's README reports 1.47 because `train.py` keeps the best checkpoint.
-  The scorer measures the final model, so regularization is the first lever a search finds
-  (`dropout = 0.3` gains 0.18).
-- **Sensitivity runs both ways.** Less regularization is far worse (`dropout = 0.0`: 4.04,
-  the model memorizes the train text) and so is too low a learning rate (1e-5: 2.17, the
-  model underfits). But a learning rate 10x up or 10x down is NOT worse here: both train
-  less well and so overfit less. 10x up scored 1.40, 1.56 (3g slice) and 1.41, 1.38, 1.48
-  (1g slice), and 1.68 on one more 1g seed; 10x down scored 1.457 (1g slice). A 10x learning
-  rate is high-variance, and the scorer's 2 seeds do not always show that.
-- **Noise.** Six baseline seeds on the 3g slice, deterministic: 1.5833-1.6011, SD 0.0068.
-  Six seeds on a 1g slice with default (non-deterministic) kernels: SD 0.0084. With 2 seeds
-  per call, two scores differ by noise alone by up to about 0.015 (2 SD); treat a smaller
-  gain as noise until crux's confirmation repeats it at new seeds.
+| candidate | `val_loss` | `holdout_loss` | best step | scorer wall |
+|---|---|---|---|---|
+| baseline, `CRUX_SEED` 0 | 1.3873 (1.3850, 1.3896) | 1.541 | 2000, 1750 | 236 s |
+| baseline, `CRUX_SEED` 1 | 1.3801 (1.3847, 1.3755) | 1.556 | 1750, 2000 | 174 s |
+| baseline, `CRUX_SEED` 2 | 1.3879 (1.3855, 1.3902) | 1.550 | 1750, 1750 | 175 s |
+| `dropout = 0.3`, `CRUX_SEED` 0 | 1.3743 (1.3749, 1.3737) | 1.544 | 3000, 2750 | 186 s |
+| `dropout = 0.3`, `CRUX_SEED` 1 | 1.3689 (1.3715, 1.3663) | 1.535 | 2500, 2750 | 173 s |
+| `weight_decay = 1.0`, `CRUX_SEED` 0 | 1.3812 (1.3880, 1.3744) | 1.530 | 2750, 2500 | 173 s |
+| `learning_rate = 1e-2, min_lr = 1e-3` (10x) | **1.4610** (1.3570, 1.5650) | 1.638 | 3500, 5000 | 241 s |
+| `learning_rate = 1e-4, min_lr = 1e-5` (0.1x) | **1.4570** (1.4568, 1.4573) | 1.595 | 5000, 5000 | 173 s |
+| model.py, train.py and val.bin of the candidate edited | 1.3873 (bit-identical to the baseline) | 1.541 | 2000, 1750 | 177 s |
+| over-long config (1 layer, 16 wide, context 8, batch 1: 27e9 steps allowed) | fails: wall-time cap at step 75,800 | | | 138 s |
+
+- **Compare to nanoGPT's 1.47.** nanoGPT's README reports a best val loss of 1.4697 over the
+  whole val split. The scorer splits val in two: the mean of `val_loss` and `holdout_loss`
+  for the baseline is (1.385 + 1.549) / 2 = 1.467, which matches.
+- **The baseline peaks early.** Its best val is at step 1750-2000 of 5000; after that it
+  overfits (final val 1.58-1.60, final train loss 0.83).
+- **Sensitivity.** A learning rate 10x up (1.461) and 10x down (1.457) both score worse than
+  every baseline call (1.380-1.388). The 10x-up config is unstable: one seed reached 1.357,
+  better than the baseline, and the other 1.565.
+- **Noise.** Six baseline seeds: 1.3755-1.3902, SD 0.0052. The median of 2 seeds then has an
+  SD of about 0.004, and two such scores differ by noise alone by up to about 0.010 (2 SD).
+  Treat a smaller gain as noise until crux's confirmation repeats it at new seeds. A third
+  seed would cut that to about 0.008 and cost about 85 s more per call, which breaks the
+  5-minute target; 2 seeds stay.
+- **Cost of the evaluations.** 20 evaluations of both halves take 1.4-2.5 s per seed, under
+  2% of training time.
 - **Determinism.** With default CUDA kernels, the same seed on the same slice type gave
   losses 0.001-0.004 apart. The scorer forces `torch.use_deterministic_algorithms(True)`
   (with `CUBLAS_WORKSPACE_CONFIG=:4096:8`): the same seed then gives the same loss to the
   last digit, it costs about 4% of training time, and it is what lets the scorer prove that
   edits outside the config change nothing. It is deterministic per GPU type only: seed 0 of
-  the baseline gives 1.5833 on a 3g slice, 1.5922 on a 1g slice and 1.5937 on a full H100.
+  the baseline gives a final val loss of 1.5833 on a 3g slice, 1.5922 on a 1g slice and
+  1.5937 on a full H100. The best-val runs reproduced the final-loss runs' final values to
+  the last digit.
   **Score the baseline and every candidate of one search on the same GPU type.**
 - **Time per seed** (5000 steps of the baseline): 1g.10gb slice 219-238 s; 3g.40gb slice
   72-99 s; full H100 58 s. Two seeds on one GPU in parallel are no faster than in sequence

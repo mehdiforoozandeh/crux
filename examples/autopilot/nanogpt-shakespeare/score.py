@@ -12,10 +12,11 @@ loop below, the data and its split, the tokenizer, the evaluation, the budget --
 comes from work/frozen/ or from this file.
 
 Output (crux `run_scorer` contract): stdout is exactly one JSON object. On success, exit 0 and
-the objective is the leaf `val_loss` ({"value": median over SEEDS training runs of the mean
-cross-entropy, in nats per character, on the first half of the val split}); LOWER IS BETTER,
-so the plan uses `address:: val_loss` and `direction:: min`. `holdout_loss` is the same
-measurement on the second half of the val split; it is reported, never the objective.
+the objective is the leaf `val_loss` ({"value": median over SEEDS training runs of the BEST
+mean cross-entropy, in nats per character, on the first half of the val split, over EVALS
+evaluations during training}); LOWER IS BETTER, so the plan uses `address:: val_loss` and
+`direction:: min`. `holdout_loss` is the same measurement on the second half of the val split,
+at the step where each seed's val_loss was best; it is reported, never the objective.
 On a wrong candidate, exit 1; stdout is {"passed": false, "reason": ...} with no `val_loss`
 leaf, and the reason is also on stderr.
 
@@ -55,6 +56,9 @@ TRAIN_CAP_S = 130         # seconds of training per seed: the wall-time backstop
 MAX_PARAMS = 40_000_000   # size backstop (~4x the baseline's 10.65M)
 MAX_TOKENS_PER_MICRO = 65536   # batch_size * block_size: memory backstop (4x baseline)
 MAX_BLOCK = 1024
+EVALS = 20                # evaluations per seed, at every 1/20 of the step count (the baseline:
+                          # every 250 steps, nanoGPT's eval_interval for this config)
+EVAL_TOKENS = 16384       # tokens per evaluation forward pass
 
 # Keys the candidate may set, with their type and allowed range. Unset keys take nanoGPT
 # train.py's defaults (DEFAULTS).
@@ -131,6 +135,40 @@ def worker(spec_path):
         ratio = (it - warm) / (decay - warm)
         return lrmin + 0.5 * (1.0 + math.cos(math.pi * ratio)) * (lr0 - lrmin)
 
+    @torch.no_grad()
+    def nll(data):
+        """Mean next-character cross-entropy over EVERY character of `data` after the first,
+        in fp32, with the uncompiled frozen model in eval mode (no dropout). Non-overlapping
+        windows of the candidate's block_size; the last, shorter window is scored too, so
+        every candidate is scored on the same characters. Uses no random numbers, so
+        evaluating does not change the training run."""
+        raw.eval()
+        n = (len(data) - 1) // T
+        rows = max(1, EVAL_TOKENS // T)
+        tot, cnt = 0.0, 0
+        xs = data[:n * T].view(n, T); ys = data[1:n * T + 1].view(n, T)
+        for i in range(0, n, rows):
+            logits, _ = raw(xs[i:i + rows], ys[i:i + rows])
+            tot += F.cross_entropy(logits.float().reshape(-1, VOCAB),
+                                   ys[i:i + rows].reshape(-1), reduction="sum").item()
+            cnt += ys[i:i + rows].numel()
+        if n * T + 1 < len(data):
+            x, y = data[n * T:-1][None], data[n * T + 1:][None]
+            logits, _ = raw(x, y)
+            tot += F.cross_entropy(logits.float().reshape(-1, VOCAB), y.reshape(-1),
+                                   reduction="sum").item()
+            cnt += y.numel()
+        assert cnt == len(data) - 1
+        raw.train()
+        return tot / cnt
+
+    half = len(val) // 2
+    val_a, val_b = val[:half], val[half:]
+    # Evaluate after every 1/EVALS of the budget's steps: the same number of evaluations for
+    # every candidate, whatever its step count, so no config buys more chances at a low min.
+    eval_at = sorted({max(1, round(k * iters / EVALS)) for k in range(1, EVALS + 1)})
+    curve = []                                      # (step, val_loss, holdout_loss)
+    eval_s = 0.0
     X, Y = get_batch()
     torch.cuda.synchronize()
     t0 = time.perf_counter()
@@ -149,41 +187,28 @@ def worker(spec_path):
             torch.nn.utils.clip_grad_norm_(raw.parameters(), hp["grad_clip"])
         opt.step()
         opt.zero_grad(set_to_none=True)
+        if it + 1 in eval_at:
+            te = time.perf_counter()
+            curve.append((it + 1, nll(val_a), nll(val_b)))
+            eval_s += time.perf_counter() - te
         if it % 100 == 0 and time.perf_counter() - t0 > spec["train_cap_s"]:
             proto.write(json.dumps({"error": f"training passed the {spec['train_cap_s']}s "
                                     f"wall-time cap at step {it} of {iters}"}) + "\n")
             return
     final_train = float(loss.item()) * GA
     torch.cuda.synchronize()
-    train_s = time.perf_counter() - t0
-
-    @torch.no_grad()
-    def nll(data):
-        """Mean next-character cross-entropy over EVERY character of `data` after the first,
-        in fp32, with the uncompiled frozen model. Non-overlapping windows of the candidate's
-        block_size; the last, shorter window is scored too, so every candidate is scored on
-        the same characters."""
-        raw.eval()
-        n = (len(data) - 1) // T
-        tot, cnt = 0.0, 0
-        xs = data[:n * T].view(n, T); ys = data[1:n * T + 1].view(n, T)
-        for i in range(0, n, 64):
-            logits, _ = raw(xs[i:i + 64], ys[i:i + 64])
-            tot += F.cross_entropy(logits.float().reshape(-1, VOCAB), ys[i:i + 64].reshape(-1),
-                                   reduction="sum").item()
-            cnt += ys[i:i + 64].numel()
-        if n * T + 1 < len(data):
-            x, y = data[n * T:-1][None], data[n * T + 1:][None]
-            logits, _ = raw(x, y)
-            tot += F.cross_entropy(logits.float().reshape(-1, VOCAB), y.reshape(-1),
-                                   reduction="sum").item()
-            cnt += y.numel()
-        assert cnt == len(data) - 1
-        return tot / cnt
-
-    half = len(val) // 2
-    out = {"seed": seed, "val_loss": nll(val[:half]), "holdout_loss": nll(val[half:]),
-           "final_train_loss": final_train, "train_s": train_s, "iters": iters,
+    wall_s = time.perf_counter() - t0
+    vals = [v for _, v, _ in curve]
+    if not all(math.isfinite(v) for v in vals):
+        proto.write(json.dumps({"error": f"seed {seed}: a val loss is not finite "
+                                "(training diverged)"}) + "\n")
+        return
+    b = min(range(len(curve)), key=lambda i: curve[i][1])      # first step of the minimum
+    out = {"seed": seed, "val_loss": curve[b][1], "holdout_loss": curve[b][2],
+           "best_step": curve[b][0], "final_val_loss": curve[-1][1],
+           "final_holdout_loss": curve[-1][2], "final_train_loss": final_train,
+           "train_s": wall_s - eval_s, "eval_s": eval_s, "iters": iters,
+           "curve": [[s_, round(v, 4)] for s_, v, _ in curve],
            "params": raw.get_num_params(), "gpu": torch.cuda.get_device_name(0),
            "max_mem_gb": torch.cuda.max_memory_allocated() / 2**30}
     proto.write(json.dumps(out) + "\n")
@@ -428,15 +453,19 @@ def main():
     doc = {
         "val_loss": leaf("val_loss"),
         "holdout_loss": leaf("holdout_loss"),
+        "final_val_loss": leaf("final_val_loss"),
+        "best_step": {"value": statistics.median(r["best_step"] for r in results),
+                      "repeats": [r["best_step"] for r in results]},
         "passed": True,
         "workload": {"id": WORKLOAD, "nanogpt_commit": PINNED_COMMIT,
                      "flop_budget": BUDGET, "flops_per_iter": flops_per_iter(hp),
                      "iters": iters, "params": N, "seeds": seeds,
                      "val_chars": "first half of val.bin (55,770)",
                      "holdout_chars": "second half of val.bin (55,770)",
+                     "evals_per_seed": EVALS, "statistic": "best eval per seed, median over seeds",
                      "deterministic": determ, "parallel": not sequential},
         "hparams": hp,
-        "runs": [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()}
+        "runs": [{k: (round(v, 5) if isinstance(v, float) else v) for k, v in r.items()}
                  for r in results],
         "candidate": {"path": cand, "config_sha256": sha(cfg_path)},
         "scorer_wall_s": round(wall, 1),
