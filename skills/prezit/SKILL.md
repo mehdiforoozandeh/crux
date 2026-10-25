@@ -6,13 +6,15 @@ description: >-
   where every number on a slide is an address into the vault, not a photocopy of one, and
   `crux deck --verify` can prove it still matches. Drives the engine's `crux deck` verbs
   (--json harvest, --verify, --refresh, --lint), fills the shipped template, and runs the
-  refinement loop with the PI. Use when a crux user wants slides from their vault. Triggers:
-  "make a deck from q…", "present this subtree", "slides for the group meeting", "update my
-  deck", prezit, crux presentation, crux slides.
+  refinement loop with the PI. Two arcs: the tree arc (default) and the lab arc (motivation →
+  method → results → discussion, for an experiment's lab-meeting deck). Use when a crux user
+  wants slides from their vault. Triggers: "make a deck from q…", "present this subtree",
+  "slides for the group meeting", "lab deck for this experiment", "update my deck", prezit,
+  crux presentation, crux slides.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
-  version: "1.0"
+  version: "1.1"
   spec: ".spec/11-prezit.md"
 ---
 
@@ -35,7 +37,18 @@ this week" is answered by choosing the anchor whose subtree moved.
 You never retype the chrome (copy the template), and you never let the engine author a
 sentence — selection and phrasing are your whole job.
 
-## The mapping — what each crux object becomes
+## Two arcs — the PI picks one
+
+| arc | shape | numbers proved by | use it for |
+|---|---|---|---|
+| **tree arc** (default) | title → lineage → question → method → results → verdict, built from the tree as mapped below | `metrics.json` addresses and `crux deck --verify` | a subtree with hypotheses, findings and addresses |
+| **lab arc** | motivation → method → results → discussion | a `build_deck.py` that embeds result files as DATA (plus `--verify` for any addressed number) | one experiment or a family of them, at a lab meeting, often exploratory |
+
+When the PI picks the lab arc, read [`references/lab-arc.md`](references/lab-arc.md) before
+drafting: its slide roles and style rules replace the tree-arc defaults below (the mapping,
+numbers by role, no future-work slide). Everything else in this file applies to both arcs.
+
+## The mapping — what each crux object becomes (tree arc)
 
 | crux object | role in the deck |
 |---|---|
@@ -60,7 +73,9 @@ Shorthand: intro = wiki, methods = design (not implementation legwork), results 
 2. **Read end to end.** Every linked report under `results/<hid>/`, every finding, the
    approved synthesis. Inventory the figures and the `metrics.json` addresses.
 3. **Agree the arc with the PI before drafting.** Structured questions, each with a
-   recommended default: single arc vs mini-arc per sub-question; redesign figures from
+   recommended default: tree arc vs lab arc (recommend the lab arc for an experiment's
+   lab-meeting deck, or when the numbers have no `metrics.json` addresses yet); single arc
+   vs mini-arc per sub-question; redesign figures from
    `metrics.json` vs reuse; which 1–3 findings get a slide. Trivia (output path, framework)
    is stated, not asked.
 4. **Draft.** Copy `assets/deck.html` to `<vault>/presentations/<anchor-id>/index.html` and
@@ -127,11 +142,15 @@ own. Fallback ladder, in order:
   compute."
 - **Show uncertainty**; a gap smaller than the SE is not a gap.
 - **Bullets are conclusions, not axis descriptions.**
-- **Numbers by role (D5):** motivation slides carry none; method slides carry addressed
+- **Plain names on slides**: no abbreviated axis labels, terse check names, internal arm
+  codes or task ids; say what the thing is or does.
+- **A mandatory decomposition is always shown**: when the project's rules split a metric
+  into parts, every value of that metric on a slide carries its split.
+- **Numbers by role (D5, tree arc):** motivation slides carry none; method slides carry addressed
   definitional constants only; result slides carry at least two addressed numbers; the
   verdict slide introduces none of its own.
 - **"Rules locked before results":** surface the anchor's `## Protocol` when it has one.
-- No background, related-work, or future-work slide unless asked.
+- Tree arc: no background, related-work, or future-work slide unless asked.
 
 ## The slide contract
 
@@ -148,7 +167,7 @@ One self-contained HTML file: no CDN, no framework, no build step, opens by doub
 from `file://` and survives being emailed. Fade-only transitions with
 `prefers-reduced-motion` honored; keyboard nav (`→ ← space Home End`); thin progress bar;
 slide counter derived from the DOM; print stylesheet gives page-per-slide PDF via the
-browser. Color is semantic — one color per arm, defined once as CSS variables, reused
+browser; optional speaker notes (`<aside class="notes">` in `<p>`) toggle with `n`. Color is semantic — one color per arm, defined once as CSS variables, reused
 identically across chart, legend and bullets. In-SVG fonts are sized for a projector
 (~1.5× laptop taste); chart height is capped in `vh` so a figure never crowds out its
 caption bullets.

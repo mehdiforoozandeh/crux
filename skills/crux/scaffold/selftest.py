@@ -2538,6 +2538,29 @@ def run_prezit():
                    "contract header", "one claim", "re-run the plotting code"):
         check(f"prezit: SKILL.md states '{needle}'", needle in s)
 
+    # the lab arc: a second named arc beside the tree arc, disclosed behind one pointer
+    lab = os.path.join(skl, "references", "lab-arc.md")
+    check("prezit: SKILL.md names both arcs and points at the lab-arc reference",
+          "tree arc" in s and "lab arc" in s and "references/lab-arc.md" in s)
+    check("prezit: lab-arc reference ships", os.path.isfile(lab))
+    if os.path.isfile(lab):
+        lb = read(lab).lower()
+        for needle in ("motivation", "method", "results", "discussion", "options",
+                       "build_deck.py", "__data__", "2×", "decomposition", "plain name",
+                       "label every panel", "speaker notes", "one question at a time"):
+            check(f"prezit: lab-arc reference states '{needle}'", needle in lb)
+    # speaker notes are template chrome (`n` toggles them), and notes add no content units
+    check("prezit: template hides speaker notes until `n`",
+          "aside.notes{display:none}" in t and "e.key==='n'" in t)
+    nt = tempfile.mkdtemp(prefix="crux_pzn_")
+    nd = os.path.join(nt, "notes.html")
+    write(nd, "<!-- job x\n source x\n numbers none\n cut x -->\n"
+              '<section class="slide"><ul>' + "<li>x</li>" * 7 + "</ul>"
+              '<aside class="notes"><p>a</p><p>b</p></aside></section>')
+    check("prezit: speaker notes in <p> add no content units to the lint",
+          E.deck_lint(nd) == [])
+    shutil.rmtree(nt, ignore_errors=True)
+
 
 def run_rd():
     """Spec 07 — the RD layer. Requirements Documents: one active RD per node, living in

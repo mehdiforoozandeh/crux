@@ -6,6 +6,18 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **prezit gains a second arc, the lab arc** (spec 11; prezit skill **1.0 → 1.1**; engine
+  unchanged, no vault-format change). Motivation → method → results → discussion, for an
+  experiment's lab-meeting deck, taken from a family of decks a PI approved slide by slide.
+  The tree arc stays the default; the PI picks the arc at the arc-agreement step, and the lab
+  arc's slide roles and style rules live in `skills/prezit/references/lab-arc.md`. In an
+  exploratory study with no `metrics.json`, a `build_deck.py` embeds every number from the
+  result files as DATA. The template gains optional speaker notes (`n`); a deck without notes
+  is unchanged. Two rules now hold for both arcs: plain names on slides, and a project's
+  mandatory metric decomposition shown with every value.
+
 ## [0.9.0] - 2026-10-11
 
 ### Fixed
