@@ -10,8 +10,12 @@
   prezit DECK TEMPLATE  ·  copy me, never retype me
   ============================================================================
 
+  This is the TREE ARC's spine. The paper arc (the default) starts from
+  examples/paper_deck/ instead — see references/paper-arc.md.
+
   This file is the CHROME: palette tokens, typography, fade-only transitions,
-  keyboard nav, progress bar, DOM-derived slide count, print stylesheet, and
+  keyboard nav, progress bar, DOM-derived slide count, print stylesheet,
+  optional speaker notes (`n`), and
   the slide spine as contract-headed stubs. The agent fills the stubs from
   `crux deck <anchor> --json`; it never retypes this boilerplate — retyping is
   where drift and ugliness enter.
@@ -225,11 +229,27 @@
   kbd{font-family:var(--sans);border:1px solid var(--hair);border-bottom-width:2px;
     border-radius:4px;padding:1px 6px;font-size:11px;color:var(--muted);background:#fff}
 
+  /* --- speaker notes ---------------------------------------------------
+     Optional: an <aside class="notes"> inside a slide, written in <p> (an <li>
+     there counts toward the slide's 7 units). Hidden; `n` overlays the active
+     slide's notes; print puts them under each slide. A deck without notes is
+     unaffected. */
+  aside.notes{display:none}
+  body.shownotes .slide.active aside.notes{display:block;position:fixed;left:7vw;right:7vw;
+    bottom:58px;max-height:52vh;overflow:auto;background:#fff;border:1px solid var(--hair);
+    border-left:4px solid var(--accent);border-radius:10px;padding:16px 22px;font-size:16.5px;
+    line-height:1.55;color:#333;z-index:60;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  aside.notes::before{content:"Speaker notes · n to close";display:block;font-size:11px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px}
+  aside.notes p{margin:0 0 6px}
+
   @media print{
     body{overflow:visible}
     #progress,.nav,.count,.hint{display:none}
     .slide{position:relative;opacity:1;visibility:visible;page-break-after:always;
       height:100vh;transition:none}
+    aside.notes{display:block;margin-top:18px;border-top:1px solid #bbb;padding-top:10px;
+      font-size:12.5px;line-height:1.5;color:#333}
   }
 </style>
 </head>
@@ -578,6 +598,8 @@ window.addEventListener('keydown',e=>{
   else if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();prev();}
   else if(e.key==='Home'){show(0);}
   else if(e.key==='End'){show(tot-1);}
+  else if(e.key==='n'||e.key==='N'){e.preventDefault();document.body.classList.toggle('shownotes');}
+  else if(e.key==='Escape'){document.body.classList.remove('shownotes');}
 });
 show(0);
 </script>
