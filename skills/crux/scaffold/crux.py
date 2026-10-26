@@ -23,7 +23,7 @@ Quick tour:
 `close` reads the `## Verifiables` checkboxes the agent (or the PI) ticked:
 all `- [x]` -> supported · any `- [ ]` -> refuted/partial · `- [-]` -> inconclusive.
 """
-import argparse, sys, os, json, shlex
+import argparse, sys, os, json
 
 if sys.version_info < (3, 8):
     sys.exit("crux: needs Python >= 3.8 (found %d.%d)" % sys.version_info[:2])
@@ -345,10 +345,6 @@ def main(argv=None):
     s.add_argument("--settings", default=None,
                    help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
 
-    # autopilot (spec 05, PRD 05.0 + 05.1 + 05.2). `brief`, `guide` and `status` touch nothing
-    # and no process; `check` dry-runs the PI's scorer once (`--static` is what it used to
-    # do), `refs` lists a run's refs read-only, `promote` cuts one branch at a recorded
-    # attempt, `approve` is the PI's signature on a plan, and `run` is the driver loop.
     lp = sub.add_parser("lit", aliases=["literature"],
                         help="literature search (spec 17): walk the citation graph out from "
                              "trusted seeds and rank what is missing from raw/")
@@ -371,59 +367,28 @@ def main(argv=None):
                                                "problem it carries, not just the first"))
     s.add_argument("slug", help="the search whose wiki/lit/<slug>/scope.md to check")
 
+    # autopilot (spec 18). `check` runs the setup check (`--static`: parse the plan only),
+    # `run` is the driver loop, `status` reads the ledger and writes nothing.
     ap = sub.add_parser("auto", aliases=["autopilot"],
-                        help="autopilot (spec 05): validate, approve and run a flight plan, "
-                             "read a run's state, print a worker's brief, append the PI's "
-                             "guidance, promote an attempt or list a run's refs")
+                        help="autopilot (spec 18): check a plan, run it, read a run's ledger")
     asub = ap.add_subparsers(dest="acmd", metavar="<sub-verb>")
 
-    s = _jsonable(asub.add_parser("check", help="validate a flight plan and report every "
-                                                "problem it carries, not just the first"))
-    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+    s = _jsonable(asub.add_parser("check", help="check a plan: score the base, prove the scorer "
+                                                "discriminates, prove the worker can commit"))
+    s.add_argument("plan", help="the plan: auto/<qid>/plan.md, vault-relative or absolute")
     s.add_argument("--static", action="store_true",
-                   help="validate the plan only — engine checks, no process started")
+                   help="parse the plan only — no process started")
 
-    s = _jsonable(asub.add_parser("promote", help="create a branch in the repository at a "
-                                                  "recorded attempt's commit (no checkout, "
-                                                  "no merge)"))
-    s.add_argument("id", help="the recorded attempt to promote")
-    s.add_argument("--branch", dest="branch", default=None,
-                   help="the branch to create (default: crux/auto/<qid>/promoted/<hid>)")
-
-    s = _jsonable(asub.add_parser("refs", help="list a run's refs, branches and live "
-                                               "worktrees — creates nothing"))
-    s.add_argument("qid", nargs="?", default=None,
-                   help="the anchor question, or the auto/<qid>/plan.md the other verbs take; "
-                        "optional when the vault holds one flight plan")
-
-    s = _jsonable(asub.add_parser("brief", help="assemble the worker brief for the next "
-                                                "attempt built on a given attempt"))
-    s.add_argument("id", help="the parent attempt — the hypothesis a new attempt builds on")
-    s.add_argument("--lint", action="store_true",
-                   help="also run every brief check and exit non-zero on a failure")
-
-    s = _jsonable(asub.add_parser("guide", help="append one standing instruction from the PI "
-                                                "to a flight plan's ## Guidance (never edits)"))
-    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
-    s.add_argument("--author", required=True, help="who the instruction came from")
-    s.add_argument("text", help="the instruction, as one line")
-
-    s = _jsonable(asub.add_parser("approve", help="the PI's signature on a flight plan: stamp "
-                                                  "approved and a hash of what was approved"))
-    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
-
-    s = _jsonable(asub.add_parser("run", help="run an approved flight plan unattended until "
-                                              "one of its four stops; resumes a run already "
-                                              "on disk"))
-    s.add_argument("plan", help="the flight plan: auto/<qid>/plan.md, vault-relative or absolute")
+    s = _jsonable(asub.add_parser("run", help="run a plan unattended until its budget is "
+                                              "spent; continues a run already on disk"))
+    s.add_argument("plan", help="the plan: auto/<qid>/plan.md, vault-relative or absolute")
     s.add_argument("--max-attempts", dest="max_attempts", type=int, default=None,
-                   help="tighten budget_attempts for this invocation")
+                   help="stop after this many attempts in this invocation")
 
-    s = _jsonable(asub.add_parser("status", help="read a run's state.json — starts nothing, "
+    s = _jsonable(asub.add_parser("status", help="read a run's ledger — starts nothing, "
                                                  "writes nothing"))
     s.add_argument("qid", nargs="?", default=None,
-                   help="the anchor question, or the auto/<qid>/plan.md the other verbs take; "
-                        "optional when the vault holds one autopilot run")
+                   help="the anchor question (default: the most recent run)")
 
     s = _jsonable(sub.add_parser("doctor", help="check this install: skill/agent links, engine version, vault drift"))
 
@@ -504,158 +469,49 @@ DASH = "—"        # the em dash for an empty slot, named because an f-string e
 
 
 def _dispatch_auto(a):
-    """`crux auto <sub-verb>` (spec 05, PRD 05.0 + 05.1). Every verb but `guide` resolves the
-    vault read-only and never re-stamps it; `guide` is the one that writes, appending the PI's
-    words to `## Guidance`.
-
-    `autopilot` is imported HERE, inside the verbs that need it, and never at module scope:
-    `check --static`, `brief` and `guide` start no process, and the way that stays true is
-    that the module which CAN start one is not even loaded on their path."""
+    """`crux auto check|run|status` (spec 18). `auto` is imported HERE and never at module
+    scope, so a verb that starts no process does not load the module that can."""
     t = getattr(a, "acmd", None)
     if not t:
-        print("crux: auto needs a sub-verb \u2014 check / brief / guide / promote / refs / "
-              "approve / run / status", file=sys.stderr)
+        print("crux: auto needs a sub-verb \u2014 check / run / status", file=sys.stderr)
         return 1
-    if t == "approve":
-        res = E.cmd_auto_approve(_vault(), a.plan)
+    import auto
+    if t == "status":
+        res = auto.status(_vault_ro(None), a.qid)
         if a.json:
             return _emit(res)
-        if res["already"]:
-            print(f"\u2713 flight plan already approved: {res['plan']}  ({res['approved']})")
-        else:
-            print(f"\u2713 flight plan approved: {res['plan']}  ({res['approved']}, "
-                  f"hash {res['approved_hash']})")
+        best = res.get("best") or {}
+        print(f"auto/{res['anchor']}  mode {res['mode']} \u00b7 objective {res['address']} "
+              f"{res['direction']} {res['bar']} \u00b7 baseline {res['baseline']}")
+        print(f"attempts: {len(res['attempts'])} \u00b7 best {best.get('id') or DASH} = "
+              f"{DASH if best.get('score') is None else best.get('score')}")
+        print(f"hours: {res['elapsed_hours']:.3f} elapsed of {res['budget_hours']:g} "
+              f"\u00b7 {res['attempts_per_hour']} attempts/hour")
+        for r in res["attempts"][-5:]:
+            print(f"  {r['n']}  {r['id'] or DASH}  {r['status']}  {r['score']}")
+        stop = res.get("stop")
+        print(f"stop: {stop.get('reason')} \u2014 {stop.get('detail') or ''}" if stop
+              else ("live" if res["live"] else "stop: none, and no line for a while"))
         return 0
+    root = _vault() if t == "run" else _vault_ro(None)
+    plan = a.plan if os.path.isabs(a.plan) or os.path.exists(a.plan) \
+        else os.path.join(root, a.plan)
     if t == "run":
-        root = _vault()
-        import autopilot
-        st = autopilot.auto_run(root, a.plan, max_attempts=a.max_attempts)
+        st = auto.run(root, plan, max_attempts=a.max_attempts)
         if a.json:
             return _emit(st)
-        stop = st.get("stop") or {}
-        axis = f" ({stop.get('axis')})" if stop.get("axis") else ""
-        best = st.get("best") or {}
-        bid = best.get("id") or DASH
-        bscore = DASH if best.get("score") is None else best.get("score")
-        print(f"\u2713 auto run on {st.get('anchor')} stopped: {stop.get('reason')}{axis} "
-              f"\u2014 {len(st.get('closed') or [])} attempts closed, "
-              f"best {bid} = {bscore}")
+        print(f"\u2713 auto run stopped: {st.get('reason')} \u2014 {st.get('detail') or ''}")
         return 0
-    if t == "status":
-        res = E.auto_status(_vault_ro(None), a.qid)
-        if a.json:
-            return _emit(res)
-        st, qid = res["state"], res["anchor"]
-        print(f"{E.AUTO_DIR}/{qid}/{E.AUTO_STATE_FILE}  (run {st.get('run')})")
-        print(f"mode {st.get('mode')} \u00b7 c_puct {st.get('c_puct')} \u00b7 escalated "
-              f"{'true' if st.get('escalated') else 'false'}")
-        flight = sorted(st.get("in_flight") or {}, key=E.natkey)
-        print("in flight: " + (", ".join(flight) if flight else DASH))
-        best = st.get("best") or {}
-        bid = best.get("id") or DASH
-        bscore = DASH if best.get("score") is None else best.get("score")
-        print(f"closed: {len(st.get('closed') or [])} \u00b7 best {bid} = {bscore}")
-        b = st.get("budget") or {}
-        at, hr, mc = b.get("attempts") or {}, b.get("hours") or {}, b.get("model_calls") or {}
-        print(f"budget: attempts {at.get('used')}/{at.get('total')} \u00b7 hours "
-              f"{float(hr.get('used') or 0):.3f}/{float(hr.get('total') or 0):g} \u00b7 "
-              f"model calls {mc.get('used')}/{mc.get('total')}")
-        stop = st.get("stop")
-        if stop:
-            axis = f" ({stop.get('axis')})" if stop.get("axis") else ""
-            print(f"stop: {stop.get('reason')}{axis} \u2014 {stop.get('detail')}")
-        else:
-            print("stop: running")
-        return 0
-    if t == "check":
-        root = _vault_ro(None)
-        if getattr(a, "static", False):
-            res = E.auto_check(root, a.plan)
-        else:
-            import autopilot
-            res = autopilot.auto_check(root, a.plan)
-        if a.json:
-            _emit(res)
-            return 0 if res["ok"] else 1
-        if res["ok"]:
-            print(f"\u2713 flight plan valid: {res['plan']}  "
-                  f"(anchor {res['anchor']}, mode {res['mode']})")
-            sc = res.get("scorer") or {}
-            if sc.get("ran"):
-                print(f"\u2713 scorer ok: {sc['address']} = {sc['value']}  ({sc['cmd']})")
-        # 05.3: one line per command of the list. An unreachable entry beside a reachable one
-        # is reported and is not a problem — a failover list may name a CLI this machine
-        # does not have.
-        for row in res.get("agents") or []:
-            if row.get("reachable"):
-                # shlex-joined, not space-joined: an argv element holding a space has to print
-                # quoted, or the line the PI reads cannot be pasted back as the command that ran.
-                shown = " ".join(shlex.quote(str(x)) for x in row.get("probe") or [])
-                print(f"\u2713 agent reachable: {row['command']}  "
-                      f"(probe: {shown}, {float(row.get('seconds') or 0.0):.2f}s)")
-            else:
-                print(f"\u2717 agent unreachable: {row['command']}  ({row.get('detail')})")
-        if res["ok"]:
-            return 0
-        for p in res["problems"]:
-            print(f"\u2717 {p['check']}: {p['message']}")
+    res = auto.check(root, plan, static=getattr(a, "static", False))
+    if a.json:
+        _emit(res)
+        return 0 if res["ok"] else 1
+    for p in res["problems"]:
+        print(f"\u2717 {p}")
+    if not res["ok"]:
         return 1
-    if t == "promote":
-        import autopilot
-        res = autopilot.promote(_vault_ro(None), a.id, branch=a.branch)
-        if a.json:
-            return _emit(res)
-        print(f"\u2713 promoted {res['id']} to {res['branch']}  ({res['commit'][:12]})")
-        return 0
-    if t == "refs":
-        import autopilot
-        res = autopilot.auto_refs(_vault_ro(None), a.qid)
-        if a.json:
-            return _emit(res)
-        print(f"refs/crux/auto/{res['anchor']}/  ({res['repo']})")
-        for r in res["refs"]:
-            print(f"  {(r['commit'] or '')[:12]}  {r['name']}")
-        if not res["refs"]:
-            print("  (none)")
-        print("branches:")
-        for b in res["branches"]:
-            print(f"  {(b['commit'] or '')[:12]}  {b['name']}")
-        if not res["branches"]:
-            print("  (none)")
-        print("worktrees:")
-        for w in res["worktrees"]:
-            print(f"  {(w['commit'] or '')[:12]}  {w['id']}  {w['path']}")
-        if not res["worktrees"]:
-            print("  (none)")
-        return 0
-    if t == "brief":
-        root = _vault_ro(None)
-        if a.lint:
-            rep = E.auto_brief_lint(root, a.id)
-            if a.json:
-                _emit(rep)
-                return 0 if rep["ok"] else 1
-            if rep["text"]:
-                print(rep["text"])
-            print("\nauto brief checks:")
-            for ck in rep["checks"]:
-                print(f"  {'ok  ' if ck['ok'] else 'FAIL'} {ck['name']}  {ck['detail']}")
-            return 0 if rep["ok"] else 1
-        payload = E.auto_brief(root, a.id)
-        if a.json:
-            return _emit(payload)
-        print(E.auto_brief_text(payload))
-        return 0
-    if t == "guide":
-        root = _vault()
-        entry = E.append_guidance(root, a.plan, a.text, a.author)
-        path = a.plan if os.path.isabs(a.plan) else os.path.join(root, a.plan)
-        rel = E._rel(root, path)
-        n = len(E.parse_flight_plan(E.read(path))["guidance"])
-        if a.json:
-            return _emit({"plan": rel, "entry": entry, "entries": n})
-        print(f"\u2713 guidance appended to {rel}  ({n} entries)")
-        return 0
+    print(f"\u2713 plan ok: {a.plan}" + ("" if res.get("baseline") is None else
+          f"  (baseline {res['baseline']}, scorer {res['scorer_seconds']:.1f}s)"))
     return 0
 
 

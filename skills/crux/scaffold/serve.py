@@ -11,7 +11,7 @@ Stdlib only. Opening is context-aware (plain terminal / VS Code / Remote-SSH):
 localhost binding is exactly what VS Code auto-forwards, and one prominent printed
 URL is the universal entry point that never fails.
 """
-import os, sys, json, socket, shutil, socketserver, threading, webbrowser, http.server, urllib.parse, hashlib
+import os, sys, json, socket, shutil, socketserver, threading, time, webbrowser, http.server, urllib.parse, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
@@ -77,8 +77,8 @@ def vault_stat_key(root):
     spuriously regenerate per poll); hidden files (.crux.yaml) are counted.
     The vault's top-level `auto/` is skipped for the same reason, one level up:
     engine.snapshot reads nothing there, so a write under it CANNOT change the
-    snapshot's content — while an autopilot driver rewrites state.json inside
-    every event, which would otherwise miss this cache on every 1 Hz poll and
+    snapshot's content — while an autopilot driver appends to ledger.jsonl on
+    every attempt, which would otherwise miss this cache on every 1 Hz poll and
     rebuild the whole tree for a payload byte-identical to the last one. Only the
     top level is skipped, so a `results/auto/` or a wiki page named `auto` is
     still walked. The run's own payload gets its own key — see auto_stat_key.
@@ -117,7 +117,10 @@ def auto_stat_key(root):
     latest = 0.0
     count = 0
     for dirpath, dirnames, filenames in os.walk(d):
-        dirnames[:] = [x for x in dirnames if not x.startswith(".")]
+        # auto/<qid>/work/ holds the attempts' git worktrees: whole repo copies, never read
+        # by the payload, so walking them per poll would cost a repo walk for nothing.
+        dirnames[:] = [x for x in dirnames if not x.startswith(".")
+                       and not (x == "work" and os.path.dirname(dirpath) == d)]
         try:
             latest = max(latest, os.stat(dirpath).st_mtime)
         except OSError:
@@ -246,34 +249,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(data, etag)
 
     def _auto(self):
-        """The autopilot run's own small payload (spec 05 §15, PRD 05.4 §A). Deliberately NOT
-        part of /snapshot.json: a running loop rewrites state.json after every event, and
-        folding this into the tree snapshot would invalidate its cache on every attempt and
-        rebuild the whole tree per poll — the 29 ms / 181 file reads per second spec 12
-        measured and killed.
+        """The autopilot runs' own small payload (spec 18): `auto.cockpit(root)`, read only.
+        Deliberately NOT part of /snapshot.json, so a running loop does not invalidate the
+        tree cache on every attempt. Its own cache triple under its own lock, mirroring
+        _snapshot: same content-sha ETag, same 304 on If-None-Match. The key also carries the
+        minute, because `live` is a question about the clock as well as the files: a run that
+        died writes nothing, and only time turns it from live to stopped.
 
-        Its own cache triple under its own lock, mirroring _snapshot exactly: same content-sha
-        ETag, same 304 on If-None-Match, same Cache-Control: no-store from end_headers. The
-        cache key carries the requested tail length, so ?events=1 and ?events=2000 never
-        collide in one slot. A non-integer ?events= is NOT an error — it is treated as absent
-        and the engine's own default applies, because a mistyped query is a reader's typo, not
-        a reason to hand the tab a 400 it has no way to show.
-
-        No path segment, no id, no traversal surface: the route enumerates `auto/` itself and
-        the only query parameter is an integer, so nothing from the request reaches the disk."""
+        `auto` is imported here, lazily: the cockpit never loads the driver until this route
+        is asked for, and nothing from the request reaches the disk."""
         srv = self.server
-        raw = urllib.parse.parse_qs(
-            urllib.parse.urlsplit(self.path).query).get("events", [None])[0]
         try:
-            n = int(raw)
-        except (TypeError, ValueError):
-            n = None                      # absent or unparseable: let the engine default stand
-        try:
+            import auto
             with srv.auto_lock:
-                key = (auto_stat_key(srv.root), n)
+                key = (auto_stat_key(srv.root), int(time.time() // 60))
                 if key != srv.auto_key:
-                    kw = {} if n is None else {"events": n}
-                    data = json.dumps(engine.auto_cockpit(srv.root, **kw)).encode("utf-8")
+                    data = json.dumps(auto.cockpit(srv.root)).encode("utf-8")
                     srv.auto_key = key
                     srv.auto_data = data
                     srv.auto_etag = '"%s"' % hashlib.sha256(data).hexdigest()[:32]
