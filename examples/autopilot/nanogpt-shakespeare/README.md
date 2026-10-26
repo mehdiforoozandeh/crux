@@ -36,6 +36,12 @@ parameters), context 256, batch 64, dropout 0.2, learning rate 1e-3, 5000 steps.
 All rows are one scorer call each (median of 2 seeds; the 2 seeds in brackets), run as crux
 runs it: cwd = candidate, `CRUX_WORKSPACE` and `CRUX_SEED` set. Jobs 428648, 428649, 442266.
 
+**Known improvement:** `dropout = 0.3` with `lr_decay_iters = 3500` (more regularization,
+and the learning rate decays by the time the val loss bottoms out). Both calls (1.3692,
+1.3613) are below every baseline call (1.3801-1.3879): 0.011-0.019 below the best baseline
+call and 0.018-0.026 below the baseline median (1.3873). It is a modest gain, about 2-4x the
+noise between two scores.
+
 | candidate | `val_loss` | `holdout_loss` | best step | scorer wall |
 |---|---|---|---|---|
 | baseline, `CRUX_SEED` 0 | 1.3873 (1.3850, 1.3896) | 1.541 | 2000, 1750 | 236 s |
@@ -43,6 +49,10 @@ runs it: cwd = candidate, `CRUX_WORKSPACE` and `CRUX_SEED` set. Jobs 428648, 428
 | baseline, `CRUX_SEED` 2 | 1.3879 (1.3855, 1.3902) | 1.550 | 1750, 1750 | 175 s |
 | `dropout = 0.3`, `CRUX_SEED` 0 | 1.3743 (1.3749, 1.3737) | 1.544 | 3000, 2750 | 186 s |
 | `dropout = 0.3`, `CRUX_SEED` 1 | 1.3689 (1.3715, 1.3663) | 1.535 | 2500, 2750 | 173 s |
+| `lr_decay_iters = 2500`, `CRUX_SEED` 0 | 1.3727 (1.3697, 1.3756) | 1.533 | 2000, 1750 | 230 s |
+| `lr_decay_iters = 2500`, `CRUX_SEED` 1 | 1.3744 (1.3763, 1.3725) | 1.558 | 2500, 2000 | 173 s |
+| **known improvement:** `dropout = 0.3, lr_decay_iters = 3500`, `CRUX_SEED` 0 | **1.3692** (1.3697, 1.3687) | 1.544 | 3000, 2750 | 174 s |
+| **known improvement:** same, `CRUX_SEED` 1 | **1.3613** (1.3647, 1.3578) | 1.546 | 2750, 3500 | 192 s |
 | `weight_decay = 1.0`, `CRUX_SEED` 0 | 1.3812 (1.3880, 1.3744) | 1.530 | 2750, 2500 | 173 s |
 | `learning_rate = 1e-2, min_lr = 1e-3` (10x) | **1.4610** (1.3570, 1.5650) | 1.638 | 3500, 5000 | 241 s |
 | `learning_rate = 1e-4, min_lr = 1e-5` (0.1x) | **1.4570** (1.4568, 1.4573) | 1.595 | 5000, 5000 | 173 s |
