@@ -174,6 +174,7 @@ def run_all(check):
         _plan_tests(check, A)
         _unit_tests(check, A)
         _run_tests(check, A)
+        _bench_plan_tests(check, A)
     finally:
         os.environ.clear()
         os.environ.update(keep_env)
@@ -532,6 +533,35 @@ def _run_tests(check, A):
               ok and r.returncode == 0 and h2 in r.stdout)
         check("old vault: the cockpit payload reads an old ledger without crashing",
               len(cp["runs"]) == 1 and cp["runs"][0]["attempts"] == [] and not cp["active"])
+
+
+def _bench_plan_tests(check, A):
+    """Every examples/autopilot/*/plan.md, with run-fir.sh's placeholders filled, loads and
+    uses at most 10 frontmatter rows (repo and base count as one). Skipped outside a checkout."""
+    ex = os.path.join(HERE, "..", "..", "..", "examples", "autopilot")
+    if not os.path.isdir(ex):
+        return
+    names = sorted(d for d in os.listdir(ex) if os.path.isfile(os.path.join(ex, d, "plan.md")))
+    bad = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in names:
+            with open(os.path.join(ex, name, "plan.md"), encoding="utf-8") as f:
+                text = f.read()
+            text = (text.replace("@BENCH@", "/b/" + name).replace("@ANCHOR@", "q1")
+                    .replace("@REPO@", "/r/" + name))
+            path = os.path.join(tmp, name + ".md")
+            _write(path, text)
+            try:
+                A.load_plan(path)
+                head, _ = A._split_doc(text)
+                keys = [l.partition(":")[0].strip() for l in head
+                        if l.strip() and not l.lstrip().startswith("#")]
+                if len(set(keys) - {"base"}) > 10 or "@" in text:
+                    bad.append(name + ": too many rows or a placeholder left")
+            except E.CruxError as e:
+                bad.append(f"{name}: {e}")
+    check(f"bench plans: every examples/autopilot plan loads with <= 10 rows ({len(names)} found"
+          + (f"; {bad}" if bad else "") + ")", len(names) == 4 and not bad)
 
 
 def main():
