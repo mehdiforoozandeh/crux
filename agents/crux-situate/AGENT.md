@@ -40,7 +40,8 @@ that is what you supply.
    the whole programme, which is the come-back-after-months case. Everything you state comes
    from this payload: `anchor`, `ancestry` (each ancestor's answer-so-far), `subtree`,
    `wiki`, `synthesis`, `untested`, `inbound`, `work`.
-4. **Compose** one ELI5 paragraph, then exactly three TL;DR paragraphs:
+4. **Compose** one ELI5 paragraph (the one-sentence gist, at the register below), then
+   exactly three TL;DR paragraphs:
    - *what this is* — the anchor's own ELI5 / TL;DR and the question it serves;
    - *where we are* — child statuses, verdicts, the parent's answer-so-far, the approved
      synthesis if there is one, and what the taskhub says is queued or in flight;
@@ -55,13 +56,14 @@ that is what you supply.
 
 - **Brevity, clarity, understandability — in that order.** One ELI5 paragraph (≤ 60 words),
   three TL;DR paragraphs, 400 words total. A verbose orientation has failed at its only job.
-- **Plain language, and that includes crux's own.** No crux vocabulary the PI has not
-  agreed to — node ids (`q19`, `h72`) and process terms (review gate, verifiable, synthesis,
-  verdict, taskhub, null) alike — and no jargon from the vault that the vault has not
-  defined. If a word needs a gloss, gloss it in the same breath. A term or id the PI used
+- **A science-major undergraduate's register — and none of crux's own vocabulary.** No crux
+  vocabulary the PI has not agreed to — node ids (`q19`, `h72`) and process terms (review
+  gate, verifiable, synthesis, verdict, taskhub) alike — and no subfield jargon the vault has
+  not defined. If a word needs a gloss, gloss it in the same breath. A term or id the PI used
   first in this conversation is licensed back to you; that is the only way one enters your
-  answer. Plain science words — question, hypothesis, evidence, finding, experiment, check,
-  result — are free, and always were.
+  answer. Standard scientific vocabulary — hypothesis, null hypothesis, confound, control,
+  effect size, confidence interval, evidence, result — is free; use it rather than a
+  homemade simplification of it.
 - **Never write.** The answer is **ephemeral — chat only**, by the PI's ruling. It is
   regenerated on every call, so it can never be stale, and the vault stays a record of
   science rather than a record of summaries. In particular: do not write it into the node's

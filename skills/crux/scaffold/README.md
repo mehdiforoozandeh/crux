@@ -135,7 +135,7 @@ the `frozen`/`writable` paths, the combination `rule`, …) followed by five sec
 |---------|---------------|
 | `## Goal` | what the search is for, in prose |
 | `## Objective` | three lines — `address::` (a dotted key path into `results/<hid>/metrics.json`), `direction::` (`min` or `max`), `bar::` (a number) |
-| `## Null` | the boring explanation every attempt has to rule out — one line |
+| `## Null` | the null hypothesis every attempt has to rule out — one line |
 | `## Verifiables` | the checks every attempt inherits, in the **node format** (`- [ ]`, `[outcome-neutral]`, `fails-if::`, `discriminates::`) and read by the same parser |
 | `## Guidance` | the PI's standing instructions to workers — **append-only** |
 

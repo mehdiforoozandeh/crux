@@ -149,8 +149,8 @@ def main(argv=None):
                    default=[], help="mark the preceding --fails-if as the one that "
                                     "discriminates against the declared null (at least one must)")
     s.add_argument("--null", default=None,
-                   help="the BORING explanation: the cheapest way this result could be trivially "
-                        "true. One line, <=25 words, naming a confound family (capacity, chance, "
+                   help="the null hypothesis: the most parsimonious alternative explanation of a "
+                        "positive result. One line, <=25 words, naming a confound family (capacity, chance, "
                         "leakage, selection, normalization, instrumentation). The PI approves it "
                         "with `crux approve-null` BEFORE checks are written against it.")
     s.add_argument("--rule", default=None, choices=None,
@@ -267,7 +267,7 @@ def main(argv=None):
 
     s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
                                  help="the PI's sign-off on a hypothesis' null — the gate between "
-                                      "naming the boring explanation and writing checks against it"))
+                                      "naming the null hypothesis and writing checks against it"))
     s.add_argument("id")
 
     s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
@@ -315,7 +315,8 @@ def main(argv=None):
                    help="anchor node id — a question, or a hypothesis for a shorter deck")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--verify", metavar="DECK", default=None,
-                   help="prove every addressed number in DECK still matches the vault")
+                   help="prove every addressed number in DECK still matches the vault, and "
+                        "that a built deck's source files are unchanged since its build")
     g.add_argument("--refresh", metavar="DECK", default=None,
                    help="rewrite DECK's cached values from the vault (values only; prose untouched)")
     g.add_argument("--lint", metavar="DECK", default=None,
@@ -1096,6 +1097,9 @@ def dispatch(a):
                       f"carries no address")
             if failed:
                 return 1
+            if "sources" in rep:
+                print(f"✓ deck sources: {len(rep['sources'])} file(s) unchanged since the "
+                      f"deck was built")
             print(f"✓ deck verified: every addressed number matches the vault"
                   + (f" ({len(rep['unsourced'])} unsourced numeral(s) above — --strict to fail on them)"
                      if rep["unsourced"] else ""))
@@ -1104,6 +1108,9 @@ def dispatch(a):
             res = E.deck_refresh(root, a.refresh)
             if a.json:
                 return _emit(res)
+            if res.get("rebuild"):
+                print("  ⚠ a built deck: its DATA comes from build_deck.py — rerun the build "
+                      "script; refresh rewrites addressed values only", file=sys.stderr)
             if not res["changes"] and not res["unresolvable"]:
                 print("✓ deck already current — nothing rewritten")
                 return 0

@@ -6,6 +6,32 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The register is a science-major undergraduate's** (engine **3.5**, unchanged; no
+  vault-format change). Agents, templates, CLI help and the cockpit now say "null hypothesis"
+  where they said "the boring explanation", and the ELI5 slot asks for one sentence a science
+  undergraduate follows rather than "no jargon". The voice lint no longer counts `null` as
+  crux vocabulary, so "null hypothesis" in chat is no longer flagged as a leak. Old template
+  placeholders still read as unwritten.
+### Added
+
+- **prezit's default arc is now the paper arc, and `crux deck --verify` proves built decks**
+  (spec 11; prezit skill **1.0 → 1.1**; engine **3.5**, unchanged; no vault-format change).
+  The paper arc runs motivation → method → results → discussion, the style a PI approved
+  slide by slide for a family of experiment decks. Its slide roles, style rules and build
+  live in `skills/prezit/references/paper-arc.md`, with a worked example in
+  `skills/prezit/examples/paper_deck/`. The tree arc stays available and the PI picks it
+  at the arc step. A paper deck is built: `build_deck.py` embeds result-file numbers as DATA
+  and writes a deck-sources manifest (vault path → sha256). `crux deck --verify` re-reads
+  every listed file: a changed file is a mismatch, a missing one is unresolvable, and an
+  unbuilt `deck_src.html` is refused and skipped by `validate --check=decks`. `crux deck
+  --lint` requires speaker notes on every paper-arc slide, and `--refresh` tells you to
+  rebuild. A deck that declares no arc and carries no manifest (every tree deck) takes the
+  old path, and its report keeps the same keys. The template gains optional speaker notes
+  (`n`). Two rules now hold for both arcs: plain names on slides, and a project's mandatory
+  metric decomposition shown with every value.
+
 ## [0.9.0] - 2026-10-11
 
 ### Fixed

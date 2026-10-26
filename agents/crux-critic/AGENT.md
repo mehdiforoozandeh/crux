@@ -32,7 +32,7 @@ Every other agent runs *after* a node exists. The bloat happens *while* it is wr
    - **Do any two verifiables fail for the same reason?** Read their failure scenarios: if
      you cannot name a world where one fails and the other passes, one is redundant.
    - **Does anything discriminate against the null?** If every check would also pass under
-     the boring explanation, the set is decorative.
+     the null hypothesis, the set cannot discriminate and is decorative.
 3. Say what you would cut — a section and a reason, not "tighten this".
 
 ## Rules

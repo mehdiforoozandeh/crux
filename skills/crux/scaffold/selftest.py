@@ -1899,7 +1899,8 @@ def run_economy():
     check("economy: snapshot exposes tldr on an idea", "tldr" in snap["nodes"][h1])
     check("economy: an unwritten summary reads empty, not as the placeholder",
           snap["nodes"][q1]["eli5"] == "")
-    edit(node_path(root, q1), "_(one sentence, plain language, no jargon)_",
+    edit(node_path(root, q1), "_(one sentence a science undergraduate follows — standard terms, "
+                              "subfield jargon glossed)_",
          "Whether short nodes stay short.")
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
@@ -2537,6 +2538,147 @@ def run_prezit():
     for needle in ("crux deck", "--verify", "--refresh", "presentations/", "metrics.json",
                    "contract header", "one claim", "re-run the plotting code"):
         check(f"prezit: SKILL.md states '{needle}'", needle in s)
+
+    # the paper arc (the default) beside the tree arc, disclosed behind one pointer
+    pref = os.path.join(skl, "references", "paper-arc.md")
+    check("prezit: SKILL.md names both arcs, the paper arc as default, and points at its reference",
+          "tree arc" in s and "the paper arc is the default" in s.lower()
+          and "references/paper-arc.md" in s)
+    check("prezit: paper-arc reference ships", os.path.isfile(pref))
+    if os.path.isfile(pref):
+        lb = read(pref).lower()
+        for needle in ("motivation", "method", "results", "discussion", "options",
+                       "build_deck.py", "__data__", "__sources__", "deck-sources", "2×",
+                       "decomposition", "plain name", "label every panel", "speaker notes",
+                       "one question at a time"):
+            check(f"prezit: paper-arc reference states '{needle}'", needle in lb)
+    # speaker notes are template chrome (`n` toggles them), and notes add no content units
+    check("prezit: template hides speaker notes until `n`",
+          "aside.notes{display:none}" in t and "e.key==='n'" in t)
+    nt = tempfile.mkdtemp(prefix="crux_pzn_")
+    nd = os.path.join(nt, "notes.html")
+    write(nd, "<!-- job x\n source x\n numbers none\n cut x -->\n"
+              '<section class="slide"><ul>' + "<li>x</li>" * 7 + "</ul>"
+              '<aside class="notes"><p>a</p><p>b</p></aside></section>')
+    check("prezit: speaker notes in <p> add no content units to the lint",
+          E.deck_lint(nd) == [])
+    shutil.rmtree(nt, ignore_errors=True)
+
+    run_prezit_paper(CRUX, skl, exd)
+
+
+def run_prezit_paper(CRUX, skl, exd):
+    """The paper arc's proof path: a BUILT deck carries a deck-sources manifest (vault path
+    -> sha256 of every file its build read) and --verify re-reads each file. The tree path
+    must stay byte-identical in its report."""
+    print("\n# prezit paper arc (built decks: deck-sources manifest, verify, lint)")
+    pdir = os.path.join(skl, "examples", "paper_deck")
+    src, bld, idx = (os.path.join(pdir, f) for f in ("deck_src.html", "build_deck.py", "index.html"))
+    check("prezit: paper example ships (deck_src.html, build_deck.py, index.html)",
+          all(os.path.isfile(f) for f in (src, bld, idx)))
+    if not all(os.path.isfile(f) for f in (src, bld, idx)):
+        return
+    base = tempfile.mkdtemp(prefix="crux_pp_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    run = lambda *a: subprocess.run([sys.executable, CRUX, "deck", *a], capture_output=True,
+                                    text=True, encoding="utf-8", cwd=svc)
+    x = read(idx)
+    check("prezit: paper example declares the paper arc and carries a manifest",
+          E.deck_arc(x) == "paper" and 'id="deck-sources"' in x and "__SOURCES__" not in x)
+    check("prezit: paper example is self-contained (no external refs)",
+          not re.search(r'(?:src|href)\s*=\s*["\']https?://|<script\s[^>]*\bsrc\s*=', x))
+
+    # the build is reproducible: rebuilding against a vault copy gives the shipped bytes
+    pc = os.path.join(base, "paper_deck")
+    shutil.copytree(pdir, pc)
+    os.remove(os.path.join(pc, "index.html"))
+    rb = subprocess.run([sys.executable, os.path.join(pc, "build_deck.py"), svc],
+                        capture_output=True, text=True, encoding="utf-8")
+    check("prezit: paper build_deck.py runs", rb.returncode == 0)
+    check("prezit: paper build reproduces the shipped index.html byte for byte",
+          os.path.isfile(os.path.join(pc, "index.html")) and read(os.path.join(pc, "index.html")) == x)
+
+    rep = E.deck_verify(svc, idx)
+    check("prezit: paper example — every source re-read and unchanged",
+          sorted(rep.get("sources", [])) == [f"results/{h}/metrics.json" for h in ("h1", "h2", "h3")])
+    check("prezit: paper example — no mismatch, unresolvable or unsourced",
+          rep["mismatch"] == [] and rep["unresolvable"] == [] and rep["unsourced"] == [])
+    check("prezit: `crux deck --verify --strict` green on the paper example",
+          run("--verify", idx, "--strict").returncode == 0)
+    check("prezit: `crux deck --lint` green on the paper example (built and source)",
+          run("--lint", idx).returncode == 0 and run("--lint", src).returncode == 0)
+
+    # failing for the right reasons
+    rs = E.deck_verify(svc, src)
+    check("prezit: the unbuilt deck_src.html fails verify as unbuilt",
+          any(u["kind"] == "unbuilt" for u in rs["unresolvable"]) and rs.get("unbuilt"))
+    pres = os.path.join(svc, "presentations", "q1")
+    os.makedirs(pres)
+    shutil.copy(src, os.path.join(pres, "deck_src.html"))
+    shutil.copy(idx, os.path.join(pres, "index.html"))
+    check("prezit: validate's deck check skips an unbuilt source and passes the built deck",
+          E.deck_warnings(svc) == [])
+    with open(os.path.join(svc, "results", "h3", "metrics.json"), "a") as fh:
+        fh.write(" ")
+    rm = E.deck_verify(svc, idx)
+    check("prezit: a source changed after the build is a mismatch naming that file",
+          [m["addr"] for m in rm["mismatch"]] == ["results/h3/metrics.json"])
+    check("prezit: a changed source fails `--verify` and validate warns",
+          run("--verify", idx).returncode != 0 and len(E.deck_warnings(svc)) == 1)
+    os.remove(os.path.join(svc, "results", "h2", "metrics.json"))
+    ru = E.deck_verify(svc, idx)
+    check("prezit: a missing source is unresolvable",
+          any(u["kind"] == "missing-file" and "results/h2/metrics.json" in u["msg"]
+              for u in ru["unresolvable"]))
+
+    t2 = os.path.join(base, "t")
+    os.makedirs(t2)
+    def deck(name, head, body='<p>x</p>', notes=True):
+        f = os.path.join(t2, name)
+        write(f, head + "<!-- job x\n source x\n numbers x\n cut x -->\n<section class=\"slide\">"
+                 + body + ('<aside class="notes"><p>n</p></aside>' if notes else "") + "</section>")
+        return f
+    PA = '<meta name="prezit-arc" content="paper">'
+    MAN = lambda m: '<script type="application/json" id="deck-sources">%s</script>' % json.dumps(m)
+    good = {"results/h1/metrics.json":
+            hashlib.sha256(open(os.path.join(svc, "results", "h1", "metrics.json"), "rb").read()).hexdigest()}
+    f = deck("nomanifest.html", PA)
+    check("prezit: a paper deck with no manifest is unresolvable",
+          any(u["kind"] == "no-manifest" for u in E.deck_verify(svc, f)["unresolvable"]))
+    f = deck("dotdot.html", PA + MAN({"../outside.txt": "0" * 64}))
+    check("prezit: a manifest path escaping the vault is refused",
+          any(u["kind"] == "bad-path" for u in E.deck_verify(svc, f)["unresolvable"]))
+    f = deck("badarc.html", '<meta name="prezit-arc" content="lab">' + MAN(good))
+    check("prezit: an unknown arc name is unresolvable",
+          any(u["kind"] == "bad-arc" for u in E.deck_verify(svc, f)["unresolvable"]))
+    f = deck("typed.html", PA + MAN(good), body="<p>gain of 3.3 points</p>")
+    rt = E.deck_verify(svc, f)
+    check("prezit: a typed numeral on a paper slide is unsourced (fails --strict only)",
+          rt["mismatch"] == [] and rt["unresolvable"] == []
+          and [u["numeral"] for u in rt["unsourced"]] == ["3.3"])
+    f = deck("nonotes.html", PA + MAN(good), notes=False)
+    check("prezit: lint fails a paper slide with no speaker notes",
+          any("speaker notes" in m for _, m in E.deck_lint(f)))
+    f = deck("commented.html", "<!-- " + PA + MAN(good) + " -->", notes=False)
+    check("prezit: arc and manifest quoted inside a comment are ignored (tree path)",
+          E.deck_arc(read(f)) is None and "sources" not in E.deck_verify(svc, f)
+          and E.deck_lint(f) == [])
+    f = deck("refresh.html", PA + MAN(good))
+    before = read(f)
+    rr = E.deck_refresh(svc, f)
+    check("prezit: refresh on a built deck says rebuild and writes nothing",
+          rr.get("rebuild") is True and rr["changes"] == [] and read(f) == before)
+
+    # the tree path is unchanged: same report keys, no rebuild flag
+    rv = E.deck_verify(svc, exd)
+    check("prezit: tree deck report keeps exactly the pre-paper-arc keys",
+          sorted(rv) == ["derived", "literal", "mismatch", "unresolvable", "unsourced"])
+    exc = os.path.join(t2, "tree_copy.html")
+    shutil.copy(exd, exc)
+    check("prezit: refresh on a tree deck carries no rebuild flag",
+          "rebuild" not in E.deck_refresh(svc, exc))
+    shutil.rmtree(base, ignore_errors=True)
 
 
 def run_rd():
@@ -5042,7 +5184,7 @@ def run_brief():
 
 
 def run_null():
-    """Spec 09 PRD 09.1 — `## Null`, the boring explanation, PI-gated.
+    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis, PI-gated.
 
     The brief removes the parent's authored prompt, but one leak cannot be engineered away:
     the hypothesis TITLE is directional. "masked-token beats masked-stem" presumes a winner.
@@ -5358,7 +5500,7 @@ def run_migrate():
           all(E.node_schema(n) == 0 for n in v.nodes.values() if n.type in ("question", "idea")))
     check("evmig: migrate writes no evidence field",
           all(f not in n["fm"] for n in v.nodes.values() for f in E.MIGRATE_FORBIDDEN))
-    check("evmig: the Null it adds is EMPTY — naming the boring explanation is a scientific act",
+    check("evmig: the Null it adds is EMPTY — naming the null hypothesis is a scientific act",
           E._null_text(v.get("h1")) is None)
     check("evmig: migrate changes no recorded verdict",
           fingerprint(root)[1] == before_verdicts and fingerprint(root)[2] == before_status)
@@ -5575,10 +5717,12 @@ def run_agent_roster():
 
     # PRD-3. The shas were read off disk at the base commit of this slice. A literal here is
     # the point: `git diff --stat` proves nothing to a reader six months from now, and these
-    # four files are the ones the slice is most tempted to edit.
+    # four files are the ones the slice is most tempted to edit. crux-null was re-pinned on
+    # 2026-10-25, deliberately: "the boring explanation" became "the null hypothesis" when the
+    # register moved to a science undergraduate's (CHANGELOG, Unreleased).
     REUSED_SHA = {
         "crux-close": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
-        "crux-null": "26f1c5ee36bb6a2fbcdaa438d1c524017ab512c0b1a547200b19665cc07507d6",
+        "crux-null": "fc4e5fb06fb0f4fdb1158e1986ed96e8374bff7a6638e380ba46cf42c340c832",
         "crux-verifiables": "307daa3e363358ea26b3a037596345fb0b2e6cc55219c862bd999fb18c0f7d2a",
         "crux-design": "01a9d2d7bb4f92e21aac04800a3f6edfc99b914b027458fd49fa2b6d3c9a5584"}
     drifted = sorted(
@@ -7518,11 +7662,16 @@ def run_science_voice():
           all(E.is_crux_term(t) for t in
               ("verifiable", "verifiables", "review gate", "synthesis", "verdict", "taskhub",
                "vault", "node", "cockpit", "roll-up", "outcome-neutral", "invalid-run",
-               "situate", "null", "ledger", "glossary", "RD", "seed file", "META.md")))
-    check("voice: plain science words are free — a grad student owes no gloss for 'hypothesis'",
+               "situate", "ledger", "glossary", "RD", "seed file", "META.md")))
+    check("voice: standard science words are free — a grad student owes no gloss for 'hypothesis'",
           not any(E.is_crux_term(t) for t in
                   ("question", "hypothesis", "evidence", "finding", "experiment", "check",
-                   "result", "supported", "refuted", "inconclusive", "baseline")))
+                   "result", "supported", "refuted", "inconclusive", "baseline",
+                   "null", "null hypothesis", "confound", "control")))
+    check("voice: 'null hypothesis' in chat is science, not a leak — the register is a science "
+          "undergraduate's, so the standard term must never be what the lint pushes against",
+          E.voice_lint([("agent", "The null hypothesis is that seed noise alone explains "
+                                  "the gain.")]) == [])
     check("voice: and the words measured to collide with real science prose stay out",
           not any(E.is_crux_term(t) for t in
                   ("seed", "partial", "anchor", "idea", "brief", "pursue", "parent")))
@@ -10635,7 +10784,7 @@ HAND_CLOSE_GOLDEN = "\n".join((
     '',
     '## ELI5',
     '',
-    '_(one sentence, plain language, no jargon)_',
+    '_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_',
     '',
     '## TL;DR',
     '',

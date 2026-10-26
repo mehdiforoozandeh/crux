@@ -20,7 +20,7 @@ Parent:: [[<<parent_basename>>]]
 
 ## ELI5
 
-_(one sentence, plain language, no jargon)_
+_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_
 
 ## TL;DR
 
@@ -28,10 +28,10 @@ _(one paragraph: what this claims, and what would settle it)_
 
 ## Null
 
-<!-- spec 09: the BORING explanation — the cheapest way this result could be trivially
-     true. One line, <=25 words, naming a family. Your checks must discriminate against it.
+<!-- spec 09: the null hypothesis — the most parsimonious alternative explanation under
+     which this result appears although the claim is false. One line, <=25 words, naming a family. Your checks must discriminate against it.
      The PI approves it before checks are written: `crux approve-null <id>`. -->
-_(one line: the cheapest way this result could be trivially true — name a family from capacity, chance, leakage, selection, normalization, instrumentation)_
+_(one line: the null hypothesis, the most parsimonious alternative explanation — name a family from capacity, chance, leakage, selection, normalization, instrumentation)_
 
 ## Problem Statement
 
