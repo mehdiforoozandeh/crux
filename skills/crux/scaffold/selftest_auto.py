@@ -51,6 +51,17 @@ elif mode == "rate":
     print("You've hit your session limit - resets 9:10pm"); sys.exit(1)
 elif mode == "slow":
     time.sleep(30)
+elif mode == "mv":
+    os.makedirs("src", exist_ok=True)
+    subprocess.check_call(["git", "mv", "frozen.txt", "src/frozen.txt"])
+    commit("move the frozen file")
+elif mode == "ignore":
+    open("prog.local", "w").write("50\n")
+    setv(repr(float(cur) + 1)); commit("raise and leave an ignored file")
+elif mode == "sleep":
+    setv("sleep"); commit("make the scorer sleep")
+elif mode == "rateslow":
+    time.sleep(4); print("You've hit your session limit"); sys.exit(1)
 elif mode == "nap":
     time.sleep(1.5); setv(repr(float(cur) + 1)); commit("raise after a nap")
 '''
@@ -60,7 +71,12 @@ SCORER = r'''import os, sys, json
 tmp = os.environ["CRUX_STUB_DIR"]
 cf = os.path.join(tmp, "score_count")
 open(cf, "a").write(os.environ.get("CRUX_ATTEMPT", "") + "|" + os.environ.get("CRUX_WORKSPACE", "") + "\n")
+import time
 first = (open("prog.txt").read().split("\n") or [""])[0].strip()
+if os.path.exists("prog.local"):
+    first = open("prog.local").read().strip()
+if first == "sleep":
+    time.sleep(30)
 if first == "garbage":
     print("not json"); sys.exit(0)
 if first == "nokey":
@@ -73,6 +89,7 @@ except ValueError:
     print(json.dumps({"passed": False, "reason": "not a number"})); sys.exit(1)
 print(json.dumps({"x": {"value": v}, "passed": True}))
 '''
+HANG = 'import time\ntime.sleep(30)\n'
 CONST = 'import json\nprint(json.dumps({"x": {"value": 5.0}, "passed": True}))\n'
 
 
@@ -96,12 +113,14 @@ def fixture(tmp, scorer="score.py", modes="up", **fields):
     os.makedirs(repo)
     _write(os.path.join(repo, "prog.txt"), "1.0\n")
     _write(os.path.join(repo, "frozen.txt"), "frozen\n")
+    _write(os.path.join(repo, ".gitignore"), "*.local\n")
     _sh(["git", "init", "-q"], repo)
     _sh(["git", "add", "-A"], repo)
     _sh(["git", "commit", "-q", "-m", "base"], repo)
     base = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"]).decode().strip()
     _write(os.path.join(tmp, "score.py"), SCORER)
     _write(os.path.join(tmp, "const.py"), CONST)
+    _write(os.path.join(tmp, "hang.py"), HANG)
     _write(os.path.join(tmp, "stub"), STUB, 0o755)
     root = os.path.join(tmp, "vault")
     E.cmd_init("Auto Test", root)
@@ -399,6 +418,21 @@ def _run_tests(check, A):
               at[0]["score"] is None
               and E.Vault(root).get(at[0]["id"])["fm"].get("verdict") == "invalid-run")
 
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,mv,up", editable="prog.txt, src/")
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        check("rule 1: moving a frozen file into an editable dir is discarded (no rename bypass)",
+              at[0]["status"] == "discarded" and "frozen.txt" in at[0]["reason"]
+              and "src/" not in at[0]["reason"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,ignore")
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        check("rule 1: a gitignored file the worker leaves is cleaned before scoring",
+              at[0]["status"] == "kept" and at[0]["score"] == 2.0)
+
     # rule 2: crash / no number / timeout are failed attempts; the run continues
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, modes="up,crash,garbage,nokey,up")
@@ -433,6 +467,32 @@ def _run_tests(check, A):
         check("rule 4: a worker past attempt_minutes is a failed attempt, killed in time",
               at[0]["status"] == "failed" and "time" in at[0]["reason"]
               and at[0]["seconds"] < 10 and time.monotonic() - t0 < 25)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,sleep", attempt_minutes="0.05")
+        t0 = time.monotonic()
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        check("rule 4: a slow scorer is killed at the attempt deadline; the attempt is failed",
+              at[0]["status"] == "failed" and "scorer" in at[0]["reason"]
+              and at[0]["seconds"] < 10 and time.monotonic() - t0 < 25)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,rateslow,slow", attempt_minutes="0.1")
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        check("rule 4: a rate-limit retry gets only what is left of the attempt's time",
+              len(at) == 1 and at[0]["status"] == "failed" and at[0]["seconds"] < 8.5)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, scorer="hang.py", attempt_minutes="0.05")
+        t0 = time.monotonic()
+        stop = A.run(root, path)
+        led = ledger(root, qid)
+        check("rule 6: a hung base scorer fails setup cleanly, with a ledger line",
+              stop["reason"] == "setup" and time.monotonic() - t0 < 20
+              and led[0]["event"] == "setup" and led[0]["ok"] is False
+              and any("time" in p for p in led[0]["problems"]))
 
     # rule 7: budget checked only between attempts; a rate limit waits and retries
     with tempfile.TemporaryDirectory() as tmp:

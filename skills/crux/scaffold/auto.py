@@ -251,14 +251,18 @@ def web_denied(argv):
     return {"WebFetch", "WebSearch"} <= denied
 
 
-def _work(plan, wt, brief, limit, parent, log):
-    """Run the worker once in `wt`, brief on stdin, killed after `limit` seconds. A failure
-    that reads as a provider limit (rule 7) waits, resets the worktree and tries again.
+def _work(plan, wt, brief, deadline, parent, log):
+    """Run the worker in `wt`, brief on stdin, killed at the monotonic `deadline`. A failure
+    that reads as a provider limit (rule 7) waits, resets the worktree and tries again; the
+    wait moves the deadline, the time already worked does not come back.
     Returns (rc, timed_out, seconds spent waiting)."""
     waited = 0.0
     while True:
+        left = deadline + waited - time.monotonic()
         try:
-            rc, out, err = _run(worker_argv(plan), cwd=wt, timeout=max(limit, 1.0), stdin=brief)
+            if left <= 0:
+                raise subprocess.TimeoutExpired("worker", 0)
+            rc, out, err = _run(worker_argv(plan), cwd=wt, timeout=left, stdin=brief)
             timed_out = False
         except subprocess.TimeoutExpired:
             rc, out, err, timed_out = None, "", "", True
@@ -272,7 +276,7 @@ def _work(plan, wt, brief, limit, parent, log):
         time.sleep(wait)
         waited += wait
         _git(wt, "reset", "--hard", "-q", parent)
-        _git(wt, "clean", "-fdq")
+        _git(wt, "clean", "-fdxq")
 
 
 def brief_text(plan, n, parent, pscore, best, last):
@@ -488,7 +492,7 @@ def setup_check(root, plan, worker=True):
     try:
         _add_worktree(repo, wt, base)
         t0 = time.monotonic()
-        st, baseline, why = score(plan, wt, 0, ws)
+        st, baseline, why = score(plan, wt, 0, ws, t0 + plan["attempt_minutes"] * 60)
         secs = time.monotonic() - t0
         target = next((f for e in plan["editable"] for f in
                        _git(wt, "ls-files", "--", e).splitlines()), None)
@@ -498,7 +502,8 @@ def setup_check(root, plan, worker=True):
             problems.append("no editable path names a file tracked at base")
         else:
             open(os.path.join(wt, target), "w").close()
-            st2, s2, _ = score(plan, wt, 0, ws)
+            st2, s2, _ = score(plan, wt, 0, ws,
+                               time.monotonic() + plan["attempt_minutes"] * 60)
             if st2 == "kept" and s2 == baseline:
                 problems.append(f"the score does not respond: with {target} emptied it still "
                                 f"scores {s2!r}")
@@ -508,7 +513,8 @@ def setup_check(root, plan, worker=True):
                     f"line to `{target}` in this git worktree, in that file's comment syntax, "
                     f"then make ONE git commit with the subject `crux setup check`. Change "
                     f"nothing else and do not use the web.\n")
-            rc, timed_out, _ = _work(plan, wt, text, plan["attempt_minutes"] * 60, base,
+            rc, timed_out, _ = _work(plan, wt, text,
+                                     time.monotonic() + plan["attempt_minutes"] * 60, base,
                                      os.path.join(d, "logs", "setup.log"))
             if _rev(wt, "HEAD") == base:
                 problems.append(f"the worker made no commit (exit {rc}, timed out "
@@ -554,12 +560,12 @@ def _attempt(root, plan, setup, rows, n, lp):
     commit, value, claim = None, None, ""
     _add_worktree(repo, wt, pcommit)
     try:
-        rc, timed_out, waited = _work(plan, wt, text,
-                                      attempt_s - 1.5 * float(setup["scorer_seconds"] or 0),
-                                      pcommit, os.path.join(d, "logs", f"{n}.log"))
+        rc, timed_out, waited = _work(
+            plan, wt, text, start + attempt_s - 1.5 * float(setup["scorer_seconds"] or 0),
+            pcommit, os.path.join(d, "logs", f"{n}.log"))
         deadline = start + waited + attempt_s
         _git(wt, "reset", "--hard", "-q")              # the scorer reads the commit, only
-        _git(wt, "clean", "-fdq")
+        _git(wt, "clean", "-fdxq")
         head = _rev(wt, "HEAD")
         if head and head != pcommit:
             commit = head
@@ -570,8 +576,9 @@ def _attempt(root, plan, setup, rows, n, lp):
         elif commit is None:
             status, reason = "failed", f"the worker made no commit (exit {rc})"
         else:
-            bad = [p for p in _git(wt, "diff", "--name-only", pcommit, head).splitlines()
-                   if p and not editable_ok(p, plan["editable"])]
+            # --no-renames: a move lists both paths, so a frozen file cannot leave unseen
+            diff = _git(wt, "diff", "--name-only", "--no-renames", pcommit, head)
+            bad = [p for p in diff.splitlines() if p and not editable_ok(p, plan["editable"])]
             if bad:
                 status, reason = "discarded", "changed non-editable path(s): " + ", ".join(bad)
             else:
