@@ -8,6 +8,11 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- **The autopilot is rebuilt lean** (spec 18; replaces the spec-05 driver). A plan has at most
+  ten rows, three verbs remain (`crux auto check`, `run`, `status`), and seven rules govern a
+  run; each attempt is a hypothesis closed on its derived verdict and one line in
+  `auto/<qid>/ledger.jsonl`. Islands, the steward, approval hashes and `auto approve`/`brief`/
+  `guide`/`promote`/`refs` are gone, and an old plan is refused with the new fields named.
 - **The register is a science-major undergraduate's** (engine **3.5**, unchanged; no
   vault-format change). Agents, templates, CLI help and the cockpit now say "null hypothesis"
   where they said "the boring explanation", and the ELI5 slot asks for one sentence a science

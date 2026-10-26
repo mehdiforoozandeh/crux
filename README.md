@@ -56,10 +56,11 @@ about a hypothesis — requires the researcher's acceptance (`crux task accept`)
 
 An optimization loop for questions with a single metric, such as a loss or a runtime. It
 extends [autoresearch](https://github.com/karpathy/autoresearch). The researcher and the
-agent first write a flight plan with the objective, baselines, limits and guidance. In each
-attempt, an agent changes the code, the program is run and scored, and the attempt is
-recorded in the research tree as a hypothesis with a verdict. The next attempt is selected
-with the tree-search rule from Google's [ERA](https://www.nature.com/articles/s41586-026-10658-6),
+agent first write a short plan: the editable files, a frozen scorer, the objective and its
+bar, a time budget, and guidance. In each attempt, an agent changes the code, the program is
+scored, and the attempt is recorded in the research tree as a hypothesis with a verdict.
+Climb mode always builds on the best attempt; explore mode picks the parent with the
+tree-search rule from Google's [ERA](https://www.nature.com/articles/s41586-026-10658-6),
 which balances refining the best attempt against exploring less-visited ones. Skill:
 `crux-autopilot`; command: `crux auto`.
 
