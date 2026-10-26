@@ -93,19 +93,9 @@ function computeGeom() {
   return g;
 }
 
-// ---------------------------------------------------------- autopilot cockpit (spec 05, PRD 05.4)
-// The Autopilot tab reads ONE endpoint of its own, /auto.json, which touches only the run's own
-// directory. It is deliberately not fed from the tree snapshot: a run rewrites state.json after
-// every event, and a reader that came through the snapshot would rebuild the whole tree per poll.
-const AUTO_VIEWS = [["live", "Live"], ["results", "Results"]];
-// the engine's own AUTO_EVENTS_TAIL / AUTO_EVENTS_MAX. A selftest pins both numbers to the engine
-// constants, so the ledger panel and the route can never disagree about how much history exists.
-const AUTO_EVENTS_TAIL = 200, AUTO_EVENTS_MAX = 2000;
-// engine.AUTO_PORTFOLIO_RULE, verbatim — the portfolio panel prints it rather than paraphrasing
-// it. One sentence living in two files is the exact shape that drifts, so a selftest greps one
-// for the other.
-const AUTO_PORTFOLIO_RULE =
-  "Ranked by the objective, then taken greedily — a candidate in the same lineage as one already taken is skipped.";
+// ---------------------------------------------------------- autopilot cockpit (spec 18)
+// The Autopilot tab reads ONE endpoint of its own, /auto.json — `auto.cockpit(root)` — which
+// touches only the vault's auto/ directory. It is deliberately not fed from the tree snapshot.
 
 const state = {
   snap: null,
@@ -139,14 +129,7 @@ const state = {
   tab: "tree",              // "tree" | "wiki" | "tasks" | "auto" — applied from localStorage once the layer is known
   // the Autopilot tab's own state. `data` is the last /auto.json payload and nothing else reads
   // it; `key` is the render signature, the same no-op guard renderTasks uses.
-  auto: { data: null,                                   // the last /auto.json payload
-          etag: "",                                     // its validator, echoed as If-None-Match
-          lastJSON: "",                                 // text-diff guard, the poll's own idiom
-          view: localStorage.getItem("crux-auto-view") || "live",
-          run: localStorage.getItem("crux-auto-run") || null,   // selected anchor, when >1 run
-          events: AUTO_EVENTS_TAIL,                     // what the ledger panel is asking for
-          selected: null,                               // the attempt id the rows show as `on`
-          key: "" },                                    // last-rendered signature — skip no-op renders
+  auto: { data: null, etag: "", lastJSON: "", selected: null, key: "" },
   wiki: {
     selected: localStorage.getItem("crux-wiki-slug") || null,  // slug, or null => the _index page
     page: null,             // fetched /wiki/<slug>.json payload for the reader
@@ -2103,44 +2086,14 @@ $("tasks-pane").addEventListener("click", (e) => {
   const row = e.target.closest("[data-task]");
   if (row) selectTask(row.getAttribute("data-task"));
 });
-// the Autopilot pane's own clicks: the view rail, the run picker, an attempt row, Show more.
-// Attached HERE for the same reason the taskhub listener above is — the buttons render inside
-// this pane, and the version that sat on #tabs left that rail dead.
+// the Autopilot pane's own click: an attempt row opens its node in the detail pane, which sits
+// outside every tab pane, so no tab change is needed.
 $("auto-pane").addEventListener("click", (e) => {
-  const av = e.target.closest("[data-au-view]");
-  if (av) {
-    state.auto.view = av.getAttribute("data-au-view");
-    localStorage.setItem("crux-auto-view", state.auto.view);
-    state.auto.key = "";
-    renderAuto();
-    return;
-  }
-  const ar = e.target.closest("[data-au-run]");
-  if (ar) {
-    state.auto.run = ar.getAttribute("data-au-run");
-    localStorage.setItem("crux-auto-run", state.auto.run);
-    state.auto.key = "";
-    renderAuto();
-    return;
-  }
-  // the detail pane sits OUTSIDE every tab pane, so opening an attempt's node needs no tab
-  // change — and re-entering the tree renderer from a click would be the loop the run mark's
-  // comment warns about
   const an = e.target.closest("[data-au-node]");
-  if (an) {
-    state.auto.selected = an.getAttribute("data-au-node");
-    state.auto.key = "";
-    selectNode(state.auto.selected);
-    return;
-  }
-  // ask the next poll for five times the tail, up to AUTO_EVENTS_MAX. Clearing the validator and
-  // the text guard is what makes the larger answer arrive: an unchanged run would 304 forever.
-  const am = e.target.closest("[data-au-more]");
-  if (am) {
-    state.auto.events = Math.min(state.auto.events * 5, AUTO_EVENTS_MAX);
-    state.auto.etag = "";
-    state.auto.lastJSON = "";
-  }
+  if (!an) return;
+  state.auto.selected = an.getAttribute("data-au-node");
+  state.auto.key = "";
+  selectNode(state.auto.selected);
 });
 $("run-chip").addEventListener("click", () => setTab("auto"));
 
@@ -3009,32 +2962,23 @@ function taskGateDetail() {
     `The cockpit is read-only.</p>` + hint;
 }
 
-// ------------------------------------------------------- the Autopilot tab (spec 05, PRD 05.4)
-// Everything below reads state.auto.data — the /auto.json payload — and nothing else. The tree
-// snapshot is never consulted here, and nothing here writes: the cockpit stays read-only.
+// ------------------------------------------------------- the Autopilot tab (spec 18)
+// Everything below reads state.auto.data — the /auto.json payload, `auto.cockpit(root)`:
+// {active, runs: [status(...)]} — and nothing else. Nothing here writes: the cockpit stays
+// read-only. The tab shows ONE run: the live one, else the last in the payload.
 
-function autoActive() { return !!(state.auto.data && state.auto.data.active); }
 function autoRuns()   { return (state.auto.data && state.auto.data.runs) || []; }
-// the run the tab is showing: the one the rail picked, else the first. A stored anchor whose run
-// is gone falls back to the first rather than leaving the pane blank.
-function autoRun() {
-  const rs = autoRuns();
-  if (!rs.length) return null;
-  return rs.find((x) => x.anchor === state.auto.run) || rs[0];
-}
-// the run the top-bar chip and the anchor ring speak for. `running` ONLY — never `stale` and
-// never `stopped`: the mark's whole claim is that a driver is writing right now.
-function liveRun() { return autoRuns().find((x) => x.liveness === "running") || null; }
+// the tab exists while any run exists: a stopped run is still worth reading
+function autoActive() { return autoRuns().length > 0; }
+function liveRun()    { return autoRuns().find((x) => x.live) || null; }
+function autoRun()    { const rs = autoRuns(); return liveRun() || rs[rs.length - 1] || null; }
 
-// The tab's own poll, beside the snapshot poll and shaped exactly like it: one ETag'd request a
-// second, which answers 304 forever on an idle vault, and a text diff before any parse. It runs
-// whatever tab is up, because the chip and the anchor ring belong to every tab. A network error
-// leaves the last-known payload in place and touches no badge in the top bar — the connection
-// badge belongs to the snapshot poll, and a second writer would make it disagree with itself.
+// The tab's own poll, beside the snapshot poll and shaped like it: one ETag'd request a second,
+// a 304 on an idle vault, and a text diff before any parse. A network error keeps the last
+// payload and touches no badge — the connection badge belongs to the snapshot poll.
 async function pollAuto() {
   try {
-    const q = state.auto.events !== AUTO_EVENTS_TAIL ? "?events=" + state.auto.events : "";
-    const r = await fetch("auto.json" + q, { cache: "no-store",
+    const r = await fetch("auto.json", { cache: "no-store",
       headers: state.auto.etag ? { "If-None-Match": state.auto.etag } : {} });
     if (r.ok) {                     // 304 is neither ok nor an error — the run has not moved
       state.auto.etag = r.headers.get("ETag") || "";
@@ -3053,23 +2997,16 @@ async function pollAuto() {
   setTimeout(pollAuto, 1000);
 }
 
-// The run-level explanation for the pulse the tree already draws. `n.status === "running"` is
-// already inside treeSignatures' COSMETIC key, so an attempt's own pulse repaints in place; the
-// anchor's run state is in NEITHER of that function's two keys, so this one is called from the
-// /auto.json poll AND from the tail of the tree renderer — a structural render would otherwise
-// drop the ring with nothing to put it back.
-// It is a class toggle on elements that already exist, and it re-enters no renderer: that would
-// be a loop, and a rebuild costs ~55x the toggle it would be standing in for (spec 12).
+// The top-bar chip and the ring on the anchor question, for a LIVE run only. Called from the
+// poll and from the tail of the tree renderer (a structural render drops the ring). A class
+// toggle on elements that already exist; it re-enters no renderer.
 function updateRunMark() {
   const r = liveRun();
-  // the chip lives in the top bar, outside the SVG, so no tree render can drop it
   if ($("run-chip")) {
     $("run-chip").hidden = !r;
     if (r) $("run-chip").textContent =
-      `Autopilot · ${r.mode} · ${r.budget.attempts.used}/${r.budget.attempts.total} · ${r.anchor}`;
+      `Autopilot · ${r.mode} · ${(r.attempts || []).length} attempts · ${r.anchor}`;
   }
-  // clear the ring wherever it is, then put it on the anchor if that node is drawn. An anchor
-  // collapsed out of the tree is a no-op, never an error.
   svg.querySelectorAll(".node.run-anchor").forEach((el) => el.classList.remove("run-anchor"));
   if (r) {
     const el = svg.querySelector('.node[data-id="' + CSS.escape(r.anchor) + '"]');
@@ -3081,336 +3018,127 @@ function renderAuto() {
   if (!autoActive() || state.tab !== "auto") return;
   const r = autoRun();
   if (!r) return;
-  // §H's clickability does not come from /auto.json at all: a row is a button only when its id
-  // is in the SNAPSHOT's nodes. /auto.json and /snapshot.json race at boot, so Results can paint
-  // before the snapshot lands — and on a STOPPED run none of `updated`, `liveness` or
-  // `event_count` ever moves again, so without a snapshot-derived term the key never changes and
-  // every row stays dead for as long as the reader looks at it. The term counts THIS run's
-  // attempts that have a node filed, and is -1 while there is no snapshot at all, so it moves
-  // exactly when a row's clickability moves — a plain `state.snap` would rebuild the pane at
-  // 1 Hz on every unrelated vault edit, which is the scroll-reset this guard exists to prevent.
+  // a row is a button only when its node is in the SNAPSHOT, and /auto.json and the snapshot
+  // race at boot — so the count of filed attempts joins the key, or a stopped run's rows would
+  // stay dead forever. An unchanged key must not rebuild the pane (it would reset the scroll).
   const filed = state.snap && state.snap.nodes
-    ? (r.attempts || []).reduce((n, a) => n + (a && a.id in state.snap.nodes ? 1 : 0), 0)
-    : -1;
-  // the no-op guard renderTasks carries: an unchanged payload must not rebuild the pane, or a
-  // 1 Hz poll would reset the reader's scroll while nothing had moved
-  const key = JSON.stringify([state.auto.view, r.anchor, state.auto.selected, state.search,
-                              r.updated, r.liveness, r.event_count, state.auto.events, filed]);
+    ? (r.attempts || []).filter((a) => a.id in state.snap.nodes).length : -1;
+  const key = JSON.stringify([r, state.auto.selected, filed]);
   if (key === state.auto.key) return;
   state.auto.key = key;
-  renderAutoRail(r);
-  $("auto-body").innerHTML = state.auto.view === "results" ? autoResultsHTML(r) : autoLiveHTML(r);
+  $("auto-body").innerHTML = autoHTML(r);
 }
 
-// the rail mirrors the Taskhub's: the views first, then — only when there is more than one run
-// — the runs. With one run, every case today, the rail is exactly two buttons.
-function renderAutoRail(r) {
-  const runs = autoRuns();
-  $("auto-rail-body").innerHTML =
-    AUTO_VIEWS.map(([k, label]) =>
-      `<button class="au-view${state.auto.view === k ? " on" : ""}" data-au-view="${k}">${label}</button>`).join("") +
-    (runs.length > 1
-      ? `<div class="au-group">Run</div>` + runs.map((x) =>
-          `<button class="au-view${x.anchor === r.anchor ? " on" : ""}" ` +
-          `data-au-run="${esc(x.anchor)}">${esc(x.anchor)}</button>`).join("")
-      : "");
-}
+const autoNum = (x) => {        // Number(null) is 0: a missing score must never read as zero
+  if (x === null || x === undefined || x === "") return null;
+  const v = Number(x);
+  return isFinite(v) ? v : null;
+};
+const autoFmt = (v) => {
+  if (v === null) return "—";
+  const a = Math.abs(v);
+  return a !== 0 && (a >= 1e5 || a < 1e-3) ? v.toExponential(2) : String(Math.round(v * 1e4) / 1e4);
+};
 
-// Live — the plot, what is in flight, the three budget axes and the ledger tail, under a banner
-// that says which of the three states the run is in. A stopped run still renders its whole
-// history below: a run worth stopping is a run worth reading, and no view is reassigned behind
-// the reader.
-function autoLiveHTML(r) {
-  const since = (t) => {
-    const ms = Date.parse(String(t || "").replace(" ", "T"));
-    if (!ms) return "";
-    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-    return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
-  };
-  const g = (x) => String(Number(x));          // auto_stop's %g on the budget totals
+function autoHTML(r) {
   let html = "";
-  if (r.liveness === "stopped" && r.stop) {
+  if (r.stop) {
     html += `<div class="au-stop"><b>Stopped — ${esc(r.stop.reason)}</b>` +
-      (r.stop.axis ? ` <span>${esc(r.stop.axis)}</span>` : "") +
-      `<p>${esc(r.stop.detail)}</p></div>`;
-  } else if (r.liveness === "stale") {
-    // there is no heartbeat anywhere in a run's state — `updated` is written by the driver's own
-    // events — so this line may say only that nothing has been written since, and no more
-    html += `<div class="au-stale">no driver write since ${esc(r.updated)}</div>`;
+      `<p>${esc(r.stop.detail || "")}</p></div>`;
   }
+  html += `<p class="au-note">${esc(r.anchor)} · ${esc(r.mode)} · ` +
+    `${esc(r.address || "—")} ${esc(r.direction || "")}` +
+    (r.bar !== null && r.bar !== undefined ? ` · bar ${esc(autoFmt(autoNum(r.bar)))}` : "") +
+    ` · baseline ${esc(autoFmt(autoNum(r.baseline)))}` +
+    ` · ${r.live ? "live" : "not live"} · ${esc(Number(r.elapsed_hours).toFixed(2))} of ` +
+    `${esc(r.budget_hours)} hours · ${esc(r.attempts_per_hour)} attempts/hour</p>`;
+  html += r.best
+    ? `<p class="au-best">Best: ${esc(r.best.id)} · ${esc(autoFmt(autoNum(r.best.score)))}</p>`
+    : `<p class="au-note">no kept attempt yet</p>`;
 
   html += `<p class="au-sec">Score against attempt number</p>` + autoChartSVG(r);
 
-  const flight = r.in_flight || [];
-  html += `<p class="au-sec">In flight, per island</p>`;
-  html += flight.length
-    ? `<div class="au-panel">` + flight.map((f) =>
-        `<div class="au-flight"><span>${esc(f.island)}</span>` +
-        `<span>${esc(f.id)}</span><span>${esc(f.phase)}</span>` +
-        `<span>parent ${esc(f.parent == null ? "—" : f.parent)}</span>` +
-        `<span>worker ${esc(f.worker_tries)} · scorer ${esc(f.scorer_tries)}</span>` +
-        `<span>${esc(since(f.started))}</span></div>`).join("") + `</div>`
-    : `<p class="au-note">nothing in flight</p>`;
-
-  // the meters borrow auto_stop's own words for each axis, so the tab and the stop reason can
-  // never tell the PI two different stories about the same budget
-  const b = r.budget || {};
-  const at = b.attempts || { used: 0, total: 0 }, hr = b.hours || { used: 0, total: 0 },
-        mc = b.model_calls || { used: 0, total: 0 };
-  const meter = (used, total, words) => {
-    const pct = Number(total) > 0 ? Math.min(100, (Number(used) / Number(total)) * 100) : 0;
-    // the track stays full width and the SPAN inside it carries the percentage, which is the
-    // shape style.css draws: `.au-meter-fill` is the grey rule, `.au-meter-fill > span` the
-    // accent fill. Putting the width on the track instead draws a SHRINKING GREY BAR — nothing
-    // at 0%, full-width grey at 100% — which reads as the opposite of how much is spent.
-    return `<div class="au-meter"><div class="au-meter-fill">` +
-      `<span style="width: ${pct.toFixed(1)}%"></span></div>` +
-      `<span class="au-meter-lab">${words}</span></div>`;
-  };
-  html += `<p class="au-sec">Budget</p><div class="au-panel">` +
-    meter(at.used, at.total, `${esc(at.used)} of ${esc(at.total)} attempts closed`) +
-    meter(hr.used, hr.total,
-          `${esc(Number(hr.used).toFixed(4))} of ${esc(g(hr.total))} driver hours used`) +
-    meter(mc.used, mc.total, `${esc(mc.used)} of ${esc(mc.total)} model calls used`) +
+  // the lineage: the best attempt's parents, back to the base commit
+  const byId = {};
+  (r.attempts || []).forEach((a) => { byId[a.id] = a; });
+  const chain = [];
+  for (let id = r.best && r.best.id; id && !chain.includes(id); id = byId[id] && byId[id].parent)
+    chain.unshift(id);
+  html += `<p class="au-sec">Lineage of the best</p><div class="au-panel">` +
+    (chain.length ? chain.map((id) => esc(id)).join(" → ") : `<span class="au-note">none yet</span>`) +
     `</div>`;
 
-  const evs = r.events || [];
-  html += `<p class="au-sec">Ledger</p>` +
-    `<div class="au-ledger">` + evs.map((e) => {
-      const fields = Object.keys(e).filter((k) => k !== "at" && k !== "event")
-        .map((k) => `${esc(k)}=${esc(e[k] && typeof e[k] === "object" ? JSON.stringify(e[k]) : e[k])}`)
-        .join(" · ");
-      return `<div class="au-ev"><span class="au-ev-at">${esc(e.at)}</span>` +
-        `<span class="au-ev-name">${esc(e.event)}</span>` +
-        `<span class="au-ev-fields">${fields}</span></div>`;
-    }).join("") + `</div>`;
-  if (r.event_count > evs.length) {
-    const capped = state.auto.events >= AUTO_EVENTS_MAX;
-    html += `<button class="au-more" type="button" data-au-more="1"${capped ? " disabled" : ""}>` +
-      `Show more (${evs.length} of ${r.event_count})</button>`;
-  }
+  const filed = (id) => !!(state.snap && state.snap.nodes && id in state.snap.nodes);
+  const cells = (a) => [a.n, a.id, a.parent, autoFmt(autoNum(a.score)), a.status,
+    a.seconds === null || a.seconds === undefined ? "—" : Math.round(a.seconds) + "s"]
+    .map((c) => `<span>${esc(c === null || c === undefined ? "—" : c)}</span>`).join("");
+  html += `<p class="au-sec">Attempts</p><div class="au-panel">` +
+    `<div class="au-row au-head">${["#", "node", "parent", "score", "status", "time"]
+      .map((h) => `<span>${h}</span>`).join("")}</div>` +
+    (r.attempts || []).slice().reverse().map((a) => filed(a.id)
+      ? `<button type="button" class="au-row${state.auto.selected === a.id ? " on" : ""}" ` +
+        `data-au-node="${esc(a.id)}">${cells(a)}</button>`
+      : `<div class="au-row dead">${cells(a)}</div>`).join("") + `</div>`;
   return html;
 }
 
-// §E1 — score against attempt number, the fastest read on whether a run is working. Drawn by
-// hand: there is no chart library here and none is coming, because the standard-library-only
-// rule binds the frontend too — motion.js is the only vendored file and nothing joins it. What
-// follows is an SVG string built the way nodeSVG and renderWikiGraph already build theirs.
-//
-// x is the attempt's ordinal in `closed` order (`attempt_no`), so an attempt still in flight
-// carries no x and is not plotted. y is its score, fitted to the OBSERVED range with a small pad
-// rather than pinned to zero: these objectives are in arbitrary units, and forcing zero would
-// squash every real difference into one flat line at the top of the box.
+// Score against attempt number, drawn by hand as an SVG string (no chart library: the frontend
+// is stdlib-only too). y fits the observed range plus the bar and the baseline. A failed or
+// discarded attempt measured nothing: a hollow mark on the axis, never a zero.
 function autoChartSVG(r) {
-  // Number(null) and Number("") are both 0, so a bare Number() here would invent a score of
-  // zero for an attempt that has none — the exact error this panel exists not to make
-  const num = (x) => {
-    if (x === null || x === undefined || x === "") return null;
-    const v = Number(x);
-    return isFinite(v) ? v : null;
-  };
-  const fmt = (v) => {
-    const a = Math.abs(v);
-    return a !== 0 && (a >= 1e5 || a < 1e-3)
-      ? v.toExponential(2) : String(Math.round(v * 1e4) / 1e4);
-  };
-  const rows = (r.attempts || []).filter((a) => a && num(a.attempt_no) !== null);
-  // an invalid run measured NOTHING: it has no score, and it belongs on the axis as a hollow
-  // mark. Drawing it at zero would let a broken apparatus read as a bad result — a different
-  // claim about the evidence, and a false one.
-  const scored = rows.filter((a) => a.verdict !== "invalid-run" && num(a.score) !== null);
-  const voids = rows.filter((a) => a.verdict === "invalid-run" || num(a.score) === null);
-
-  // island colour: the island's index in state.json's own key order, mod six. An island that
-  // appears on an attempt but not in `islands` (a run whose state moved on) still gets a colour
-  // rather than none, by appending it to the same order.
-  const order = Object.keys(r.islands || {});
-  rows.forEach((a) => {
-    if (a.island != null && order.indexOf(a.island) < 0) order.push(a.island);
-  });
-  const hue = (isl) => `var(--au-i${Math.max(0, order.indexOf(isl)) % 6})`;
-
-  const maxX = rows.reduce((m, a) => Math.max(m, num(a.attempt_no)), 1);
-  const PADL = 52, PADR = 16, PADT = 30, PADB = 30, H = 220;
-  // ~24 px per attempt, so a 200-attempt run is wider than the pane and scrolls inside
-  // .au-chart's own box rather than making the pane scroll sideways
+  const rows = (r.attempts || []).filter((a) => autoNum(a.n) !== null);
+  const scored = rows.filter((a) => autoNum(a.score) !== null);
+  const voids = rows.filter((a) => autoNum(a.score) === null);
+  const maxX = rows.reduce((m, a) => Math.max(m, a.n), 1);
+  const PADL = 52, PADR = 16, PADT = 14, PADB = 30, H = 220;
   const W = Math.max(380, PADL + PADR + Math.max(1, maxX - 1) * 24 + 24);
-  const x0 = PADL, xr = W - PADR, y0 = PADT, yr = H - PADB;
-  // the first and last marks are inset from the axes, so a dot never half-hides behind one
-  const xa = x0 + 8, xb = xr - 8;
-  const xAt = (n) => (maxX > 1 ? xa + ((num(n) - 1) / (maxX - 1)) * (xb - xa) : (xa + xb) / 2);
-
-  // the bar joins the y domain when it exists, or a bar outside the observed scores would be
-  // drawn off the top of the plot and the reader could not see how far away it is
-  const bar = num(r.objective && r.objective.bar);
-  const dom = scored.map((a) => num(a.score));
+  const x0 = PADL, xr = W - PADR, y0 = PADT, yr = H - PADB, xa = x0 + 8, xb = xr - 8;
+  const xAt = (n) => (maxX > 1 ? xa + ((n - 1) / (maxX - 1)) * (xb - xa) : (xa + xb) / 2);
+  const bar = autoNum(r.bar), base = autoNum(r.baseline);
+  const dom = scored.map((a) => autoNum(a.score));
   if (bar !== null) dom.push(bar);
+  if (base !== null) dom.push(base);
   let lo = dom.length ? Math.min.apply(null, dom) : 0;
   let hi = dom.length ? Math.max.apply(null, dom) : 1;
   const pad = (hi - lo) || Math.abs(hi) || 1;
   lo -= pad * 0.08; hi += pad * 0.08;
-  const yAt = (v) => yr - ((num(v) - lo) / (hi - lo)) * (yr - y0);
+  const yAt = (v) => yr - ((v - lo) / (hi - lo)) * (yr - y0);
 
-  let g = "";
-  for (let i = 1; i <= 3; i++) {
-    const gy = (y0 + ((yr - y0) * i) / 4).toFixed(1);
-    g += `<line class="ac-grid" x1="${x0}" y1="${gy}" x2="${xr}" y2="${gy}"/>`;
-  }
-  g += `<line class="ac-axis" x1="${x0}" y1="${y0}" x2="${x0}" y2="${yr}"/>` +
-       `<line class="ac-axis" x1="${x0}" y1="${yr}" x2="${xr}" y2="${yr}"/>` +
-       `<text class="ac-axlab" x="${x0 - 6}" y="${y0 + 4}" text-anchor="end">${esc(fmt(hi))}</text>` +
-       `<text class="ac-axlab" x="${x0 - 6}" y="${yr}" text-anchor="end">${esc(fmt(lo))}</text>` +
-       `<text class="ac-axlab" x="${x0}" y="${H - 10}">1</text>` +
-       `<text class="ac-axlab" x="${xr}" y="${H - 10}" text-anchor="end">${esc(String(maxX))}</text>`;
-
-  // the objective's bar, as a rule across the plot — omitted entirely when there is none
-  if (bar !== null) {
-    const by = yAt(bar).toFixed(1);
-    g += `<line class="ac-bar" x1="${x0}" y1="${by}" x2="${xr}" y2="${by}"/>` +
-         `<text class="ac-axlab" x="${xr - 2}" y="${(yAt(bar) - 5).toFixed(1)}" ` +
-         `text-anchor="end">bar ${esc(fmt(bar))}</text>`;
-  }
-
-  // one path per island, in the islands' own order, plus a legend swatch so a colour can be
-  // read back to an island without hovering a dot
-  let legend = "", lx = x0;
-  order.forEach((isl) => {
-    const pts = scored.filter((a) => a.island === isl)
-      .sort((a, b) => num(a.attempt_no) - num(b.attempt_no));
-    if (!pts.length) return;
-    const d = pts.map((a, i) => (i ? "L" : "M") + xAt(a.attempt_no).toFixed(1) + " " +
-                                yAt(a.score).toFixed(1)).join(" ");
-    g += `<path class="ac-series" data-island="${esc(isl)}" fill="none" ` +
-         `stroke="${hue(isl)}" d="${d}"/>`;
-    const lab = trunc(String(isl), 14);
-    if (lx + 13 + 7 * lab.length < xr) {          // a run with many islands stops at the edge
-      legend += `<rect x="${lx}" y="10" width="9" height="9" rx="2" fill="${hue(isl)}"/>` +
-                `<text class="ac-axlab" x="${lx + 13}" y="18">${esc(lab)}</text>`;
-      lx += 13 + 7 * lab.length + 14;
-    }
+  let g = `<line class="ac-axis" x1="${x0}" y1="${y0}" x2="${x0}" y2="${yr}"/>` +
+    `<line class="ac-axis" x1="${x0}" y1="${yr}" x2="${xr}" y2="${yr}"/>` +
+    `<text class="ac-axlab" x="${x0 - 6}" y="${y0 + 4}" text-anchor="end">${esc(autoFmt(hi))}</text>` +
+    `<text class="ac-axlab" x="${x0 - 6}" y="${yr}" text-anchor="end">${esc(autoFmt(lo))}</text>` +
+    `<text class="ac-axlab" x="${x0}" y="${H - 10}">1</text>` +
+    `<text class="ac-axlab" x="${xr}" y="${H - 10}" text-anchor="end">${maxX}</text>`;
+  [[bar, "bar", "ac-bar"], [base, "baseline", "ac-grid"]].forEach(([v, lab, cls]) => {
+    if (v === null) return;
+    const y = yAt(v).toFixed(1);
+    g += `<line class="${cls}" x1="${x0}" y1="${y}" x2="${xr}" y2="${y}"/>` +
+      `<text class="ac-axlab" x="${xr - 2}" y="${(yAt(v) - 5).toFixed(1)}" text-anchor="end">` +
+      `${lab} ${esc(autoFmt(v))}</text>`;
   });
-  g += legend;
-
-  // the running best, as a step line in the objective's direction. `min` is the only value that
-  // means descend; anything else — "max", null, a typo in the plan — climbs, the same fallback
-  // auto_portfolio's ranking makes, so the plot and the portfolio cannot disagree.
-  const down = (r.objective && r.objective.direction) === "min";
-  const seq = scored.slice().sort((a, b) => num(a.attempt_no) - num(b.attempt_no));
+  // the running best over KEPT attempts, a step line in the objective's direction
+  const down = r.direction === "min";
   let best = null, step = "", py = null;
-  seq.forEach((a, i) => {
-    const v = num(a.score);
+  scored.filter((a) => a.status === "kept").sort((a, b) => a.n - b.n).forEach((a) => {
+    const v = autoNum(a.score);
     if (best === null || (down ? v < best : v > best)) best = v;
-    const px = xAt(a.attempt_no).toFixed(1), cy = yAt(best).toFixed(1);
-    step += i === 0 ? `M${px} ${cy}` : ` L${px} ${py} L${px} ${cy}`;
+    const px = xAt(a.n).toFixed(1), cy = yAt(best).toFixed(1);
+    step += py === null ? `M${px} ${cy}` : ` L${px} ${py} L${px} ${cy}`;
     py = cy;
   });
   if (step) g += `<path class="ac-step" d="${step}"/>`;
-
   scored.forEach((a) => {
-    g += `<circle class="ac-dot" cx="${xAt(a.attempt_no).toFixed(1)}" ` +
-         `cy="${yAt(a.score).toFixed(1)}" r="3.2" fill="${hue(a.island)}" stroke="${hue(a.island)}">` +
-         `<title>${esc(a.id)} · ${esc(trunc(a.title || "", 60))} · ${esc(fmt(num(a.score)))}</title></circle>`;
+    g += `<circle class="ac-dot ${esc(a.status)}" cx="${xAt(a.n).toFixed(1)}" ` +
+      `cy="${yAt(autoNum(a.score)).toFixed(1)}" r="3.2">` +
+      `<title>${esc(a.id)} · ${esc(a.status)} · ${esc(autoFmt(autoNum(a.score)))}</title></circle>`;
   });
-  // hollow, on the axis, with the reason in its tooltip — never a zero
   voids.forEach((a) => {
-    g += `<circle class="ac-dot invalid" cx="${xAt(a.attempt_no).toFixed(1)}" cy="${yr}" r="3.6">` +
-         `<title>${esc(a.id)} · ${esc(a.verdict || a.phase || "no score")} — measured nothing` +
-         `</title></circle>`;
+    g += `<circle class="ac-dot invalid" cx="${xAt(a.n).toFixed(1)}" cy="${yr}" r="3.6">` +
+      `<title>${esc(a.id)} · ${esc(a.status)} — measured nothing</title></circle>`;
   });
-
   return `<div class="au-chart"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" ` +
-    `role="img" aria-label="score against attempt number">${g}</svg></div>` +
-    (scored.length ? ""
-      : `<p class="au-note">no attempt carries a score yet — the axes are drawn so the first ` +
-        `one has somewhere to land</p>`);
-}
-
-// §G / §H — Results. Two blocks: the lineage forest the bandit actually selected over, and the
-// diverse portfolio, with the single best marked apart from it so the portfolio is never read as
-// a ranking. Every row shows its verdict, and an invalid run appears in the lineage — it is part
-// of the history — while being absent from the portfolio, because it measured nothing.
-function autoResultsHTML(r) {
-  const rows = (r.attempts || []).filter((a) => a && a.id != null);
-  const byId = {};
-  rows.forEach((a) => { byId[a.id] = a; });
-  const score = (v) => (v === null || v === undefined || !isFinite(Number(v))
-    ? "—" : String(Math.round(Number(v) * 1e4) / 1e4));
-  const cells = (a) =>
-    `<span>${esc(a.id)}</span>` +
-    `<span>${esc(trunc(a.title || "no title filed", 64))}</span>` +
-    `<span>${esc(a.island == null ? "—" : a.island)}</span>` +
-    `<span>${esc(score(a.score))}</span>` +
-    `<span>${esc(a.verdict || "no verdict yet")}</span>`;
-  // §H: an attempt is a node id, and the detail reader already opens a node by id. A row whose
-  // node is in the snapshot is a button that selects it; nothing else is built.
-  const filed = (id) => !!(state.snap && state.snap.nodes && id in state.snap.nodes);
-  const rowHTML = (a, cls, depth) => {
-    const extra = cls ? " " + cls : "";
-    const style = depth ? ` style="--tk-depth: ${depth}"` : "";
-    if (filed(a.id)) {
-      const on = state.auto.selected === a.id ? " on" : "";
-      return `<button type="button" class="au-row${on}${extra}"${style} ` +
-        `data-au-node="${esc(a.id)}">${cells(a)}</button>`;
-    }
-    // reserved only: the id was handed out but no node was ever filed, so there is nothing for
-    // the detail reader to open. The row carries its phase as the explanation and no node
-    // attribute at all — a click handler that found one would open a node that does not exist.
-    return `<div class="au-row dead${extra}"${style} ` +
-      `title="reserved — no node filed">${cells(a)}<span>${esc(a.phase || "reserved")}</span></div>`;
-  };
-
-  // the forest, per island: a root is an attempt that builds on nothing, or on an attempt
-  // outside this island. `builds_on` is a FIELD, not a tree edge — nothing structurally
-  // prevents a cycle — so the walk carries a `seen` set, as auto_island_attempts' chain() does.
-  const forest = (list) => {
-    const ids = new Set(list.map((a) => a.id));
-    const kids = {};
-    list.forEach((a) => {
-      if (a.builds_on && ids.has(a.builds_on)) (kids[a.builds_on] = kids[a.builds_on] || []).push(a);
-    });
-    const seen = new Set();
-    const walk = (a, depth) => {
-      if (seen.has(a.id)) return "";
-      seen.add(a.id);
-      return rowHTML(a, depth ? "au-tree au-tree-kid" : "au-tree", depth) +
-        (kids[a.id] || []).map((c) => walk(c, depth + 1)).join("");
-    };
-    let out = list.filter((a) => !a.builds_on || !ids.has(a.builds_on))
-      .map((a) => walk(a, 0)).join("");
-    // a builds_on cycle leaves its members reachable from no root; they render flat rather than
-    // vanish, the same repair taskTreeRows makes for a parent cycle in the taskhub
-    out += list.filter((a) => !seen.has(a.id)).map((a) => walk(a, 0)).join("");
-    return out;
-  };
-
-  const groups = {};
-  rows.forEach((a) => {
-    const k = a.island == null ? "—" : a.island;
-    (groups[k] = groups[k] || []).push(a);
-  });
-  const islandOrder = Object.keys(r.islands || {}).filter((k) => groups[k])
-    .concat(Object.keys(groups).filter((k) => !(k in (r.islands || {}))));
-
-  let html = `<p class="au-sec">Lineage, per island</p>`;
-  html += islandOrder.length
-    ? islandOrder.map((k) =>
-        `<div class="au-panel"><p class="au-note">island ${esc(k)}</p>${forest(groups[k])}</div>`).join("")
-    : `<p class="au-note">no attempt has been filed yet</p>`;
-
-  const port = (r.portfolio || []).map((id) => byId[id]).filter((a) => a);
-  html += `<p class="au-sec">Portfolio</p><div class="au-panel au-port">`;
-  html += port.length
-    ? port.map((a) => rowHTML(a, "", 0)).join("")
-    : `<p class="au-note">no attempt is eligible yet — a portfolio needs a scored, valid run</p>`;
-  // the engine's own sentence, verbatim: the panel says what the rule was rather than leaving a
-  // reader to infer a ranking from the order
-  html += `<p class="au-note">${esc(AUTO_PORTFOLIO_RULE)}</p>`;
-  const b = r.best || {};
-  html += b.id
-    ? `<p class="au-best">Single best: ${esc(b.id)} · ${esc(score(b.score))}</p>`
-    : `<p class="au-note">no single best yet</p>`;
-  html += `</div>`;
-  return html;
+    `role="img" aria-label="score against attempt number">${g}</svg></div>`;
 }
 
 // one fetch for both layers — the route comes from the layer descriptor

@@ -1447,6 +1447,25 @@ def run_webui():
           and 'fetch("auto.json"' in app_js
           and "/wiki/" in app_js and "/file/" in app_js and "method:" not in app_js)
 
+    # -- spec 18: the Autopilot tab reads auto.cockpit()'s payload and nothing else. Every
+    #    `r.<key>` (a run) and `a.<key>` (an attempt) the tab names must be a key the driver
+    #    emits, so a renamed or deleted payload key cannot leave the tab reading undefined.
+    tab = app_js[app_js.index("// ------------------------------------------------------- the Autopilot tab"):
+                 app_js.index("// one fetch for both layers")]
+    run_keys = {"anchor", "mode", "address", "direction", "bar", "baseline", "best", "attempts",
+                "attempts_per_hour", "elapsed_hours", "budget_hours", "live", "stop"}
+    att_keys = {"n", "id", "parent", "score", "status", "seconds", "at"}
+    used_r = set(re.findall(r"\br\.([a-z_]+)", tab)) - {"ok", "headers", "text"}
+    used_a = set(re.findall(r"\ba\.([a-z_]+)", tab))
+    check(f"webui: the Autopilot tab reads only auto.cockpit()'s run keys "
+          f"({sorted(used_r - run_keys)})", used_r and used_r <= run_keys)
+    check(f"webui: ... and only its attempt keys ({sorted(used_a - att_keys)})",
+          used_a and used_a <= att_keys)
+    gone = [w for w in ("island", "steward", "in_flight", "portfolio", "liveness", "budget.",
+                        "events", "auto-rail") if w in tab]
+    check(f"webui: the Autopilot tab has no island, steward, in-flight or ledger parts ({gone})",
+          not gone and "auto-rail" not in read(os.path.join(HERE, "webui", "index.html")))
+
     # ---------------------------------------------------------------- v0.5 cockpit contract
     style = read(os.path.join(HERE, "webui", "style.css"))
     index = read(os.path.join(HERE, "webui", "index.html"))
@@ -7466,12 +7485,7 @@ def run_proxy_register():
               for a in covered - set(roster)))
 
     # -- the register, parsed out of the spec and diffed against the manifests both ways
-    # Spec 18 deleted worker-01, steward-01 and setup-01 with the agents they graded. The
-    # register is a spec document this suite does not own; a retired row may linger there
-    # until the docs catch up, and is dropped here by name, never by absence on disk.
-    retired = {"worker-01", "steward-01", "setup-01"}
-    rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")
-            if r[0].strip("`") not in retired}
+    rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")}
     check(f"evals: the proxy register and the fixture tree agree "
           f"({sorted(set(rows) ^ set(V.fixture_names()))})",
           set(rows) == set(V.fixture_names()))
