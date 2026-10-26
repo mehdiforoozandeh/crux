@@ -1,7 +1,7 @@
 # Spec 18 — Lean autopilot
 
 - **Kind:** refactor (rebuild)  - **Spec:** replaces the engine design of [05](05-autopilot.md); keeps its goal and its leash.
-- **Status:** draft for PI approval, 2026-10-26.
+- **Status:** approved by the PI, 2026-10-26, with all four open questions answered yes.
 
 ## Problem
 
@@ -92,9 +92,10 @@ This change does not alter the crux tree, verdict derivation, the leash ruling o
 
 Old autopilot runs stay readable, because they are ordinary nodes in the vault. Old plan files are refused, not migrated. The vault format does not change, so `ENGINE_VERSION` stays unless the build proves otherwise.
 
-## Open questions for the PI
+## Decisions (PI, 2026-10-26)
 
-1. Is 20 minutes right as the default `attempt_minutes`?
-2. Are the throughput bars right: 3 attempts per hour for climb and 6 for explore?
-3. Is 1,500 lines the right size target?
-4. Should an attempt that does not beat its parent still become a node? The proposal says yes, as a refuted hypothesis, so the next worker can see what failed.
+1. The default `attempt_minutes` is 20.
+2. The throughput bars are 3 attempts per hour for climb and 6 for explore.
+3. The size target is under 1,500 lines.
+4. An attempt that does not beat its parent still becomes a node, as a refuted hypothesis.
+5. Both modes must be used and tested: climb on memesuite-lite and nanogpt-shakespeare, explore (ERA flat PUCT) on circle-packing and m4-weekly.
