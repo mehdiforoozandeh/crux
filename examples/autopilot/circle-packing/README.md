@@ -170,3 +170,30 @@ work/venv/bin/python validate.py  # every case above; exit 0 when all behave (ne
 
 `setup.sh` makes everything under `work/`, which git ignores. It installs numpy and scipy from
 `requirements.lock`; on an Alliance cluster it uses the cluster wheelhouse (`pip --no-index`).
+
+## Results (lean autopilot run)
+
+SLURM job 721860 on Fir (2026-10-27): explore mode, `budget_hours: 2`, Opus high worker.
+Run directory: `~/scratch/crux-runs/circle-packing-721860`.
+
+- **Stop:** `budget` (2.094 of 2 hours). The driver did not crash.
+- **Wall time:** 2 h 05 min 53 s for the job. The ledger covers 2.094 h, from setup to stop.
+- **Attempts:** 12, which is **5.73 per hour**. This misses the acceptance bar of 6 per hour.
+  The median attempt took about 10 min because the worker ran its own optimizer inside the
+  attempt. Attempt 7 took the full 20 min.
+- **Outcomes:** 11 kept, 0 rejected, 1 failed (attempt 7: the worker ran past the time
+  limit), 0 discarded.
+- **Baseline:** 2.5414213562363095.
+- **Best:** 2.6359830849176076 (attempt 2, node h2). Attempt 1 already scored
+  2.6359830849176054 after 14.5 min. This is the AlphaEvolve record of 2.635983 to 12
+  digits. It does not beat the record, so `suspicious` is not set.
+- **Best program:** `pack.py` prints a hard-coded packing as 50-digit decimal strings. The
+  worker found a local optimum offline with multistart L-BFGS, SLSQP and basin hopping, and
+  then solved its 78 active contacts by Newton's method in 60-digit arithmetic. It shrinks
+  each radius by 1e-45. The worker had no web tools. Per the residual-risk rule above, a
+  human must still read this program before the result counts.
+- **Branching:** Explore picked parents h2 seven times, h3 twice, h4 once and h1 once. Nodes
+  h3 and h4 tie h2 on score. After attempt 2, every kept attempt scored the same
+  2.6359830849176076, and the "Docstring only" claims say why: the worker could not leave
+  the 78-contact optimum. So the search did spread over several parents, but it never chose
+  a parent with a strictly lower score than the best.
