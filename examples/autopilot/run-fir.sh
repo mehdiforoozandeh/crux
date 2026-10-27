@@ -16,7 +16,7 @@ PY=python/3.11.5
 case "$B" in
   memesuite-lite)      SRC=work/cand-baseline;  RES=(--account=def-maxwl_cpu --cpus-per-task=8 --mem=16000M) ;;
   nanogpt-shakespeare) SRC=work/cand-baseline;  PY="StdEnv/2023 python/3.12.4"
-                       RES=(--account=def-maxwl_gpu --gres=gpu:nvidia_h100_80gb_hbm3_3g.40gb:1 --cpus-per-task=4 --mem=32000M) ;;
+                       RES=(--account=def-maxwl_gpu --gpus=h100:1 --cpus-per-task=4 --mem=32000M) ;;
   circle-packing)      SRC=baseline;            RES=(--account=def-maxwl_cpu --cpus-per-task=4 --mem=8000M) ;;
   m4-weekly)           SRC=candidates/naive2;   RES=(--account=def-maxwl_cpu --cpus-per-task=4 --mem=16000M) ;;
   *) echo "run-fir.sh: unknown benchmark '$B'" >&2; exit 2 ;;
