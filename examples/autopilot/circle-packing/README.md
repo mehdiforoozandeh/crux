@@ -197,3 +197,20 @@ Run directory: `~/scratch/crux-runs/circle-packing-721860`.
   2.6359830849176076, and the "Docstring only" claims say why: the worker could not leave
   the 78-contact optimum. So the search did spread over several parents, but it never chose
   a parent with a strictly lower score than the best.
+
+### Re-run with 10-minute attempts
+
+SLURM job 767419 on Fir (2026-10-27). The plan was the same except `attempt_minutes: 10`.
+Run directory: `~/scratch/crux-runs/circle-packing-767419`.
+
+- **Stop:** `budget` (2.046 of 2 hours). The driver did not crash. The job ran for
+  2 h 03 min 17 s.
+- **Attempts:** 31, which is **15.16 per hour**. This passes the bar of 6 per hour.
+- **Outcomes:** 29 kept, 0 rejected, 2 failed (attempts 9 and 19: the worker ran past the
+  time limit), 0 discarded.
+- **Best:** 2.6359830849176076 (attempt 2, node h2). The run reached it 7 min after setup.
+  Attempt 1 scored 2.635983084917579 after 5.6 min. Attempt 2 printed the same packing at
+  50-digit precision with a 1e-40 radius margin. Every later kept attempt tied h2.
+- **Branching:** Explore picked parents h2 21 times, h3 4 times, h4 twice and h1, h5 and
+  h6 once each. After h2 existed, it never picked a parent with a strictly lower score than
+  the best. The only lower node, h1, was the parent of attempt 2, when h1 was the best.
