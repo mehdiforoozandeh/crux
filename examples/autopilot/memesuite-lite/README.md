@@ -119,3 +119,27 @@ Measured on Fir (EPYC 9655, 8 CPUs, `--cpus-per-task=8`):
 The scorer uses 5 repeats: a sixth call costs 2-6 s more and does not remove a slow run.
 Treat a change under about 3% on one node as noise, and confirm a small gain with a second
 scorer run.
+
+## Results (lean autopilot run)
+
+SLURM job 735113 on Fir (2026-10-27): climb mode, `budget_hours: 4`, 8 CPUs.
+Run directory: `~/scratch/crux-runs/memesuite-lite-735113`.
+
+- **Stop:** `budget` (4.022 of 4 hours). The driver did not crash.
+- **Wall time:** 4 h 04 min 05 s for the job. The ledger covers 4.022 h, from setup to stop.
+- **Attempts:** 31, which is **7.707 per hour**. The median attempt took about 7.6 min.
+- **Outcomes:** 22 kept, 4 rejected (each failed the same frozen-test assert on the p-value
+  background tables in `_p_value_backgrounds`), 3 failed (one worker ran past the time limit, two workers made no commit), 2 discarded
+  (the worker committed `memelite/__pycache__/*.pyc`).
+- **Baseline:** 7.25493 s. This node was slow: other Fir nodes time the baseline at 5.9-6.4 s.
+- **Best:** **2.835755 s** (attempt 30, node h30), 2.56 times faster than the baseline on the
+  same node. This passes the bar of <= 5.4.
+- **Best program:** All the speed-up is in the numba kernels of `memelite/tomtom.py` (286
+  lines added, 34 removed). The gains came from fused 4-row distance passes, loops bounded to
+  each row's non-zero span, an integer-count median, and then (attempt 27, 3.37 s to 2.90 s) a
+  square root through the `llvm.sqrt` intrinsic, so that the distance loop vectorizes.
+  Attempts 28 and 30 are empty commits whose messages say "no change". So the best *code* is
+  attempt 27's, and the 2.90 s to 2.84 s step is noise (about 2%).
+- **Notes:** In climb mode, every kept attempt counts as a candidate parent, so empty "no
+  change" commits are kept and can become the best by noise. The search stayed on parent h6
+  for attempts 7-25: most children of h6 scored 3.6-4.6 s, slower than h6 (3.59 s).
