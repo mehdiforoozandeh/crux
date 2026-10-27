@@ -148,3 +148,32 @@ module load python/3.11.5
 python3 score.py candidates/naive2            # inside a SLURM job
 python3 selfcheck.py                          # every check above (~2.5 min)
 ```
+
+## Results (lean autopilot run)
+
+SLURM job 735116 on Fir (2026-10-27): explore mode (ERA flat PUCT), `budget_hours: 3`.
+Run directory: `~/scratch/crux-runs/m4-weekly-735116`.
+
+- **Stop:** `budget` (3.204 of 3 hours). The driver did not crash.
+- **Wall time:** 3 h 12 min 38 s for the job. The ledger covers 3.204 h, from setup to stop.
+- **Attempts:** 19, which is **5.929 per hour**. This misses the acceptance bar of 6 per hour.
+  The median attempt took about 10 min. The scorer alone took about 146 s for the best
+  program (two runs of about 72 s each), against 0.8 s for the baseline.
+- **Outcomes:** 18 kept, 0 rejected, 1 failed (attempt 7: the scorer ran past the
+  attempt's time limit), 0 discarded.
+- **Baseline:** val_owa 1.0 (Naive2).
+- **Best:** val_owa **0.666157** (attempt 19, node h19). This passes the bar of < 0.99.
+- **Test-set `owa` of the best, read once:** **0.741032** (scorer run as job 754763 on the
+  h19 commit; val_owa reproduced exactly). This misses the 0.739 bar by 0.002. The gap
+  between val_owa 0.666 and owa 0.741 suggests that the late attempts tuned weights to the
+  validation fold.
+- **Best program:** `forecast.py` trains one global HistGradientBoosting model per horizon
+  on log-ratio windows pooled over all series, with 52-, 104- and 156-week windows averaged.
+  It stretches the predicted log-change, blends in a Theta forecast, and adds a two-year
+  seasonal-naive term. Attempt 1 alone (the global model) reached 0.725; attempts 2-19
+  added the third window, the stretch, the Theta blend, and then small weight changes. The
+  last change (h19) raises the near-term Theta weight from 0.35 to 0.42 and lowers the
+  156-week model weight from 2 to 1.5.
+- **Branching:** The search was nearly a single chain. Explore picked the current best as
+  the parent in every attempt but one: attempt 11 took h10 (0.678742) as parent while h9
+  (0.677047) was better. So explore picked a strictly lower-scoring parent once.
