@@ -20,8 +20,8 @@ from 5.455 s to 0.7004 s (7.8x), with bit-identical output.
 - **Direction:** lower is better.
 - **Baseline** (the pinned code, Fir): **6.02 s** (median of 5 scorer runs; medians
   5.92-6.06 s)
-- **Bar** (PR #21 as a candidate, Fir): **1.62 s** (median of 4 scorer runs; medians
-  1.617-1.624 s), so 3.7x faster
+- **Threshold** (the plan's `bar` field; PR #21 as a candidate, Fir): **1.62 s** (median of
+  4 scorer runs; medians 1.617-1.624 s), so 3.7x faster
 
 These numbers come from a Fir compute node (AMD EPYC 9655, Zen 5), 8 CPUs, not exclusive,
 Python 3.11.5, SLURM job 342272. An Apple M1 gave 9.11 s and 2.32 s (3.9x). The PR measured
@@ -133,7 +133,7 @@ Run directory: `~/scratch/crux-runs/memesuite-lite-735113`.
   (the worker committed `memelite/__pycache__/*.pyc`).
 - **Baseline:** 7.25493 s. This node was slow: other Fir nodes time the baseline at 5.9-6.4 s.
 - **Best:** **2.835755 s** (attempt 30, node h30), 2.56 times faster than the baseline on the
-  same node. This passes the bar of <= 5.4.
+  same node. This passes the threshold of <= 5.4.
 - **Best program:** All the speed-up is in the numba kernels of `memelite/tomtom.py` (286
   lines added, 34 removed). The gains came from fused 4-row distance passes, loops bounded to
   each row's non-zero span, an integer-count median, and then (attempt 27, 3.37 s to 2.90 s) a

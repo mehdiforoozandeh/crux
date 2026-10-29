@@ -7676,16 +7676,14 @@ def run_correct_terms():
     # ---- consumer 3: nothing crux ships for a reader says a paraphrase in place of its term.
     #      Excluded, deliberately: history (CHANGELOG, .spec, docs/prd), code (comments are
     #      not read by the PI), eval fixtures (frozen vault snapshots), sortlab_vault, a
-    #      high-school student's notebook the PI ruled stays in its own voice, and, for now,
-    #      crux-autopilot: the autopilot-lean branch rewrites it, and its pass follows there.
+    #      high-school student's notebook the PI ruled stays in its own voice.
     repo = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
     def shipped():
         for top in ("agents", "skills"):
             for dp, dns, fns in os.walk(os.path.join(repo, top)):
                 rel = os.path.relpath(dp, repo).replace(os.sep, "/")
                 dns[:] = sorted(d for d in dns if not (
-                    rel + "/" + d).endswith(("evals/fixtures", "examples/sortlab_vault", "vendor",
-                                             "skills/crux-autopilot")))
+                    rel + "/" + d).endswith(("evals/fixtures", "examples/sortlab_vault", "vendor")))
                 for fn in sorted(fns):
                     if fn.endswith((".md", ".html")) or fn == "app.js":
                         yield os.path.join(dp, fn)

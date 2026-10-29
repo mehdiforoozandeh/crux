@@ -46,8 +46,8 @@ rounded to 3 decimals. Other published Weekly OWAs: 036 Petropoulos & Svetunkov 
 (Makridakis et al. 2020, IJF; the publisher returned 403), so we did not check its table
 directly. The spreadsheet is the organisers' own file.
 
-**Bar** (on `owa`, read once at the end). 0.739 (235, best on Weekly). Smyl, who won M4
-overall, scored 0.851 on Weekly.
+**Threshold** (the plan's `bar` field; on `owa`, read once at the end). 0.739 (235, best on
+Weekly). Smyl, who won M4 overall, scored 0.851 on Weekly.
 
 ## Candidate contract
 
@@ -85,12 +85,13 @@ mostly do not fit.
 
 - **Pass:** exit 0. stdout is one JSON object: `val_owa` (the search objective: `value`,
   `smape`, `mase`, and the Naive2 terms), `owa` (the same fields, on the M4 test set),
-  `passed`, `workload`, `bar`, `checks` (copy shares, sandbox), `runs` (seconds per run),
-  `candidate`, `scorer_wall_s`. Plan: **`address:: val_owa`**, `direction:: min`.
+  `passed`, `workload`, `bar` (the published OWAs to compare against), `checks` (copy shares,
+  sandbox), `runs` (seconds per run), `candidate`, `scorer_wall_s`. Plan:
+  **`address:: val_owa`**, `direction:: min`.
 - **`owa` is read once.** The PI ruled that the search steers on `val_owa` only. The scorer
   still computes `owa` on every call, because the test run is cheap (0.1-4 s for the shipped
   candidates) and it checks the format of the full-data forecasts too. Nobody reads `owa`
-  until the search ends; then the winner's `owa` is compared with the bar.
+  until the search ends; then the winner's `owa` is compared with the threshold.
 - **Fail:** exit 1. stdout is `{"passed": false, "reason": ...}`, and the reason also goes
   to stderr. crux treats `scorer-exit` as a machine fault and retries it `retries:` times.
 - **Candidate:** a path argument, else `CRUX_CANDIDATE`, else the working directory, but only
@@ -123,7 +124,7 @@ this route. The engine denies the workers web access; a run without that rule is
 **Why the objective is `val_owa`.** A long search that read `owa` after every attempt would
 adapt to the test set, which M4 entrants never saw. `val_owa` is held out in time from the
 same series, so the search never looks at the test set, and `owa` stays a single, honest read
-against the bar.
+against the threshold.
 
 ## Validation (Fir, `selfcheck.py`, jobs 429125, 431252 and 433556, 4 CPUs)
 
@@ -156,15 +157,15 @@ Run directory: `~/scratch/crux-runs/m4-weekly-735116`.
 
 - **Stop:** `budget` (3.204 of 3 hours). The driver did not crash.
 - **Wall time:** 3 h 12 min 38 s for the job. The ledger covers 3.204 h, from setup to stop.
-- **Attempts:** 19, which is **5.929 per hour**. This misses the acceptance bar of 6 per hour.
+- **Attempts:** 19, which is **5.929 per hour**. This misses the acceptance threshold of 6 per hour.
   The median attempt took about 10 min. The scorer alone took about 146 s for the best
   program (two runs of about 72 s each), against 0.8 s for the baseline.
 - **Outcomes:** 18 kept, 0 rejected, 1 failed (attempt 7: the scorer ran past the
   attempt's time limit), 0 discarded.
 - **Baseline:** val_owa 1.0 (Naive2).
-- **Best:** val_owa **0.666157** (attempt 19, node h19). This passes the bar of < 0.99.
+- **Best:** val_owa **0.666157** (attempt 19, node h19). This passes the threshold of < 0.99.
 - **Test-set `owa` of the best, read once:** **0.741032** (scorer run as job 754763 on the
-  h19 commit; val_owa reproduced exactly). This misses the 0.739 bar by 0.002. The gap
+  h19 commit; val_owa reproduced exactly). This misses the 0.739 threshold by 0.002. The gap
   between val_owa 0.666 and owa 0.741 suggests that the late attempts tuned weights to the
   validation fold.
 - **Best program:** `forecast.py` trains one global HistGradientBoosting model per horizon

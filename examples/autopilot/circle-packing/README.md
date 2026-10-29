@@ -28,9 +28,10 @@ construction with every radius shrunk by 1e-12 passes and scores 2.6359830848916
 - **Objective:** the leaf `sum_radii` (`address:: sum_radii`, `direction:: max`).
 - **Baseline** (`baseline/pack.py`: a 5x5 grid of radius 0.1, plus one circle in a gap):
   **2.5414213562363** on Fir, scorer wall time 0.16-1.15 s (the first, cold run is the slowest).
-- **Bar:** the record, 2.635983084919. A score above it is flagged `"suspicious": true`, and
-  the scorer warns on stderr. It is not refused, because the check is exact and a higher valid
-  packing would be a real new record. Read the program before you believe it.
+- **Threshold** (the plan's `bar` field): the record, 2.635983084919. A score above it is
+  flagged `"suspicious": true`, and the scorer warns on stderr. It is not refused, because the
+  check is exact and a higher valid packing would be a real new record. Read the program
+  before you believe it.
 - **Deterministic:** the score is an exact rational sum; the same printed output gives the
   same score bit for bit (5 of 5 repeats on Fir). A candidate that uses randomness without a
   fixed seed can print different packings on different runs; that is the candidate's
@@ -178,7 +179,7 @@ Run directory: `~/scratch/crux-runs/circle-packing-721860`.
 
 - **Stop:** `budget` (2.094 of 2 hours). The driver did not crash.
 - **Wall time:** 2 h 05 min 53 s for the job. The ledger covers 2.094 h, from setup to stop.
-- **Attempts:** 12, which is **5.73 per hour**. This misses the acceptance bar of 6 per hour.
+- **Attempts:** 12, which is **5.73 per hour**. This misses the acceptance threshold of 6 per hour.
   The median attempt took about 10 min because the worker ran its own optimizer inside the
   attempt. Attempt 7 took the full 20 min.
 - **Outcomes:** 11 kept, 0 rejected, 1 failed (attempt 7: the worker ran past the time
@@ -205,7 +206,7 @@ Run directory: `~/scratch/crux-runs/circle-packing-767419`.
 
 - **Stop:** `budget` (2.046 of 2 hours). The driver did not crash. The job ran for
   2 h 03 min 17 s.
-- **Attempts:** 31, which is **15.16 per hour**. This passes the bar of 6 per hour.
+- **Attempts:** 31, which is **15.16 per hour**. This passes the threshold of 6 per hour.
 - **Outcomes:** 29 kept, 0 rejected, 2 failed (attempts 9 and 19: the worker ran past the
   time limit), 0 discarded.
 - **Best:** 2.6359830849176076 (attempt 2, node h2). The run reached it 7 min after setup.

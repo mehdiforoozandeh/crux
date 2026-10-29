@@ -3,9 +3,9 @@ name: crux-autopilot
 description: >-
   Set up a crux autopilot plan with the PI and write it to `auto/<qid>/plan.md`: the anchor
   question, the program repo and the paths the worker may edit, the frozen scorer, the
-  objective with its direction and bar, and the PI's own guidance. Checks the scorer contract,
-  runs `crux auto check` (which scores the baseline), then stops and hands the PI the exact
-  `crux auto run` line. Never starts the run. Use when a crux user wants to start an
+  objective with its direction and threshold, and the PI's own guidance. Checks the scorer
+  contract, runs `crux auto check` (which scores the baseline), then stops and hands the PI the
+  exact `crux auto run` line. Never starts the run. Use when a crux user wants to start an
   autopilot search. Triggers: "set up an autopilot run", "I want to search this", "start the
   autopilot", "write me an auto plan", "configure crux auto", crux autopilot, crux auto setup.
 license: MIT
@@ -41,8 +41,9 @@ The PI's guidance, in their words.
 ```
 
 `anchor`, `repo` (absolute, or relative to the vault root), `base` (a commit or ref),
-`editable` (comma-separated; a trailing `/` is a directory), `scorer` and `objective`
-(`<address> <min|max> <bar>`) are required. The rest default to the values shown; `mode` is
+`editable` (comma-separated; a trailing `/` is a directory), `scorer` and `objective` are
+required. `objective` is `<address> <min|max> <bar>`: the score's address, its direction, and
+the threshold (the plan's `bar` field). The rest default to the values shown; `mode` is
 `climb` or `explore`, and `worker` is `<model> <low|medium|high|xhigh|max>`. The optional
 `min_gain` (a number >= 0, default 0, in the objective's units) sets how much an attempt must
 beat its parent, and climb's best, to count as better; set it above the scorer's noise. Put no comment
@@ -61,10 +62,10 @@ after a value: it becomes part of the value.
    scorer**: the driver checks none of them. The scorer runs in the candidate's worktree, with
    `CRUX_WORKSPACE` set to a scratch directory. If the scorer misses any of this, say what is
    missing and fix it with the PI before you go on.
-4. **The objective: address, direction, bar.** Read the address off the scorer's output.
+4. **The objective: address, direction, threshold.** Read the address off the scorer's output.
    **Ask the direction; never infer it.** A metric named `loss` is usually minimised, and
-   "usually" is how a backwards bar gets written; one short question is cheaper than a wasted
-   run. Then ask the bar.
+   "usually" is how a backwards threshold gets written; one short question is cheaper than a
+   wasted run. Then ask the threshold.
 5. **The defaults, in one line.** State `mode`, `budget_hours`, `attempt_minutes` and
    `worker` with their values, and change one only if the PI asks. `explore` suits many
    different routes; `climb` suits one line of improvement. `attempt_minutes` covers the
@@ -81,9 +82,9 @@ after a value: it becomes part of the value.
    `crux auto run auto/<qid>/plan.md`. On Fir, a benchmark starts with
    `bash examples/autopilot/run-fir.sh <bench>`.
 
-**Never start `crux auto run` yourself.** The PI's start is the signature on the bar, and the
-run spends compute unattended. Start it only when the PI tells you to, in so many words. Read a
-run in progress with `crux auto status`.
+**Never start `crux auto run` yourself.** The PI's start is the signature on the threshold, and
+the run spends compute unattended. Start it only when the PI tells you to, in so many words.
+Read a run in progress with `crux auto status`.
 
 ## Whose words go in the guidance
 

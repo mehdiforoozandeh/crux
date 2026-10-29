@@ -295,7 +295,7 @@ def brief_text(plan, n, parent, pscore, best, last):
         f"worktree (your current directory).",
         "",
         f"Objective: `{plan['address']}` in the scorer's JSON, {better} is better. "
-        f"The bar is {plan['bar']}.",
+        f"The threshold is {plan['bar']}.",
         f"The scorer is frozen; the driver runs it after you finish: {plan['scorer']}",
         f"You start from {parent}, which scores {pscore}. The best score so far is {best}.",
         *([f"A score counts as better only if it beats the parent by more than "

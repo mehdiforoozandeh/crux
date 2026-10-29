@@ -1,12 +1,12 @@
 # crux autopilot
 
-Run one anchor question unattended, against an objective and a bar you fix **before** the run
-starts. A question that suits search (make this faster, lower this loss, pack these circles
-tighter) runs overnight with no turn-taking, and reads back in the morning as ordinary crux:
-one hypothesis per attempt, each with its verdict.
+Run one anchor question unattended, against an objective and a threshold you fix **before**
+the run starts. A question that suits search (make this faster, lower this loss, pack these
+circles tighter) runs overnight with no turn-taking, and reads back in the morning as ordinary
+crux: one hypothesis per attempt, each with its verdict.
 
-It is not an autonomous scientist. The run cannot change its objective, its bar, its scorer or
-its anchor. It searches inside a frame you built.
+It is not an autonomous scientist. The run cannot change its objective, its threshold, its
+scorer or its anchor. It searches inside a frame you built.
 
 | when | what is yours |
 |---|---|

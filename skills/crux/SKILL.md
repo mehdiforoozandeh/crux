@@ -271,8 +271,8 @@ or tells you in so many words to start it. Never start one on your own judgment.
 driver performs four acts per attempt that are the PI's everywhere else: `hypothesize`,
 `approve-null` (on the driver's fixed null), `test --to running`, and `close`. Starting the
 run covers all four: each attempt closes on its derived verdict with no per-attempt signature,
-because what the PI signs is the bar, and in a run the bar is signed once, in the plan, and
-inherited by every attempt. Outside an approved autopilot run, nothing changes. Inside one,
+because what the PI signs is the threshold, signed once per run, in the plan, and inherited
+by every attempt. Outside an approved autopilot run, nothing changes. Inside one,
 `ask`, `answer`, `approve` on a synthesis, and merging into `main` stay the PI's.
 
 
@@ -345,7 +345,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `answer` | ◆ | **refuses** a question with no approved synthesis |
 | `task accept` | ◆ | **the PI accepts what an experiment concluded** — never run this on your own judgment |
 | `rd` | ◆ | the Requirements Document the 400-word cap displaces (see the **crux-rd** skill) |
-| `auto run` | ◆ | it spends compute unattended — **start it only on the PI's explicit yes**; that start is the PI's signature on the plan's bar, and inside the run the driver files, approves the null of, runs and closes each attempt under that signature (see the leash above) |
+| `auto run` | ◆ | it spends compute unattended — **start it only on the PI's explicit yes**; that start is the PI's signature on the plan's threshold, and inside the run the driver files, approves the null of, runs and closes each attempt under that signature (see the leash above) |
 | `ingest` | ○→◆ | registers a PI-curated `raw/` source (see the **crux-wiki** skill) |
 
 Every verb except `init`/`serve`/`selftest` takes **`--json`** — use it when you need to read

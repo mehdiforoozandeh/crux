@@ -126,8 +126,8 @@ met · `[ ]` unmet · `[-]` n/a). It never invents a verdict; you supply the tic
 
 ## Autopilot (spec 18)
 
-The autopilot searches one anchor question unattended against a bar the PI fixes before the
-run. The driver is `auto.py`: plain Python, no model of its own. The design is
+The autopilot searches one anchor question unattended against a threshold the PI fixes
+before the run. The driver is `auto.py`: plain Python, no model of its own. The design is
 [`.spec/18-autopilot-lean.md`](../../../.spec/18-autopilot-lean.md).
 
 **The plan** is `auto/<anchor>/plan.md`: a `---` frontmatter of `key: value` lines, then free
@@ -142,7 +142,7 @@ nodes.
 | `base` | the commit or ref the run starts from | required |
 | `editable` | comma-separated repo paths the worker may change (a trailing `/` is a directory) | required |
 | `scorer` | the frozen command, split with shlex, no shell | required |
-| `objective` | `<address> <min\|max> <bar>`; the address is a dotted path to a `{"value": n}` leaf | required |
+| `objective` | `<address> <min\|max> <bar>`; the address is a dotted path to a `{"value": n}` leaf, and `<bar>` is the threshold (the plan's `bar` field) | required |
 | `mode` | `climb` (always build on the best) or `explore` (ERA flat PUCT, c_puct 1.0) | `climb` |
 | `budget_hours` | the run's budget, read only between attempts | `8` |
 | `attempt_minutes` | one limit per attempt, worker plus scorer | `20` |

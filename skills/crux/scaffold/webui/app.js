@@ -3048,7 +3048,7 @@ function autoHTML(r) {
   }
   html += `<p class="au-note">${esc(r.anchor)} · ${esc(r.mode)} · ` +
     `${esc(r.address || "—")} ${esc(r.direction || "")}` +
-    (r.bar !== null && r.bar !== undefined ? ` · bar ${esc(autoFmt(autoNum(r.bar)))}` : "") +
+    (r.bar !== null && r.bar !== undefined ? ` · threshold ${esc(autoFmt(autoNum(r.bar)))}` : "") +
     ` · baseline ${esc(autoFmt(autoNum(r.baseline)))}` +
     ` · ${r.live ? "live" : "not live"} · ${esc(Number(r.elapsed_hours).toFixed(2))} of ` +
     `${esc(r.budget_hours)} hours · ${esc(r.attempts_per_hour)} attempts/hour</p>`;
@@ -3110,7 +3110,7 @@ function autoChartSVG(r) {
     `<text class="ac-axlab" x="${x0 - 6}" y="${yr}" text-anchor="end">${esc(autoFmt(lo))}</text>` +
     `<text class="ac-axlab" x="${x0}" y="${H - 10}">1</text>` +
     `<text class="ac-axlab" x="${xr}" y="${H - 10}" text-anchor="end">${maxX}</text>`;
-  [[bar, "bar", "ac-bar"], [base, "baseline", "ac-grid"]].forEach(([v, lab, cls]) => {
+  [[bar, "threshold", "ac-bar"], [base, "baseline", "ac-grid"]].forEach(([v, lab, cls]) => {
     if (v === null) return;
     const y = yAt(v).toFixed(1);
     g += `<line class="${cls}" x1="${x0}" y1="${y}" x2="${xr}" y2="${y}"/>` +
