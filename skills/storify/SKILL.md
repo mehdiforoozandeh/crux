@@ -45,9 +45,10 @@ Start from `assets/`. The worked example `examples/q1_story/` is built on
    approved synthesis if one exists, and the wiki pages the anchor and its ancestors link.
    Read the project's own rules (`CLAUDE.md`, `AGENTS.md`) for a mandatory decomposition or
    a significance threshold. Inventory every number you need and the file that holds it.
-   Done when each claim you will make has a result file behind it.
+   Done when each claim you will make has a result file behind it. For a hypothesis
+   anchor, also read the hypothesis's own file: the harvest omits its problem statement.
 3. **State the scope and draft.** Tell the PI the scope in one line ("a short paper on
-   <the question's title>, from its three experiments"). Then draft at once. Do not ask
+   <the anchor's title>, from <what was run>"). Then draft at once. Do not ask
    questions first: the PI is the only reader, and they redirect the draft after they read
    it. Copy `assets/` into `<vault>/stories/<anchor-id>/` and write `story_src.tex` and the
    REDUCE block of `build_story.py`.
@@ -88,6 +89,13 @@ teach. Give no ranking and no recommendation, because the PI chooses.
 
 **Readings, not verdicts.** State the answer as settled only when the anchor has an
 approved synthesis. Otherwise write what the results suggest, and say what would settle it.
+
+**A hypothesis anchor.** Take the motivation from the parent question's own text, not from
+its current answer: that answer can give away the results of later experiments. When a later
+experiment under the same parent qualifies this result, name it in the conclusion as a
+limitation, in words, without its numbers. Before you list the next-step options, read the
+parent's other hypotheses and drop every option that was already run. A parent's approved
+synthesis does not make this one result a verdict.
 
 ## Length
 
