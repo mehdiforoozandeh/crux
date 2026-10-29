@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-Despite optimizing pixel/region-level correspondence directly, DenseCL and PixPro underperformed iBOT by 2.6 mIoU on ADE20K (47.0 vs 49.6) and even trailed MAE (48.1). Under Cityscapes->ACDC domain shift the gap widened further (DenseCL 38.2 vs iBOT 42.0, PixPro 37.9), suggesting dense contrastive objectives overfit to ImageNet's object-centric layout rather than learning weather/appearance-robust features. None of the three pre-registered bars were met.
+Despite optimizing pixel/region-level correspondence directly, DenseCL and PixPro underperformed iBOT by 2.6 mIoU on ADE20K (47.0 vs 49.6) and even trailed MAE (48.1). Under Cityscapes->ACDC domain shift the gap widened further (DenseCL 38.2 vs iBOT 42.0, PixPro 37.9), suggesting dense contrastive objectives overfit to ImageNet's object-centric layout rather than learning weather/appearance-robust features. None of the three pre-registered thresholds were met.

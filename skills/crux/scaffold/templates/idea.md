@@ -20,7 +20,7 @@ Parent:: [[<<parent_basename>>]]
 
 ## ELI5
 
-_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_
+_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_
 
 ## TL;DR
 

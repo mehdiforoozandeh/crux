@@ -33,9 +33,9 @@ Mark the section on every slide in the kicker:
 |---|---|---|---|
 | title | 1 | the question as a headline; the scope in one line | run counts only |
 | motivation | 1–4 | why this experiment; what failed before, as a figure from the earlier results; the question | earlier results are allowed because they are the motivation; each comes from DATA |
-| method | 2–5 | the design as schematics; the **grid of arms** (the deck's one table); what is scored, with its decomposition and the noise rule; the references and controls (baselines, no-covariate twins) | design constants only |
+| method | 2–5 | the design as schematics; the **grid of arms** (the deck's one table); the outcome measure, with its decomposition and the significance criterion; the references and controls (baselines, no-covariate twins) | design constants only |
 | results | one per claim, labelled (a), (b), … | the headline states the claim; the figure proves it | at least two, from DATA |
-| discussion | 2–3 | what is ruled in and ruled out; the doubts, each with its count; an **options** slide when the PI will pick the next phase from the deck | restated from results; none new |
+| discussion | 2–3 | what is ruled in and ruled out; the limitations, each with its count; an **options** slide when the PI will pick the next phase from the deck | restated from results; none new |
 | backup | optional, after a divider | glossary, every cell, detail moved out of the main arc | from DATA |
 
 The options slide shows labelled options (Option A, Option B, …). Each option gives its
@@ -46,8 +46,14 @@ PI chooses.
 
 - **Figures over text.** Draw a schematic wherever the idea can be drawn: the design, the
   pairs that are scored, the data flow. Use a table only for a grid concept, such as the
-  grid of arms or a readings grid. Keep text low, and write explanations simple enough for
-  a lab member who does not know the design.
+  grid of arms or a readings grid. Keep text low. Explain the design so that a lab member
+  who does not know it can follow, in the field's own terms.
+- **The correct term, glossed on first use.** Write the technical term — pre-registration,
+  95% confidence interval, standard deviation, statistically significant, confound,
+  limitations — never a homemade stand-in ("rules locked", "the interval", "within noise",
+  "spread", "Doubts"). A term past what a science undergraduate easily follows gets a gloss
+  of 10 words or fewer in the same line, on the slide where it first appears: "pre-registered
+  (fixed in writing before any run)". `crux deck --lint` fails the known stand-ins.
 - **Speaker notes on every slide**: `<aside class="notes">` inside the section, written in
   `<p>`. Write no digits in the notes; a number goes in through a DATA-filled span. The `n`
   key shows the notes, and print puts them under each slide. `crux deck --lint` fails a
@@ -57,11 +63,15 @@ PI chooses.
   "one g across tracks"), not only in a footnote.
 - **Plain names everywhere on a slide.** Write the plain name of every axis, check, arm
   and piece of work: "control fraction", not "ctlfrac"; "the encoder-decoder with a learned
-  decoder", not an internal arm code; what the work does, not its task id. A term the deck
-  needs goes in a backup glossary.
-- **The noise rule is on the slide.** Show the seed spread with every value. A gap counts
-  only when it is above 2× the larger seed spread, or above whatever bar the project sets.
-  Label every smaller gap "within noise" and keep it on the slide. Quantify, then
+  decoder", not an internal arm code; what the work does, not its task id. A plain name is
+  not a simplified one: a technical term stays, glossed where it first appears. A backup
+  glossary may repeat the glosses; it never replaces them.
+- **The significance criterion is on the slide.** Show the 95% confidence interval, or the
+  standard deviation across seeds, with every value. A difference counts only when it meets
+  the criterion: its confidence interval excludes zero, or it is above 2× the larger standard
+  deviation across seeds, or above whatever threshold the project sets. Label every smaller
+  difference by what it fails — "not significant (CI includes zero)" or "below the noise
+  floor (2× the seed standard deviation)" — and keep it on the slide. Quantify, then
   interpret, then caveat.
 - **A mandatory decomposition is always shown.** When the project defines one for a metric
   (for example CRPS split into its oracle-scaled part and its scale-error part), every
@@ -74,7 +84,7 @@ PI chooses.
 
 `build_deck.py` reads every number from a result file and embeds it as DATA. The render
 code fills every numeral from DATA, in charts and in prose. Computed comparisons (a gap, a
-swing, "N of M", "within noise") are computed in the render code and are never typed. The
+swing, "N of M", "not significant") are computed in the render code and are never typed. The
 build also writes the **deck-sources manifest**, which maps each file it read
 (vault-relative path) to the sha256 of that file:
 

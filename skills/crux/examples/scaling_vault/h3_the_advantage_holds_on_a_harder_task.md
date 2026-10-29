@@ -46,4 +46,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-On the harder task the data arm lost outright (-1.3), and lost by more at equal compute (-5.1). No bar was met. Kept on record: this rules the easy-task reading out rather than leaving it untested.
+On the harder task the data arm lost outright (-1.3), and lost by more at equal compute (-5.1). No threshold was met. Kept on record: this rules the easy-task reading out rather than leaving it untested.

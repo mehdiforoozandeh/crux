@@ -37,5 +37,5 @@ of a data pipeline produces a measurable shift ([[held-out-evaluation]]).
 
 Because the second finding above means a data-scaling advantage *might* transfer to
 shifted conditions and might not, and the in-distribution result cannot settle it. That
-makes it a question to open rather than a paragraph to add — with its own bars, fixed
+makes it a question to open rather than a paragraph to add — with its own thresholds, fixed
 before the shifted evaluation runs.

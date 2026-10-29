@@ -13,9 +13,9 @@ Related:: [[q1_does_self_supervised_pretraining_beat_su]]
 
 ## Headline conclusions
 
-- **Self-distillation is the only clean win.** iBOT+UPerNet beat supervised ImageNet-1k init by +3.3 mIoU on ADE20K and +1.5 on Cityscapes, in all three seeds — every pre-registered bar met.
+- **Self-distillation is the only clean win.** iBOT+UPerNet beat supervised ImageNet-1k init by +3.3 mIoU on ADE20K and +1.5 on Cityscapes, in all three seeds — every pre-registered threshold met.
 - **MAE's advantage is fine-tuning-only.** It clears supervised under full FT (+1.8 ADE20K) but trails it by 6.7 mIoU frozen, so it is not evidence of better encoder quality.
-- **Dense contrastive is out.** DenseCL underperformed supervised init on VOC2012 (−1.3 mIoU) and missed its bar on ADE20K.
+- **Dense contrastive is out.** DenseCL underperformed supervised init on VOC2012 (−1.3 mIoU) and missed its threshold on ADE20K.
 
 ## Cross-run table
 

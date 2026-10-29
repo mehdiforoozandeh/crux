@@ -14,7 +14,7 @@ description: >-
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
-  version: "1.1"
+  version: "1.2"
   spec: ".spec/11-prezit.md"
 ---
 
@@ -56,7 +56,7 @@ both arcs.
 | ancestors of the anchor (root → parent) | grand motivation — the line of reasoning |
 | wiki pages linked from anchor + ancestors | background for the intro |
 | sibling questions | the map of the larger problem |
-| **the anchor question** | the question slide; its `## Protocol` → the "rules locked up front" note |
+| **the anchor question** | the question slide; its `## Protocol` → the pre-registration note (rules fixed before any run) |
 | child hypotheses | the bridge from question to method |
 | RD pages (once the RD layer exists; `rd` is empty until then) | methods |
 | verifiables + ticks + findings | the results claims, and the honest negatives |
@@ -142,23 +142,30 @@ own. Fallback ladder, in order:
   in a sentence does not exist. Deck length is elastic; only the results section grows.
 - **Keep the negatives.** An honest "this did not work, and here is the number" is often
   the most valuable slide. Never spun, never dropped.
-- **Dual register**: a lead a science-major undergraduate grasps in one read — standard
-  scientific terms (null hypothesis, confound, effect size, confidence interval) used as is,
-  never swapped for a folksy paraphrase, subfield jargon glossed in the same line — backed by
-  exact numbers a specialist can check.
+- **The correct term, glossed on first use.** Say the term the field uses — null hypothesis,
+  confound, pre-registration, 95% confidence interval, standard deviation, statistically
+  significant, limitations — never a homemade stand-in for it ("the boring explanation",
+  "rules locked", "within noise", "spread", "Doubts"). A term past what a science
+  undergraduate easily follows gets a gloss of 10 words or fewer in the same line, on the
+  slide where it first appears; a backup glossary may repeat it but never replaces it. Leads
+  stay short, not simplified, and exact numbers back them for a specialist. `crux deck
+  --lint` fails the known stand-ins.
 - **Quantify → interpret → caveat.** Not "more data helps" but "+3.3 points, CI clear of
   zero — because the extra data lands where the model was thinnest — but at 1.4× the
   compute."
-- **Show uncertainty**; a gap smaller than the SE is not a gap.
+- **Show uncertainty** — the 95% confidence interval or the standard error (SE); a difference
+  smaller than its SE is no finding.
 - **Bullets are conclusions, not axis descriptions.**
 - **Plain names on slides**: no abbreviated axis labels, terse check names, internal arm
-  codes or task ids; say what the thing is or does.
+  codes or task ids; say what the thing is or does. A plain name is never a simplified one:
+  a technical term stays, glossed.
 - **A mandatory decomposition is always shown**: when the project's rules split a metric
   into parts, every value of that metric on a slide carries its split.
 - **Numbers by role (D5, tree arc):** motivation slides carry none; method slides carry addressed
   definitional constants only; result slides carry at least two addressed numbers; the
   verdict slide introduces none of its own.
-- **"Rules locked before results":** surface the anchor's `## Protocol` when it has one.
+- **Pre-registration** (rules fixed before any result): surface the anchor's `## Protocol`
+  when it has one.
 - Tree arc: no background, related-work, or future-work slide unless asked.
 
 ## The slide contract

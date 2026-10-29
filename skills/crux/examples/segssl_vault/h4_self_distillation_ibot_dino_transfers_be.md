@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-iBOT/DINO self-distillation beat the best MIM method (MAE) by 1.5 mIoU (49.6 vs 48.1) and the best contrastive method (DenseCL) by 2.6 mIoU (49.6 vs 47.0) on ADE20K with UPerNet, and the advantage held on Cityscapes (80.6 vs 79.1 supervised baseline, +1.5). All three pre-registered bars were met. We attribute the gain to iBOT's patch-level distillation producing more spatially-grouped semantic features than instance-level contrastive objectives or raw pixel reconstruction.
+iBOT/DINO self-distillation beat the best MIM method (MAE) by 1.5 mIoU (49.6 vs 48.1) and the best contrastive method (DenseCL) by 2.6 mIoU (49.6 vs 47.0) on ADE20K with UPerNet, and the advantage held on Cityscapes (80.6 vs 79.1 supervised baseline, +1.5). All three pre-registered thresholds were met. We attribute the gain to iBOT's patch-level distillation producing more spatially-grouped semantic features than instance-level contrastive objectives or raw pixel reconstruction.

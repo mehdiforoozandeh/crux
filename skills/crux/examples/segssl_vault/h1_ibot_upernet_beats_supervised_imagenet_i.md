@@ -46,4 +46,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-iBOT-pretrained ViT-B/16 beat the supervised ImageNet-1k baseline by 3.3 mIoU on ADE20K (49.6 vs 46.3) and 1.5 mIoU on Cityscapes (80.6 vs 79.1) with an identical UPerNet decoder under full fine-tuning, and the gain held across all three seeds. All three pre-registered bars were met. The result is consistent with self-distillation learning more spatially-grouped semantic features than supervised classification pretraining, and it sets iBOT/DINO as the SegSSL default.
+iBOT-pretrained ViT-B/16 beat the supervised ImageNet-1k baseline by 3.3 mIoU on ADE20K (49.6 vs 46.3) and 1.5 mIoU on Cityscapes (80.6 vs 79.1) with an identical UPerNet decoder under full fine-tuning, and the gain held across all three seeds. All three pre-registered thresholds were met. The result is consistent with self-distillation learning more spatially-grouped semantic features than supervised classification pretraining, and it sets iBOT/DINO as the SegSSL default.

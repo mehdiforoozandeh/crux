@@ -8,6 +8,20 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- **The correct technical term, glossed on first use — never a homemade stand-in** (engine
+  **3.5**, unchanged; prezit skill **1.1 → 1.2**; no vault-format change). One rule now holds
+  in chat, decks, vault prose and agent text: say the field's term, and give anything past what
+  a science undergraduate easily follows a gloss of 10 words or fewer the first time it
+  appears. A new closed paraphrase table (`PARAPHRASES` in `engine.py`) lists the stand-ins crux
+  actually shipped ("boring explanation", "rules locked", "within noise", "noise rule", "seed
+  spread", "lucky run"); a stand-in passes only when its term sits in the same sentence, as the
+  gloss. `crux voice` (and its chat-time hook) reports `voice:paraphrase`, `crux deck --lint`
+  fails a stand-in in slide text or speaker notes, and selftest sweeps shipped text for them.
+  prezit's paper arc no longer asks for "simple enough" text or banishes terms to a backup
+  glossary; its example deck now says pre-registered, 95% confidence interval, statistically
+  significant and Limitations. "bar" became "threshold" in crux's skill, agents, `validate`
+  message and the scaling and segssl example vaults (autopilot text follows on its own branch).
+  The ELI5 placeholder asks for glossed terms; the old one still reads as unwritten.
 - **The register is a science-major undergraduate's** (engine **3.5**, unchanged; no
   vault-format change). Agents, templates, CLI help and the cockpit now say "null hypothesis"
   where they said "the boring explanation", and the ELI5 slot asks for one sentence a science
