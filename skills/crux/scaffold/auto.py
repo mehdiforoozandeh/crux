@@ -404,9 +404,10 @@ def _beats(value, ref, direction, min_gain=0.0):
     return value < ref - min_gain if direction == "min" else value > ref + min_gain
 
 
-def _best(kept, direction, min_gain=0.0):
-    """In attempt order, a kept attempt replaces the best only if it beats it by > min_gain."""
-    best = None
+def _best(kept, direction, min_gain=0.0, baseline=None):
+    """The base (when its score is known) starts as the best; in attempt order, a kept attempt
+    replaces the best only if it beats it by more than min_gain."""
+    best = None if baseline is None else {"id": "base", "score": baseline}
     for r in sorted(kept, key=lambda r: r.get("n") or 0):
         if best is None or _beats(r["score"], best["score"], direction, min_gain):
             best = r
@@ -556,19 +557,20 @@ def check(root, plan_path, static=False):
 def _attempt(root, plan, setup, rows, n, lp):
     anchor, repo, d = plan["anchor"], _repo(root, plan), run_dir(root, plan["anchor"])
     kept = [r for r in rows if r["status"] == "kept"]
-    if kept:
+    best = _best(kept, plan["direction"], plan["min_gain"], setup["baseline"])
+    pid = best["id"]                                   # climb: the best, possibly the base
+    if kept and plan["mode"] != "climb":
         pop = [{"id": r["id"], "score": r["score"],
                 "visits": sum(1 for x in rows if x.get("parent") == r["id"])} for r in kept]
-        pid = (_best(kept, plan["direction"], plan["min_gain"])["id"] if plan["mode"] == "climb"
-               else puct_select(pop, MODES[plan["mode"]], plan["direction"]))
+        pid = puct_select(pop, MODES[plan["mode"]], plan["direction"])
+    if pid != "base":
         prow = next(r for r in kept if r["id"] == pid)
         pcommit, pscore = prow["commit"], prow["score"]
     else:
-        pid, pcommit, pscore = "base", _rev(repo, plan["base"]), setup["baseline"]
+        pcommit, pscore = _rev(repo, plan["base"]), setup["baseline"]
         if pcommit is None:
             raise E.CruxError(f"base '{plan['base']}' is not a commit in {repo}")
-    best = _best(kept, plan["direction"], plan["min_gain"])
-    text = brief_text(plan, n, pid, pscore, best["score"] if best else setup["baseline"],
+    text = brief_text(plan, n, pid, pscore, best["score"],
                       rows[-5:])
     wt, ws = os.path.join(d, "work", str(n)), os.path.join(d, "scratch", str(n))
     os.makedirs(os.path.join(d, "logs"), exist_ok=True)
@@ -679,8 +681,8 @@ def status(root, qid=None):
     keys = ("n", "id", "parent", "score", "status", "seconds", "at")
     atts = [{k: r.get(k) for k in keys} for r in _attempt_rows(lines)]
     kept = [a for a in atts if a["status"] == "kept" and isinstance(a["score"], (int, float))]
-    best = _best(kept, direction, num("min_gain", 0))
     setup = next((l for l in reversed(lines) if l.get("event") == "setup"), {})
+    best = _best(kept, direction, num("min_gain", 0), setup.get("baseline"))
     times = [t for t in (_ts(l.get("at")) for l in lines) if t]
     elapsed = (times[-1] - times[0]).total_seconds() / 3600 if len(times) > 1 else 0.0
     stop = lines[-1] if lines and lines[-1].get("event") == "stop" else None
@@ -690,7 +692,8 @@ def status(root, qid=None):
     return {"anchor": qid, "mode": raw.get("mode") or "climb",
             "address": obj[0] if obj else None, "direction": direction, "bar": bar,
             "baseline": setup.get("baseline"),
-            "best": {"id": best["id"], "score": best["score"]} if best else None,
+            "best": ({"id": best["id"], "score": best["score"]}
+                     if best and best["id"] != "base" else None),
             "attempts": atts,
             "attempts_per_hour": round(len(atts) / elapsed, 3) if elapsed > 0 else 0.0,
             "elapsed_hours": round(elapsed, 4), "budget_hours": num("budget_hours", 8),

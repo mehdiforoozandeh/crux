@@ -438,6 +438,19 @@ def _run_tests(check, A):
               at[1]["parent"] == "base" and at[1]["status"] == "kept"
               and A.status(root, qid)["best"]["id"] == at[1]["id"])
 
+    # the base is the starting best: a kept attempt worse than the base never leads climb
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,down,up")
+        A.run(root, path, max_attempts=1)
+        best1 = A.status(root, qid)["best"]
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        check("baseline: an attempt worse than the base is kept but is not the best",
+              at[0]["status"] == "kept" and at[0]["score"] == 0.0 and best1 is None)
+        check("baseline: climb then builds on the base, not on the worse attempt",
+              at[1]["parent"] == "base" and at[1]["score"] == 2.0
+              and A.status(root, qid)["best"]["id"] == at[1]["id"])
+
     # min_gain: a gain of 1 per step is not more than 1.5, so nothing counts as better
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, modes="up", min_gain="1.5")
@@ -447,10 +460,10 @@ def _run_tests(check, A):
         check("min_gain: a gain not above min_gain is kept but filed refuted",
               [a["status"] for a in at] == ["kept"] * 3
               and v.get(at[1]["id"])["fm"].get("verdict") == "refuted"
-              and "x > 3.5" in v.get(at[1]["id"])["body"])
+              and "x > 2.5" in v.get(at[1]["id"])["body"])
         check("min_gain: best and climb's parent move only on a gain above min_gain",
-              at[1]["parent"] == at[0]["id"] and at[2]["parent"] == at[0]["id"]
-              and A.status(root, qid)["best"]["id"] == at[0]["id"])
+              at[1]["parent"] == "base" and at[2]["parent"] == "base"
+              and A.status(root, qid)["best"] is None)
 
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, modes="up,mv,up", editable="prog.txt, src/")
