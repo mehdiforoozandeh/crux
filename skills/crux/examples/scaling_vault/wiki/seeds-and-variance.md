@@ -19,9 +19,9 @@ real effect from noise, however carefully everything else was controlled.
 
 ## Practice here
 
-Every arm runs three seeds. The pre-registered bar is that the effect holds in *all
+Every arm runs three seeds. The pre-registered threshold is that the effect holds in *all
 three*, not that it holds on the mean. This is a deliberately blunt rule: means can be
-carried by one outlier, and a bar that a single lucky run can clear is not a bar.
+carried by one outlier, and a threshold that a single run can clear by chance alone is not a threshold.
 
 Three is a compromise between statistical honesty and the compute this programme has.
 It is enough to catch a sign flip and not enough to estimate a variance, and it is

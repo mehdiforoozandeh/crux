@@ -44,4 +44,4 @@ _(none yet)_
 
 ## Findings
 
-At half the training set accuracy fell by only 0.9 points, within the 2-point bar, on both tasks.
+At half the training set accuracy fell by only 0.9 points, within the 2-point threshold, on both tasks.

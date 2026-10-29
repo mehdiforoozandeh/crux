@@ -16,7 +16,7 @@ Parent:: [[<<parent_basename>>]]
 
 ## ELI5
 
-_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_
+_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_
 
 ## TL;DR
 
@@ -28,8 +28,8 @@ _(one paragraph: what this asks, and what would settle it)_
 
 ## Protocol
 
-<!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,
-     thresholds, scope. `crux deck` surfaces this as the "rules locked up front" note. -->
+<!-- optional (engine 1.4 / spec 11): the pre-registered rules — endpoints, arms, thresholds,
+     scope — fixed BEFORE any run. `crux deck` surfaces this as the pre-registration note. -->
 _(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
 
 ## Answer so far

@@ -25,7 +25,7 @@ the gain holds in every seed.
 
 ![ADE20K val mIoU by seed](miou-by-seed.svg)
 
-Per-seed numbers are in [per-seed.csv](per-seed.csv). The bar that mattered most — *no
+Per-seed numbers are in [per-seed.csv](per-seed.csv). The threshold that mattered most — *no
 seed regresses to or below the baseline* — is the third verifiable, and the worst iBOT
 seed (49.4) still clears the best supervised seed (46.4) by 3.0 mIoU.
 

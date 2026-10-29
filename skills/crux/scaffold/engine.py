@@ -247,8 +247,8 @@ TERMINAL_QUESTION= "resolved"
 #   it names a family from a CLOSED list — the agent picks a family and names the instance,
 #                                          so nothing exotic is even on the menu
 #   the PI approves it before checks are written — the gate between crux-null and
-#                                          crux-verifiables; the null IS the bar restated,
-#                                          and the leash already makes the bar the PI's call
+#                                          crux-verifiables; the null IS the threshold restated,
+#                                          and the leash already makes the threshold the PI's call
 CONFOUND_FAMILIES = ("capacity", "chance", "leakage", "selection", "normalization",
                      "instrumentation")
 NULL_MAX_WORDS    = 25
@@ -625,8 +625,8 @@ Parent:: [[<<parent_basename>>]]
 
 ## Protocol
 
-<!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,
-     thresholds, scope. `crux deck` surfaces this as the "rules locked up front" note. -->
+<!-- optional (engine 1.4 / spec 11): the pre-registered rules — endpoints, arms, thresholds,
+     scope — fixed BEFORE any run. `crux deck` surfaces this as the pre-registration note. -->
 _(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
 
 ## Answer so far
@@ -1477,7 +1477,7 @@ def null_gap(n):
                 f"nothing. Re-approve with `crux approve-null {n.id}`.")
     if not str(n["fm"].get(NULL_APPROVED) or "").strip():
         return (f"hypothesis '{n.id}': the null is declared but not approved. The null IS the "
-                f"bar restated, and the bar is the PI's call — `crux approve-null {n.id}` "
+                f"threshold restated, and the threshold is the PI's call — `crux approve-null {n.id}` "
                 f"once they have read it. Checks are written against an APPROVED null.")
     return None
 
@@ -2105,6 +2105,47 @@ NOTEBOOK_TERMS = frozenset(glossary_key(t) for t in
 
 VOICE_SPEAKERS = ("pi", "agent")
 
+#: The paraphrase table (2026-10-29). The other half of the voice rule from CRUX_LEXICON:
+#: crux's OWN words stay out of chat, and science's words stay IN — the correct technical
+#: term, glossed in at most ten words on first use, never a homemade stand-in for it. Prose
+#: alone did not hold that line (prezit's paper arc shipped "within noise" and "rules locked"
+#: under a rule saying not to), so the swaps crux actually shipped are listed here, closed.
+#: Each row: the stand-in, the term to say, and the stems whose presence in the SAME sentence
+#: makes the stand-in a gloss rather than a replacement — "null hypothesis (the boring
+#: explanation)" is the rule followed, not broken. Read by `voice_lint`, `deck_lint` and the
+#: selftest sweep over shipped text. "bar" is deliberately absent: "error bar" and "bar chart"
+#: are the same word, so a threshold-for-bar swap is fixed in the text, not caught here.
+PARAPHRASES = (
+    (r"boring explanations?", "null hypothesis", ("null hypothes",)),
+    (r"rules?\s+(?:were\s+|are\s+|was\s+|is\s+)?locked", "pre-registration",
+     ("pre-regist", "preregist")),
+    (r"within\s+(?:the\s+)?noise", "not statistically significant",
+     ("significan", "noise floor")),
+    (r"noise\s+rule", "significance criterion", ("significan",)),
+    (r"seed\s+spread|spread\s+(?:over|across|between)\s+(?:the\s+)?(?:seeds|runs|repeats|trials)",
+     "standard deviation", ("standard deviation",)),
+    (r"lucky\s+(?:runs?|splits?|seeds?|draws?)", "sampling variability",
+     ("sampling variab", "chance")),
+)
+_PARAPHRASE_RX = tuple((re.compile(r"\b(?:%s)\b" % p, re.I), term, stems)
+                       for p, term, stems in PARAPHRASES)
+#: a sentence ends at . ! ? or a blank line; a single newline is wrapped prose, not a break
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n\s*\n")
+
+
+def paraphrases_in(text):
+    """[(stand-in as written, the technical term)] for every paraphrase in `text` whose term
+    is absent from its own sentence. Pure."""
+    out = []
+    for sent in _SENTENCE_RE.split(str(text or "")):
+        low = sent.lower()
+        for rx, term, stems in _PARAPHRASE_RX:
+            if any(s in low for s in stems):
+                continue
+            out += [(m.group(0), term) for m in rx.finditer(sent)]
+    return out
+
+
 #: compiled once: a lint over a long transcript would otherwise rebuild ~40 patterns a turn
 _LEXICON_PATTERNS = tuple((k, term_pattern(k)) for k in sorted(CRUX_LEXICON))
 
@@ -2144,11 +2185,14 @@ def voice_lint(turns, agreed=(), report_from=1):
     (PRD 16.2) needs exactly that — the mirror rule is cumulative over a conversation, but
     re-reporting turn 3's slip on every later tool call turns the signal into wallpaper.
 
-    Two findings, one per kind of leak:
+    Three findings, one per kind of slip:
 
-      voice:node-id    the agent said `q19` and the PI never had
-      voice:crux-term  the agent said "review gate", "verifiable", "synthesis" — the same
-                       what-the-hell-is-q19 problem in different clothes
+      voice:node-id     the agent said `q19` and the PI never had
+      voice:crux-term   the agent said "review gate", "verifiable", "synthesis" — the same
+                        what-the-hell-is-q19 problem in different clothes
+      voice:paraphrase  the agent said "within noise" for "not statistically significant" —
+                        a PARAPHRASES stand-in with its term nowhere in the sentence. Never
+                        licensed: the mirror rule is for crux's words, not for science's
 
     Order matters and that is the whole mechanism: a term is licensed from the turn the PI
     uses it, not for the turns before. Scanning a conversation rather than a message is what
@@ -2168,10 +2212,16 @@ def voice_lint(turns, agreed=(), report_from=1):
             licensed_terms |= terms
             notebook = bool(terms & NOTEBOOK_TERMS)
             continue
-        if notebook:
-            continue                      # leafing through the notebook — its words are open
         if i < report_from:
             continue                      # licensed above, reported by a narrower consumer
+        # science's words are never licensed away: not by the PI using the stand-in first,
+        # not by leafing through the notebook — the mirror rule covers crux's words only
+        for phrase, term in paraphrases_in(text):
+            out.append(("voice:paraphrase",
+                        f"turn {i}: the agent said {phrase!r} in place of {term!r}. Say "
+                        f"{term!r}, glossed in at most ten words on first use."))
+        if notebook:
+            continue                      # leafing through the notebook — its words are open
         for nid in sorted(ids - licensed_ids, key=natkey):
             out.append(("voice:node-id",
                         f"turn {i}: the agent said {nid!r}, which the PI has not used in "
@@ -2316,13 +2366,14 @@ def hook_report(payload):
     found = voice_lint(turns, agreed, report_from=agent_turns[-1])
     if not found:
         return None
-    lines = ["crux voice — the newest PI-facing message broke the mirror rule "
+    lines = ["crux voice — the newest PI-facing message broke the voice rules "
              "(SKILL.md, \"Voice — the invisible notebook\"):"]
     lines += ["  · %s  %s" % (i, m) for i, m in found]
-    lines.append("Say it again in science before going on: name the node by its title, and "
+    lines.append("Say it again in science before going on: name the node by its title, "
                  "give the PI what the bookkeeping MEANS rather than the fact that it "
-                 "happened. No apology and no meta-commentary about this notice — just the "
-                 "science, from here on.")
+                 "happened, and say each technical term itself, glossed on first use. No "
+                 "apology and no meta-commentary about this notice — just the science, from "
+                 "here on.")
     return "\n".join(lines)
 
 
@@ -4320,7 +4371,7 @@ def boundary_info(v):
     return out
 
 def _section_placeholder(name):
-    return {"ELI5":     "_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_",
+    return {"ELI5":     "_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_",
             "TL;DR":    "_(one paragraph: what this claims, and what would settle it)_",
             "Null":     "_(one line: the null hypothesis, the most parsimonious alternative "
                         "explanation — name a family from " + ", ".join(CONFOUND_FAMILIES) + ")_",
@@ -5848,6 +5899,11 @@ def deck_lint(path):
         if paper and not re.search(r'<aside\s+class="notes\b', seg):
             problems.append((i, f"slide {i}: paper arc: no speaker notes "
                                 f'(<aside class="notes">)'))
+        # slide text AND speaker notes: the notes are read aloud to the same room
+        said = html.unescape(re.sub(r"<[^>]+>", " ", seg))
+        for phrase, term in paraphrases_in(said):
+            problems.append((i, f"slide {i}: says {phrase!r} in place of {term!r} — say the "
+                                f"term, glossed in at most ten words on first use"))
     return problems
 
 def deck_warnings(root):

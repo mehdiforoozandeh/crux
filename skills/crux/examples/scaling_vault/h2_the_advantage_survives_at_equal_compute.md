@@ -46,4 +46,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-At equal data the gain replicates (+1.8). Matched on training FLOPs it reverses (-4.6). Exactly one of three bars was met: most of the h1 advantage was the extra budget, not the extra data.
+At equal data the gain replicates (+1.8). Matched on training FLOPs it reverses (-4.6). Exactly one of three thresholds was met: most of the h1 advantage was the extra budget, not the extra data.

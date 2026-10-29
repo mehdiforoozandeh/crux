@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-All three pre-registered bars were met: the mask-transformer beat UPerNet on the same frozen features, closed to within 0.3 mIoU of full fine-tuning, and did so with 55% of the parameter budget. The same pattern replicated on frozen iBOT (47.9 vs UPerNet 47.1), supporting the mechanism that query-token cross-attention exploits the semantic clustering self-distillation objectives ([[wiki/dinov2]], [[wiki/ibot]]) induce in patch tokens, something convolutional multi-scale fusion captures less directly.
+All three pre-registered thresholds were met: the mask-transformer beat UPerNet on the same frozen features, closed to within 0.3 mIoU of full fine-tuning, and did so with 55% of the parameter budget. The same pattern replicated on frozen iBOT (47.9 vs UPerNet 47.1), supporting the mechanism that query-token cross-attention exploits the semantic clustering self-distillation objectives ([[wiki/dinov2]], [[wiki/ibot]]) induce in patch tokens, something convolutional multi-scale fusion captures less directly.

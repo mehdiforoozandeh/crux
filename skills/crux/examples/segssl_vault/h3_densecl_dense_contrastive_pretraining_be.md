@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-DenseCL+Segmenter underperformed supervised init on Pascal VOC 2012 by 1.3 mIoU (76.9 vs 78.2) and 2.6 boundary-mIoU (62.1 vs 64.7), and on ADE20K it edged supervised by only +0.7 mIoU (47.0 vs 46.3), below the +1.0 bar. None of the three pre-registered bars were met. Despite optimizing pixel-level correspondence, dense-contrastive pretraining gave no reliable transfer advantage over supervised init in the full-label regime, echoing Q2's finding that DenseCL trailed both iBOT and MAE.
+DenseCL+Segmenter underperformed supervised init on Pascal VOC 2012 by 1.3 mIoU (76.9 vs 78.2) and 2.6 boundary-mIoU (62.1 vs 64.7), and on ADE20K it edged supervised by only +0.7 mIoU (47.0 vs 46.3), below the +1.0 threshold. None of the three pre-registered thresholds were met. Despite optimizing pixel-level correspondence, dense-contrastive pretraining gave no reliable transfer advantage over supervised init in the full-label regime, echoing Q2's finding that DenseCL trailed both iBOT and MAE.

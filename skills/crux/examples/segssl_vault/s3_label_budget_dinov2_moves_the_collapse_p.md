@@ -15,7 +15,7 @@ Related:: [[q3_how_far_can_the_labeled_data_budget_drop]]
 
 - **The collapse point is a function of pretraining, not only data scale.** DINOv2 retains 81.2% of full-label mIoU at 1% labels vs 66.2% for supervised init.
 - **The margin grows as labels shrink** (+1.3 mIoU at 100% → +12.9 at 1%) — the signature of delayed collapse rather than a constant offset.
-- **MAE is a mild regularizer, not a rescue.** Its edge decays to +0.7 mIoU at 1% and missed the retention bar; DenseCL showed no low-label advantage at all.
+- **MAE is a mild regularizer, not a rescue.** Its edge decays to +0.7 mIoU at 1% and missed the retention threshold; DenseCL showed no low-label advantage at all.
 
 ## Cross-run table
 

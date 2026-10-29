@@ -334,7 +334,7 @@ def main(argv=None):
     g2.add_argument("term")
     _jsonable(gs.add_parser("list", help="print the vocabulary model (terms + the decline list)"))
 
-    s = _jsonable(sub.add_parser("voice", help="lint a conversation for crux's own vocabulary reaching the PI"))
+    s = _jsonable(sub.add_parser("voice", help="lint a conversation for crux's own vocabulary, or a stand-in for a science term, reaching the PI"))
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--hook", action="store_true",
                    help="read a Claude Code hook payload on stdin; report on the newest agent turn only")
