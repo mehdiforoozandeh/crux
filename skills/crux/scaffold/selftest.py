@@ -2972,6 +2972,48 @@ def run_storify_engine():
     shutil.rmtree(base, ignore_errors=True)
 
 
+def run_storify_skill():
+    """The storify skill ships its SKILL.md, the vendored Springer Nature class, the template
+    and a worked example on scaling_vault q1 whose built story verifies and lints clean."""
+    print("\n# storify skill assets and the q1 example")
+    CRUX = os.path.join(HERE, "crux.py")
+    skl = os.path.abspath(os.path.join(HERE, "..", "..", "storify"))
+    ex = os.path.join(skl, "examples", "q1_story")
+    ships = [os.path.join(skl, "SKILL.md")] + \
+        [os.path.join(skl, "assets", f) for f in
+         ("sn-jnl.cls", "sn-mathphys-num.bst", "story_src.tex", "build_story.py")] + \
+        [os.path.join(ex, f) for f in ("story_src.tex", "build_story.py", "story.tex")]
+    check("storify: SKILL.md, template, build and q1 example ship",
+          all(os.path.isfile(f) for f in ships))
+    if not all(os.path.isfile(f) for f in ships):
+        return
+    with open(os.path.join(skl, "assets", "sn-jnl.cls"), "rb") as fh:
+        cls = fh.read()
+    check("storify: the vendored class keeps its LPPL licence header",
+          b"LaTeX Project Public License" in cls and b"\\ProvidesClass{sn-jnl}" in cls)
+    base = tempfile.mkdtemp(prefix="crux_storyex_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    run = lambda *a: subprocess.run([sys.executable, CRUX, "story", *a], capture_output=True,
+                                    text=True, encoding="utf-8", cwd=svc)
+    story = os.path.join(ex, "story.tex")
+    check("storify: the q1 example verifies green under --strict",
+          run("--verify", story, "--strict").returncode == 0)
+    check("storify: the q1 example lints clean", run("--lint", story).returncode == 0)
+    # the build is reproducible: rebuilding against a vault copy gives the shipped bytes
+    ec = os.path.join(base, "q1_story")
+    os.makedirs(ec)
+    for f in ("story_src.tex", "build_story.py"):
+        shutil.copy(os.path.join(ex, f), ec)
+    rb = subprocess.run([sys.executable, os.path.join(ec, "build_story.py"), svc],
+                        capture_output=True, text=True, encoding="utf-8")
+    check("storify: q1 build_story.py runs", rb.returncode == 0)
+    built = os.path.join(ec, "story.tex")
+    check("storify: q1 build reproduces the shipped story.tex byte for byte",
+          os.path.isfile(built) and read(built) == read(story))
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def run_rd():
     """Spec 07 — the RD layer. Requirements Documents: one active RD per node, living in
     rd/, linked from the node, OUTSIDE the roll-up tree. This is the overflow channel spec 06
@@ -16893,6 +16935,7 @@ def main():
     run_deck_verify()
     run_prezit()
     run_storify_engine()
+    run_storify_skill()
     run_evidence_boundary()
     run_verifiable_kind()
     run_combination_rule()
