@@ -39,6 +39,8 @@ elif mode == "down":
     setv(repr(float(cur) - 1)); commit("lower the number by one")
 elif mode == "same":
     open("prog.txt", "a").write("# a comment\n"); commit("")
+elif mode == "empty":
+    subprocess.check_call(["git", "commit", "-q", "--allow-empty", "-m", "no change"])
 elif mode == "frozen":
     open("frozen.txt", "a").write("x\n"); commit("touch the frozen file")
 elif mode in ("bad", "garbage", "nokey", "die"):
@@ -190,9 +192,15 @@ def _plan_tests(check, A):
               and p["bar"] == 100.0 and p["editable"] == ["prog.txt"] and p["mode"] == "climb"
               and p["model"] == "opus" and p["effort"] == "high"
               and p["guidance"].startswith("Try making"))
-        check("plan: PLAN_FIELDS is the 11 names, and a plan uses at most 10 rows",
-              len(A.PLAN_FIELDS) == 11 and "guidance" in A.PLAN_FIELDS
-              and len(set(A.PLAN_FIELDS) - {"repo", "base"}) + 1 == 10)
+        check("plan: PLAN_FIELDS is the 12 names; min_gain is optional and defaults to 0",
+              len(A.PLAN_FIELDS) == 12 and "guidance" in A.PLAN_FIELDS
+              and "min_gain" in A.PLAN_FIELDS and p.get("min_gain") == 0.0)
+
+    for bad in ("-0.5", "tiny"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, path, qid, repo = fixture(tmp, min_gain=bad)
+            check(f"plan: a min_gain of {bad!r} is refused with a message naming min_gain",
+                  raises(lambda: A.load_plan(path), "min_gain", ">= 0"))
 
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, mode=None, budget_hours=None, attempt_minutes=None,
@@ -418,6 +426,31 @@ def _run_tests(check, A):
         check("rule 1: a discarded attempt is never scored and closes invalid-run",
               at[0]["score"] is None
               and E.Vault(root).get(at[0]["id"])["fm"].get("verdict") == "invalid-run")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,empty,up")
+        A.run(root, path, max_attempts=2)
+        at = attempts(root, qid)
+        check("empty commit: an attempt with no file change is discarded, never scored",
+              at[0]["status"] == "discarded" and at[0]["score"] is None
+              and at[0]["reason"] == "empty commit: no file changed")
+        check("empty commit: it never becomes a parent or the best",
+              at[1]["parent"] == "base" and at[1]["status"] == "kept"
+              and A.status(root, qid)["best"]["id"] == at[1]["id"])
+
+    # min_gain: a gain of 1 per step is not more than 1.5, so nothing counts as better
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up", min_gain="1.5")
+        A.run(root, path, max_attempts=3)
+        at = attempts(root, qid)
+        v = E.Vault(root)
+        check("min_gain: a gain not above min_gain is kept but filed refuted",
+              [a["status"] for a in at] == ["kept"] * 3
+              and v.get(at[1]["id"])["fm"].get("verdict") == "refuted"
+              and "x > 3.5" in v.get(at[1]["id"])["body"])
+        check("min_gain: best and climb's parent move only on a gain above min_gain",
+              at[1]["parent"] == at[0]["id"] and at[2]["parent"] == at[0]["id"]
+              and A.status(root, qid)["best"]["id"] == at[0]["id"])
 
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, modes="up,mv,up", editable="prog.txt, src/")

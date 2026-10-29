@@ -43,7 +43,9 @@ The PI's guidance, in their words.
 `anchor`, `repo` (absolute, or relative to the vault root), `base` (a commit or ref),
 `editable` (comma-separated; a trailing `/` is a directory), `scorer` and `objective`
 (`<address> <min|max> <bar>`) are required. The rest default to the values shown; `mode` is
-`climb` or `explore`, and `worker` is `<model> <low|medium|high|xhigh|max>`. Put no comment
+`climb` or `explore`, and `worker` is `<model> <low|medium|high|xhigh|max>`. The optional
+`min_gain` (a number >= 0, default 0, in the objective's units) sets how much an attempt must
+beat its parent, and climb's best, to count as better; set it above the scorer's noise. Put no comment
 after a value: it becomes part of the value.
 
 ## The steps

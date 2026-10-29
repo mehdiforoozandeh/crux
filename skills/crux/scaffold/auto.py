@@ -22,7 +22,7 @@ sys.path.insert(0, HERE)
 import engine as E
 
 PLAN_FIELDS = ("anchor", "repo", "base", "editable", "scorer", "objective", "mode",
-               "budget_hours", "attempt_minutes", "worker", "guidance")
+               "budget_hours", "attempt_minutes", "worker", "min_gain", "guidance")
 REQUIRED = ("anchor", "repo", "base", "editable", "scorer", "objective")
 MODES = {"climb": 0.0, "explore": 1.0}                  # mode -> c_puct
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -143,6 +143,12 @@ def load_plan(path):
         problems.append(f"'mode' must be climb or explore (got {p['mode']!r})")
     p["budget_hours"] = _pos_float(raw, "budget_hours", 8, problems)
     p["attempt_minutes"] = _pos_float(raw, "attempt_minutes", 20, problems)
+    try:
+        p["min_gain"] = float(raw.get("min_gain") or 0)
+        if not (p["min_gain"] >= 0 and math.isfinite(p["min_gain"])):
+            raise ValueError
+    except ValueError:
+        problems.append(f"'min_gain' must be a number >= 0 (got {raw.get('min_gain')!r})")
     w = (raw.get("worker") or "opus high").split()
     if len(w) != 2 or not re.fullmatch(r"[A-Za-z][\w.\-]*", w[0]) or w[1] not in EFFORTS:
         problems.append(f"'worker' must be `<model> <effort>`, effort one of "
@@ -292,6 +298,8 @@ def brief_text(plan, n, parent, pscore, best, last):
         f"The bar is {plan['bar']}.",
         f"The scorer is frozen; the driver runs it after you finish: {plan['scorer']}",
         f"You start from {parent}, which scores {pscore}. The best score so far is {best}.",
+        *([f"A score counts as better only if it beats the parent by more than "
+           f"{plan['min_gain']:g}."] if plan.get("min_gain") else []),
         "Last outcomes:", *(lines or ["- none yet"]),
         "",
         "Rules:",
@@ -391,11 +399,18 @@ def puct_select(attempts, c_puct, direction="max"):
     return puct_rank(attempts, c_puct, direction)[0]["id"]
 
 
-def _best(kept, direction):
-    if not kept:
-        return None
-    sign = 1 if direction == "min" else -1
-    return min(kept, key=lambda r: (sign * r["score"], r.get("n") or 0))
+def _beats(value, ref, direction, min_gain=0.0):
+    """Better than `ref` by MORE than min_gain, in the objective's direction."""
+    return value < ref - min_gain if direction == "min" else value > ref + min_gain
+
+
+def _best(kept, direction, min_gain=0.0):
+    """In attempt order, a kept attempt replaces the best only if it beats it by > min_gain."""
+    best = None
+    for r in sorted(kept, key=lambda r: r.get("n") or 0):
+        if best is None or _beats(r["score"], best["score"], direction, min_gain):
+            best = r
+    return best
 
 
 # ------------------------------------------------------------------------------ the vault
@@ -417,11 +432,12 @@ def _tick(root, nid, ticks):
 def file_node(root, plan, n, parent, pscore, status, value, reason, claim):
     """One attempt as one hypothesis under the anchor, filed and closed: hypothesize,
     approve the null, running, tick, close. The verdict is the engine's. Returns the id."""
-    op = "<" if plan["direction"] == "min" else ">"
+    op, g = ("<" if plan["direction"] == "min" else ">"), plan.get("min_gain") or 0
+    bar = pscore if not g else (pscore - g if op == "<" else pscore + g)
     claim = " ".join((claim or "").split()) or f"Autopilot attempt {n} (no claim)"
     nid, _fn, _w = E.cmd_hypothesize(
         root, " ".join(claim.split()[:12]), parent=plan["anchor"],
-        verifiables=[f"{plan['address']} {op} {pscore!r}"], neutral=[CONTROL], null=NULL,
+        verifiables=[f"{plan['address']} {op} {bar!r}"], neutral=[CONTROL], null=NULL,
         fails_if=["the candidate does not beat its parent's score",
                   "the scorer rejected the candidate, failed, or never ran"],
         discriminates=[True, False], builds_on=None if parent == "base" else parent,
@@ -429,7 +445,7 @@ def file_node(root, plan, n, parent, pscore, status, value, reason, claim):
     E.cmd_approve_null(root, nid)
     E.cmd_test(root, nid, to="running")
     if status == "kept":
-        better = value < pscore if plan["direction"] == "min" else value > pscore
+        better = _beats(value, pscore, plan["direction"], g)
         _tick(root, nid, [("x" if better else " ", repr(value)), ("x", "passed")])
     else:
         _tick(root, nid, [("-", "n/a"), (" ", status)])
@@ -543,14 +559,15 @@ def _attempt(root, plan, setup, rows, n, lp):
     if kept:
         pop = [{"id": r["id"], "score": r["score"],
                 "visits": sum(1 for x in rows if x.get("parent") == r["id"])} for r in kept]
-        pid = puct_select(pop, MODES[plan["mode"]], plan["direction"])
+        pid = (_best(kept, plan["direction"], plan["min_gain"])["id"] if plan["mode"] == "climb"
+               else puct_select(pop, MODES[plan["mode"]], plan["direction"]))
         prow = next(r for r in kept if r["id"] == pid)
         pcommit, pscore = prow["commit"], prow["score"]
     else:
         pid, pcommit, pscore = "base", _rev(repo, plan["base"]), setup["baseline"]
         if pcommit is None:
             raise E.CruxError(f"base '{plan['base']}' is not a commit in {repo}")
-    best = _best(kept, plan["direction"])
+    best = _best(kept, plan["direction"], plan["min_gain"])
     text = brief_text(plan, n, pid, pscore, best["score"] if best else setup["baseline"],
                       rows[-5:])
     wt, ws = os.path.join(d, "work", str(n)), os.path.join(d, "scratch", str(n))
@@ -579,7 +596,9 @@ def _attempt(root, plan, setup, rows, n, lp):
             # --no-renames: a move lists both paths, so a frozen file cannot leave unseen
             diff = _git(wt, "diff", "--name-only", "--no-renames", pcommit, head)
             bad = [p for p in diff.splitlines() if p and not editable_ok(p, plan["editable"])]
-            if bad:
+            if not diff.strip():
+                status, reason = "discarded", "empty commit: no file changed"
+            elif bad:
                 status, reason = "discarded", "changed non-editable path(s): " + ", ".join(bad)
             else:
                 status, value, reason = score(plan, wt, n, ws, deadline)
@@ -652,20 +671,20 @@ def status(root, qid=None):
         bar = float(obj[2]) if len(obj) > 2 else None
     except ValueError:
         bar = None
-    keys = ("n", "id", "parent", "score", "status", "seconds", "at")
-    atts = [{k: r.get(k) for k in keys} for r in _attempt_rows(lines)]
-    kept = [a for a in atts if a["status"] == "kept" and isinstance(a["score"], (int, float))]
-    best = _best(kept, direction)
-    setup = next((l for l in reversed(lines) if l.get("event") == "setup"), {})
-    times = [t for t in (_ts(l.get("at")) for l in lines) if t]
-    elapsed = (times[-1] - times[0]).total_seconds() / 3600 if len(times) > 1 else 0.0
-    stop = lines[-1] if lines and lines[-1].get("event") == "stop" else None
-
     def num(k, default):
         try:
             return float(raw.get(k) or default)
         except ValueError:
             return float(default)
+    keys = ("n", "id", "parent", "score", "status", "seconds", "at")
+    atts = [{k: r.get(k) for k in keys} for r in _attempt_rows(lines)]
+    kept = [a for a in atts if a["status"] == "kept" and isinstance(a["score"], (int, float))]
+    best = _best(kept, direction, num("min_gain", 0))
+    setup = next((l for l in reversed(lines) if l.get("event") == "setup"), {})
+    times = [t for t in (_ts(l.get("at")) for l in lines) if t]
+    elapsed = (times[-1] - times[0]).total_seconds() / 3600 if len(times) > 1 else 0.0
+    stop = lines[-1] if lines and lines[-1].get("event") == "stop" else None
+
     live = (stop is None and bool(times) and (datetime.datetime.utcnow() - times[-1])
             .total_seconds() < 2 * num("attempt_minutes", 20) * 60)
     return {"anchor": qid, "mode": raw.get("mode") or "climb",
