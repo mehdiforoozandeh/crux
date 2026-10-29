@@ -16,7 +16,7 @@ Parent:: [[q3_does_any_of_it_hold_on_data_from_elsewhe]]
 
 ## Problem Statement
 
-Bars are fixed before the shifted evaluation runs, because a robustness claim is the one most often asserted and least often pre-registered ([[wiki/held-out-evaluation]]).
+Thresholds are fixed before the shifted evaluation runs, because a robustness claim is the one most often asserted and least often pre-registered ([[wiki/held-out-evaluation]]).
 
 ## Idea / Hypothesis
 

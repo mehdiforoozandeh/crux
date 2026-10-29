@@ -131,10 +131,10 @@ crux is running.
 synthesis, verdict, taskhub, vault, node, seed file, RD, cockpit, ledger, roll-up,
 outcome-neutral, invalid-run, and the rest of it. A term or id **the PI uses first licenses
 it back to you**: that is the mirror rule. Standard scientific vocabulary is free — null
-hypothesis, confound, control, effect size, confidence interval, supported, refuted.
-**The register is a science-major undergraduate's**: never swap a standard term for a
-homemade simplification ("the boring explanation" for the null hypothesis), and gloss a
-term specific to this subfield in the same breath.
+hypothesis, confound, confidence interval. **Say the correct term, never a homemade
+stand-in** ("the boring explanation" for null hypothesis); past what a science undergraduate
+easily follows, gloss it in ≤10 words on first use: *"the null hypothesis (capacity alone
+explains the gain)"*.
 
 The two halves go stale differently, so the licence differs. **Ids are licensed for the
 current conversation only**: "the PI knew what q19 was in March" will not be true in April.
@@ -251,7 +251,7 @@ conclusion is a record on the **task's** side and never re-verdicts the old node
 - **Agent (◆ judgment, drafts).** You: phrase questions, write hypotheses + verifiables,
   turn run results into a per-box verdict + headline metric, draft interpretations.
 - **PI (◆ judgment, decides).** The human: which questions matter, which hypotheses are
-  worth a run, the verifiable bar, and the close/reopen call.
+  worth a run, the thresholds, and the close/reopen call.
 
 **Leash rule** — crux is **human-in-charge by default** (this is fixed, not configurable):
 - **Read-only / bookkeeping** (`status`, `review`, `validate`, `test --to staged`): act
@@ -373,14 +373,14 @@ science explicit and falsifiable.
 > **You:** That's an open one — nothing we have settles it either way. I'll carry it as
 > *"Can JEPA pretraining improve CANDI?"*. What's the first thing you'd actually test?
 > **PI:** masked-token beats masked-stem.
-> **You:** Then here's the bar to beat, fixed before we run anything: *imp-Spearman ≥ +0.01
+> **You:** Then here's the threshold, fixed before we run anything: *imp-Spearman ≥ +0.01
 > vs the stem baseline on held-out*. Good, or tighter?
 > **PI:** good
 > **You:** Tighter it is if you say so — otherwise that's locked and I'll get it set up.
 
 Both engine calls (`crux ask`, `crux hypothesize -v …`) happen silently while that exchange
 runs. Notice what is *not* in it: no id, no command echoed back, no "shall I register this?"
-The PI approved the **question** and the **bar** — the science — and the filing is yours.
+The PI approved the **question** and the **threshold** — the science — and the filing is yours.
 
 **Granularity:** per-node confirm by default; when the PI says "draft me the next N," batch-propose a
 sub-tree (a question + several hypotheses + verifiables) and let them approve/edit it as one block.
@@ -389,7 +389,7 @@ sub-tree (a question + several hypotheses + verifiables) and let them approve/ed
 (`- [x]`/`- [ ]`/`- [-]`), write a one-paragraph `## Findings`, link the run's report and figures
 under `## Artifacts`, then `crux close h1 -m "<metric>"`. The engine derives the verdict and rolls
 it up. To the PI this is one sentence of science — *"the doubled-data arm cleared all three
-bars, so that one holds"* — and never a status token.
+thresholds, so that one holds"* — and never a status token.
 
 **At a `review` gate:** say what the evidence showed, in plain statements rather than ticked
 boxes, and ask the science question — *"do you think that's settled, given …?"* Draft the
@@ -404,7 +404,7 @@ is the engine's half of the same rule.
 Ten isolated subagents ship with crux (`agents/`; `install.sh` puts them in `~/.claude/agents`).
 Each owns one bounded judgment, and each runs **cold**: `crux brief <id> --json` is assembled
 deterministically from vault state, so the advocacy that produced a claim never reaches the
-agent that sets its bar. **When agents named `crux-*` are available, you must not do these
+agent that sets its threshold. **When agents named `crux-*` are available, you must not do these
 jobs inline** — the anti-bias architecture only works when the isolated agent, fed the
 engine-built brief, does the work. You never author the brief and never paraphrase the task
 beyond naming the node.
@@ -427,7 +427,7 @@ ticks at `close`) stay exactly where the leash puts them. **Roster not installed
 job yourself under the same discipline — the null named and approved before checks, kinds +
 combination rule written *with* the checks (the *Pre-register verifiables* guardrail below),
 the conclude-nothing question asked before the compute — and never feed your own advocacy
-into the bar you set.
+into the threshold you set.
 
 ## Guardrails
 

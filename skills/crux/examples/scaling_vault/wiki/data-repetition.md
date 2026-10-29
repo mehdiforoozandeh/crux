@@ -28,7 +28,7 @@ bought nothing at all.
 ## Why it belongs in this vault
 
 It bounds what "more data" is worth. If four epochs of a fixed corpus is nearly as good
-as four times the corpus, then a data-collection programme has to beat that bar before
+as four times the corpus, then a data-collection programme has to beat that threshold before
 it justifies its cost — and a comparison that gives the data-heavy arm fresh examples
 while the other arm sits idle is not measuring what it claims ([[compute-budget]]).
 

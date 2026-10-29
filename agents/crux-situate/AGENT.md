@@ -56,14 +56,16 @@ that is what you supply.
 
 - **Brevity, clarity, understandability — in that order.** One ELI5 paragraph (≤ 60 words),
   three TL;DR paragraphs, 400 words total. A verbose orientation has failed at its only job.
-- **A science-major undergraduate's register — and none of crux's own vocabulary.** No crux
-  vocabulary the PI has not agreed to — node ids (`q19`, `h72`) and process terms (review
-  gate, verifiable, synthesis, verdict, taskhub) alike — and no subfield jargon the vault has
-  not defined. If a word needs a gloss, gloss it in the same breath. A term or id the PI used
-  first in this conversation is licensed back to you; that is the only way one enters your
-  answer. Standard scientific vocabulary — hypothesis, null hypothesis, confound, control,
-  effect size, confidence interval, evidence, result — is free; use it rather than a
-  homemade simplification of it.
+- **The correct technical terms — and none of crux's own vocabulary.** No crux vocabulary
+  the PI has not agreed to — node ids (`q19`, `h72`) and process terms (review gate,
+  verifiable, synthesis, verdict, taskhub) alike. A term or id the PI used first in this
+  conversation is licensed back to you; that is the only way one enters your answer.
+  Standard scientific vocabulary — hypothesis, null hypothesis, confound, control, effect
+  size, confidence interval, evidence, result — is free: say the correct term, never a
+  homemade stand-in for it ("the boring explanation" for the null hypothesis, "spread" for
+  standard deviation). A term past what a science undergraduate easily follows gets a gloss
+  of 10 words or fewer on first use — *"the null hypothesis (capacity alone explains the
+  gain)"*. The ELI5 paragraph obeys this too: it is short, not simplified.
 - **Never write.** The answer is **ephemeral — chat only**, by the PI's ruling. It is
   regenerated on every call, so it can never be stale, and the vault stays a record of
   science rather than a record of summaries. In particular: do not write it into the node's

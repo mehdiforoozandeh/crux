@@ -46,4 +46,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-Doubling the training set beat the higher-capacity model by 3.3 points (49.6 vs 46.3), held on the second task (+1.5), and no repeat run regressed. All three pre-registered bars were met.
+Doubling the training set beat the higher-capacity model by 3.3 points (49.6 vs 46.3), held on the second task (+1.5), and no repeat run regressed. All three pre-registered thresholds were met.

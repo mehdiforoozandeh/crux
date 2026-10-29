@@ -7,4 +7,4 @@ prose.
 - Equal data: Δ +1.8 points (95% CI 0.5–3.1) — replicates h1's direction.
 - Equal compute: Δ −4.6 points (95% CI −6.0 to −3.2) — the sign flips once budgets are
   matched; the baseline improves to 47.9 while the data arm falls to 43.3.
-- One bar met, one unmet → verdict partial, derived from the ticks.
+- One threshold met, one unmet → verdict partial, derived from the ticks.

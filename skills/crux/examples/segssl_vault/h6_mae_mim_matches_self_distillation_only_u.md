@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-With full fine-tuning against UPerNet, MAE nearly matched iBOT on ADE20K (48.1 vs 49.6, -1.5) and Cityscapes->ACDC domain shift (40.1 vs 42.0, -1.9), meeting both near-parity bars. Under frozen linear probing, however, MAE collapsed to 24.1 mIoU vs iBOT's 33.5 mIoU, a 9.4-point gap over triple the 3.0-point tolerance, showing MIM features need decoder-side nonlinear recombination to become usable. The decoder-dependence portion of the hypothesis holds; the claim that the gap stays small regardless of decoder does not.
+With full fine-tuning against UPerNet, MAE nearly matched iBOT on ADE20K (48.1 vs 49.6, -1.5) and Cityscapes->ACDC domain shift (40.1 vs 42.0, -1.9), meeting both near-parity thresholds. Under frozen linear probing, however, MAE collapsed to 24.1 mIoU vs iBOT's 33.5 mIoU, a 9.4-point gap over triple the 3.0-point tolerance, showing MIM features need decoder-side nonlinear recombination to become usable. The decoder-dependence portion of the hypothesis holds; the claim that the gap stays small regardless of decoder does not.

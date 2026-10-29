@@ -20,7 +20,7 @@ The comparison is made constantly and controlled almost never: each arm is run a
 
 ## Protocol
 
-Architecture family, adaptation protocol and seed count fixed before any run. Every comparison executed twice — once at equal data, once at equal compute. Verifiable bars pre-registered on all three hypotheses; verdicts derived mechanically from the ticks.
+Architecture family, adaptation protocol and seed count fixed before any run. Every comparison executed twice — once at equal data, once at equal compute. Verifiable thresholds pre-registered on all three hypotheses; verdicts derived mechanically from the ticks.
 
 ## Answer so far
 

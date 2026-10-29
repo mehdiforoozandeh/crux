@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-DINOv2-pretrained ViT-B/16 + UPerNet scores 80.4 mIoU at 100% labels, 76.8 at 10% (-3.6), and 65.3 at 1% (-15.1), retaining 81.2% of full-data performance versus 66.2% for the supervised-init baseline over the same drop. The DINOv2-vs-supervised gap widens from +1.3 mIoU at 100% to +5.6 at 10% to +12.9 at 1%, showing self-distillation actively delays collapse rather than adding a fixed offset. All three pre-registered bars were met. DINOv2 builds directly on the [[wiki/dino]] self-distillation lineage.
+DINOv2-pretrained ViT-B/16 + UPerNet scores 80.4 mIoU at 100% labels, 76.8 at 10% (-3.6), and 65.3 at 1% (-15.1), retaining 81.2% of full-data performance versus 66.2% for the supervised-init baseline over the same drop. The DINOv2-vs-supervised gap widens from +1.3 mIoU at 100% to +5.6 at 10% to +12.9 at 1%, showing self-distillation actively delays collapse rather than adding a fixed offset. All three pre-registered thresholds were met. DINOv2 builds directly on the [[wiki/dino]] self-distillation lineage.

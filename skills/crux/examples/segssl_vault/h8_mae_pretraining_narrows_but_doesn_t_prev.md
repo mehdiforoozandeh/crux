@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-MAE-pretrained ViT-B/16 + UPerNet beats supervised init at every budget (80.6 vs 79.1 at 100%, 73.5 vs 71.2 at 10%, 53.1 vs 52.4 at 1%), so the weakest bar holds. But the margin shrinks to +0.7 mIoU at 1% labels and MAE retains only 65.9% of its full-data mIoU, missing both the 10%-margin bar (+2.3 vs the required +3.0) and the 1%-retention bar (65.9% vs required 75%) -- MAE needs substantial fine-tuning data to express its representation quality. (compare [[wiki/label-efficiency]])
+MAE-pretrained ViT-B/16 + UPerNet beats supervised init at every budget (80.6 vs 79.1 at 100%, 73.5 vs 71.2 at 10%, 53.1 vs 52.4 at 1%), so the weakest threshold holds. But the margin shrinks to +0.7 mIoU at 1% labels and MAE retains only 65.9% of its full-data mIoU, missing both the 10%-margin threshold (+2.3 vs the required +3.0) and the 1%-retention threshold (65.9% vs required 75%) -- MAE needs substantial fine-tuning data to express its representation quality. (compare [[wiki/label-efficiency]])

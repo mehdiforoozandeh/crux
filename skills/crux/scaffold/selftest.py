@@ -1899,8 +1899,7 @@ def run_economy():
     check("economy: snapshot exposes tldr on an idea", "tldr" in snap["nodes"][h1])
     check("economy: an unwritten summary reads empty, not as the placeholder",
           snap["nodes"][q1]["eli5"] == "")
-    edit(node_path(root, q1), "_(one sentence a science undergraduate follows — standard terms, "
-                              "subfield jargon glossed)_",
+    edit(node_path(root, q1), E._section_placeholder("ELI5"),
          "Whether short nodes stay short.")
     check("economy: a written ELI5 reaches the snapshot",
           E.snapshot(root)["nodes"][q1]["eli5"] == "Whether short nodes stay short.")
@@ -5719,11 +5718,13 @@ def run_agent_roster():
     # the point: `git diff --stat` proves nothing to a reader six months from now, and these
     # four files are the ones the slice is most tempted to edit. crux-null was re-pinned on
     # 2026-10-25, deliberately: "the boring explanation" became "the null hypothesis" when the
-    # register moved to a science undergraduate's (CHANGELOG, Unreleased).
+    # register moved to a science undergraduate's (CHANGELOG, Unreleased). crux-null and
+    # crux-verifiables re-pinned 2026-10-29, deliberately: "one lucky split" became "sampling
+    # variability" and "bar" became "threshold" (the correct-terms rule, CHANGELOG).
     REUSED_SHA = {
         "crux-close": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
-        "crux-null": "fc4e5fb06fb0f4fdb1158e1986ed96e8374bff7a6638e380ba46cf42c340c832",
-        "crux-verifiables": "307daa3e363358ea26b3a037596345fb0b2e6cc55219c862bd999fb18c0f7d2a",
+        "crux-null": "b01de6adb00b8913bbbbf99f59a09a5e1d8df0757203ca82ddb67205fd9b3f68",
+        "crux-verifiables": "4b6ee757479fbc5aa2726f8f0cbd39a3298005fb63fbd027f1064eed4181fc20",
         "crux-design": "01a9d2d7bb4f92e21aac04800a3f6edfc99b914b027458fd49fa2b6d3c9a5584"}
     drifted = sorted(
         n for n, want in REUSED_SHA.items()
@@ -6526,12 +6527,15 @@ def run_glossary_oracle():
       - 'data floor' is 1 document / 2 occurrences: the row that separates the document gate
         from the occurrence gate.
       - 'mask transformer head' and 'pre-registered bar' score ZERO under the spec's original
-        case+plural guess. They are why the rule is what it is."""
+        case+plural guess. They are why the rule is what it is.
+    Moved 2026-10-29, the CORPUS and not the rule: segssl_vault now says "pre-registered
+    threshold" where it said "pre-registered bar" (the correct-terms rule), and the row
+    follows the words with the same 9/9/0."""
     print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
     ex = os.path.join(HERE, "..", "examples")
     ORACLE = {
         "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
-                         ("label efficiency", 17, 26, 0), ("pre-registered bar", 9, 9, 0),
+                         ("label efficiency", 17, 26, 0), ("pre-registered threshold", 9, 9, 0),
                          ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
         "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
         "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
@@ -7607,6 +7611,155 @@ def _voice_vault():
     h2 = hy("pretraining still helps at 20 labels", q2)
     h3 = hy("colour jitter is the family that matters", q3)
     return root, {"q1": q1, "q2": q2, "q3": q3, "h1": h1, "h2": h2, "h3": h3}
+
+
+def run_correct_terms():
+    """2026-10-29, the PI's ruling: the correct technical term, glossed in at most ten words
+    the first time it appears — never a homemade paraphrase in its place. PR #56 wrote the
+    rule as prose ("a science-major undergraduate's register") and prezit's paper arc drifted
+    anyway: "within noise", "rules locked", "Doubts". So the swaps crux actually shipped are a
+    closed table, and three consumers read it: the chat-time voice lint, `crux deck --lint`,
+    and the sweep over shipped text below. Whether a gloss is PRESENT is not decidable by a
+    script and stays a rule; whether a known paraphrase stands IN PLACE of its term is."""
+    print("\n# correct terms — the paraphrase table (voice lint, deck lint, shipped text)")
+    P = getattr(E, "PARAPHRASES", None)
+    check("terms: the engine ships a non-empty paraphrase table", bool(P))
+    if not P:
+        return
+    flagged = [
+        ("The boring explanation is that the encoder is larger.", "null hypothesis"),
+        ("The rules were locked before the first run.", "pre-registration"),
+        ("The gap on the harder task is within noise.", "statistically significant"),
+        ("Every gap goes through the noise rule.", "significance criterion"),
+        ("The seed spread is wider on the harder task.", "standard deviation"),
+        ("The error bar shows the spread over seeds.", "standard deviation"),
+        ("One lucky split would show this on its own.", "sampling variability"),
+    ]
+    miss = [s for s, term in flagged
+            if not any(term in t for _p, t in E.paraphrases_in(s))]
+    check(f"terms: each shipped paraphrase is caught and named by its technical term ({miss})",
+          not miss)
+    glossed = [
+        "The null hypothesis (the boring explanation) is that the encoder is larger.",
+        "Results were pre-registered: the rules were locked before the first run.",
+        "The gap is not statistically significant, so it is within noise.",
+        "The standard deviation across seeds (the spread over seeds) is 0.4 points.",
+        "Under chance, one lucky split would show this on its own.",
+    ]
+    check("terms: a paraphrase in the same sentence as its term is the gloss, and passes",
+          not any(E.paraphrases_in(s) for s in glossed))
+    clean = [
+        "The null hypothesis is that seed noise alone explains the gain.",
+        "The error bars show one standard deviation across three seeds.",
+        "We locked the vault file before the run.",
+        "Spread the runs over three GPUs.",
+        "The noise floor of the timer is one microsecond.",
+    ]
+    check("terms: the correct terms, and near-misses that are not paraphrases, are clean",
+          not any(E.paraphrases_in(s) for s in clean))
+    check("terms: the term must be in the SAME sentence — a gloss two sentences away is no gloss",
+          bool(E.paraphrases_in("The null hypothesis is capacity. The boring explanation is "
+                                "that the encoder is larger.")))
+
+    # ---- consumer 1: the chat-time voice lint
+    v = E.voice_lint([("agent", flagged[0][0])])
+    check("terms: voice_lint reports a paraphrase as voice:paraphrase, naming the term",
+          [i for i, _m in v] == ["voice:paraphrase"] and "null hypothesis" in v[0][1])
+    check("terms: ... and the PI saying the paraphrase first does NOT license it — the mirror "
+          "rule is for crux's words, not for science",
+          [i for i, _m in E.voice_lint([("pi", "is it the boring explanation?"),
+                                        ("agent", flagged[0][0])])] == ["voice:paraphrase"])
+    check("terms: ... and leafing through the notebook does not license it either",
+          [i for i, _m in E.voice_lint([("pi", "open the vault"),
+                                        ("agent", flagged[1][0])])] == ["voice:paraphrase"])
+    check("terms: ... report_from scopes the report exactly as it does for ids",
+          E.voice_lint([("agent", flagged[0][0]), ("pi", "ok"), ("agent", "Fine.")],
+                       report_from=3) == [])
+    check("terms: ... and the glossed form is clean in chat",
+          E.voice_lint([("agent", glossed[0])]) == [])
+    tmp = tempfile.mkdtemp(prefix="crux_terms_")
+    tp = os.path.join(tmp, "t.jsonl")
+    with open(tp, "w", encoding="utf-8") as fh:
+        for kind, text in (("user", "did the extra data help?"),
+                           ("assistant", "Yes, but the gap is within noise.")):
+            fh.write(json.dumps({"type": kind, "message": {"role": kind, "content": [
+                {"type": "text", "text": text}]}}) + "\n")
+    ctx = E.hook_report({"tool_input": {"command": "crux status"}, "transcript_path": tp,
+                         "cwd": tmp}) or ""
+    check("terms: the chat-time hook reports a paraphrase and says to gloss the term",
+          "voice:paraphrase" in ctx and "statistically significant" in ctx and "gloss" in ctx)
+
+    # ---- consumer 2: `crux deck --lint`
+    def slide(body, notes="<p>n</p>"):
+        p = os.path.join(tmp, "d%d.html" % len(os.listdir(tmp)))
+        write(p, "<!-- job j\n source s\n numbers n\n cut c -->\n"
+                 '<section class="slide">' + body + '<aside class="notes">' + notes
+                 + "</aside></section>")
+        return E.deck_lint(p)
+    check("terms: deck lint flags a paraphrase on the slide, naming the term",
+          any("pre-registration" in m for _, m in slide("<p>Rules locked up front.</p>")))
+    check("terms: ... and in the speaker notes",
+          any("standard deviation" in m
+              for _, m in slide("<p>x</p>", "<p>The bar is the seed spread.</p>")))
+    check("terms: ... but not inside an HTML comment, and not when glossed",
+          slide("<!-- the rules locked up front --><p>x</p>") == []
+          and slide("<p>" + glossed[2] + "</p>") == [])
+
+    # ---- consumer 3: nothing crux ships for a reader says a paraphrase in place of its term.
+    #      Excluded, deliberately: history (CHANGELOG, .spec, docs/prd), code (comments are
+    #      not read by the PI), eval fixtures (frozen vault snapshots), sortlab_vault, a
+    #      high-school student's notebook the PI ruled stays in its own voice, and, for now,
+    #      crux-autopilot: the autopilot-lean branch rewrites it, and its pass follows there.
+    repo = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+    def shipped():
+        for top in ("agents", "skills"):
+            for dp, dns, fns in os.walk(os.path.join(repo, top)):
+                rel = os.path.relpath(dp, repo).replace(os.sep, "/")
+                dns[:] = sorted(d for d in dns if not (
+                    rel + "/" + d).endswith(("evals/fixtures", "examples/sortlab_vault", "vendor",
+                                             "skills/crux-autopilot")))
+                for fn in sorted(fns):
+                    if fn.endswith((".md", ".html")) or fn == "app.js":
+                        yield os.path.join(dp, fn)
+        for fn in ("README.md", "AGENTS.md"):
+            yield os.path.join(repo, fn)
+    # the engine's own templates, as a fresh vault receives them
+    fv = tempfile.mkdtemp(prefix="crux_terms_v_")
+    shutil.rmtree(fv)
+    E.cmd_init("Terms", fv, goal="Check the templates.")
+    fq, _ = E.cmd_ask(fv, "a question")
+    E.cmd_hypothesize(fv, "a claim", parent=fq, rule="all", verifiables=["a check"],
+                      neutral=["a control"])
+    files = list(shipped()) + [os.path.join(dp, f) for dp, _d, fs in os.walk(fv)
+                               for f in fs if f.endswith(".md")]
+    hits = [f"{os.path.relpath(f, repo)}: {p!r}" for f in files
+            for p, _t in E.paraphrases_in(re.sub(r"<!--.*?-->", " ", read(f), flags=re.S)
+                                          if f.endswith(".html") else read(f))]
+    check(f"terms: no shipped PI-facing text uses a paraphrase in place of its term — "
+          f"{len(files)} files ({hits[:4]})", len(files) > 50 and not hits)
+
+    # ---- the rule, where agents read it
+    surfaces = {"crux SKILL.md": os.path.join(repo, "skills", "crux", "SKILL.md"),
+                "prezit SKILL.md": os.path.join(repo, "skills", "prezit", "SKILL.md"),
+                "paper-arc.md": os.path.join(repo, "skills", "prezit", "references", "paper-arc.md"),
+                "crux-situate": os.path.join(repo, "agents", "crux-situate", "AGENT.md")}
+    gaps = [k for k, p in surfaces.items()
+            if not re.search(r"first use", read(p)) or not re.search(r"10 words|ten words", read(p))]
+    check(f"terms: every rule surface states the gloss-on-first-use rule and its 10-word cap ({gaps})",
+          not gaps)
+    old_ph = ("_(one sentence a science undergraduate follows — standard terms, subfield jargon "
+              "glossed)_")
+    new_ph = E._section_placeholder("ELI5")
+    tpl = os.path.join(HERE, "templates")
+    check("terms: the ELI5 placeholder asks for glossed terms, and both templates carry it",
+          new_ph != old_ph and "gloss" in new_ph and "10 words" in new_ph
+          and all(new_ph in read(os.path.join(tpl, t)) for t in ("idea.md", "question.md")))
+    check("terms: ... and the new placeholder and the old one both still read as unwritten",
+          E._summary(f"## ELI5\n{new_ph}\n\n## TL;DR\nx\n", "ELI5") == ""
+          and E._summary(f"## ELI5\n{old_ph}\n\n## TL;DR\nx\n", "ELI5") == "")
+    sk = read(surfaces["crux SKILL.md"]).replace("\r\n", "\n").encode("utf-8")
+    check(f"terms: crux SKILL.md did not grow past its size on origin/main at this change "
+          f"({len(sk)} <= 37844 bytes)", len(sk) <= 37844)
 
 
 def run_science_voice():
@@ -10755,7 +10908,8 @@ def run_auto_purity():
 
 # The node a hypothesis closed BY HAND leaves, captured from the engine as it stood BEFORE 05.2.
 # Stored as lines rather than one triple-quoted block because three frontmatter lines end in a
-# space, and an editor that strips trailing whitespace would move the golden silently.
+# space, and an editor that strips trailing whitespace would move the golden silently. The ELI5
+# placeholder line moved on 2026-10-29, deliberately: the correct-terms rule (CHANGELOG).
 HAND_CLOSE_GOLDEN = "\n".join((
     '---',
     'id: h1',
@@ -10784,7 +10938,7 @@ HAND_CLOSE_GOLDEN = "\n".join((
     '',
     '## ELI5',
     '',
-    '_(one sentence a science undergraduate follows — standard terms, subfield jargon glossed)_',
+    '_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_',
     '',
     '## TL;DR',
     '',
@@ -16469,6 +16623,7 @@ def main():
     run_methodology_migration()
     run_design_agent()
     run_science_voice()
+    run_correct_terms()
     run_situate_title_anchor()
     run_cli_third_person()
     run_voice_enforcement()

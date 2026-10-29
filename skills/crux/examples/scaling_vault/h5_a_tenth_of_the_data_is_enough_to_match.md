@@ -44,4 +44,4 @@ _(none yet)_
 
 ## Findings
 
-At a tenth of the training set accuracy collapsed by 11.4 points, far outside the bar. The usable floor sits between a tenth and a half.
+At a tenth of the training set accuracy collapsed by 11.4 points, far outside the threshold. The usable floor sits between a tenth and a half.

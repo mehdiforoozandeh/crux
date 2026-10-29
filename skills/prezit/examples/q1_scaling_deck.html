@@ -266,7 +266,8 @@
       <div class="kicker">More data, or a better model? · crux q1</div>
       <h1>Does more data beat<br>a better model?</h1>
       <p class="sub">Three hypotheses, all closed — one supported, one partial, one refuted.<br>
-      Endpoint: top-1 accuracy. Every comparison run twice: at equal data, and at equal compute.</p>
+      Endpoint (the pre-chosen outcome measure): top-1 accuracy (share of top guesses that are right).
+      Every comparison run twice: at equal data, and at equal compute.</p>
       <p class="hint">Navigate with <kbd>&rarr;</kbd> <kbd>&larr;</kbd> or <kbd>space</kbd></p>
     </div>
   </section>
@@ -336,11 +337,12 @@
         <li><b>Does doubling the data beat the better model?</b> &nbsp;— the headline, and the
         comparison the literature usually reports.</li>
         <li><b>Does it still win once the budgets are level?</b> &nbsp;— doubling the data also
-        roughly doubles the compute, so the headline comparison confounds the two.</li>
+        roughly doubles the compute, so the headline comparison confounds the two (their
+        effects cannot be separated).</li>
       </ul>
-      <p class="note">Scope: architecture family, adaptation protocol and seed count fixed before
-      any run. Every comparison executed <b>twice</b> — once at equal data, once at equal
-      compute. Verifiable bars pre-registered on all three hypotheses.</p>
+      <p class="note">Pre-registered (fixed in writing before any run): architecture family,
+      adaptation protocol, seed count, and pass/fail thresholds on all three hypotheses. Every
+      comparison executed <b>twice</b> — once at equal data, once at equal compute.</p>
     </div>
   </section>
 
@@ -361,10 +363,11 @@
         <div class="tlab">Target — &Delta; top-1 accuracy on held-out data</div>
         <div class="ttxt">Every arm is scored against <b>the better model on the original
         data</b> and reported as a delta in accuracy points, so <b>positive means the extra data
-        won</b>. Each arm is trained with <span data-src="h1#design.seeds">3</span> seeds and
-        evaluated on a held-out split of <span data-src="h1#design.heldout_n">50,000</span>
-        examples; every interval in this deck is the
-        <span data-src="literal">95%</span> interval across those seeds.</div>
+        won</b>. Each arm is trained with <span data-src="h1#design.seeds">3</span> seeds
+        (independent random restarts) and evaluated on a held-out split (never used in
+        training) of <span data-src="h1#design.heldout_n">50,000</span> examples; every interval
+        in this deck is the <span data-src="literal">95%</span> confidence interval across those
+        seeds.</div>
       </div>
       <div class="cols2">
         <div class="blk">
@@ -415,15 +418,15 @@
           <tr><td>h1</td><td>twice the data beats a better model</td>
               <td>none — this is the headline comparison, run as the field usually runs it</td></tr>
           <tr><td>h2</td><td>the advantage survives at equal compute</td>
-              <td><b>budget</b> — re-runs both arms matched on training FLOPs</td></tr>
+              <td><b>budget</b> — re-runs both arms matched on training FLOPs (floating-point operations, a compute count)</td></tr>
           <tr><td>h3</td><td>the advantage holds on a harder task</td>
               <td><b>task difficulty</b> — re-runs where the capacity lever should pay more</td></tr>
         </tbody>
       </table>
       <div class="target" style="margin-top:26px">
         <div class="tlab">How a verdict is reached</div>
-        <div class="ttxt">Each hypothesis carries <b>pre-registered verifiable bars</b>, written
-        before any run. On close, each bar is ticked met / unmet / could-not-evaluate and the
+        <div class="ttxt">Each hypothesis carries <b>pre-registered thresholds</b>, written
+        before any run. On close, each threshold is ticked met / unmet / could-not-evaluate and the
         verdict is <b>derived mechanically</b> from the ticks — all met is <i>supported</i>, any
         unmet is <i>partial</i> or <i>refuted</i>. Nobody chooses the verdict after seeing the
         number.</div>
@@ -431,7 +434,7 @@
       <div class="pipe">
         <!-- step ordinals are chrome, not vault values: data-src="literal" keeps
              --verify --strict quiet about them -->
-        <div class="step"><div class="n" data-src="literal">1</div><div class="t">Bars pre-registered on each hypothesis, before any run</div></div>
+        <div class="step"><div class="n" data-src="literal">1</div><div class="t">Thresholds pre-registered on each hypothesis, before any run</div></div>
         <div class="psep">&rarr;</div>
         <div class="step"><div class="n" data-src="literal">2</div><div class="t">Each arm run at its own budget, then re-run matched on training FLOPs</div></div>
         <div class="psep">&rarr;</div>
@@ -546,7 +549,7 @@
         <li><b>What opens:</b> if the win was budget, the real question is how little data we can
         get away with — and whether any of it transfers off this distribution.</li>
         <li><b>What we would not have caught:</b> h1 alone passed all three of its
-        pre-registered bars. It took h2 to make the confound visible.</li>
+        pre-registered thresholds. It took h2 to make the confound visible.</li>
       </ul>
     </div>
   </section>
@@ -605,7 +608,7 @@ function buildForest(){
   });
 
   s+=`<line x1="${Lg}" y1="${pB}" x2="${Lg+plotW}" y2="${pB}" class="axis"/>`;
-  s+=`<text x="${Lg}" y="${H-8}" class="cap">&Delta; top-1 accuracy vs the better model · whiskers are the 95% interval across 3 seeds</text>`;
+  s+=`<text x="${Lg}" y="${H-8}" class="cap">&Delta; top-1 accuracy vs the better model · whiskers are the 95% confidence interval across 3 seeds</text>`;
   return s+`</svg>`;
 }
 

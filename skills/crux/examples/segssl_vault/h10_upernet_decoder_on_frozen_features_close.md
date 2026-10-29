@@ -38,4 +38,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-The <=2.0 mIoU bar was met for DINO, DINOv2, and MoCo v3 but missed by 4.8 points for MAE, so only 3 of 4 backbones satisfy the first verifiable. The >=8 mIoU improvement over linear probe held for every backbone (e.g. MAE: 41.3 vs 24.1 linear probe, +17.2), confirming UPerNet's ([[wiki/segmentation-decoders]]) multi-scale fusion always helps but cannot fully compensate for MIM features' ([[wiki/masked-image-modeling]]) weak linear separability without decoder-side spatial context beyond what UPerNet provides.
+The <=2.0 mIoU threshold was met for DINO, DINOv2, and MoCo v3 but missed by 4.8 points for MAE, so only 3 of 4 backbones satisfy the first verifiable. The >=8 mIoU improvement over linear probe held for every backbone (e.g. MAE: 41.3 vs 24.1 linear probe, +17.2), confirming UPerNet's ([[wiki/segmentation-decoders]]) multi-scale fusion always helps but cannot fully compensate for MIM features' ([[wiki/masked-image-modeling]]) weak linear separability without decoder-side spatial context beyond what UPerNet provides.

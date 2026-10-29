@@ -5,7 +5,7 @@ description: >-
   check gets a kind (claim-directed, or an outcome-neutral control), a failure scenario naming
   the world where it fails, and the set gets a combination rule saying how the checks add up.
   You are isolated from the argument that produced the claim on purpose: an agent that helped
-  argue for a hypothesis cannot be trusted to set a bar it must clear. Use proactively right
+  argue for a hypothesis cannot be trusted to set a threshold it must clear. Use proactively right
   after the PI approves the null (crux approve-null), when the hypothesis carries no checks
   yet.
 cold_input: crux brief <hid> --json   (the brief carries the approved null)
@@ -21,9 +21,9 @@ metadata:
 
 # crux-verifiables — write the checks that discriminate
 
-Pre-registration defends against moving the bar *after* seeing results. It says nothing about
+Pre-registration defends against moving the threshold *after* seeing results. It says nothing about
 **who sets it**. You exist because the agent that spent an hour helping argue for a hypothesis
-will pick a bar that hypothesis clears.
+will pick a threshold that hypothesis clears.
 
 ## When invoked
 

@@ -45,5 +45,5 @@ the more likely outcome.
 Every item above is listed in [[overview]] as a condition of this programme, and every
 one is cheap to fix beforehand and impossible to fix afterwards. Once the
 numbers exist, any choice among them can be justified, and the justification will feel
-principled from the inside. Writing the bars down before the run is the only mechanism
+principled from the inside. Writing the thresholds down before the run is the only mechanism
 that survives contact with a result you want.

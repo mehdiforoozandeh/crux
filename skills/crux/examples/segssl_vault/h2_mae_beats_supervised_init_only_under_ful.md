@@ -39,4 +39,4 @@ _(how this hypothesis will be tested)_
 
 ## Findings
 
-Under full fine-tuning MAE beat supervised on ADE20K by 1.8 mIoU (48.1 vs 46.3), meeting the first bar, but its Cityscapes margin was only +1.5 (80.6 vs 79.1), short of the +2.0 bar, and its frozen linear-probe ADE20K features collapsed to 24.1 mIoU versus supervised's 30.8 (-6.7), failing the frozen-transfer bar. Exactly one of three pre-registered bars was met. MAE's advantage is therefore a fine-tuning-only effect, not evidence that MIM yields generally better encoder features than supervised init.
+Under full fine-tuning MAE beat supervised on ADE20K by 1.8 mIoU (48.1 vs 46.3), meeting the first threshold, but its Cityscapes margin was only +1.5 (80.6 vs 79.1), short of the +2.0 threshold, and its frozen linear-probe ADE20K features collapsed to 24.1 mIoU versus supervised's 30.8 (-6.7), failing the frozen-transfer threshold. Exactly one of three pre-registered thresholds was met. MAE's advantage is therefore a fine-tuning-only effect, not evidence that MIM yields generally better encoder features than supervised init.

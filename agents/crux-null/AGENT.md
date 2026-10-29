@@ -34,7 +34,7 @@ and everything downstream inherits that lean. Your whole job is to push back onc
    confound that requires the fewest extra assumptions.
 3. Pick the family it belongs to:
    - `capacity` — more parameters or compute alone would do it
-   - `chance` — noise, too few seeds, one lucky split
+   - `chance` — sampling variability: noise, too few seeds, one unrepresentative split
    - `leakage` — the answer was reachable from the inputs
    - `selection` — the sample or subset was picked in a way that favours it
    - `normalization` — a preprocessing or scaling artifact
