@@ -6,6 +6,20 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **storify: a short private paper from a subtree** (engine **3.5**, unchanged; new skill
+  `storify` **1.0**; no vault-format change). A new skill turns one question and its subtree,
+  or one hypothesis after its run, into a PDF of at most 1,200 body words and 4 pages in the
+  Springer Nature article template (`sn-jnl.cls` v3.1, LPPL, shipped in
+  `skills/storify/assets/`): motivation and background, methods, results and discussion,
+  conclusion. As in prezit's paper arc, `build_story.py` writes every number into the `.tex`
+  as a macro and records the sha256 of each file it read. `crux story` (an alias of
+  `crux deck`) takes the story path for a `.tex` file: `--verify [--strict]` checks the
+  sources and fails a typed numeral; `--lint` checks the four sections, the word and page
+  caps, and the voice (node ids, crux words, stand-in phrases). `validate --check=decks` also
+  walks `stories/`; plain `validate` ignores it. Worked example on `scaling_vault` q1.
+
 ### Changed
 
 - **The autopilot is rebuilt lean** (spec 18; replaces the spec-05 driver). A plan has at most

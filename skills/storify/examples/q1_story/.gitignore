@@ -1,0 +1,13 @@
+# compile output and the class/style copied in to compile; only the sources and the built
+# story.tex are committed
+*.pdf
+*.log
+*.aux
+*.fls
+*.fdb_latexmk
+*.out
+*.bbl
+*.blg
+*.synctex.gz
+sn-jnl.cls
+sn-mathphys-num.bst

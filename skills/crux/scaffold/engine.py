@@ -409,13 +409,15 @@ PROSE_SECTIONS = {
 
 # `crux validate --check=<list>`. Named so an agent can drive one check deterministically
 # without parsing prose, and so the PI can silence a tier without silencing the whole lint.
-# OPT_CHECKS run ONLY when named: `decks` walks presentations/, which plain `validate`
+# OPT_CHECKS run ONLY when named: `decks` walks presentations/ and stories/, which plain `validate`
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
 CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary")
 OPT_CHECKS = ("decks", "gate")
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
+STORIES_DIR = "stories"                 # derived stories (storify): the same standing as
+                                        # presentations/, read only by --check=decks
 
 # `crux brief --mode=…` (spec 13). Two payloads on one verb, and the pair is a SAFETY
 # boundary: `isolated` is spec 09's bias-proof cold input, which excludes the problem
@@ -5686,39 +5688,53 @@ def _deck_sources(root, text, rep):
             bad("no-manifest", "paper-arc deck carries no deck-sources manifest — build it "
                                "with its build_deck.py, which records every file it read")
         return
-    body = m.group(1).strip()
+    _check_sources(root, m.group(1).strip(), rep, _DECK_WORDS, {"slide": 0})
+
+# The words a manifest finding speaks in — (manifest name, document noun, build script,
+# source file, built file) — so a deck and a story share one checker and each still names
+# its own build script. The deck tuple reproduces the pre-story messages byte for byte.
+_DECK_WORDS  = ("deck-sources", "deck", "build_deck.py", "deck_src.html", "index.html")
+_STORY_WORDS = ("crux-sources", "story", "build_story.py", "story_src.tex", "story.tex")
+
+def _check_sources(root, body, rep, words, where):
+    """Check one manifest BODY (the JSON text, or the __SOURCES__ placeholder) into `rep`:
+    every recorded file re-read against its sha256. `where` is the position every finding
+    carries ({"slide": 0} for a deck, {"line": n} for a story)."""
+    name, noun, script, src, built = words
+    def bad(kind, msg):
+        rep["unresolvable"].append(dict({"addr": name}, **where, kind=kind, msg=msg))
     if body == "__SOURCES__":
         rep["unbuilt"] = True
-        bad("unbuilt", "unbuilt deck source (__SOURCES__ still in place) — verify the "
-                       "index.html that build_deck.py writes, not deck_src.html")
+        bad("unbuilt", f"unbuilt {noun} source (__SOURCES__ still in place) — verify the "
+                       f"{built} that {script} writes, not {src}")
         return
     try:
         man = json.loads(body)
     except ValueError as e:
-        bad("bad-manifest", f"deck-sources manifest is not JSON: {e}")
+        bad("bad-manifest", f"{name} manifest is not JSON: {e}")
         return
     if not isinstance(man, dict) or not man:
-        bad("bad-manifest", "deck-sources manifest must be a non-empty object {path: sha256}")
+        bad("bad-manifest", f"{name} manifest must be a non-empty object {{path: sha256}}")
         return
     for rel, want in sorted(man.items()):
         parts = str(rel).split("/")
         if (not rel or "\\" in rel or os.path.isabs(rel) or re.match(r"[A-Za-z]:", rel)
                 or any(x in ("", ".", "..") for x in parts)):
-            bad("bad-path", f"deck-sources path '{rel}' must be vault-relative, with no '..'")
+            bad("bad-path", f"{name} path '{rel}' must be vault-relative, with no '..'")
             continue
         if not (isinstance(want, str) and _SHA256_RE.fullmatch(want)):
-            bad("bad-manifest", f"deck-sources '{rel}': hash must be 64 lowercase hex (sha256)")
+            bad("bad-manifest", f"{name} '{rel}': hash must be 64 lowercase hex (sha256)")
             continue
         fp = os.path.join(root, *parts)
         if not os.path.isfile(fp):
-            bad("missing-file", f"deck source '{rel}' does not exist in this vault")
+            bad("missing-file", f"{noun} source '{rel}' does not exist in this vault")
             continue
         with open(fp, "rb") as fh:
             got = hashlib.sha256(fh.read()).hexdigest()
         if got != want:
-            rep["mismatch"].append({"addr": rel, "slide": 0, "field": "sha256",
-                                    "msg": f"deck source '{rel}' changed since the deck was "
-                                           f"built — rerun its build_deck.py"})
+            rep["mismatch"].append(dict({"addr": rel}, **where, field="sha256",
+                                        msg=f"{noun} source '{rel}' changed since the {noun} "
+                                            f"was built — rerun its {script}"))
         else:
             rep["sources"].append(rel)
 
@@ -5807,7 +5823,10 @@ def deck_refresh(root, path):
     (whose results the engine must not compute) are left alone. Returns the change list;
     the CLI turns it into the loud per-slide warning, because a correct value refresh can
     silently falsify the sentence around a number — refresh fixes values, only a human can
-    fix the prose."""
+    fix the prose. A story (.tex) is refused: every number in it comes from its build."""
+    if path.lower().endswith(".tex"):
+        raise CruxError(f"{path} is a story: its numbers come from its build_story.py, not "
+                        f"from --refresh — rerun build_story.py, then `crux deck --verify`")
     text = read(path)
     ops, changes, unresolvable = [], [], []
     starts = [m.start() for m in _slide_sections(text)]
@@ -5907,27 +5926,248 @@ def deck_lint(path):
     return problems
 
 def deck_warnings(root):
-    """`validate --check=decks`: verify every *.html under presentations/ and surface
-    mismatch/unresolvable findings as WARNINGS — a stale derived document must never brick
-    the vault lint (and under --strict, warnings already fail, which is the asked-for
-    behavior)."""
+    """`validate --check=decks`: verify every *.html under presentations/ and every *.tex
+    under stories/, and surface mismatch/unresolvable findings as WARNINGS — a stale derived
+    document must never brick the vault lint (and under --strict, warnings already fail,
+    which is the asked-for behavior)."""
     out = []
-    pd = os.path.join(root, PRESENTATIONS_DIR)
-    if not os.path.isdir(pd):
-        return out
-    for dirpath, dirnames, filenames in os.walk(pd):
-        dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
-        for fn in sorted(filenames):
-            if not fn.endswith(".html"):
-                continue
-            rel = _rel(root, os.path.join(dirpath, fn))
-            rep = deck_verify(root, os.path.join(dirpath, fn))
-            if rep.get("unbuilt"):
-                continue        # a build script's deck_src.html: its built index.html is checked
-            for bucket in ("mismatch", "unresolvable"):
-                for f in rep[bucket]:
-                    out.append((f"deck:{rel}", f"deck '{rel}': {bucket} — {f['msg']}"))
+    for sub, ext, verify, tag in ((PRESENTATIONS_DIR, ".html", deck_verify, "deck"),
+                                  (STORIES_DIR, ".tex", story_verify, "story")):
+        pd = os.path.join(root, sub)
+        if not os.path.isdir(pd):
+            continue
+        for dirpath, dirnames, filenames in os.walk(pd):
+            dirnames[:] = sorted(x for x in dirnames if not x.startswith("."))
+            for fn in sorted(filenames):
+                if not fn.endswith(ext):
+                    continue
+                rel = _rel(root, os.path.join(dirpath, fn))
+                rep = verify(root, os.path.join(dirpath, fn))
+                if rep.get("unbuilt"):
+                    continue    # a build script's source (deck_src.html / story_src.tex)
+                for bucket in ("mismatch", "unresolvable"):
+                    for f in rep[bucket]:
+                        out.append((f"{tag}:{rel}", f"{tag} '{rel}': {bucket} — {f['msg']}"))
     return out
+
+# --- stories (storify) --------------------------------------------------------------
+# A story is a short private paper in LaTeX, built like a paper-arc deck: build_story.py
+# reads result files, writes every number as a \newcommand macro in the preamble, and
+# records the files it read in ONE preamble comment line (the contract with the skill):
+#
+#   % crux-sources: {"results/h1/metrics.json": "<sha256>"}      (story_src.tex: __SOURCES__)
+#   % crux-allow: tree, node                                      (optional, lint only)
+#
+# The engine never compiles LaTeX and never parses it properly; it strips the body by
+# regex — comments, code environments, the arguments of non-text commands, optional
+# arguments, command names — and every newline survives each strip, so a finding keeps its
+# line. `--verify` re-reads the manifest and (under --strict) fails any digit left in the
+# body; `--lint` holds the paper to its fixed four sections, its word and page caps, and
+# the voice rule. Nothing under stories/ is evidence: only `validate --check=decks` reads it.
+STORY_SECTIONS  = ("Motivation and background", "Methods", "Results and discussion", "Conclusion")
+STORY_WORDS_MAX = 1200
+STORY_PAGES_MAX = 4
+_STORY_MANIFEST_RE = re.compile(r"\s*%\s*crux-sources:\s*(.*?)\s*$")
+_STORY_ALLOW_RE    = re.compile(r"\s*%\s*crux-allow:\s*(.*?)\s*$")
+# a % preceded by an even run of backslashes starts a comment; \% is a percent sign
+_TEX_COMMENT_RE = re.compile(r"(?<!\\)((?:\\\\)*)%.*")
+# commands whose arguments are keys, paths or lengths — never prose, never a typed number
+# (href: its first argument, the URL, only — its second is the link text)
+_TEX_NONTEXT = (r"label", r"ref", r"cref", r"Cref", r"eqref", r"cite[A-Za-z]*",
+                r"includegraphics", r"url", r"href", r"begin", r"end", r"input",
+                r"hspace", r"vspace", r"setlength", r"bibliography", r"bibliographystyle",
+                r"email")
+_TEX_CODE_ENVS  = r"tikzpicture|[A-Za-z]*axis"
+_TEX_FLOAT_ENVS = r"figure\*?|table\*?|thebibliography|" + _TEX_CODE_ENVS
+
+def _blank(s):
+    """`s` with every character but newline turned to a space: a strip that keeps lines."""
+    return re.sub(r"[^\n]", " ", s)
+
+def _tex_group_end(s, j):
+    """Index just past the [...] or {...} group opening at s[j], or -1 if it never closes."""
+    op, cl = s[j], {"[": "]", "{": "}"}[s[j]]
+    depth, k = 0, j
+    while k < len(s):
+        ch = s[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == op:
+            depth += 1
+        elif ch == cl:
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return -1
+
+def _tex_drop_args(s, names, first_only=("href",)):
+    """Blank each \\name (a regex alternative from `names`) together with the [..] and {..}
+    groups glued to it. A name in `first_only` loses its first {..} group only."""
+    rx = re.compile(r"\\(%s)(?![A-Za-z@])\*?" % "|".join(names))
+    out, pos = [], 0
+    while True:
+        m = rx.search(s, pos)
+        if not m:
+            break
+        j, braces = m.end(), 0
+        while j < len(s) and s[j] in "[{":
+            if s[j] == "{" and braces and m.group(1) in first_only:
+                break
+            k = _tex_group_end(s, j)
+            if k < 0:
+                break
+            braces += s[j] == "{"
+            j = k
+        out += [s[pos:m.start()], _blank(s[m.start():j])]
+        pos = j
+    return "".join(out) + s[pos:]
+
+def _tex_drop_envs(s, names):
+    return re.sub(r"\\begin\s*\{(%s)\}.*?\\end\s*\{\1\}" % names,
+                  lambda m: _blank(m.group(0)), s, flags=re.S)
+
+def _tex_plain(s):
+    """The last two strips every reading shares: optional [..] arguments, then command names
+    (and control symbols such as \\% and \\\\)."""
+    s = re.sub(r"(\\(?:[A-Za-z@]+|\\)\*?)((?:\[[^\[\]\n]*\])+)",
+               lambda m: m.group(1) + _blank(m.group(2)), s)
+    return re.sub(r"\\(?:[A-Za-z@]+\*?|.)", lambda m: _blank(m.group(0)), s, flags=re.S)
+
+def _tex_parts(text):
+    """(raw preamble lines, uncommented body, line number the body starts on). The body is
+    the text strictly between \\begin{document} and \\end{document}; it is None when the
+    file has no \\begin{document}."""
+    raw = text.split("\n")
+    unc = [_TEX_COMMENT_RE.sub(r"\1", ln) for ln in raw]
+    for i, ln in enumerate(unc):
+        m = re.search(r"\\begin\s*\{document\}", ln)
+        if m:
+            body = "\n".join([ln[m.end():]] + unc[i + 1:])
+            e = re.search(r"\\end\s*\{document\}", body)
+            return raw[:i], (body[:e.start()] if e else body), i + 1
+    return raw, None, 0
+
+def _story_marks(pre, rx):
+    """[(line, value)] for every preamble line the marker regex matches."""
+    return [(i, m.group(1)) for i, ln in enumerate(pre, 1) for m in [rx.match(ln)] if m]
+
+def story_verify(root, path):
+    """The story twin of deck_verify: re-read every file in the `% crux-sources:` manifest
+    against its sha256, and list every digit left in the body (`unsourced`, with its line)
+    once comments, \\lit{}, macro names, the keys of non-text commands, optional arguments
+    and TikZ/pgfplots code are gone. Captions, tables and math are scanned. The CLI decides
+    exit codes, as for a deck."""
+    text = read(path)
+    pre, body, line0 = _tex_parts(text)
+    rep = {"mismatch": [], "unresolvable": [], "unsourced": [], "sources": []}
+    mans = _story_marks(pre, _STORY_MANIFEST_RE)
+    if not mans:
+        rep["unresolvable"].append({"addr": "crux-sources", "line": 0, "kind": "no-manifest",
+                                    "msg": "story carries no `% crux-sources:` line in its "
+                                           "preamble — build it with its build_story.py, "
+                                           "which records every file it read"})
+    elif len(mans) > 1:
+        rep["unresolvable"].append({"addr": "crux-sources", "line": mans[1][0],
+                                    "kind": "bad-manifest",
+                                    "msg": f"story carries {len(mans)} `% crux-sources:` lines "
+                                           f"(lines {', '.join(str(n) for n, _ in mans)}) — "
+                                           f"exactly one"})
+    else:
+        _check_sources(root, mans[0][1], rep, _STORY_WORDS, {"line": mans[0][0]})
+    if body is not None:
+        s = _tex_drop_envs(body, _TEX_CODE_ENVS)
+        s = _tex_drop_args(s, _TEX_NONTEXT + ("lit",))
+        s = _tex_plain(s)
+        for m in re.finditer(r"\S*\d\S*", s):
+            rep["unsourced"].append({"numeral": m.group(0).strip("{}()[],.;:!?$~'\"&"),
+                                     "line": line0 + s.count("\n", 0, m.start())})
+    return rep
+
+def story_lint(path):
+    """{problems: [(line, message)], allowed, words, pages} for a story .tex — line 0 where
+    a problem has no line. Empty problems = clean. Checks, all on the body: the four fixed
+    top-level sections in order and nothing else at that level; at most STORY_WORDS_MAX words
+    (figures, tables, code, keys and command names excluded; titles and the abstract count);
+    a sibling <stem>.log reporting at most STORY_PAGES_MAX pages (no log, no check: CI has
+    no LaTeX); and voice_lint over the prose, captions kept, with `% crux-allow:` terms
+    passed as agreed — which licenses crux terms only, never a node id or a paraphrase."""
+    text = read(path)
+    pre, body, line0 = _tex_parts(text)
+    allowed = [w.strip() for _, v in _story_marks(pre, _STORY_ALLOW_RE)
+               for w in v.split(",") if w.strip()]
+    res = {"problems": [], "allowed": allowed, "words": 0, "pages": None}
+    probs = res["problems"]
+    if body is None:
+        probs.append((0, "no \\begin{document} found — a story is a full LaTeX document"))
+        return res
+    at = lambda s, pos: line0 + s.count("\n", 0, pos)
+
+    # sections: exactly the four, in order
+    norm = lambda s: " ".join(s.split()).casefold()
+    want = [norm(x) for x in STORY_SECTIONS]
+    seen = []
+    for m in re.finditer(r"\\section\*?\s*(?:\[[^\]]*\])?\s*(?=\{)", body):
+        k = _tex_group_end(body, m.end())
+        title = body[m.end() + 1:k - 1] if k > 0 else ""
+        ln = at(body, m.start())
+        if norm(title) not in want:
+            probs.append((ln, f"line {ln}: extra top-level section '{title.strip()}' — a story "
+                              f"has only its four fixed sections; use \\subsection"))
+        elif norm(title) in [t for t, _ in seen]:
+            probs.append((ln, f"line {ln}: section '{title.strip()}' appears twice"))
+        else:
+            seen.append((norm(title), ln))
+    for x in STORY_SECTIONS:
+        if norm(x) not in [t for t, _ in seen]:
+            probs.append((0, f"missing section '{x}' — the sections are, in order: "
+                             f"{' → '.join(STORY_SECTIONS)}"))
+    for (t, ln), (t2, _) in zip(seen[1:], seen):
+        if want.index(t) < want.index(t2):
+            probs.append((ln, f"line {ln}: section '{STORY_SECTIONS[want.index(t)]}' is out of "
+                              f"order — the sections are, in order: {' → '.join(STORY_SECTIONS)}"))
+            break
+
+    # word cap
+    s = _tex_plain(_tex_drop_args(_tex_drop_envs(body, _TEX_FLOAT_ENVS), _TEX_NONTEXT))
+    res["words"] = sum(1 for w in s.split() if re.search(r"[^\W_]", w))
+    if res["words"] > STORY_WORDS_MAX:
+        probs.append((0, f"{res['words']:,} body words, over the {STORY_WORDS_MAX:,}-word cap "
+                         f"(figures, tables, captions and references do not count)"))
+
+    # page cap, from the sibling log
+    log = os.path.splitext(path)[0] + ".log"
+    if os.path.isfile(log):
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r"Output written on\s.*?\((\d+)\s+pages?", fh.read(), re.S)
+        if m:
+            res["pages"] = int(m.group(1))
+            if res["pages"] > STORY_PAGES_MAX:
+                probs.append((0, f"{os.path.basename(log)} reports {res['pages']} pages, over "
+                                 f"the {STORY_PAGES_MAX}-page cap"))
+
+    # voice: one agent turn per paragraph (a sentence never crosses a blank line), so each
+    # finding maps back to its paragraph, then to the first line naming what it flags
+    prose = _tex_plain(_tex_drop_args(_tex_drop_envs(body, _TEX_CODE_ENVS), _TEX_NONTEXT))
+    paras, cur = [], None
+    for i, ln in enumerate(prose.split("\n")):
+        if ln.strip():
+            if cur is None:
+                cur = (line0 + i, [])
+                paras.append(cur)
+            cur[1].append(ln)
+        else:
+            cur = None
+    for fid, msg in voice_lint([("agent", "\n".join(p)) for _, p in paras], agreed=allowed):
+        m = re.match(r"turn (\d+): (.*)", msg, re.S)
+        start, plines = paras[int(m.group(1)) - 1]
+        said = re.search(r"said (['\"])(.*?)\1", m.group(2))
+        off = next((j for j, l in enumerate(plines)
+                    if said and said.group(2).lower() in l.lower()), 0)
+        probs.append((start + off, f"line {start + off}: {fid} — "
+                                   + m.group(2).replace("the agent said", "the story says", 1)))
+    return res
 
 
 # ============================================================================= autopilot (spec 18)

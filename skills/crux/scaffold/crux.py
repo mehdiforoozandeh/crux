@@ -309,8 +309,9 @@ def main(argv=None):
                    help="comma-separated subset of checks to run: " + ",".join(E.CHECKS)
                         + " (default: all) — plus opt-in: " + ",".join(E.OPT_CHECKS))
 
-    s = _jsonable(sub.add_parser("deck", aliases=["prezit", "present", "slides"],
-                                 help="assemble the presentation payload for an anchor's subtree (spec 11)"))
+    s = _jsonable(sub.add_parser("deck", aliases=["prezit", "present", "slides", "story", "storify"],
+                                 help="assemble the presentation payload for an anchor's subtree (spec 11); "
+                                      "--verify/--lint on a .tex take the story path (storify)"))
     s.add_argument("anchor", nargs="?", default=None,
                    help="anchor node id — a question, or a hypothesis for a shorter deck")
     g = s.add_mutually_exclusive_group()
@@ -929,10 +930,47 @@ def dispatch(a):
             return 0
         print("✓ vault is valid")
         return 0
-    elif c in ("deck", "prezit", "present", "slides"):
+    elif c in ("deck", "prezit", "present", "slides", "story", "storify"):
         # a read verb: resolve without stamping, like serve — payload assembly and verify
         # never mutate a vault (refresh rewrites the DECK file, still not the vault)
         root = _vault_ro()
+        if a.verify and a.verify.lower().endswith(".tex"):
+            rep = E.story_verify(root, a.verify)
+            failed = bool(rep["mismatch"] or rep["unresolvable"]
+                          or (a.strict and rep["unsourced"]))
+            if a.json:
+                _emit(rep)
+                return 1 if failed else 0
+            for f in rep["mismatch"]:
+                print(f"✗ mismatch     {f['msg']}")
+            for f in rep["unresolvable"]:
+                print(f"✗ unresolvable {f['msg']}")
+            for u in rep["unsourced"]:
+                mark = "✗" if a.strict else "⚠"
+                print(f"{mark} unsourced    line {u['line']}: numeral '{u['numeral']}' is typed "
+                      f"into the body — use a build macro, or \\lit{{}} for a design constant")
+            if failed:
+                return 1
+            print(f"✓ story sources: {len(rep['sources'])} file(s) unchanged since the story "
+                  f"was built"
+                  + (f" ({len(rep['unsourced'])} unsourced numeral(s) above — --strict to fail on them)"
+                     if rep["unsourced"] else ""))
+            return 0
+        if a.lint and a.lint.lower().endswith(".tex"):
+            res = E.story_lint(a.lint)
+            if a.json:
+                _emit(dict(res, problems=[{"line": i, "message": m} for i, m in res["problems"]]))
+                return 1 if res["problems"] else 0
+            if res["allowed"]:
+                print(f"allowed: {', '.join(res['allowed'])}")
+            for _, m in res["problems"]:
+                print(f"✗ {m}")
+            if res["problems"]:
+                return 1
+            pages = f"{res['pages']} page(s)" if res["pages"] is not None else "no log, pages unchecked"
+            print(f"✓ story lint clean: four sections in order, {res['words']:,} of "
+                  f"{E.STORY_WORDS_MAX:,} words, {pages}, voice clean")
+            return 0
         if a.verify:
             rep = E.deck_verify(root, a.verify)
             failed = bool(rep["mismatch"] or rep["unresolvable"]

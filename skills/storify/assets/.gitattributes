@@ -1,0 +1,4 @@
+# The vendored Springer Nature files are copied byte-for-byte (sn-jnl.cls uses CR line
+# endings). Keep git from rewriting them.
+sn-jnl.cls -text
+sn-mathphys-num.bst -text
