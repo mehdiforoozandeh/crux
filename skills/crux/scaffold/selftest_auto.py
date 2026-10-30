@@ -16,10 +16,9 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAM
 
 # The stub worker. Reads its brief on stdin, logs argv + brief, then acts out the k-th mode of
 # CRUX_STUB_MODES (the last mode repeats). `prog.txt`'s first line is the program's number.
-STUB = r'''#!/usr/bin/env python3
-import os, sys, json, subprocess, time
+STUB = r'''import os, sys, json, subprocess, time
 tmp = os.environ["CRUX_STUB_DIR"]
-brief = sys.stdin.read()
+brief = sys.stdin.buffer.read().decode("utf-8")
 cf = os.path.join(tmp, "stub_count")
 k = int(open(cf).read()) if os.path.exists(cf) else 0
 open(cf, "w").write(str(k + 1))
@@ -100,12 +99,10 @@ def _sh(argv, cwd):
                           env=dict(os.environ, **GIT_ENV))
 
 
-def _write(path, text, mode=None):
+def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    if mode:
-        os.chmod(path, mode)
 
 
 def fixture(tmp, scorer="score.py", modes="up", **fields):
@@ -123,7 +120,7 @@ def fixture(tmp, scorer="score.py", modes="up", **fields):
     _write(os.path.join(tmp, "score.py"), SCORER)
     _write(os.path.join(tmp, "const.py"), CONST)
     _write(os.path.join(tmp, "hang.py"), HANG)
-    _write(os.path.join(tmp, "stub"), STUB, 0o755)
+    _write(os.path.join(tmp, "stub.py"), STUB)
     root = os.path.join(tmp, "vault")
     E.cmd_init("Auto Test", root)
     qid, _fn = E.cmd_ask(root, "Can the number go up?")
@@ -136,7 +133,9 @@ def fixture(tmp, scorer="score.py", modes="up", **fields):
     path = os.path.join(root, "auto", qid, "plan.md")
     _write(path, "---\n" + "".join(f"{k}: {v}\n" for k, v in plan.items() if v is not None)
            + "---\n\n" + guidance + "\n")
-    os.environ.update({"CRUX_AUTO_CLAUDE": os.path.join(tmp, "stub"), "CRUX_STUB_DIR": tmp,
+    # run through sys.executable, never as a #! script: Windows cannot execute one
+    stub = f"{shlex.quote(sys.executable)} {shlex.quote(os.path.join(tmp, 'stub.py'))}"
+    os.environ.update({"CRUX_AUTO_CLAUDE": stub, "CRUX_STUB_DIR": tmp,
                        "CRUX_STUB_MODES": modes, "CRUX_AUTO_RATE_WAIT": "0"})
     os.environ.update(GIT_ENV)
     return root, path, qid, repo
@@ -173,10 +172,11 @@ def run_all(check):
         return
     keep_env = dict(os.environ)
     try:
-        _plan_tests(check, A)
-        _unit_tests(check, A)
-        _run_tests(check, A)
-        _bench_plan_tests(check, A)
+        for section in (_plan_tests, _unit_tests, _run_tests, _bench_plan_tests):
+            try:
+                section(check, A)
+            except Exception as e:  # an unexpected result is a FAIL line, never a traceback
+                check(f"{section.__name__} crashed: {type(e).__name__}: {e}", False)
     finally:
         os.environ.clear()
         os.environ.update(keep_env)
@@ -348,11 +348,14 @@ def _run_tests(check, A):
               and all(set(("n", "id", "parent", "commit", "score", "status", "reason",
                            "seconds")) <= set(a) for a in at))
         check("rule 5: climb builds attempt 1 on base, then always on the best",
-              at[0]["parent"] == "base" and at[1]["parent"] == at[0]["id"]
+              len(at) == 3 and at[0]["parent"] == "base" and at[1]["parent"] == at[0]["id"]
               and at[2]["parent"] == at[1]["id"])
         check("rule 5: every valid attempt is kept with its score",
               [a["status"] for a in at] == ["kept"] * 3
               and [a["score"] for a in at] == [2.0, 3.0, 3.0])
+        if len(at) != 3:
+            check("run: the attempt checks need three attempts (got %d)" % len(at), False)
+            return
         h1, h2, h3 = (v.get(a["id"]) for a in at)
         check("nodes: each attempt is a hypothesis under the anchor, closed",
               all(h.type == "idea" and h.parent == qid and h.status == "done"

@@ -239,7 +239,9 @@ def _tail(text, n=400):
 
 # ---------------------------------------------------------------------------------- worker
 def worker_argv(plan):
-    return [os.environ.get("CRUX_AUTO_CLAUDE") or "claude", "-p",
+    # CRUX_AUTO_CLAUDE is a command line, split like the scorer's, so a test can run a Python
+    # stub through sys.executable: Windows cannot execute a #! script directly.
+    return shlex.split(os.environ.get("CRUX_AUTO_CLAUDE") or "claude") + ["-p",
             "--model", plan["model"], "--effort", plan["effort"],
             "--permission-mode", "bypassPermissions",
             "--disallowedTools", "WebFetch", "WebSearch"]
