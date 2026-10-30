@@ -1,0 +1,210 @@
+# M4 Weekly: an autopilot benchmark where whole forecasting programs compete
+
+**Task.** Write one program that forecasts the next 13 weeks of each of the 359 M4 Weekly
+series. Any method family may compete: statistical, tree-based or neural. The search
+objective is `val_owa`: M4's official OWA on each train series minus its last 13 weeks.
+The OWA against the held-out M4 test values (`owa`) is read once, at the end. Lower is better.
+
+This is an Explore problem in the style of Google's ERA: the search agent writes the whole
+program. The data and every published forecast come from
+[Mcompetitions/M4-methods](https://github.com/Mcompetitions/M4-methods) at commit `6c1067e`
+(master, 2020-03-20). That repository has **no license file**. We download the data at setup
+time and never commit it.
+
+## Data (verified at the pinned commit)
+
+- `Dataset/Train/Weekly-train.csv`: 359 series. `Dataset/Test/Weekly-test.csv`: 359 x 13.
+- `Dataset/M4-info.csv`: all 359 Weekly ids have `Frequency` 1 and `Horizon` 13.
+- `setup.sh` pins each file by sha256 and puts it in `work/secret/`. The scorer checks the
+  train and test hashes again on every call.
+
+## Metric (M4's own definitions)
+
+The reference is `Benchmarks and Evaluation.R` in the same repository.
+
+- sMAPE = mean of 200·|y − f| / (|y| + |f|) over all 359 × 13 points.
+- MASE = mean of |y − f| / scale, where scale is the in-sample mean of |x_t − x_{t−m}|. The
+  scale uses `m` = the M4-info `Frequency`, which is **1 for Weekly**.
+- Naive2 is the naive forecast of the seasonally adjusted series. With frequency 1, the M4
+  code applies no seasonal adjustment, so for Weekly, Naive2 repeats the last value.
+- OWA = ½ (sMAPE / sMAPE_Naive2 + MASE / MASE_Naive2). Naive2 has OWA 1.000 by definition.
+
+**Reproduction.** `score.py --forecasts FILE` scores the published point forecasts that
+`setup.sh` extracts from the official submission archives. The results match the published
+table (`Evaluation and Ranks.xlsx`, sheet *Point Forecasts-Frequency*):
+
+| method | our sMAPE / MASE / OWA | published sMAPE / MASE / OWA |
+|---|---|---|
+| Naive2 (benchmark) | 9.1613 / 2.7773 / 1.0000 | 9.161 / 2.777 / 1 |
+| Theta (benchmark) | 9.0930 / 2.6371 / 0.97104 | 9.093 / 2.637 / 0.97104 |
+| **118 Smyl** (winner of M4 overall) | 7.8171 / 2.3559 / 0.85078 | 7.817 / 2.356 / 0.85084 |
+| **235 Darin & Stellwagen** (best Weekly) | 6.5816 / 2.1070 / 0.73853 | 6.582 / 2.107 / 0.73863 |
+
+The last digits of OWA differ because the spreadsheet computes OWA from sMAPE and MASE
+rounded to 3 decimals. Other published Weekly OWAs: 036 Petropoulos & Svetunkov 0.751,
+237 Pawlikowski 0.766, Damped 0.917, Comb 0.926. We could not open the M4 paper
+(Makridakis et al. 2020, IJF; the publisher returned 403), so we did not check its table
+directly. The spreadsheet is the organisers' own file.
+
+**Threshold** (the plan's `bar` field; on `owa`, read once at the end). 0.739 (235, best on
+Weekly). Smyl, who won M4 overall, scored 0.851 on Weekly.
+
+## Candidate contract
+
+A candidate is a directory that contains `forecast.py`. The scorer copies the directory
+(without `.git`) into a new stage, then runs it with the venv's Python:
+
+```
+python forecast.py TRAIN_CSV OUT_CSV          # cwd = the staged copy
+```
+
+- `TRAIN_CSV`: the header is `id,y1,y2,...`. Each row is one series, oldest value first.
+  Rows have different lengths, from 80 to 2,597 values. Ids are anonymised (`s001`...) in a
+  fixed shuffled order.
+- `OUT_CSV`: the header must be exactly `id,F1,...,F13`. Write one row per input id, with 13
+  finite numbers. A missing, extra or duplicate id fails the candidate, and so does a NaN, an
+  inf or a wrong column count.
+- Environment: `M4_HORIZON=13`, `M4_CPUS` (the CPUs of the job), `CRUX_SEED` (default `0`),
+  `PYTHONHASHSEED=0`. The BLAS and OpenMP thread variables are 1, which keeps a run
+  deterministic; a program may use `multiprocessing` over `M4_CPUS`.
+- Packages in `work/venv`: numpy, pandas, scipy, statsmodels, scikit-learn
+  (`requirements.lock`). There is no torch and no lightgbm. Neural methods use scikit-learn's
+  MLP, or numpy written by hand.
+- The program runs **twice**. The **val** run gets each series minus its last 13 values and
+  is scored against those 13 values (`val_owa`). The **test** run gets the full train series
+  and is scored against the official test file (`owa`). Each run has a **110 s** wall-time
+  cap. The whole scorer stops itself at 280 s.
+
+What fits in 110 s on 4 CPUs (Fir): the M4 Theta benchmark takes 1.3 s. The shipped
+ensemble (SES, damped Holt and Theta, three statsmodels fits per series) takes 3 s. So
+per-series ETS or ARIMA model selection fits, and so do global tree models and small MLPs
+over all series. Deep nets trained from scratch (an N-BEATS- or ES-RNN-sized model) on CPU
+mostly do not fit.
+
+## Output
+
+- **Pass:** exit 0. stdout is one JSON object: `val_owa` (the search objective: `value`,
+  `smape`, `mase`, and the Naive2 terms), `owa` (the same fields, on the M4 test set),
+  `passed`, `workload`, `bar` (the published OWAs to compare against), `checks` (copy shares,
+  sandbox), `runs` (seconds per run), `candidate`, `scorer_wall_s`. Plan:
+  **`address:: val_owa`**, `direction:: min`.
+- **`owa` is read once.** The PI ruled that the search steers on `val_owa` only. The scorer
+  still computes `owa` on every call, because the test run is cheap (0.1-4 s for the shipped
+  candidates) and it checks the format of the full-data forecasts too. Nobody reads `owa`
+  until the search ends; then the winner's `owa` is compared with the threshold.
+- **Fail:** exit 1. stdout is `{"passed": false, "reason": ...}`, and the reason also goes
+  to stderr. crux treats `scorer-exit` as a machine fault and retries it `retries:` times.
+- **Candidate:** a path argument, else `CRUX_CANDIDATE`, else the working directory, but only
+  when `CRUX_WORKSPACE` is set. The plan needs no adapter: `scorer: python3 <abs>/score.py`.
+  The stage goes inside `CRUX_WORKSPACE` when it is set.
+
+## How the test values are protected
+
+1. **Sandbox.** Each run is under bubblewrap (`bwrap`, which exists on Fir compute nodes):
+   no network (a new network namespace with only a down loopback), a read-only filesystem,
+   and new pid, ipc and uts namespaces. `/home`, `/scratch`, `/project` and `/nearline` are
+   replaced by empty tmpfs. Only this directory (read-only) and the stage (writable) are
+   bound back in, and then `work/secret/` (the test file and the published forecasts) is
+   replaced by an empty tmpfs. A candidate therefore cannot see the crux vault, other copies
+   of M4 on the cluster, or the test file, and it cannot edit `score.py`.
+2. **Ordering.** The parent process reads the test file only after both runs have ended.
+3. **Replay check.** The scorer fails a candidate when 25% or more of its values equal
+   (relative tolerance 1e-6) the test values, the val truth, or the published forecasts of
+   118 (Smyl) or 235 (best Weekly). This catches an answer table that was put into the
+   program while it was written.
+4. **Anonymised ids.** The ids are anonymised, so a program cannot look up a downloaded
+   answer by its M4 id.
+
+**Requirement on the run: search workers have no web access.** The test set and every
+published forecast are public on GitHub. An agent with web access *while it writes* the
+program could download them and put a perturbed copy into the program (for example, Smyl's
+forecasts times 1.001); the replay check catches exact copies only. The scorer cannot block
+this route. The engine denies the workers web access; a run without that rule is not valid.
+
+**Why the objective is `val_owa`.** A long search that read `owa` after every attempt would
+adapt to the test set, which M4 entrants never saw. `val_owa` is held out in time from the
+same series, so the search never looks at the test set, and `owa` stays a single, honest read
+against the threshold.
+
+## Validation (Fir, `selfcheck.py`, jobs 429125, 431252 and 433556, 4 CPUs)
+
+| candidate | expected | result |
+|---|---|---|
+| `candidates/naive2` (the baseline) | OWA 1 | owa 1.000000, val_owa 1.000000; scorer 0.6 s |
+| `candidates/theta` (M4 Theta) | ≈ 0.971 | owa 0.971011 (published 0.97104), val_owa 0.906 |
+| `candidates/ensemble` | better | owa 0.944181, val_owa 0.885; scorer 7 s |
+| same candidates again | same | bit-identical owa and val_owa |
+| 12 columns / one NaN | fail | fail: header / "NaN or infinite forecast" |
+| sleeps forever | fail | fail at the 110 s cap |
+| reads `work/secret/*.csv`, writes `score.py`'s directory | no gain | file not found, write refused (read-only); owa 1.000 |
+| scans `/scratch`, `/home` for other `Weekly-test.csv` | no gain | none visible (one existed on `/scratch`) |
+| downloads the test set from GitHub | no gain | network refused; owa 1.000 |
+| carries the test values / Smyl's forecasts as a table | fail | fail: "reproduce val_truth 100%" / "submission_118 99.4%" |
+
+## How to run (Fir)
+
+```
+module load python/3.11.5
+./setup.sh                                    # data, published forecasts, work/venv (~3.5 min)
+python3 score.py candidates/naive2            # inside a SLURM job
+python3 selfcheck.py                          # every check above (~2.5 min)
+```
+
+## Results (lean autopilot run)
+
+SLURM job 735116 on Fir (2026-10-27): explore mode (ERA flat PUCT), `budget_hours: 3`.
+Run directory: `~/scratch/crux-runs/m4-weekly-735116`.
+
+- **Stop:** `budget` (3.204 of 3 hours). The driver did not crash.
+- **Wall time:** 3 h 12 min 38 s for the job. The ledger covers 3.204 h, from setup to stop.
+- **Attempts:** 19, which is **5.929 per hour**. This misses the acceptance threshold of 6 per hour.
+  The median attempt took about 10 min. The scorer alone took about 146 s for the best
+  program (two runs of about 72 s each), against 0.8 s for the baseline.
+- **Outcomes:** 18 kept, 0 rejected, 1 failed (attempt 7: the scorer ran past the
+  attempt's time limit), 0 discarded.
+- **Baseline:** val_owa 1.0 (Naive2).
+- **Best:** val_owa **0.666157** (attempt 19, node h19). This passes the threshold of < 0.99.
+- **Test-set `owa` of the best, read once:** **0.741032** (scorer run as job 754763 on the
+  h19 commit; val_owa reproduced exactly). This misses the 0.739 threshold by 0.002. The gap
+  between val_owa 0.666 and owa 0.741 suggests that the late attempts tuned weights to the
+  validation fold.
+- **Best program:** `forecast.py` trains one global HistGradientBoosting model per horizon
+  on log-ratio windows pooled over all series, with 52-, 104- and 156-week windows averaged.
+  It stretches the predicted log-change, blends in a Theta forecast, and adds a two-year
+  seasonal-naive term. Attempt 1 alone (the global model) reached 0.725; attempts 2-19
+  added the third window, the stretch, the Theta blend, and then small weight changes. The
+  last change (h19) raises the near-term Theta weight from 0.35 to 0.42 and lowers the
+  156-week model weight from 2 to 1.5.
+- **Branching:** The search was nearly a single chain. Explore picked the current best as
+  the parent in every attempt but one: attempt 11 took h10 (0.678742) as parent while h9
+  (0.677047) was better. So explore picked a strictly lower-scoring parent once.
+
+### Re-run with 10-minute attempts
+
+SLURM job 1204546 on Fir (2026-10-29): the same plan with `attempt_minutes: 10`, and the
+engine with the C8 fixes (empty commits are discarded; the best starts at the baseline).
+Run directory: `~/scratch/crux-runs/m4-weekly-1204546`.
+
+- **Stop:** `budget` (3.042 of 3 hours). The driver did not crash. Job wall time 3 h 04 min 10 s.
+- **Attempts:** 24, which is **7.89 per hour**. This passes the bar of 6 per hour.
+- **Outcomes:** 16 kept, 0 rejected, 5 failed, 3 discarded. The 3 discards (attempts 4, 11,
+  18) are all "empty commit: no file changed". Of the 5 failures, 3 are the scorer running
+  past the attempt's time limit (17, 21, 22) and 2 are a worker that made no commit (15, 19).
+  The scorer takes about 160 s for the late programs, because the worker raised the boosting
+  iterations until each forecast run took 74-86 s of its 110 s cap.
+- **Best:** val_owa **0.694235** (attempt 23, node h23). This passes the bar of < 0.99.
+- **Test-set `owa` of the best, read once:** **0.69157** (scorer run as job 1281272 on the h23
+  commit; val_owa reproduced exactly). This beats the 0.739 bar. The val-to-test gap is
+  -0.003: the test score is slightly better than the validation score, so this run shows no
+  sign of tuning to the validation fold. The first run had a gap of +0.075 (0.666 to 0.741).
+  A score this far under the best M4 Weekly entry needs a human read of the program before
+  it counts.
+- **Best program:** `forecast.py` fits one pooled HistGradientBoosting model per horizon on
+  log-ratio windows over all series, with a 1000-week lookback and the horizons in parallel.
+  The search then moved all the weight to this model (SES, Theta and damped Holt remain only
+  as a fallback for short series), turned off early stopping, and raised the iterations to
+  800. The last step (h23) gives the final horizon fit all OpenMP threads and spends the
+  time saved on 800 iterations instead of 780.
+- **Branching:** Explore never picked a strictly lower-scoring parent. It picked the current
+  best every time, except attempt 6, which took h3, a parent tied with the best h2 at
+  0.725213.

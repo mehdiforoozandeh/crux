@@ -1,145 +1,70 @@
 # crux autopilot
 
-Run one anchor question unattended, against a goal and a bar you fix **before** the loop
-starts — so a question suited to brute-force search (reproducing a paper's numbers, sweeping
-a space, hunting a better method) can be pursued overnight without turn-taking, and read back
-in the morning as ordinary crux: questions, hypotheses, verifiables, verdicts, artifacts.
+Run one anchor question unattended, against an objective and a threshold you fix **before**
+the run starts. A question that suits search (make this faster, lower this loss, pack these
+circles tighter) runs overnight with no turn-taking, and reads back in the morning as ordinary
+crux: one hypothesis per attempt, each with its verdict.
 
-It is not an autonomous scientist. The loop cannot change its objective, its bar, its checks
-or its anchor. It searches inside a frame you built.
+It is not an autonomous scientist. The run cannot change its objective, its threshold, its
+scorer or its anchor. It searches inside a frame you built.
 
-**Your required acts are three, and none of them is mid-run.**
-
-| when | what |
+| when | what is yours |
 |---|---|
-| before | approve the flight plan — `crux auto approve` |
+| before | write the plan with the `crux-autopilot` skill, and start `crux auto run` |
 | after | answer the anchor question, if it is answered |
 | after | merge what you want into `main` |
 
 ## How a run works
 
-```mermaid
-%%{init: {"theme":"base", "flowchart": {"wrappingWidth": 600, "nodeSpacing": 40, "rankSpacing": 45}} }%%
-flowchart TB
-  classDef pi fill:#fde68a,stroke:#b45309,color:#1c1917
-  classDef drv fill:#dbeafe,stroke:#1d4ed8,color:#1c1917
-  classDef agt fill:#dcfce7,stroke:#15803d,color:#1c1917
-  classDef bad fill:#fee2e2,stroke:#b91c1c,color:#1c1917
+1. **Setup check.** The driver scores the base, scores again with the first editable file
+   emptied (the score must change), and runs the worker once to prove it can commit.
+2. **Each attempt.** The driver picks a parent, cuts a git worktree from it, and gives the
+   worker a brief. The worker (`claude -p`, no web tools) edits only the editable paths and
+   makes one commit; its subject line is the claim. The driver checks the paths, runs the
+   frozen scorer, files a hypothesis under the anchor, closes it on its derived verdict, and
+   appends one line to `auto/<qid>/ledger.jsonl`.
+3. **Stop.** The run stops when `budget_hours` is spent. A second `crux auto run` continues
+   from the ledger.
 
-  subgraph SETUP["1 · Setup — a conversation with the PI, six acts, four asks and two approvals"]
-    direction TB
-    A0(["crux-autopilot skill — the flight plan is written here, in dialogue,<br/>and every slot it does not ask for is derived, measured, or defaulted"]):::agt
-    A1["ask · the anchor question, and the goal in one falsifiable sentence"]:::pi
-    A2["approve · the null, proposed by crux-null"]:::pi
-    A3["derived · verifiables against that null — kinds, combination rule,<br/>and at least one outcome-neutral control (crux-verifiables)"]:::agt
-    A4["derived · the objective address, read off the discriminating check<br/>— never chosen first, or the search clears a bar it was always going to clear"]:::agt
-    A5["ask · direction and bar · ask · the harness: scorer, run command,<br/>frozen paths, writable roots, budget"]:::pi
-    A6["ask · the PI's standing guidance — their priors, the analogies they see,<br/>the routes they rate, the dead ends. The one input nothing else can derive."]:::pi
-    A7["measured · the baseline at several seeds, and the published rivals<br/>— so every threshold is set outside the noise, against what has really been achieved"]:::drv
-    A8["approve · crux-design's verdict on the design"]:::pi
-    A0 --> A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
-  end
+**Climb** always builds on the best attempt so far (Karpathy's keep-or-reset). **Explore**
+picks the parent from all kept attempts with the flat PUCT rule of Google's ERA, which balances
+the best attempt against less-visited ones.
 
-  SIGN{{"crux auto approve — the PI's signature, on a hash of the plan.<br/>Spec 15 made a verdict arithmetic, so what is signed is the bar, once."}}:::pi
-  A8 --> SIGN --> L1
+## The plan
 
-  subgraph LOOP["2 · The run — the driver is plain Python, no model; no agent outlives one step"]
-    direction TB
-    L1["select the parent attempt — flat PUCT over the island's attempts<br/>(Climb is the same rule at c_puct = 0); reserve the node id under the lock;<br/>cut a worktree from the parent's commit"]:::drv
-    L2["assemble the brief — engine-side and byte-stable: goal, objective, bar, current best,<br/>the island's sub-question, the parent's claim + diff + score,<br/>refuted siblings with their failure scenarios, the inherited null and checks, guidance"]:::drv
-    L3["crux-auto-worker, fresh per attempt — propose the claim, change the program,<br/>file the hypothesis, commit under refs/crux/auto/qid/hid, exit"]:::agt
-    L4["the driver runs the frozen scorer and parses the metric from its output,<br/>never from a file the worker touched; writes results/hid/metrics.json"]:::drv
-    L5["crux-close, fresh — draft the per-verifiable ticks and the findings"]:::agt
-    L6["the driver derives the verdict from kinds + combination rule + pass/fail vector,<br/>closes the node, moves island-best if the score improved, drops the worktree"]:::drv
-    L1 --> L2 --> L3 --> L4 --> L5 --> L6
-    G["invalid-run, not refuted — a commit touching a frozen path ·<br/>a change under a declared shared root outside the attempt's workspace (manifest diff) ·<br/>a crash past its retries. A broken tool is not a wrong idea."]:::bad
-    L4 -.-> G -.-> L6
-    ST["crux-auto-steward — periodic, Explore only, sees the ledger alone:<br/>stalled? starving island? revise guidance, or open one island up to island_cap"]:::agt
-    ST -.->|"never widens the plan, never merges"| L2
-  end
+Ten rows at most, in `auto/<qid>/plan.md`: `anchor`, `repo`, `base`, `editable`, `scorer`,
+`objective` (required); `mode`, `budget_hours`, `attempt_minutes`, `worker` (defaulted); then
+your guidance as free text. See the benchmark directories under
+[`examples/autopilot/`](../../examples/autopilot/) for worked plans.
 
-  L6 --> CHK{"stop?"}:::drv
-  CHK -->|"no"| L1
-  CHK -->|"yes"| STOPS
+## The seven rules
 
-  subgraph STOPS["3 · Four stops, each reported by name"]
-    direction LR
-    S1["success — objective past the bar and the attempt closed supported,<br/>then re-run at different seeds before success is declared"]:::bad
-    S2["budget — attempts, wall clock, or model calls"]:::bad
-    S3["abort — the scorer itself failing, invalid-runs in a row, frozen-path violations"]:::bad
-    S4["stall — no improvement in N; self-escalates once<br/>(Climb widens exploration, Explore asks the steward), then ends"]:::bad
-  end
+1. **Allowlist.** A change outside `editable` discards the attempt.
+2. **Fail, do not crash.** A crash, a timeout or a missing number is one failed attempt.
+3. **Rejected is not broken.** `passed: false` rejects once. Only a scorer that cannot start is
+   retried, once.
+4. **One time limit.** `attempt_minutes` covers the worker and the scorer.
+5. **Keep.** Every valid attempt is kept with its score and can be a parent.
+6. **Setup check.** No run starts unless the base scores, the score responds, and the worker
+   commits with the web tools denied.
+7. **One budget.** `budget_hours` is read between attempts. A rate limit waits; it is never a
+   failure.
 
-  STOPS --> P1
+## The scorer contract
 
-  subgraph AFTER["4 · After — what stays the PI's"]
-    direction TB
-    P1["answer the anchor question, if it is answered — read back as ordinary crux:<br/>hypotheses, checks, verdicts, artifacts, and a portfolio rather than one winner"]:::pi
-    P2["merge into main — the loop never writes it. crux auto promote turns<br/>an attempt's ref into a branch worth keeping."]:::pi
-    P1 --> P2
-  end
-```
+The scorer prints one JSON object. A wrong candidate exits non-zero with `"passed": false`.
+Correctness tests, anti-cheat checks and repeats against noise live inside the scorer; the
+driver repeats none of them.
 
-## The parts, in one line each
+## Verbs
 
-- **The flight plan** — one file, `auto/<qid>/plan.md`, twenty slots plus a baseline. The
-  driver reads only this, so everything the loop does later traces to something you approved.
-  The `crux-autopilot` skill writes it with you in six acts; `crux auto check` validates it
-  and dry-runs the scorer before anything starts.
-- **The objective must come from a check that discriminates against the null.** Optimising a
-  bar the hypothesis was always going to clear means the search will clear it, thousands of
-  times, at cost, and teach nothing. This is the single most important line in the plan, and
-  it is why the skill reads the objective address *off* a check rather than asking you for a
-  number first.
-- **The driver** is plain Python with no model. It owns selection, budget, id allocation,
-  worktrees, launching runs, deriving verdicts and resume. It is the only thing that lives for
-  the whole run.
-- **The worker** is a fresh agent per attempt, alive for minutes. It sees its brief and nothing
-  else, writes code, files the hypothesis and exits — so a four-hour job never holds an agent
-  open, and no context anywhere rots.
-- **Islands** are sub-questions under the anchor: separate angles, separate worktrees, safe to
-  run in parallel. Selection inside an island is flat PUCT; *Climb* is the same rule at
-  `c_puct = 0`.
-- **The steward** is off by default and Explore-only. It reads the ledger, and may revise the
-  guidance or open one more island up to `island_cap`. It can never widen the plan and never
-  merges.
+- `crux auto check <plan>` runs the setup check and prints the baseline (`--static`: the plan
+  alone).
+- `crux auto run <plan> [--max-attempts N]` runs or continues the search.
+- `crux auto status [<qid>]` reads the ledger. The cockpit's Autopilot tab (`crux serve`) shows
+  the same.
 
-## What keeps it honest
+`main` is never written. A committed attempt lives under `refs/crux/auto/<qid>/<n>` in your
+repo. Sandboxing is your project's job: containment belongs in your scorer.
 
-- **The scorer is frozen and the driver runs it.** The metric is parsed from the command's
-  output, never read from a file the worker last touched.
-- **One workspace per attempt, named by its id**, plus a manifest over the declared shared
-  roots — path, size, mtime — recorded before the run and re-checked after.
-- **A breach closes the attempt `invalid-run`, never `refuted`.** A broken tool is not a wrong
-  idea, so the hypothesis stays alive and the record says which happened.
-- **A worker may add outcome-neutral controls; it may never add, remove or weaken a
-  claim-directed check.** A control can only invalidate a run, so a worker can only ever raise
-  its own bar.
-- **Success is confirmed at different seeds** before it is declared. A winner's score comes off
-  one evaluation, and a lucky seed is the likeliest way an overnight run hands back a false
-  result.
-- **`main` is never written by the loop.** Attempts live as commits under
-  `refs/crux/auto/<qid>/<hid>`; `crux auto promote <hid>` turns one into a branch when you keep
-  it.
-
-Sandboxing is your project's job, not crux's: the engine is standard-library-only and
-domain-agnostic, so containment belongs in your run command.
-
-## Getting started
-
-Ask for a flight plan in your own words — "set up a flight plan", "I want to search this" —
-and the `crux-autopilot` skill takes it from there. It asks you four things, derives or
-measures the rest, and stops with a path and the exact `crux auto approve` line. One of the
-four is an open question about your own priors: the analogies you see, the routes you rate,
-the dead ends you already know about. That answer is the only part of the plan nothing else
-can produce, and it is what the workers start from. Writing the
-plan costs you nothing: the approval stamp covers a hash of the document, so an unapproved
-plan is inert and `crux auto run` refuses it.
-
-Watch a run in the cockpit's Autopilot tab (`crux serve`): score against attempt number, what
-is in flight per island, the budget axes, and the ledger.
-
----
-
-Design and rationale, including the alternatives that were rejected and why:
-[`.spec/05-autopilot.md`](../../.spec/05-autopilot.md).
+Design: [`.spec/18-autopilot-lean.md`](../../.spec/18-autopilot-lean.md).

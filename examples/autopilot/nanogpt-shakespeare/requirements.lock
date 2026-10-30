@@ -1,0 +1,5 @@
+# Exact versions from the Alliance (Fir) wheelhouse, Python 3.12.4, StdEnv/2023.
+# Resolved set is recorded in work/versions.txt by setup.sh.
+torch==2.14.1
+triton==3.6.0
+numpy==2.5.3

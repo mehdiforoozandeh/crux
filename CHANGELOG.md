@@ -22,6 +22,11 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- **The autopilot is rebuilt lean** (spec 18; replaces the spec-05 driver). A plan has at most
+  ten rows, three verbs remain (`crux auto check`, `run`, `status`), and seven rules govern a
+  run; each attempt is a hypothesis closed on its derived verdict and one line in
+  `auto/<qid>/ledger.jsonl`. Islands, the steward, approval hashes and `auto approve`/`brief`/
+  `guide`/`promote`/`refs` are gone, and an old plan is refused with the new fields named.
 - **The correct technical term, glossed on first use — never a homemade stand-in** (engine
   **3.5**, unchanged; prezit skill **1.1 → 1.2**; no vault-format change). One rule now holds
   in chat, decks, vault prose and agent text: say the field's term, and give anything past what
@@ -36,6 +41,12 @@ verdict/roll-up/view logic changes.
   significant and Limitations. "bar" became "threshold" in crux's skill, agents, `validate`
   message and the scaling and segssl example vaults (autopilot text follows on its own branch).
   The ELI5 placeholder asks for glossed terms; the old one still reads as unwritten.
+- **The autopilot says "threshold", not "bar"** (engine **3.5**, unchanged; no plan-format
+  change). The crux-autopilot skill and README, the autopilot parts of crux's skill, the scaffold
+  README and the root README, the worker's brief, the cockpit's Autopilot tab and the
+  `examples/autopilot/` READMEs now say threshold; the plan's `bar` field and the scorer's `bar`
+  key keep their names and are glossed once. The shipped-text paraphrase sweep now covers
+  `skills/crux-autopilot`. persona-01 submissions re-stamped to the new crux SKILL.md hash.
 - **The register is a science-major undergraduate's** (engine **3.5**, unchanged; no
   vault-format change). Agents, templates, CLI help and the cockpit now say "null hypothesis"
   where they said "the boring explanation", and the ELI5 slot asks for one sentence a science

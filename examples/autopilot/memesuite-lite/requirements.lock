@@ -1,0 +1,16 @@
+# Exact versions from memesuite-lite's own uv.lock at dd413f6, resolved for Python 3.11.
+# memelite itself is NOT installed: the scorer puts the candidate's code on the path.
+numba==0.65.1
+llvmlite==0.47.0
+numpy==2.4.6
+pandas==3.0.3
+python-dateutil==2.9.0.post0
+six==1.17.0
+tzdata==2026.2
+pyfaidx==0.9.0.4
+packaging==26.2
+tqdm==4.67.3
+pytest==9.0.3
+iniconfig==2.3.0
+pluggy==1.6.0
+pygments==2.20.0

@@ -266,18 +266,14 @@ conclusion is a record on the **task's** side and never re-verdicts the old node
   gate, draft the synthesis, then stop — `approve` is their signature, not yours.
 
 **Inside an approved autopilot run** — the one place the leash reads differently (spec 05 §12).
-Once the PI has signed a flight plan with `crux auto approve` and started it with
-`crux auto run`, the driver performs four acts per attempt that are the PI's everywhere else:
-`hypothesize` (at the id it reserved), `approve-null` (on the plan's null, verbatim),
-`test --to running`, and `close`. The plan's approval covers all four: each attempt closes on
-its derived verdict with no per-attempt signature, because what the PI signs is the bar, and in
-a run the bar is signed once, in the flight plan, and inherited by every attempt. In Explore,
-the approval also covers a fifth act that is not per attempt: `ask` — opening one new island (a
-sub-question under the anchor) when the steward proposes it, up to the plan's `island_cap`,
-which the PI signed. It is safe for the reason spec 05 D14 gives: the objective, bar and checks
-are frozen, so a new island is another angle on a fixed target. Outside an approved autopilot
-run, nothing changes. Inside one, `answer`, `approve` on a synthesis, and merging into `main`
-stay the PI's.
+A run is approved when the PI starts `crux auto run` on a plan that `crux auto check` passed,
+or tells you in so many words to start it. Never start one on your own judgment. Inside it, the
+driver performs four acts per attempt that are the PI's everywhere else: `hypothesize`,
+`approve-null` (on the driver's fixed null), `test --to running`, and `close`. Starting the
+run covers all four: each attempt closes on its derived verdict with no per-attempt signature,
+because what the PI signs is the threshold, signed once per run, in the plan, and inherited
+by every attempt. Outside an approved autopilot run, nothing changes. Inside one,
+`ask`, `answer`, `approve` on a synthesis, and merging into `main` stay the PI's.
 
 
 ## Setting up a vault (first run)
@@ -340,9 +336,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `status` · `review` · `task review` · `validate` | ○ | none — act; what reaches the PI is the science, never the call |
 | `init` · `serve` | ○ | none — `serve` opens the read-only cockpit (launch playbook: the **crux-cockpit** skill) |
 | `task add` · `done` · `drop` · `list` · `show` · `categories` | ○ | none — and ordinary task bookkeeping is silent |
-| `auto check` · `auto brief` | ○ | none — `auto brief` only reads, and so does the lint half of `auto check`; the rest of `auto check` starts **the PI's own scorer, once**, as a dry run that writes nothing, and **probes each agent command once** with `agent_probe` (default `--version`), which sends no prompt and spends no model call. `auto check --static` is the lint alone and starts nothing (the plan `auto check` validates is the one the **crux-autopilot** skill produces) |
-| `auto refs` | ○ | none — it lists what a run already made: its refs, its branches, its worktrees. Read-only, and it creates nothing |
-| `auto status` | ○ | none — it reads a run's `state.json`, starts nothing and writes nothing |
+| `auto check` · `auto status` | ○ | none — `auto status` only reads the run's ledger; `auto check` starts **the PI's own scorer** on the base and on a blanked candidate, and **the worker once** (one model call) in a throwaway worktree; it files no node and leaves only a log under `auto/<qid>/logs/`. `auto check --static` reads the plan alone and starts nothing (the plan is the one the **crux-autopilot** skill writes) |
 | `ask` · `hypothesize` · `pursue` | ◆ | it sets direction — propose the node, get a yes |
 | `test` | ◆ | `stage` is free; **going `running` spends compute and needs the PI's OK** |
 | `close` | ◆ | derives the verdict from your ticks — never tick a box the evidence does not support |
@@ -351,10 +345,7 @@ in silence. The gate column answers "do I need a yes?"; *Voice* answers "do I sa
 | `answer` | ◆ | **refuses** a question with no approved synthesis |
 | `task accept` | ◆ | **the PI accepts what an experiment concluded** — never run this on your own judgment |
 | `rd` | ◆ | the Requirements Document the 400-word cap displaces (see the **crux-rd** skill) |
-| `auto guide` | ◆ | it appends **the PI's own standing instruction** to a flight plan, stamped with the time and the author — their words, on their yes, and the section is append-only |
-| `auto promote` | ◆ | it writes **a branch into the PI's repository** at a recorded attempt — their repo, on their yes. It never checks out, never merges, and never touches `main` |
-| `auto approve` | ◆ | **the PI's signature on a flight plan** — it stamps the plan with a hash of what was approved, so any later edit outside `## Guidance` clears it. Never run this without the PI's yes (the **crux-autopilot** skill stops at this row — the signature is the PI's) |
-| `auto run` | ◆ | it spends compute unattended on an approved plan — start it only on the PI's yes. Inside the run the driver files, approves the null of, runs and closes each attempt under that approval (see the leash above). With `closer: true` the plan's own `crux-close` reads each finished attempt and proposes the ticks the numbers cannot grade; with `steward: true` the run's steward may open one new island, which is the fifth act above |
+| `auto run` | ◆ | it spends compute unattended — **start it only on the PI's explicit yes**; that start is the PI's signature on the plan's threshold, and inside the run the driver files, approves the null of, runs and closes each attempt under that signature (see the leash above) |
 | `ingest` | ○→◆ | registers a PI-curated `raw/` source (see the **crux-wiki** skill) |
 
 Every verb except `init`/`serve`/`selftest` takes **`--json`** — use it when you need to read
