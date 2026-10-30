@@ -177,3 +177,33 @@ Run directory: `~/scratch/crux-runs/m4-weekly-735116`.
 - **Branching:** The search was nearly a single chain. Explore picked the current best as
   the parent in every attempt but one: attempt 11 took h10 (0.678742) as parent while h9
   (0.677047) was better. So explore picked a strictly lower-scoring parent once.
+
+### Re-run with 10-minute attempts
+
+SLURM job 1204546 on Fir (2026-10-29): the same plan with `attempt_minutes: 10`, and the
+engine with the C8 fixes (empty commits are discarded; the best starts at the baseline).
+Run directory: `~/scratch/crux-runs/m4-weekly-1204546`.
+
+- **Stop:** `budget` (3.042 of 3 hours). The driver did not crash. Job wall time 3 h 04 min 10 s.
+- **Attempts:** 24, which is **7.89 per hour**. This passes the bar of 6 per hour.
+- **Outcomes:** 16 kept, 0 rejected, 5 failed, 3 discarded. The 3 discards (attempts 4, 11,
+  18) are all "empty commit: no file changed". Of the 5 failures, 3 are the scorer running
+  past the attempt's time limit (17, 21, 22) and 2 are a worker that made no commit (15, 19).
+  The scorer takes about 160 s for the late programs, because the worker raised the boosting
+  iterations until each forecast run took 74-86 s of its 110 s cap.
+- **Best:** val_owa **0.694235** (attempt 23, node h23). This passes the bar of < 0.99.
+- **Test-set `owa` of the best, read once:** **0.69157** (scorer run as job 1281272 on the h23
+  commit; val_owa reproduced exactly). This beats the 0.739 bar. The val-to-test gap is
+  -0.003: the test score is slightly better than the validation score, so this run shows no
+  sign of tuning to the validation fold. The first run had a gap of +0.075 (0.666 to 0.741).
+  A score this far under the best M4 Weekly entry needs a human read of the program before
+  it counts.
+- **Best program:** `forecast.py` fits one pooled HistGradientBoosting model per horizon on
+  log-ratio windows over all series, with a 1000-week lookback and the horizons in parallel.
+  The search then moved all the weight to this model (SES, Theta and damped Holt remain only
+  as a fallback for short series), turned off early stopping, and raised the iterations to
+  800. The last step (h23) gives the final horizon fit all OpenMP threads and spends the
+  time saved on 800 iterations instead of 780.
+- **Branching:** Explore never picked a strictly lower-scoring parent. It picked the current
+  best every time, except attempt 6, which took h3, a parent tied with the best h2 at
+  0.725213.
