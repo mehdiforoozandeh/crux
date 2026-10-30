@@ -2680,6 +2680,340 @@ def run_prezit_paper(CRUX, skl, exd):
     shutil.rmtree(base, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- storify (a .tex story's engine path)
+def run_storify_engine():
+    """A story is a short LaTeX paper under stories/<anchor>/: `crux deck --verify/--lint`
+    take the story path when the file ends in .tex. The manifest is one preamble comment
+    line (`% crux-sources: {...}`), checked by the same code as a paper-arc deck's. The HTML
+    deck path and its reports stay untouched (the prezit asserts above guard that)."""
+    print("\n# storify engine (.tex verify, strict numerals, lint, validate --check=decks)")
+    CRUX = os.path.join(HERE, "crux.py")
+    base = tempfile.mkdtemp(prefix="crux_story_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    run = lambda *a: subprocess.run([sys.executable, CRUX, *a], capture_output=True,
+                                    text=True, encoding="utf-8", cwd=svc)
+    sha = lambda rel: hashlib.sha256(open(os.path.join(svc, *rel.split("/")), "rb").read()).hexdigest()
+    H1 = "results/h1/metrics.json"
+    MAN = lambda m: "% crux-sources: " + (m if isinstance(m, str) else json.dumps(m))
+    GOOD = {H1: sha(H1)}
+    SECTIONS = ("Motivation and background", "Methods", "Results and discussion", "Conclusion")
+    BODY = {
+        "Motivation and background": "We ask whether doubling the data beats a larger model.",
+        "Methods": ("We trained \\lit{3} seeds per arm, as in \\cite{smith2020}.\n"
+                    "\\begin{figure}[t]\\centering\n"
+                    "\\begin{tikzpicture}\\draw (0,0) -- (1,2) node {7};\\end{tikzpicture}\n"
+                    "\\caption{Accuracy gain of \\gainA{} points.}\\label{fig:1}\n"
+                    "\\end{figure}"),
+        "Results and discussion": "The gain was \\gainA{} points (Figure~\\ref{fig:1}).",
+        "Conclusion": "Two options remain, each with its cost.",
+    }
+    tdir = os.path.join(base, "t")
+    def story(name, sections=SECTIONS, body=None, extra_pre="", manifest=GOOD, tail=""):
+        """Write a story .tex; returns (path, {marker: line number}) for lines carrying @@k."""
+        body = dict(BODY, **(body or {}))
+        lines = ["\\documentclass{sn-jnl}", "\\newcommand{\\lit}[1]{#1}"]
+        if manifest is not None:
+            lines.append(MAN(manifest))
+        lines += ["\\newcommand{\\gainA}{3.3}"] + ([extra_pre] if extra_pre else [])
+        lines += ["\\begin{document}", "\\title{Data or a model}",
+                  "\\abstract{More data beat a better model by \\gainA{} points.}", "\\maketitle"]
+        for s in sections:
+            lines += ["\\section{%s}" % s] + body.get(s, "Text.").split("\n")
+        lines += tail.split("\n") if tail else []
+        lines += ["\\end{document}", ""]
+        marks = {}
+        for i, ln in enumerate(lines, 1):
+            for m in re.findall(r"@@(\w+)", ln):
+                marks[m] = i
+        text = "\n".join(re.sub(r"@@\w+", "", ln) for ln in lines)
+        p = os.path.join(tdir, name)
+        write(p, text)
+        return p, marks
+
+    # --- verify: the manifest ------------------------------------------------------
+    good, _ = story("good.tex")
+    rep = E.story_verify(svc, good)
+    check("storify: a built story whose sources match verifies clean",
+          rep["mismatch"] == [] and rep["unresolvable"] == [] and rep["sources"] == [H1])
+    r = run("story", "--verify", good, "--strict")
+    check("storify: `crux story --verify --strict` exits 0 on the clean story",
+          r.returncode == 0 and "1 file(s) unchanged" in r.stdout)
+    check("storify: `crux deck --verify` takes the story path for a .tex",
+          run("deck", "--verify", good).returncode == 0)
+    p, _ = story("unbuilt.tex", manifest="__SOURCES__")
+    ru = E.story_verify(svc, p)
+    check("storify: story_src.tex (__SOURCES__ in place) is unbuilt",
+          ru.get("unbuilt") is True and any(u["kind"] == "unbuilt" for u in ru["unresolvable"])
+          and run("deck", "--verify", p).returncode != 0)
+    p, _ = story("nomanifest.tex", manifest=None)
+    check("storify: a story with no crux-sources line is no-manifest",
+          any(u["kind"] == "no-manifest" for u in E.story_verify(svc, p)["unresolvable"])
+          and run("deck", "--verify", p).returncode != 0)
+    p, _ = story("missing.tex", manifest={H1: GOOD[H1], "results/h9/metrics.json": "0" * 64})
+    rm = E.story_verify(svc, p)
+    check("storify: a manifest file that does not exist is unresolvable (missing-file)",
+          any(u["kind"] == "missing-file" and "results/h9/metrics.json" in u["msg"]
+              for u in rm["unresolvable"]) and rm["sources"] == [H1])
+    p, _ = story("badjson.tex", manifest="{not json")
+    check("storify: a manifest that is not JSON is bad-manifest",
+          any(u["kind"] == "bad-manifest" for u in E.story_verify(svc, p)["unresolvable"]))
+    p, _ = story("dotdot.tex", manifest={"../outside.txt": "0" * 64})
+    check("storify: a manifest path escaping the folder is bad-path",
+          any(u["kind"] == "bad-path" for u in E.story_verify(svc, p)["unresolvable"]))
+    p, _ = story("twoman.tex", extra_pre=MAN(GOOD))
+    check("storify: two crux-sources lines is bad-manifest",
+          any(u["kind"] == "bad-manifest" for u in E.story_verify(svc, p)["unresolvable"]))
+    p, _ = story("bodyman.tex", body={"Conclusion": MAN(GOOD)}, manifest=None)
+    check("storify: a manifest line in the body is not the manifest (preamble only)",
+          any(u["kind"] == "no-manifest" for u in E.story_verify(svc, p)["unresolvable"]))
+
+    # --- verify --strict: typed numerals in the body ----------------------------------
+    p, mk = story("prose.tex", body={"Results and discussion": "The gain was 3.3 points.@@a"})
+    rp = E.story_verify(svc, p)
+    check("storify: a typed numeral in prose is unsourced, with its line",
+          [(u["numeral"], u["line"]) for u in rp["unsourced"]] == [("3.3", mk["a"])])
+    check("storify: an unsourced numeral fails only under --strict",
+          run("deck", "--verify", p).returncode == 0
+          and run("deck", "--verify", p, "--strict").returncode == 1)
+    rs = run("deck", "--verify", p, "--strict")
+    check("storify: --strict names the numeral and its line",
+          "'3.3'" in rs.stdout and f"line {mk['a']}" in rs.stdout)
+    p, mk = story("caption.tex", body={"Methods": "\\begin{figure}\\caption{Gain of 4 points.}@@a\\end{figure}"})
+    check("storify: a typed numeral in a caption is unsourced",
+          [u["line"] for u in E.story_verify(svc, p)["unsourced"]] == [mk["a"]])
+    p, mk = story("tabular.tex", body={"Methods": ("\\begin{table}\\begin{tabular}{lc}\n"
+                                                    "acc & 0.91 \\\\@@a\n\\end{tabular}\\end{table}")})
+    check("storify: a typed numeral in a tabular is unsourced (the column spec is not)",
+          [(u["numeral"], u["line"]) for u in E.story_verify(svc, p)["unsourced"]] == [("0.91", mk["a"])])
+    p, mk = story("math.tex", body={"Methods": "We set $\\alpha = 0.05$.@@a"})
+    check("storify: math mode is not exempt — a typed numeral in $...$ is unsourced",
+          [u["line"] for u in E.story_verify(svc, p)["unsourced"]] == [mk["a"]])
+    clean_body = (
+        "We set $\\alpha = \\lit{0.05}$ and kept \\lit{95}\\% of runs.\n"
+        "Gain \\gainA{} (Section~\\ref{sec:2}, Eq.~\\eqref{eq:3}, \\cref{fig:4}, \\Cref{tab:5}).\n"
+        "As shown before~\\cite{smith2020,lee2019} and \\citep[p.~12]{wu2021}.\n"
+        "% we ran 99 seeds, a comment\n"
+        "Escaped percent \\lit{50}\\% then a comment % 42 here\n"
+        "\\label{sec:6}\\url{https://x.org/v7}\\href{https://y.org/8}{the data}\n"
+        "\\includegraphics[width=0.5\\linewidth]{fig9.pdf}\\hspace{2mm}\\vspace{3pt}\n"
+        "\\setlength{\\tabcolsep}{4pt}\\input{part10}\\\\[4pt]\n"
+        "\\begin{tikzpicture}\\draw (0,0) -- (11,12);\\end{tikzpicture}\n"
+        "\\begin{axis}[xmin=0, xmax=13]\\addplot coordinates {(1,2)};\\end{axis}\n"
+        "\\begin{semilogyaxis}[ymax=14]\\addplot table {\\tblA};\\end{semilogyaxis}\n"
+        "\\begin{figure}[t]\\end{figure}\\subsection{Ablation}\n"
+        "\\bibliography{refs2}\\bibliographystyle{sn-mathphys-num}")
+    p, _ = story("strictok.tex", body={"Methods": clean_body})
+    rk = E.story_verify(svc, p)
+    check("storify: --strict passes \\lit{}, macros, labels/refs/cites, comments, tikz/axis "
+          "code and optional args", rk["unsourced"] == [] and rk["mismatch"] == []
+          and rk["unresolvable"] == [])
+    check("storify: the clean strict fixture exits 0 under --strict",
+          run("deck", "--verify", p, "--strict").returncode == 0)
+
+    # --- lint: sections, words, pages, voice ----------------------------------------
+    lint = lambda p: [m for _, m in E.story_lint(p)["problems"]]
+    check("storify: lint passes the clean story", lint(good) == [])
+    r = run("deck", "--lint", good)
+    check("storify: `crux deck --lint` on a clean story exits 0", r.returncode == 0 and "✓" in r.stdout)
+    p, _ = story("nosec.tex", sections=SECTIONS[:3])
+    check("storify: lint fails a missing section",
+          any("Conclusion" in m for m in lint(p)) and run("deck", "--lint", p).returncode == 1)
+    p, _ = story("order.tex", sections=(SECTIONS[0], SECTIONS[2], SECTIONS[1], SECTIONS[3]))
+    check("storify: lint fails sections out of order",
+          any("order" in m for m in lint(p)) and run("deck", "--lint", p).returncode == 1)
+    p, mk = story("extra.tex", sections=SECTIONS[:3] + ("Limitations",) + SECTIONS[3:])
+    check("storify: lint fails an extra top-level section, naming it",
+          any("Limitations" in m for m in lint(p)) and run("deck", "--lint", p).returncode == 1)
+    p, _ = story("ws.tex", sections=("motivation  AND background", "Methods",
+                                     "Results and Discussion", "conclusion"),
+                 body={"Methods": "Text.\n\\subsection{Anything goes here}"})
+    check("storify: section titles match case- and whitespace-insensitively; subsections are free",
+          lint(p) == [])
+    p, _ = story("starred.tex", sections=("Motivation and background", "Methods",
+                                          "Results and discussion", "Conclusion"),
+                 tail="\\section*{Appendix}")
+    check("storify: a starred top-level section counts as a section (extra fails)",
+          any("Appendix" in m for m in lint(p)))
+
+    # word cap: the four section titles are 8 words and \emph{alpha} is 1; filler fills the rest
+    def words_story(name, n, front=""):
+        nb = {s: "" for s in SECTIONS}
+        nb["Methods"] = ("\\emph{alpha} " + " ".join(["word"] * n) + "\n"
+                         "% these comment words never count at all\n"
+                         "\\begin{figure}[t]\\caption{Caption words do not count}\\label{fig:x}\\end{figure}\n"
+                         "\\begin{table}\\begin{tabular}{l} table words \\end{tabular}\\end{table}\n"
+                         "\\begin{tikzpicture}\\node {tikz words};\\end{tikzpicture}\n"
+                         "\\cite{k}\\ref{fig:x}\\includegraphics[width=3cm]{f.png}\\centering\n"
+                         "\\begin{thebibliography}{9}\\bibitem{k} Ref words here.\\end{thebibliography}")
+        lines = ["\\documentclass{sn-jnl}", "\\begin{document}", front]
+        for s in SECTIONS:
+            lines += ["\\section{%s}" % s, nb[s]]
+        lines += ["\\end{document}", ""]
+        f = os.path.join(tdir, name)
+        write(f, "\n".join(lines))
+        return f
+    p1200, p1201 = words_story("w1200.tex", 1191), words_story("w1201.tex", 1192)
+    check("storify: exactly 1,200 body words passes the word cap",
+          E.story_lint(p1200)["words"] == 1200 and lint(p1200) == [])
+    check("storify: 1,201 body words fails the word cap",
+          E.story_lint(p1201)["words"] == 1201 and any("1201" in m.replace(",", "") for m in lint(p1201))
+          and run("deck", "--lint", p1201).returncode == 1)
+    pa = words_story("wabs.tex", 1191, front="\\title{Two words}\\abstract{\\emph{one} two.}")
+    check("storify: the title and abstract count as body words (1,200 + 4 fails)",
+          E.story_lint(pa)["words"] == 1204 and any("word" in m for m in lint(pa)))
+
+    # page cap: a sibling <stem>.log
+    pg = os.path.join(base, "pg")
+    def logged(n, word="pages"):
+        f = os.path.join(pg, "story.tex")
+        write(f, read(good))
+        if n is not None:
+            write(os.path.join(pg, "story.log"),
+                  "This is pdfTeX\n...\nOutput written on story.pdf (%d %s, 123456 bytes).\n" % (n, word))
+        elif os.path.exists(os.path.join(pg, "story.log")):
+            os.remove(os.path.join(pg, "story.log"))
+        return f
+    f = logged(5)
+    check("storify: a sibling log with 5 pages fails the page cap",
+          any("5 pages" in m or "5 page" in m for m in lint(f)) and run("deck", "--lint", f).returncode == 1)
+    f = logged(4)
+    check("storify: a sibling log with 4 pages passes", lint(f) == [] and E.story_lint(f)["pages"] == 4)
+    f = logged(1, "page")
+    check("storify: a 1-page log parses (singular 'page')", E.story_lint(f)["pages"] == 1)
+    f = logged(None)
+    check("storify: no log means no page check", lint(f) == [] and E.story_lint(f)["pages"] is None)
+
+    # voice: reuses voice_lint over the body prose (captions kept, code dropped)
+    p, mk = story("para.tex", body={"Results and discussion": "The gap was within noise.@@a"})
+    lp = E.story_lint(p)["problems"]
+    check("storify: lint fails a paraphrase stand-in, with its line",
+          any("voice:paraphrase" in m and ln == mk["a"] for ln, m in lp)
+          and run("deck", "--lint", p).returncode == 1)
+    p, mk = story("nid.tex", body={"Results and discussion": "As h1 showed, the gain held.@@a"})
+    lp = E.story_lint(p)["problems"]
+    check("storify: lint fails a node id, with its line",
+          any("voice:node-id" in m and ln == mk["a"] for ln, m in lp))
+    p, mk = story("term.tex", body={"Conclusion": "The verdict is clear.@@a"})
+    lp = E.story_lint(p)["problems"]
+    check("storify: lint fails a crux term, with its line",
+          any("voice:crux-term" in m and ln == mk["a"] for ln, m in lp))
+    p, _ = story("captterm.tex", body={"Methods": "\\begin{figure}\\caption{The verdict per arm.}\\end{figure}"})
+    check("storify: a caption is read for voice (crux term in a caption fails)",
+          any("voice:crux-term" in m for m in lint(p)))
+    p, _ = story("codeterm.tex", body={"Methods": ("\\begin{tikzpicture}\\node (tree) {};\\end{tikzpicture}"
+                                                    "\\label{fig:h1}\\ref{fig:h1}")})
+    check("storify: tikz code and label/ref keys are not prose (no voice finding)", lint(p) == [])
+    p, _ = story("allow.tex", extra_pre="% crux-allow: tree, verdict",
+                 body={"Conclusion": "A decision tree gave the verdict."})
+    la = E.story_lint(p)
+    check("storify: `% crux-allow:` licenses a crux term", la["problems"] == []
+          and sorted(la["allowed"]) == ["tree", "verdict"])
+    r = run("deck", "--lint", p)
+    check("storify: lint lists the allowed terms in its output",
+          r.returncode == 0 and "allowed: tree, verdict" in r.stdout)
+    p, _ = story("allowid.tex", extra_pre="% crux-allow: h1, within noise",
+                 body={"Conclusion": "As h1 showed, the gap was within noise."})
+    lp = lint(p)
+    check("storify: `% crux-allow:` never licenses a node id or a paraphrase",
+          any("voice:node-id" in m for m in lp) and any("voice:paraphrase" in m for m in lp))
+
+    # --- refresh refuses ------------------------------------------------------------
+    before = read(good)
+    r = run("deck", "--refresh", good)
+    check("storify: --refresh on a .tex refuses, names build_story.py, writes nothing",
+          r.returncode != 0 and "build_story.py" in r.stdout + r.stderr and read(good) == before)
+
+    # --- aliases ----------------------------------------------------------------------
+    rd, rs1, rs2 = run("deck", "q1", "--json"), run("story", "q1", "--json"), run("storify", "q1", "--json")
+    check("storify: `crux story` and `crux storify` are aliases of `crux deck` (anchor --json)",
+          rd.returncode == 0 and rd.stdout == rs1.stdout == rs2.stdout and len(rd.stdout) > 40)
+    check("storify: `crux story --help` works", run("story", "--help").returncode == 0)
+
+    # --- read paths ignore stories/; only validate --check=decks walks it --------------
+    def reads():
+        v = E.Vault(svc)
+        return (json.dumps(E.snapshot(v), sort_keys=True, default=str),
+                json.dumps(E.validation_report(svc), sort_keys=True),
+                R.render_meta(v), R.render_experiments(v), R.render_wiki(v, svc),
+                run("validate").stdout, run("validate", "--strict").returncode,
+                run("status").stdout)
+    before_reads = reads()
+    sd = os.path.join(svc, "stories", "q1")
+    os.makedirs(sd)
+    shutil.copy(good, os.path.join(sd, "story.tex"))
+    shutil.copy(story("src.tex", manifest="__SOURCES__")[0], os.path.join(sd, "story_src.tex"))
+    for fn, txt in (("story.pdf", "%PDF-1.5 h1 q1 verdict"), ("story.log", "Output written on story.pdf (9 pages)."),
+                    ("sn-jnl.cls", "\\ProvidesClass{sn-jnl} % q1 h2"), ("build_story.py", "print('q1 h1')\n")):
+        write(os.path.join(sd, fn), txt)
+    write(os.path.join(svc, "stories", "q2_bad.md"), "---\nid: q2\ntype: question\n---\n# not a node\n")
+    check("storify: a stories/ folder (.tex .pdf .log .cls .py .md) leaves every read path "
+          "identical (snapshot, validate, render, status)", reads() == before_reads)
+    # (this example vault's plain validate already fails on its uncommitted raw/ papers —
+    # what matters is that stories/ changes nothing in it)
+    rv = run("validate")
+    check("storify: plain validate ignores stories/ entirely",
+          rv.stdout == before_reads[5] and "stories/" not in rv.stdout + rv.stderr)
+    # the 9-page log above is a lint concern, never validate's
+    check("storify: validate --check=decks skips story_src.tex and passes a current story",
+          E.deck_warnings(svc) == [] and E.validation_report(svc, ["decks"])["warnings"] == [])
+    with open(os.path.join(svc, "results", "h1", "metrics.json"), "a") as fh:
+        fh.write(" ")
+    w = E.deck_warnings(svc)
+    check("storify: validate --check=decks warns on a stale story, id story:<rel>",
+          [i for i, _ in w] == ["story:stories/q1/story.tex"] and "mismatch" in w[0][1])
+    rr = run("validate", "--check=decks")
+    check("storify: the stale story is a warning (exit 0), and --strict fails on it",
+          rr.returncode == 0 and "story" in rr.stdout
+          and run("validate", "--check=decks", "--strict").returncode != 0)
+    rv = run("validate")
+    check("storify: plain validate still ignores the stale story",
+          rv.stdout == before_reads[5] and "stories/" not in rv.stdout + rv.stderr)
+    shutil.rmtree(base, ignore_errors=True)
+
+
+def run_storify_skill():
+    """The storify skill ships its SKILL.md, the vendored Springer Nature class, the template
+    and a worked example on scaling_vault q1 whose built story verifies and lints clean."""
+    print("\n# storify skill assets and the q1 example")
+    CRUX = os.path.join(HERE, "crux.py")
+    skl = os.path.abspath(os.path.join(HERE, "..", "..", "storify"))
+    ex = os.path.join(skl, "examples", "q1_story")
+    ships = [os.path.join(skl, "SKILL.md")] + \
+        [os.path.join(skl, "assets", f) for f in
+         ("sn-jnl.cls", "sn-mathphys-num.bst", "story_src.tex", "build_story.py")] + \
+        [os.path.join(ex, f) for f in ("story_src.tex", "build_story.py", "story.tex")]
+    check("storify: SKILL.md, template, build and q1 example ship",
+          all(os.path.isfile(f) for f in ships))
+    if not all(os.path.isfile(f) for f in ships):
+        return
+    with open(os.path.join(skl, "assets", "sn-jnl.cls"), "rb") as fh:
+        cls = fh.read()
+    check("storify: the vendored class keeps its LPPL licence header",
+          b"LaTeX Project Public License" in cls and b"\\ProvidesClass{sn-jnl}" in cls)
+    base = tempfile.mkdtemp(prefix="crux_storyex_")
+    svc = os.path.join(base, "sv")
+    shutil.copytree(os.path.join(HERE, "..", "examples", "scaling_vault"), svc)
+    run = lambda *a: subprocess.run([sys.executable, CRUX, "story", *a], capture_output=True,
+                                    text=True, encoding="utf-8", cwd=svc)
+    story = os.path.join(ex, "story.tex")
+    check("storify: the q1 example verifies green under --strict",
+          run("--verify", story, "--strict").returncode == 0)
+    check("storify: the q1 example lints clean", run("--lint", story).returncode == 0)
+    # the build is reproducible: rebuilding against a vault copy gives the shipped bytes
+    ec = os.path.join(base, "q1_story")
+    os.makedirs(ec)
+    for f in ("story_src.tex", "build_story.py"):
+        shutil.copy(os.path.join(ex, f), ec)
+    rb = subprocess.run([sys.executable, os.path.join(ec, "build_story.py"), svc],
+                        capture_output=True, text=True, encoding="utf-8")
+    check("storify: q1 build_story.py runs", rb.returncode == 0)
+    built = os.path.join(ec, "story.tex")
+    check("storify: q1 build reproduces the shipped story.tex byte for byte",
+          os.path.isfile(built) and read(built) == read(story))
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def run_rd():
     """Spec 07 — the RD layer. Requirements Documents: one active RD per node, living in
     rd/, linked from the node, OUTSIDE the roll-up tree. This is the overflow channel spec 06
@@ -16600,6 +16934,8 @@ def main():
     run_deck()
     run_deck_verify()
     run_prezit()
+    run_storify_engine()
+    run_storify_skill()
     run_evidence_boundary()
     run_verifiable_kind()
     run_combination_rule()
