@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On plugged-in power, insertion on 10,000 items took 5.2 milliseconds. On battery, the same test took 6.1 milliseconds. The battery is slower, but only by about fifteen percent. I still try to use power when I can.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 0, refuted 0, inconclusive 1, invalid-run 1)
+**3 children** · open 1, leaning 2, settled 0, parked 0
 
-- `h62` [[h62_the_laptop_sorts_slower_on_battery_than_|The laptop sorts slower on battery than plugged in]] — *done* — verdict **supported**, metric `Plugged in: 8.7 ms. Battery: 9.6 ms. Ratio: 1.10x slower on battery.`
-- `h63` [[h63_the_battery_gap_is_bigger_when_the_batte|The battery gap is bigger when the battery is nearly empty]] — *done* — verdict **inconclusive**, metric `Full: 8.8 ms. Half: 9.1 ms. Empty: 9.3 ms.`
-- `h64` [[h64_plugging_in_mid_run_shows_up_as_a_step_i|Plugging in mid-run shows up as a step in the numbers]] — *done* — verdict **invalid-run**, metric `Cannot compute; run was void.`
+- `h62` [[h62_the_laptop_sorts_slower_on_battery_than_|The laptop sorts slower on battery than plugged in]] — *leaning · moderate*
+- `h63` [[h63_the_battery_gap_is_bigger_when_the_batte|The battery gap is bigger when the battery is nearly empty]] — *leaning · moderate*
+- `h64` [[h64_plugging_in_mid_run_shows_up_as_a_step_i|Plugging in mid-run shows up as a step in the numbers]] — *open*
 <!-- crux:ledger:end -->

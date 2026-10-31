@@ -8,7 +8,8 @@
 #
 # Also symlinks every agent definition under ./agents/ (the spec-09 roster:
 # crux-critic, crux-null, crux-verifiables, …) into ~/.claude/agents as
-# <name>.md, the flat layout Claude Code reads subagents from.
+# <name>.md, the flat layout Claude Code reads subagents from, and evolve-crux's own
+# agents under ./skills/evolve-crux/agents/*.md (crux-tests) the same way.
 #
 # Default targets: ~/.claude/skills (Claude Code) and ~/.agents/skills (the shared
 # dir Cursor, Codex, Windsurf, and Copilot CLI read); agents go to ~/.claude/agents.
@@ -18,8 +19,10 @@
 #   SKILLS_DIR=/tmp/x ./install.sh  # install skills into exactly one custom dir instead
 #   AGENTS_DIR=/tmp/y ./install.sh  # install agents into a custom dir instead
 #
-# Also registers crux's chat-time voice lint as a Claude Code PostToolUse hook in
-# ~/.claude/settings.json, idempotently (see `crux voice --install-hook`).
+# Also registers crux's chat-time voice lint as a Claude Code PostToolUse hook, and the
+# SessionStart hook (always-on core + catch-up sweep), in ~/.claude/settings.json,
+# idempotently (see `crux voice --install-hook`, `crux hook session-start --install-hook`).
+# Removes dangling ~/.claude/agents/crux-*.md links left by agents a newer crux removed.
 #
 # Safe by design: only ever creates/refreshes symlinks it manages; a real
 # (non-symlink) folder of the same name is left untouched and reported.
@@ -69,6 +72,30 @@ if compgen -G "$REPO_DIR/agents/*/AGENT.md" > /dev/null; then
   done
 fi
 
+# evolve-crux's own agents (crux-tests builds crux, not research): flat <name>.md files under
+# skills/evolve-crux/agents/, linked beside the roster. A no-op when the folder is absent.
+if compgen -G "$REPO_DIR/skills/evolve-crux/agents/*.md" > /dev/null; then
+  mkdir -p "$AGENT_TARGET"
+  for src in "$REPO_DIR"/skills/evolve-crux/agents/*.md; do
+    name="$(basename "$src" .md)"; dest="$AGENT_TARGET/$name.md"
+    if [[ -e "$dest" && ! -L "$dest" ]]; then
+      echo "  ! skip $name — a real file exists at $dest (left untouched)" >&2; skipped=$((skipped+1)); continue
+    fi
+    ln -sfn "$src" "$dest"
+    echo "  ✓ $name → $AGENT_TARGET"; linked=$((linked+1))
+  done
+fi
+
+# Agents a newer crux removed leave dangling crux-*.md links behind; drop those (symlinks only,
+# and only when their target is gone — a real file or a live link is never touched).
+if [[ -d "$AGENT_TARGET" ]]; then
+  for dest in "$AGENT_TARGET"/crux-*.md; do
+    if [[ -L "$dest" && ! -e "$dest" ]]; then
+      rm "$dest"; echo "  ✓ removed stale agent link $(basename "$dest")"
+    fi
+  done
+fi
+
 # The chat-time voice lint (PRD 16.2). crux is meant to run in the background without the
 # researcher ever seeing its ids or its vocabulary; the rules for that live in the skill and
 # were shown, twice, not to hold on their own. This registers the check that measures them.
@@ -77,6 +104,16 @@ if python3 "$REPO_DIR/skills/crux/scaffold/crux.py" voice --install-hook; then
   :
 else
   echo "  ! could not register the voice hook — run it by hand: ./crux voice --install-hook" >&2
+  skipped=$((skipped+1))
+fi
+
+# The always-on core and the catch-up sweep (spec 19): a SessionStart hook that injects the
+# crux core when a vault is near and starts the background capture run on a fresh session.
+# Idempotent, and it preserves every unrelated key in the settings file it edits.
+if python3 "$REPO_DIR/skills/crux/scaffold/crux.py" hook session-start --install-hook; then
+  :
+else
+  echo "  ! could not register the session-start hook — run it by hand: ./crux hook session-start --install-hook" >&2
   skipped=$((skipped+1))
 fi
 

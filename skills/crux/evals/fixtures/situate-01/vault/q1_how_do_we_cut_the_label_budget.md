@@ -37,8 +37,8 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <!-- crux:ledger:start -->
-**2 children** · ideas 0/0 done (supported 0, partial 0, refuted 0, inconclusive 0, invalid-run 0) · sub-questions 0/2 resolved
+**2 children** · open 1, leaning 1, settled 0, parked 0
 
-- `q2` _(Q)_ [[q2_does_pretraining_help_at_low_label_count|Does pretraining help at low label counts?]] — *open*
+- `q2` _(Q)_ [[q2_does_pretraining_help_at_low_label_count|Does pretraining help at low label counts?]] — *leaning · moderate*
 - `q3` _(Q)_ [[q3_which_augmentation_family_matters|Which augmentation family matters?]] — *open*
 <!-- crux:ledger:end -->

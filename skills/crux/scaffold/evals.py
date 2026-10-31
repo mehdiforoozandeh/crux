@@ -5,7 +5,8 @@
 so without ever running one.
 
     python evals.py --certify-all
-    python evals.py --fixture audit-01 --submission runs.json [--json]
+    python evals.py --fixture capture-01 --submission runs.json [--json]
+    python evals.py --fixture capture-01 --yield <vault after a capture run>
 
 ## The shape, and why it is this shape
 
@@ -26,16 +27,17 @@ this module has no network import and no subprocess that is not `crux.py`, which
 A fixture is only ground truth if something other than the agent says what is in it. So:
 
   - the manifest (`PLANTED.md`) is hand-authored and reviewed;
-  - `certify()` proves the manifest true by running the engine's own `validation_report` and
-    comparing the emitted id set to the planted id set, exactly.
+  - `certify()` proves the manifest true by asking the engine. For capture-01 that is
+    `capture_keys` over the vault before and after a reference capture, compared to the
+    planted id set exactly; the other oracles read the engine's own vocabulary or payload.
 
 A fixture that drifts from its manifest goes red in `selftest` immediately, and no eval ever
 grades against a stale ground truth. That is spec 10's anti-tautology rule made mechanical
 rather than promised.
 
-The defect key is **the id the engine already emits** — a node id (`h2`), or a namespaced key
-(`wiki:<slug>`, `task:<file>`). Nobody matches a message. A fixture plants at most one defect
-per id; two defects means two nodes.
+The key is **a structural fact the engine reads** — a yield key (`open:question`,
+`parked:h1`), a confound family, a payload id. Nobody matches a message. A fixture plants at
+most one row per id.
 """
 import os, re, sys, json, hashlib, argparse
 
@@ -146,60 +148,126 @@ def vault_of(manifest):
 
 
 # ----------------------------------------------------------------------------- certification
-def emitted_ids(manifest):
-    """The id set the engine reports on this fixture's vault, under the manifest's OWN
-    `checks` list. Never a default: `gate` and `decks` are opt-in checks, so a certifier
-    running the defaults would score a correctly-found gate backlog as invented."""
-    r = E.validation_report(vault_of(manifest), checks=manifest["checks"])
-    return {e["id"] for tier in ("problems", "warnings") for e in r[tier]}
+#: Words too common to tell two research questions apart. The duplicate test compares what is
+#: left, so "Does X change Y?" and "Does X affect Y?" collide and two different questions don't.
+_DUP_STOP = frozenset("does that this with from than what when which have more less into "
+                      "over under about there their they them were been being will would "
+                      "should could after before same".split())
+#: Two titles whose content words overlap at least this much (Jaccard) ask the same thing.
+DUP_OVERLAP = 0.5
 
 
-#: Ticks, as they appear in a submitted id: `h1:v2=x`. Spelled out rather than reusing the
-#: markdown characters because ` ` (unmet) cannot live inside an id.
-TICKS = {"x": "x", "u": " ", "n": "-"}
+def _content_words(text):
+    return {w for w in re.findall(r"[a-z]+", str(text or "").lower())
+            if len(w) >= 4 and w not in _DUP_STOP}
 
 
-def _oracle_validation_report(m):
-    """audit-01's shape: the planted set IS the engine's emitted set, exactly."""
-    return emitted_ids(m), []
+def _same_question(a, b):
+    wa, wb = _content_words(a), _content_words(b)
+    return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= DUP_OVERLAP
 
 
-def _oracle_ticks(m):
-    """close-01: the planted ids are `<hid>:v<n>=<tick>`, so a WRONG tick is simultaneously a
-    false positive and a false negative — which is exactly what it is.
+def capture_keys(start, after, work_markers=()):
+    """What a capture run did to a vault, as yield keys: a pure function of the vault BEFORE
+    the run and the vault AFTER it, read through the engine. Nothing is matched on prose a
+    model wrote; every key is a structural fact.
 
-    The verdict is not scored as an id. It is `verdict_read` in the submission, checked
-    separately, because an agent can get every tick right and still call an invalid run
-    `refuted` — the confusion `crux-close`'s definition names as the failure the kinds exist
-    to prevent."""
-    hid = str(m["fm"]["node"])
-    n = E.Vault(vault_of(m)).get(hid)
-    lines = E._verifiable_lines(n["body"])
-    avail = {f"{hid}:v{i}={t}" for i in range(1, len(lines) + 1) for t in TICKS}
+      open:question            it opened a question
+      open:hypothesis+expect   it opened a hypothesis that states an expectation
+      open:hypothesis-bare     ... or one that does not (the 4.0 model requires it)
+      finding:evidence         it recorded a finding whose evidence resolves
+      finding:no-evidence      ... or one with none
+      finding:<confidence>     the confidence each new finding counts with (null cap applied)
+      finding:null-open        a hypothesis finding that records its null as not ruled out
+      parked:<id>              it parked a node that existed before the run
+      duplicate:<id>           it opened a second node for a question or hypothesis that
+                               already existed (`new` when two new nodes duplicate each other)
+      work-in-tree             it opened a node for work: a manifest-declared work marker
+                               appears in a new node's title or prose
+      removed:<id>             a node that existed before the run is gone
 
-    # one tick per check, and no phantom check
-    per = {}
-    for pid in m["planted_ids"]:
-        key, _, tick = pid.partition("=")
-        per.setdefault(key, []).append(tick)
-    cross = [(f"every check has exactly one planted tick ({sorted(per)})",
-              sorted(per) == sorted(f"{hid}:v{i}" for i in range(1, len(lines) + 1))
-              and all(len(v) == 1 for v in per.values()))]
+    The first five kinds are what a correct capture yields; the rest are what a careless one
+    does, so a fixture scores both missed records and invented ones."""
+    s, a = E.Vault(start), E.Vault(after)
+    keys = set()
+    keys |= {f"removed:{i}" for i in s.nodes if i not in a.nodes}
+    olds = [n for n in s.nodes.values() if n.type in ("question", "idea")]
+    new = [n for i, n in sorted(a.nodes.items()) if i not in s.nodes]
+    nodes = [n for n in new if n.type in ("question", "idea")]
+    for n in nodes:
+        if n.type == "question":
+            keys.add("open:question")
+        else:
+            keys.add("open:hypothesis+expect" if E.expect_text(n) else "open:hypothesis-bare")
+        keys |= {f"duplicate:{o.id}" for o in olds
+                 if o.type == n.type and _same_question(o.title, n.title)}
+        text = (n.title + "\n" + n["body"]).lower()
+        if any(w.lower() in text for w in work_markers):
+            keys.add("work-in-tree")
+    for i, n in enumerate(nodes):
+        if any(o.type == n.type and _same_question(o.title, n.title) for o in nodes[i + 1:]):
+            keys.add("duplicate:new")
+    for f in (n for n in new if n.type == "finding"):
+        ev = E.finding_evidence(f)
+        ok = bool(ev) and all(E._evidence_problem(after, x) is None for x in ev)
+        keys.add("finding:evidence" if ok else "finding:no-evidence")
+        keys.add(f"finding:{E.effective_confidence(f)}")
+        if f["fm"].get("null") == E.NULL_NOT_RULED_OUT:
+            keys.add("finding:null-open")
+    for n in olds:
+        if n.id in a.nodes and a.nodes[n.id]["fm"].get(E.PARKED_FIELD) is True \
+                and n["fm"].get(E.PARKED_FIELD) is not True:
+            keys.add(f"parked:{n.id}")
+    return keys
 
-    # the fixture must NOT contain the answer: the agent proposes the ticks
-    cross.append(("the fixture's boxes are all unticked — the agent proposes them",
-                  n.status == "running" and all(t == " " for t, _x in lines)))
 
-    # and the manifest's own vector, run through the engine, must give the recorded verdict
-    by = {k: [] for k in E.VERIFIABLE_KINDS}
-    for i, (_t, text) in enumerate(lines, 1):
-        tick = per.get(f"{hid}:v{i}", [None])[0]
-        by[E.verifiable_kind(text)[0]].append(TICKS.get(tick, " "))
-    tallies = {k: E._tally(v) for k, v in by.items()}
-    derived = E.derive_verdict_15(tallies[E.DEFAULT_KIND], tallies[E.NEUTRAL_KIND],
-                                  str(n["fm"].get(E.RULE_FIELD) or "all"))
-    cross.append((f"the planted tick vector derives '{m['fm']['verdict_read']}' "
-                  f"(engine says '{derived}')", derived == str(m["fm"]["verdict_read"])))
+def capture_prose(start, after):
+    """Every sentence a capture run wrote into the record: new titles, expectations, nulls,
+    and each finding's why, answer and comparison. This is what the invisible-notebook rule
+    is scanned over."""
+    s, a = E.Vault(start), E.Vault(after)
+    out = []
+    for i, n in sorted(a.nodes.items()):
+        if i in s.nodes:
+            continue
+        out.append(n.title)
+        if n.type == "idea":
+            out += [E.expect_text(n), E._section(n["body"], "Null")]
+        if n.type == "finding":
+            out += [str(n["fm"].get(k) or "") for k in ("why", "vs_expect")]
+            out.append(E._section(n["body"], "Answer"))
+    return [t for t in out if str(t).strip()]
+
+
+def _oracle_capture(m):
+    """capture-01: a fixed transcript, the vault before it was captured (`vault/`), and the
+    vault a correct capture leaves (`reference/`, written with the ordinary crux verbs). The
+    available set is `capture_keys(vault, reference)`, so the ENGINE says what the reference
+    yields and the manifest must agree with it exactly, as audit-01 did with validate."""
+    start, ref = vault_of(m), os.path.join(m["dir"], "reference")
+    markers = _csv(m["fm"].get("work_markers"))
+    avail = capture_keys(start, ref, markers)
+    tpath = os.path.join(m["dir"], str(m["fm"].get("transcript") or "transcript.txt"))
+    transcript = E.read(tpath) if os.path.isfile(tpath) else ""
+    sv, rv = E.Vault(start), E.Vault(ref)
+    ev = _csv(m["fm"].get("evidence"))
+    cross = [
+        ("the transcript is a conversation: the PI and the agent both speak",
+         "\nPI: " in transcript and "\nAGENT: " in transcript),
+        ("the starting vault yields nothing — the fixture does not contain the answer",
+         capture_keys(start, start, markers) == set()),
+        ("the reference only adds or parks: every earlier node keeps its id and title",
+         all(i in rv.nodes and rv.nodes[i].title == n.title for i, n in sv.nodes.items())),
+        ("the reference vault validates clean",
+         E.validation_report(ref, checks=m["checks"])["problems"] == []),
+        (f"every evidence file the transcript names exists before the run ({ev})",
+         bool(ev) and all(p in transcript and os.path.exists(os.path.join(start, p))
+                          for p in ev)),
+        ("every work marker is in the transcript, so the trap is really set",
+         bool(markers) and all(w.lower() in transcript.lower() for w in markers)),
+        ("the reference capture speaks science — no node id, no crux vocabulary",
+         E.voice_lint([("agent", t) for t in capture_prose(start, ref)]) == []),
+    ]
     return avail, cross
 
 
@@ -245,12 +313,13 @@ def _oracle_situate(m):
               if n.type == "idea" and n.status == "running"}
 
     def settled(qid):
-        """Any hypothesis anywhere under `qid` that carries findings. A question with none is
+        """Any hypothesis anywhere under `qid` that carries a finding (the 4.0 record: a
+        finding file under it, spec 19). A question with none is
         one where nothing is settled yet, and saying so is the agent's job — filling the hole
         with plausible narrative is the failure a fluent model is most likely to have."""
         for k in v.children.get(qid, ()):
             n = v.nodes[k]
-            if n.type == "idea" and E._deck_text(n["body"], "Findings"):
+            if n.type == "idea" and E.node_findings(v, k):
                 return True
             if n.type == "question" and settled(k):
                 return True
@@ -277,52 +346,12 @@ def situate_anchor(m):
     return (aid, E.Vault(vault_of(m)).get(aid).title or "")
 
 
-def _v_prose_cap(m):
-    """Every id classed `over-cap` really is over the cap, per the engine's own counter."""
-    v = E.Vault(vault_of(m))
-    bad = [p["id"] for p in m["planted"] if "over-cap" in p["class"]
-           and E.prose_words(v.get(p["id"].split(":")[-1])["body"],
-                             v.get(p["id"].split(":")[-1]).type) <= E.PROSE_CAP]
-    return f"every over-cap id is genuinely over the cap ({bad})", not bad
-
-
-def _v_scenario_gap(m):
-    """Every id classed `redundant` really is one the engine flags for a shared scenario."""
-    v = E.Vault(vault_of(m))
-    bad = [p["id"] for p in m["planted"] if "redundant" in p["class"]
-           and "SAME failure scenario" not in (E.scenario_gap(v.get(p["id"].split(":")[-1])) or "")]
-    return f"every redundant id is one the engine flags ({bad})", not bad
-
-
-def _v_no_verifiables(m):
-    """The fixture must not contain the answer: the agent writes the checks."""
-    n = E.Vault(vault_of(m)).get(str(m["fm"]["node"]))
-    return ("the target node carries no verifiables — the agent writes them",
-            sum(E.count_verifiables(n["body"])) == 0)
-
-
-def _v_null_approved(m):
-    """`crux-verifiables` writes against an APPROVED null; the PI gate sits before it."""
-    n = E.Vault(vault_of(m)).get(str(m["fm"]["node"]))
-    return ("the null is approved, as the agent's cold input requires",
-            bool(str(n["fm"].get(E.NULL_APPROVED) or "").strip()))
-
-
 def _v_evidence_resolves(m):
     """Every path named in the key exists under the fixture. A tick nobody can point at is a
     guess, and a key pointing at a file that is not there cannot catch one."""
     bad = [t for p in m["planted"] for t in re.findall(r"`([\w./-]+\.(?:md|csv|py|txt))`", p["note"])
            if not os.path.isfile(os.path.join(m["dir"], "vault", t))]
     return f"every evidence pointer in the key resolves ({bad})", not bad
-
-
-def _v_term_counts(m):
-    """Each planted term survives the deterministic filter it is graded beside — a term
-    appearing once is dropped before the agent ever sees it."""
-    v = E.Vault(vault_of(m))
-    bad = [p["id"] for p in m["planted"]
-           if len(E.count_term(v, p["id"].split(":", 1)[-1])["documents"]) < 2]
-    return f"every planted term clears the occurrence floor ({bad})", not bad
 
 
 def _v_distinct_expected(m):
@@ -335,20 +364,8 @@ def _v_distinct_expected(m):
     return f"no key row expects what the broken implementation returns ({clash})", not clash
 
 
-def _v_one_disease_per_node(m):
-    """A fixture with two diseases on one node cannot tell a correct diagnosis from a lucky
-    one — and the whole taxonomy exists because a mixed result never announces which it has."""
-    pairs = [p["id"].split(":") for p in m["planted"]]
-    ok = (all(len(x) == 2 for x in pairs)
-          and len({d for d, _n in pairs}) == len(pairs) == len({n for _d, n in pairs}))
-    return f"one disease per node, each disease once ({[':'.join(x) for x in pairs]})", ok
-
-
-VERIFICATIONS = {"prose_cap": _v_prose_cap, "scenario_gap": _v_scenario_gap,
-                 "no_verifiables": _v_no_verifiables, "null_approved": _v_null_approved,
-                 "evidence_resolves": _v_evidence_resolves, "term_counts": _v_term_counts,
-                 "distinct_expected": _v_distinct_expected,
-                 "one_disease_per_node": _v_one_disease_per_node}
+VERIFICATIONS = {"evidence_resolves": _v_evidence_resolves,
+                 "distinct_expected": _v_distinct_expected}
 
 
 def _oracle_stated_key(m):
@@ -400,22 +417,27 @@ def _oracle_stated_key(m):
 #: the closed predicate vocabulary a manifest's `## Vault state` table may use. Closed on
 #: purpose: an open-ended expression language here would be a second engine, and a fixture
 #: that can assert anything can assert something wrong without anyone noticing.
-STATE_PREDICATES = ("status", "verdict", "synthesis", "approved", "answered", "task", "pending")
+STATE_PREDICATES = ("state", "confidence", "direction", "answered", "parked", "task",
+                    "pending")
 
 
 def vault_state(status):
     """The slice of `crux status --json` the state predicates read, and nothing else.
 
     A projection rather than the whole payload: a submission carrying 30KB of vault JSON per
-    run is unreviewable, and every field kept here is one a predicate can name."""
+    run is unreviewable, and every field kept here is one a predicate can name. The 4.0 model
+    (spec 19): a node's state and confidence are derived from its findings, `direction` is the
+    direction of the finding that sets the state, and a question is answered when a finding on
+    it carries answer text."""
     nodes = {}
     for i, n in (status.get("nodes") or {}).items():
-        ans = str(n.get("answer") or "").strip()
-        nodes[i] = {"type": n.get("type"), "status": n.get("status"),
-                    "verdict": n.get("verdict"), "synthesis": n.get("synthesis"),
-                    "approved": bool(n.get("approved")),
-                    # the template's `_(interpretation — …)_` placeholder is not an answer
-                    "answered": bool(ans) and not ans.startswith("_(")}
+        fs = {f.get("id"): f for f in (n.get("findings") or ())}
+        lead = fs.get(n.get("state_finding")) or {}
+        nodes[i] = {"type": n.get("type"), "state": n.get("state"),
+                    "confidence": n.get("confidence"),
+                    "direction": lead.get("direction"),
+                    "parked": bool(n.get("parked")),
+                    "answered": any(str(f.get("answer") or "").strip() for f in fs.values())}
     tasks = {t["id"]: {"status": t.get("status"), "pending_gate": bool(t.get("pending_gate"))}
              for t in ((status.get("tasks") or {}).get("items") or [])}
     return {"nodes": nodes, "tasks": tasks}
@@ -442,9 +464,9 @@ def check_state(m, after):
             raise E.CruxError(f"fixture '{m['name']}': unknown state predicate '{pred}' — known "
                               f"are {', '.join(STATE_PREDICATES)}")
         n, t = nodes.get(target) or {}, tasks.get(target) or {}
-        got = {"status": n.get("status"), "verdict": n.get("verdict"),
-               "synthesis": n.get("synthesis"), "approved": n.get("approved"),
-               "answered": n.get("answered"), "task": t.get("status"),
+        got = {"state": n.get("state"), "confidence": n.get("confidence"),
+               "direction": n.get("direction"), "answered": n.get("answered"),
+               "parked": n.get("parked"), "task": t.get("status"),
                "pending": t.get("pending_gate")}[pred]
         ok = (str(got) == want) if want else bool(got)
         out.append((f"{key} (got {got!r})", ok, proves))
@@ -487,8 +509,7 @@ def _oracle_persona(m):
     return set(m["planted_ids"]), cross
 
 
-ORACLES = {"validation_report": _oracle_validation_report,
-           "verifiable_ticks": _oracle_ticks,
+ORACLES = {"capture_yield": _oracle_capture,
            "null_vocabulary": _oracle_null,
            "situate_payload": _oracle_situate,
            "persona_voice": _oracle_persona,
@@ -520,21 +541,20 @@ def certify(name, root=None):
     """Prove the manifest true. Read-only; the fixture tree is never written.
 
     Three ways a hand-authored fixture goes wrong, and all three are caught here:
-      missing — a planted id the oracle does not offer (the defect was never planted, or was
-                planted as something `validate` does not report at all: a task `blocked_by`
-                cycle is a *status*, not a problem);
-      extra   — an id the oracle offers that nobody planted. For `validation_report` this is
-                fatal: it would score a CORRECT agent finding as invented. For the fixtures
-                whose oracle offers a *menu* (every family in the closed vocabulary, every
-                tick a check could carry), extra is expected and is not a failure — what
-                matters there is that no planted id is outside the menu.
+      missing — a planted id the oracle does not offer (the record was never planted, or
+                the engine does not read it the way the manifest claims);
+      extra   — an id the oracle offers that nobody planted. For `capture_yield` this is
+                fatal: it would score a CORRECT capture as invented. For the fixtures whose
+                oracle offers a *menu* (every family in the closed vocabulary), extra is
+                expected and is not a failure — what matters there is that no planted id is
+                outside the menu.
       band    — `unset` is legal and reported, never silently treated as a pass."""
     m = load_manifest(name, root)
     if m["oracle"] not in ORACLES:
         raise E.CruxError(f"fixture '{name}': unknown oracle '{m['oracle']}' — known oracles "
                           f"are {', '.join(sorted(ORACLES))}")
     avail, cross = ORACLES[m["oracle"]](m)
-    exact = m["oracle"] == "validation_report"
+    exact = m["oracle"] == "capture_yield"
     missing = sorted(m["planted_ids"] - avail)
     extra = sorted(avail - m["planted_ids"]) if exact else []
     failed = [c for c, ok in cross if not ok]
@@ -547,7 +567,18 @@ def certify(name, root=None):
 
 
 def certify_all(root=None):
-    return [certify(n, root) for n in fixture_names(root)]
+    """Every fixture's certificate. One whose oracle raises is a failed certificate, named,
+    never a traceback that hides the fixtures after it."""
+    out = []
+    for n in fixture_names(root):
+        try:
+            out.append(certify(n, root))
+        except Exception as e:
+            out.append({"fixture": n, "agent": "?", "ground_truth": "?", "oracle": "?",
+                        "ok": False, "missing": [], "extra": [],
+                        "cross_failed": [f"the oracle raised {type(e).__name__}: {e}"],
+                        "planted": 0, "band": BAND_UNSET, "band_set": False})
+    return out
 
 
 # ----------------------------------------------------------------------------- scoring
@@ -556,17 +587,27 @@ def certify_all(root=None):
 PASS, FAIL, UNGRADED, REFUSED = "PASS", "FAIL", "UNGRADED", "REFUSED"
 
 
+def definition_path(agent, repo=None):
+    """Where an agent's definition lives. The research roster is `agents/<name>/AGENT.md`;
+    `crux-tests` builds crux rather than research, so it lives with evolve-crux (spec 19,
+    Q12); and a fixture may grade the ORCHESTRATING skill rather than an agent — spec 16's
+    persona eval measures the voice rules, which live in the skill. None when nothing exists."""
+    repo = repo or repo_root()
+    for p in (os.path.join(repo, "agents", agent, "AGENT.md"),
+              os.path.join(repo, "skills", "evolve-crux", "agents", agent + ".md"),
+              os.path.join(repo, "skills", agent, "SKILL.md")):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def agent_sha(agent, repo=None):
     """sha256 of an agent's definition — what pins a submission to the prompt that produced
     it. Without it a score is a number with no provenance, and re-scoring after an edit
     silently compares one agent to a different one."""
-    repo = repo or repo_root()
-    p = os.path.join(repo, "agents", agent, "AGENT.md")
-    if not os.path.isfile(p):
-        # a fixture may grade the ORCHESTRATING agent rather than one of the isolated ten —
-        # spec 16's persona eval measures the voice rules, which live in the skill. The
-        # principle is unchanged: pin the score to the prompt that produced it.
-        p = os.path.join(repo, "skills", agent, "SKILL.md")
+    p = definition_path(agent, repo)
+    if p is None:
+        raise E.CruxError(f"no definition for '{agent}'")
     with open(p, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
@@ -665,17 +706,21 @@ def score(manifest, submission, repo=None):
 def hard_checks(m, submission):
     """Pass/fail checks that sit BESIDE the band, never inside it, as [(name, ok, why)].
 
-    Some things a distribution cannot express. `crux-close` can propose a perfect tick vector
-    and still call the run `refuted` rather than `invalid-run` — a different sentence, and
-    confusing the two is the failure spec 15's kinds exist to prevent. `crux-situate` can be
-    accurate and four times too long, and brevity is that agent's stated acceptance criterion.
-    Both are one bit, so both are graded as one bit."""
+    Some things a distribution cannot express. `crux-capture` can record every planted node
+    and still have asked the PI a question, or written a node id into the record — the two
+    rules its whole design rests on. `crux-situate` can be accurate and four times too long,
+    and brevity is that agent's stated acceptance criterion. Each is one bit, so each is
+    graded as one bit."""
     out = []
-    want = m["fm"].get("verdict_read")
-    if want:
-        got = str(submission.get("verdict_read") or "")
-        out.append((f"verdict_read {got or '(none)'!r}", got == str(want),
-                    f"the run reads as '{want}'"))
+    if m["oracle"] == "capture_yield":
+        asked = list(submission.get("asked_pi") or [])
+        out.append((f"the capture asked the PI nothing ({len(asked)} asked)", not asked,
+                    "a capture run never asks: anything uncertain goes to the pending list"))
+        prose = [str(t) for t in (submission.get("prose") or ()) if str(t).strip()]
+        leaks = E.voice_lint([("agent", t) for t in prose]) if prose else []
+        out.append((f"the captured prose speaks science ({sorted({i for i, _x in leaks})})",
+                    not leaks, "the invisible notebook: no node id and no crux vocabulary "
+                               "in anything the PI may later read"))
     if m["oracle"] == "situate_payload":
         answer = str(submission.get("answer") or "")
         findings = situate_findings(answer, situate_anchor(m))
@@ -726,26 +771,42 @@ def format_score(s):
 
 
 # ----------------------------------------------------------------------------- definitions
+#: The research roster, spec 19 decision 9. `crux-tests` builds crux, not research, so it
+#: lives with evolve-crux (Q12) and is outside this tuple on purpose.
+ROSTER = ("crux-capture", "crux-prerun", "crux-situate", "crux-migrate")
+#: The agents spec 19 removed. Their directories must not come back.
+REMOVED_AGENTS = ("crux-close", "crux-critic", "crux-audit", "crux-glossary", "crux-design",
+                  "crux-null", "crux-verifiables")
 #: Verbs no agent's toolbelt may carry. The TOOLBELT is the authority — what an agent may
-#: actually run — so that is what is checked; prose is not. 09's D9: since spec 15 a tick
-#: decides `invalid-run` versus `refuted`, so an agent writing one sets both the verdict and
-#: its reason.
-LEASH_VERBS = ("crux close", "crux answer", "crux approve", "crux task accept",
-               "crux pursue", "crux migrate --apply")
-#: The wider write surface, for the agents whose whole contract is "propose, never write".
-WRITE_VERBS = ("crux ask", "crux hypothesize", "crux close", "crux answer", "crux approve",
-               "crux task add", "crux glossary accept", "crux rd", "crux ingest")
+#: actually run — so that is what is checked; prose is not. Spec 19 keeps these the PI's:
+#: starting an autopilot run, starting compute (`test` stages a run), and the verbs the 4.0
+#: model removed, which an old habit could still type.
+LEASH_VERBS = ("crux auto", "crux test", "crux task accept", "crux migrate --apply",
+               "crux close", "crux answer", "crux approve", "crux pursue", "crux review")
+#: The write surface. Only crux-capture may carry any of it: recording the science silently
+#: is its whole job, and every other agent proposes or orients.
+WRITE_VERBS = ("crux ask", "crux hypothesize", "crux finding", "crux park", "crux pending add",
+               "crux pending clear", "crux task add", "crux glossary accept", "crux rd",
+               "crux ingest", "crux init")
+#: crux-capture's tools, exactly. The sweep launches it with the same list (`sweep.SWEEP_TOOLS`).
+CAPTURE_TOOLS = ("Bash", "Read")
+#: What crux-capture must be able to run: read the tree first, then record or defer.
+CAPTURE_BELT = ("crux status", "crux ask", "crux hypothesize", "crux finding", "crux park",
+                "crux pending add")
 
 
 def load_definitions(names, repo=None):
     """{name: (frontmatter, body)} for the agent definitions that exist."""
-    repo = repo or repo_root()
     out = {}
     for n in names:
-        p = os.path.join(repo, "agents", n, "AGENT.md")
-        if os.path.isfile(p):
+        p = definition_path(n, repo)
+        if p and not p.endswith("SKILL.md"):
             out[n] = E.parse_doc(E.read(p))
     return out
+
+
+def _belt(fm):
+    return [x.strip() for x in str(fm.get("toolbelt") or "").split(";") if x.strip()]
 
 
 def roster_properties(defs, verbs=""):
@@ -769,47 +830,87 @@ def roster_properties(defs, verbs=""):
                                 fm.get("name") == name)
         P[f"workflow:{name}"] = (f"agents: {name} reads as a workflow (when invoked -> steps -> output)",
                                  "When invoked" in body and "## Output" in body)
+        P[f"trigger:{name}"] = (f"agents: {name} names its trigger",
+                                bool(str(fm.get("trigger") or "").strip()))
 
     # every toolbelt entry is a real crux verb — 09 is explicit that the belt is CLI verbs,
     # not agent-private scripts, so selftest can assert them and the PI can run any by hand
     bad = []
     for name, (fm, _b) in sorted(defs.items()):
-        for line in str(fm.get("toolbelt") or "").split(";"):
-            line = line.strip()
-            if not line:
-                continue
+        for line in _belt(fm):
             if not line.startswith("crux "):
                 bad.append(f"{name}: {line!r} is not a crux verb")
             elif line.split()[1] not in verbs:
                 bad.append(f"{name}: no such verb {line.split()[1]!r}")
     P["belt-verbs"] = (f"agents: every toolbelt entry is a real crux verb (bad: {bad[:3]})", not bad)
 
-    crit = fm_of("crux-critic")
-    P["critic-isolated"] = ("agents: the critic is isolated by construction — no vault, empty toolbelt",
-                            not str(crit.get("toolbelt") or "").strip()
-                            and "vault" in str(crit.get("excludes") or "").lower())
-    P["verifiables-exclusion"] = ("agents: crux-verifiables declares the exclusion the brief actually enforces",
-                                  "Problem Statement" in str(fm_of("crux-verifiables").get("excludes") or ""))
-
     leash = [f"{n}: {b}" for n, (fm, _) in sorted(defs.items())
              for b in LEASH_VERBS if b in str(fm.get("toolbelt") or "")]
-    P["leash"] = (f"agents: no agent's toolbelt can set a verdict or a direction (found: {leash})",
+    P["leash"] = (f"agents: no agent can start a run or type a removed verb (found: {leash})",
                   not leash)
-    P["close-says-so"] = ("agents: and crux-close says so in words, since it is the one that could",
-                          "you never run `crux close`" in body_of("crux-close").lower())
-
-    gl = fm_of("crux-glossary")
-    P["glossary-contract"] = ("agents: the glossary agent matches spec 14's parked contract",
-                              "propose" in str(gl.get("cold_input") or "")
-                              and "no write verb" in str(gl.get("toolbelt") or "").lower()
-                              and "conversation" in str(gl.get("excludes") or "").lower())
+    writers = sorted(n for n, (fm, _) in defs.items()
+                     if any(w in str(fm.get("toolbelt") or "") for w in WRITE_VERBS))
+    P["writers"] = (f"agents: only crux-capture writes to the record (writers: {writers})",
+                    set(writers) <= {"crux-capture"})
 
     versioned = sorted(n for n, (fm, b) in defs.items()
                        if re.search(r"engine[ _-]?version", (str(fm) + b), re.I))
     P["no-version-pin"] = (f"agents: no agent definition pins an engine version (found: {versioned})",
                            not versioned)
 
-    # ---- spec 13's two, same convention, same table
+    # ---- crux-capture (spec 19): the heart of background memory
+    cap, cap_body = fm_of("crux-capture"), body_of("crux-capture")
+    low = cap_body.lower()
+    tools = {t.strip() for t in str(cap.get("tools") or "").split(",") if t.strip()}
+    P["capture-tools"] = (f"agents: crux-capture's tools are exactly Bash and Read ({sorted(tools)})",
+                          tools == set(CAPTURE_TOOLS))
+    belt = _belt(cap)
+    P["capture-belt"] = ("agents: crux-capture's belt reads the tree, records, parks and defers",
+                         all(any(x.startswith(v) for x in belt) for v in CAPTURE_BELT))
+    P["capture-silent"] = ("agents: crux-capture never asks the PI — uncertain items go to the "
+                           "pending list",
+                           re.search(r"never ask the PI", cap_body, re.I) is not None
+                           and "crux pending add" in cap_body
+                           and "PI" in str(cap.get("excludes") or ""))
+    P["capture-boundary"] = ("agents: crux-capture keeps knowledge in the tree and work in the "
+                             "taskhub",
+                             "knowledge" in low and "taskhub" in low
+                             and "evidence on a finding" in low)
+    P["capture-ideation"] = ("agents: crux-capture opens questions and hypotheses, each "
+                             "hypothesis with an expectation",
+                             "--expect" in cap_body and "crux ask" in cap_body
+                             and "clearly definable" in low)
+    P["capture-closure"] = ("agents: crux-capture judges closure — null cap, near miss, failed "
+                            "control, no direction on a question",
+                            all(x in low for x in ("not ruled out", "weak", "near miss",
+                                                   "failed control", "no direction")))
+    P["capture-dedup"] = ("agents: crux-capture reads the tree first and never opens a second node",
+                          re.search(r"read the tree first", cap_body, re.I) is not None
+                          and "second node" in low)
+    P["capture-park"] = ("agents: crux-capture parks what the conversation dropped",
+                         "crux park" in cap_body and "dropped" in low)
+    P["capture-voice"] = ("agents: crux-capture writes in the invisible-notebook voice",
+                          "invisible notebook" in low and "node id" in low)
+
+    # ---- crux-prerun (spec 19): design, null and verifiables merged, still isolated
+    pre, pre_body = fm_of("crux-prerun"), body_of("crux-prerun")
+    plow = pre_body.lower()
+    # `crux status <id>` returns a node's problem statement and its findings: the argument and
+    # the results, both of which the isolated brief exists to keep out
+    P["prerun-isolated"] = ("agents: crux-prerun reads the ISOLATED brief, excludes the "
+                            "argument for the claim, and has no per-node status in its belt",
+                            "crux brief" in str(pre.get("cold_input"))
+                            and not any(re.match(r"crux status\s+<?\w", x) for x in _belt(pre))
+                            and "--mode=situate" not in str(pre.get("cold_input"))
+                            and "Problem Statement" in str(pre.get("excludes")))
+    P["prerun-drafts"] = ("agents: crux-prerun drafts the expectation, the null and the checks, "
+                          "and names the outcome that would change the confidence",
+                          all(x in plow for x in ("expectation", "null", "verifiables",
+                                                  "change the confidence")))
+    P["prerun-proposal"] = ("agents: crux-prerun's output is a proposal, never a record write",
+                            "proposal" in plow and "## Output" in pre_body)
+
+    # ---- crux-situate (spec 13, 16), re-pointed to state and confidence by spec 19
     sit, sit_body = fm_of("crux-situate"), body_of("crux-situate")
     P["situate-mode"] = ("agents: crux-situate reads the situate brief, not the isolated one",
                          "--mode=situate" in str(sit.get("cold_input")))
@@ -830,55 +931,49 @@ def roster_properties(defs, verbs=""):
                                  and "name the ids" not in sit_body.lower()
                                  and re.search(r"first line.{0,80}\bTITLE\b", sit_body,
                                                re.I | re.S) is not None)
+    P["situate-state"] = ("agents: crux-situate reads state and confidence, not verdicts or "
+                          "syntheses (spec 19)",
+                          "state" in sit_body and "confidence" in sit_body
+                          and re.search(r"verdict|synthes", sit_body, re.I) is None)
 
-    des, des_body = fm_of("crux-design"), body_of("crux-design")
-    P["design-isolated"] = ("agents: crux-design reads the ISOLATED brief — the designer must not see advocacy",
-                            "crux brief" in str(des.get("cold_input"))
-                            and "--mode=situate" not in str(des.get("cold_input")))
-    P["design-excludes"] = ("agents: crux-design's excludes name the advocacy channel",
-                            "Problem Statement" in str(des.get("excludes")))
-    P["design-readonly"] = ("agents: crux-design cannot write — it proposes, the PI applies",
-                            not any(w in str(des.get("toolbelt")) for w in
-                                    ("crux close", "crux answer", "crux approve", "crux pursue",
-                                     "crux task accept", "crux hypothesize")))
-    P["design-taskhub"] = ("agents: crux-design's belt reaches the taskhub for what was already tried",
-                           "crux task list" in str(des.get("toolbelt")))
-    P["design-question"] = ("agents: crux-design states the central question verbatim",
-                            "Is there any plausible outcome of this run from which we would "
-                            "conclude nothing?" in des_body)
-    P["design-taxonomy"] = ("agents: crux-design names all three causes and both handoff targets",
-                            all(x in des_body for x in ("compound claim", "crux-critic",
-                                                        "crux-verifiables"))
-                            and "does not follow from the claim" in des_body)
-    P["design-handoff"] = ("agents: crux-design hands off by NAMING, never by invoking",
-                           "never invoke" in des_body.lower() or "does not invoke" in des_body.lower())
-    P["design-proposal"] = ("agents: crux-design's output is a proposal, never a vault write",
-                            "proposal" in des_body.lower() and "## Output" in des_body)
+    # ---- crux-migrate, re-pointed to the 4.0 seed shape (engine `parse_seed`)
+    mig_body = body_of("crux-migrate")
+    P["migrate-seed"] = ("agents: crux-migrate drafts the 4.0 seed — `expect:` and "
+                         "`finding: [direction, confidence]` lines",
+                         "expect:" in mig_body and "finding: [" in mig_body
+                         and "never invent" in mig_body.lower())
     return P
 
 
 # ----------------------------------------------------------------------------- mutation
-#: Each row: slug -> (agent or None for "any", the property it MUST break, how to degrade it).
-#: Hand-written, and each names its target BEFORE being run — the anti-tautology rule applied
-#: one level up: the thing that writes the test is not the thing that writes the answer.
+#: Each row: slug -> (agent, the property it MUST break). Hand-written, and each names its
+#: target BEFORE being run — the anti-tautology rule applied one level up: the thing that
+#: writes the test is not the thing that writes the answer.
 MUTATIONS = {
-    "belt-adds-close":            ("crux-audit", "leash"),
-    "belt-adds-answer":           ("crux-migrate", "leash"),
-    "belt-adds-approve":          ("crux-null", "leash"),
-    "belt-fake-verb":             ("crux-tests", "belt-verbs"),
-    "critic-gains-belt":          ("crux-critic", "critic-isolated"),
-    "verifiables-drops-exclusion": ("crux-verifiables", "verifiables-exclusion"),
+    "capture-gains-tool":         ("crux-capture", "capture-tools"),
+    "capture-asks-pi":            ("crux-capture", "capture-silent"),
+    "capture-files-work":         ("crux-capture", "capture-boundary"),
+    "capture-drops-expect":       ("crux-capture", "capture-ideation"),
+    "capture-drops-near-miss":    ("crux-capture", "capture-closure"),
+    "capture-skips-tree":         ("crux-capture", "capture-dedup"),
+    "capture-drops-park":         ("crux-capture", "capture-park"),
+    "capture-drops-voice":        ("crux-capture", "capture-voice"),
+    "capture-starts-run":         ("crux-capture", "leash"),
+    "drop-cold-input":            ("crux-capture", "fields:crux-capture"),
+    "prerun-reads-situate":       ("crux-prerun", "prerun-isolated"),
+    "prerun-reads-status":        ("crux-prerun", "prerun-isolated"),
+    "prerun-drops-outcome":       ("crux-prerun", "prerun-drafts"),
+    "prerun-gains-write":         ("crux-prerun", "writers"),
+    "drop-trigger":               ("crux-prerun", "trigger:crux-prerun"),
+    "pin-engine-version":         ("crux-prerun", "no-version-pin"),
     "situate-reads-isolated":     ("crux-situate", "situate-mode"),
     "situate-anchors-by-id":      ("crux-situate", "situate-title-anchor"),
     "situate-gains-write":        ("crux-situate", "situate-readonly"),
-    "design-reads-situate":       ("crux-design", "design-isolated"),
-    "design-drops-never-invoke":  ("crux-design", "design-handoff"),
-    "close-drops-never-run":      ("crux-close", "close-says-so"),
-    "glossary-gains-write":       ("crux-glossary", "glossary-contract"),
-    "drop-output-section":        ("crux-verifiables", "workflow:crux-verifiables"),
-    "drop-cold-input":            ("crux-critic", "fields:crux-critic"),
-    "name-mismatch":              ("crux-audit", "dirname:crux-audit"),
-    "pin-engine-version":         ("crux-design", "no-version-pin"),
+    "situate-reads-verdicts":     ("crux-situate", "situate-state"),
+    "migrate-old-seed":           ("crux-migrate", "migrate-seed"),
+    "belt-fake-verb":             ("crux-migrate", "belt-verbs"),
+    "drop-output-section":        ("crux-migrate", "workflow:crux-migrate"),
+    "name-mismatch":              ("crux-migrate", "dirname:crux-migrate"),
 }
 
 
@@ -887,34 +982,40 @@ def mutate(fm, body, mutation):
     mutated definition can survive a crash into the repo."""
     fm, body = dict(fm), body
     belt = str(fm.get("toolbelt") or "")
-    if mutation == "belt-adds-close":       fm["toolbelt"] = belt + "; crux close <hid>"
-    elif mutation == "belt-adds-answer":    fm["toolbelt"] = belt + "; crux answer <qid>"
-    elif mutation == "belt-adds-approve":   fm["toolbelt"] = belt + "; crux approve <sid>"
-    elif mutation == "belt-fake-verb":      fm["toolbelt"] = belt + "; crux autoresearch --loop"
-    elif mutation == "critic-gains-belt":   fm["toolbelt"] = "crux status --json"
+    if mutation == "capture-gains-tool":    fm["tools"] = str(fm.get("tools")) + ", Write"
+    elif mutation == "capture-asks-pi":
+        body = re.sub(r"(?i)never ask the PI", "ask the PI when unsure", body)
+    elif mutation == "capture-files-work":  body = re.sub(r"(?i)taskhub", "tree", body)
+    elif mutation == "capture-drops-expect": body = body.replace("--expect", "")
+    elif mutation == "capture-drops-near-miss": body = re.sub(r"(?i)near miss", "close call", body)
+    elif mutation == "capture-skips-tree":
+        body = re.sub(r"(?i)read the tree first", "read the transcript first", body)
+    elif mutation == "capture-drops-park":  body = body.replace("crux park", "crux status")
+    elif mutation == "capture-drops-voice": body = re.sub(r"(?i)invisible notebook", "notebook", body)
+    elif mutation == "capture-starts-run":  fm["toolbelt"] = belt + "; crux auto run <qid>"
+    elif mutation == "drop-cold-input":     fm.pop("cold_input", None)
+    elif mutation == "prerun-reads-situate":
+        fm["cold_input"] = str(fm.get("cold_input")) + " --mode=situate"
+    elif mutation == "prerun-reads-status": fm["toolbelt"] = belt + "; crux status <hid> --json"
+    elif mutation == "prerun-drops-outcome":
+        body = re.sub(r"(?i)change the confidence", "matter", body)
+    elif mutation == "prerun-gains-write":  fm["toolbelt"] = belt + "; crux finding <hid>"
+    elif mutation == "drop-trigger":        fm.pop("trigger", None)
+    elif mutation == "pin-engine-version":
+        body += "\n\nRequires engine version 4.0 or later.\n"
     elif mutation == "situate-gains-write": fm["toolbelt"] = belt + "; crux ask <title>"
-    elif mutation == "glossary-gains-write":
-        fm["toolbelt"] = "crux glossary accept <term>"
-    elif mutation == "verifiables-drops-exclusion":
-        fm["excludes"] = str(fm.get("excludes")).replace("## Problem Statement", "the draft")
     elif mutation == "situate-anchors-by-id":
         # the regression spec 16 exists to prevent: the ids-first-line mandate creeping back
         body = re.sub(r"by its \*\*TITLE\*\*", "by name the ids", body)
         body = body.replace("--anchor-title", "")
     elif mutation == "situate-reads-isolated":
         fm["cold_input"] = str(fm.get("cold_input")).replace("--mode=situate", "")
-    elif mutation == "design-reads-situate":
-        fm["cold_input"] = str(fm.get("cold_input")) + " --mode=situate"
-    elif mutation == "design-drops-never-invoke":
-        body = re.sub(r"[Nn]ever invoke|[Dd]oes not invoke", "should avoid calling", body)
-    elif mutation == "close-drops-never-run":
-        body = body.replace("You never run `crux close`.", "Leave `crux close` to the PI.")
-    elif mutation == "drop-output-section":
-        body = body.split("## Output")[0]
-    elif mutation == "drop-cold-input":     fm.pop("cold_input", None)
+    elif mutation == "situate-reads-verdicts":
+        body += "\n\nReport each child's verdict.\n"
+    elif mutation == "migrate-old-seed":    body = body.replace("finding: [", "finding: ")
+    elif mutation == "belt-fake-verb":      fm["toolbelt"] = belt + "; crux autoresearch --loop"
+    elif mutation == "drop-output-section": body = body.split("## Output")[0]
     elif mutation == "name-mismatch":       fm["name"] = str(fm.get("name")) + "-v2"
-    elif mutation == "pin-engine-version":
-        body += "\n\nRequires engine version 3.1 or later.\n"
     else:
         raise E.CruxError(f"unknown mutation '{mutation}'")
     return fm, body
@@ -958,7 +1059,19 @@ def main(argv=None):
                     help="read `crux status --json` on stdin and print the projection a "
                          "persona submission carries as `vault_after`. Hand-writing that "
                          "object is how a state assertion quietly becomes a wish.")
+    ap.add_argument("--yield", dest="yield_of", metavar="VAULT",
+                    help="with --fixture capture-01: print one run's entry for a submission — "
+                         "the yield keys and the prose a capture run left in VAULT, read "
+                         "against the fixture's starting vault")
     a = ap.parse_args(argv)
+
+    if a.fixture and a.yield_of:
+        m = load_manifest(a.fixture)
+        start = vault_of(m)
+        print(json.dumps({"findings": sorted(capture_keys(start, a.yield_of,
+                                                          _csv(m["fm"].get("work_markers")))),
+                          "prose": capture_prose(start, a.yield_of)}, indent=1))
+        return 0
 
     if a.project_state:
         print(json.dumps(vault_state(json.load(sys.stdin)), indent=1, sort_keys=True))

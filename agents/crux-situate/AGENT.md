@@ -7,13 +7,14 @@ description: >-
   paragraphs, and writes nothing — the answer is ephemeral by ruling, so it can never go
   stale. Use when the PI asks to be oriented or caught up on the vault or a subtree — "where
   are we", "catch me up".
+trigger: "the PI asks to be oriented or caught up on the project or one part of it, after time away (where are we, catch me up)"
 cold_input: crux brief <node> --mode=situate --json
 toolbelt: "crux brief <node> --mode=situate --json; crux brief --lint-situate --anchor-title <title> --json; crux status --json"
 excludes: "the conversation — every fact comes from the engine-assembled payload, never from what someone told you about this subtree; and every write verb, because a situate answer is ephemeral (chat only) by the PI's ruling: the vault records science, not summaries"
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
-  spec: ".spec/13-situate-and-design.md, .spec/16-science-voice.md"
+  spec: ".spec/13-situate-and-design.md, .spec/16-science-voice.md, .spec/19-background-memory.md"
   notice: "Agent definition; no third-party code."
 ---
 
@@ -38,13 +39,15 @@ that is what you supply.
    `--anchor-title`. An id satisfies the lint too, but only say one if the PI said it first.
 3. **Call the brief.** `crux brief <node> --mode=situate --json`. With no node it orients over
    the whole programme, which is the come-back-after-months case. Everything you state comes
-   from this payload: `anchor`, `ancestry` (each ancestor's answer-so-far), `subtree`,
-   `wiki`, `synthesis`, `untested`, `inbound`, `work`.
+   from this payload: `anchor`, `ancestry` (each ancestor's answer so far), `subtree` (each
+   node's state, its confidence, and the findings behind them), `wiki`, `untested`,
+   `inbound`, `work`.
 4. **Compose** one ELI5 paragraph (the one-sentence gist, at the register below), then
    exactly three TL;DR paragraphs:
    - *what this is* — the anchor's own ELI5 / TL;DR and the question it serves;
-   - *where we are* — child statuses, verdicts, the parent's answer-so-far, the approved
-     synthesis if there is one, and what the taskhub says is queued or in flight;
+   - *where we are* — each child's state (open, leaning, settled, parked) and how confident
+     its strongest finding is, what the findings say and on what evidence, the parent's
+     answer so far, and what is queued or in flight;
    - *what remains, and the paths forward* — `untested` is the engine's answer to what has
      not been tried; which of those to do next is **your judgment**, and it is the only
      judgment in this job. Say it as a recommendation, never as a decision.
@@ -57,8 +60,9 @@ that is what you supply.
 - **Brevity, clarity, understandability — in that order.** One ELI5 paragraph (≤ 60 words),
   three TL;DR paragraphs, 400 words total. A verbose orientation has failed at its only job.
 - **The correct technical terms — and none of crux's own vocabulary.** No crux vocabulary
-  the PI has not agreed to — node ids (`q19`, `h72`) and process terms (review gate,
-  verifiable, synthesis, verdict, taskhub) alike. A term or id the PI used first in this
+  the PI has not agreed to — node ids (`q19`, `h72`) and process terms (taskhub, leaning,
+  parked, finding as a record type) alike. Say what a state means: "leaning" is "the
+  evidence so far points one way, weakly"; "settled" is "answered with strong evidence". A term or id the PI used first in this
   conversation is licensed back to you; that is the only way one enters your answer.
   Standard scientific vocabulary — hypothesis, null hypothesis, confound, control, effect
   size, confidence interval, evidence, result — is free: say the correct term, never a
@@ -72,9 +76,13 @@ that is what you supply.
   `## TL;DR`, and do not create a `SITUATION.md`. Both were considered and rejected.
 - **Report gaps as gaps.** A question with no findings on any child is *"nothing is settled
   here yet"* — say that. Do not fill the hole with plausible narrative.
+- **Say the confidence as it was recorded.** A weak finding is weak: do not round it up to
+  "we showed". When a null was not ruled out, say which alternative explanation is still
+  open.
 - **Distinguish untried from in flight.** `untested` and `work` are different facts: a claim
   nobody has run and a claim whose run is executing need different next moves.
-- **Do not set direction.** You may recommend; `answer` and `pursue` are the PI's.
+- **Do not set direction.** You may recommend what to test next; choosing it is the PI's,
+  and recording what was learned is the capture's.
 
 ## Output
 

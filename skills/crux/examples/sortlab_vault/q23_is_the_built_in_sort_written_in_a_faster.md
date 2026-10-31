@@ -8,7 +8,6 @@ status: resolved
 stale: false
 created: "2026-08-16T16:06:21"
 updated: "2026-08-16T16:07:13"
-synthesis: s4
 ---
 
 # q23 — Is the built-in sort written in a faster language?
@@ -40,9 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 An empty Python loop is slower than the entire built-in sort on ten thousand items. That tells me it is not just about language. The built-in sort is using a smarter method, not just faster code.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 2, partial 0, refuted 1, inconclusive 0, invalid-run 0)
+**3 children** · open 0, leaning 1, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h69` [[h69_the_built_in_sort_is_not_running_my_kind|The built-in sort is not running my kind of Python code]] — *done* — verdict **supported**, metric `Merge sort at n=100000: 6.7 s. Built-in: 0.81 s. Ratio: 8.3x.`
-- `h70` [[h70_a_python_loop_that_only_counts_is_slower|A Python loop that only counts is slower than the whole built-in sort]] — *done* — verdict **supported**, metric `Counting loop: 0.92 s. Built-in sort: 0.81 s. Ratio: 1.14x.`
-- `h71` [[h71_most_of_my_sort_s_time_goes_on_comparing|Most of my sort's time goes on comparing, not on moving]] — *done* — verdict **refuted**, metric `Insertion comparison time: 0.41 microsec. Move time: 0.08 microsec.`
+- `h69` [[h69_the_built_in_sort_is_not_running_my_kind|The built-in sort is not running my kind of Python code]] — *settled · strong*
+- `h70` [[h70_a_python_loop_that_only_counts_is_slower|A Python loop that only counts is slower than the whole built-in sort]] — *settled · strong*
+- `h71` [[h71_most_of_my_sort_s_time_goes_on_comparing|Most of my sort's time goes on comparing, not on moving]] — *leaning · moderate*
+- `f94` finding (strong) [[f94_why_the_built_in_sort_wins|Why the built-in sort wins]]
 <!-- crux:ledger:end -->

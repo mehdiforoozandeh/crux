@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex, math
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "3.5"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "4.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -86,7 +86,16 @@ ENGINE_VERSION = "3.5"          # bumped when verdict/roll-up/view logic or vaul
                                 # else the slice adds is read-only or append-only and touches
                                 # no node: the flight plan document at auto/<qid>/plan.md,
                                 # flat PUCT selection, and the engine-assembled worker brief.
-CRUX_VERSION = "0.9.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+                                # 4.0: background memory (spec 19) — the tree becomes the
+                                # project's long-term memory: Question / Hypothesis / Finding.
+                                # A Finding is its own file (`type: finding`, ids f1…) holding a
+                                # direction (hypothesis findings only), a confidence and evidence.
+                                # A node's state (open · leaning · settled · parked) and its
+                                # confidence are DERIVED from its findings and never stored.
+                                # Synthesis, the review gate, close/answer/approve and the
+                                # experiment accept gate are removed. Verdict/roll-up/view
+                                # logic and the vault format both change: a compatibility era.
+CRUX_VERSION = "1.0.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
@@ -194,7 +203,12 @@ ARTIFACT_KINDS   = {"report": (".md",),
 SERVABLE_EXT     = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".pdf",
                               ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 
-TYPES            = ["project", "question", "idea", "synthesis"]
+TYPES            = ["project", "question", "idea", "finding"]
+# Types a pre-4.0 vault may still hold until the 4.0 migration converts them. Read, never
+# written: `validate` reports them as information, not as an unknown type.
+LEGACY_TYPES     = ("synthesis",)
+# Stored `status` on a question or hypothesis is HISTORY from 4.0 on (PI ruling Q14): the
+# engine stops reading it. The lists stay because pre-4.0 nodes carry these values.
 QUESTION_STATUS  = ["open", "review", "resolved"]
 IDEA_STATUS      = ["idea", "staged", "running", "done"]
 # `partial` is RETIRED, not removed. It can never be derived for a node that binds evidence
@@ -260,7 +274,87 @@ NULL_APPROVED     = "null_approved"
 # shape would re-hash every already-locked node and flag an edit nobody made, which is the
 # engine falsifying its own record.
 
-SCHEMA_GENERATION = 2
+# Generation 3 (spec 19): a hypothesis states an EXPECTATION (`## Expect`) before any
+# evidence; null and verifiables become optional. `lock_material` keys off `gen >= 2`, so a
+# generation-3 node hashes exactly like a generation-2 one and no lock drifts by the bump.
+SCHEMA_GENERATION = 3
+
+# ---- the 4.0 memory model (spec 19) ---------------------------------------------------------
+# A Finding records what was learned. A HYPOTHESIS finding carries a direction; a QUESTION
+# finding carries answer text and no direction (PI ruling, 2026-10-31). Every finding carries
+# a confidence, one sentence of why, and evidence links.
+#
+# `no-answer-yet` is hyphenated for the same render fact as `invalid-run`: the cockpit builds
+# CSS classes from these tokens, and a space would split the class. The CLI also accepts the
+# spaced form and stores the token.
+DIRECTIONS    = ("supports", "against", "mixed", "no-answer-yet")
+NO_ANSWER     = "no-answer-yet"
+_DIRECTION_ALIASES = {"no answer yet": NO_ANSWER, "no_answer_yet": NO_ANSWER,
+                      "noansweryet": NO_ANSWER, "support": "supports"}
+CONFIDENCES   = ("weak", "moderate", "strong")        # ascending: the index is the rank
+# A node's state is DERIVED from its findings and stored nowhere (decision 8):
+#   open     no finding that counts        leaning  the strongest counting one is weak/moderate
+#   settled  the strongest one is strong   parked   the agent parked a dropped node
+STATES        = ("open", "leaning", "settled", "parked")
+# What a finding says about the hypothesis' null. A null NOT ruled out caps confidence at weak,
+# like a non-significant p-value (decision 7) — enforced when the finding is written, flagged by
+# `validate` if hand-edited past, and applied again when the state is derived.
+NULL_STATES   = ("ruled-out", "not-ruled-out", "none")
+NULL_NOT_RULED_OUT = "not-ruled-out"
+NULL_CAP      = "weak"
+# A question's state with no finding of its own reads its child hypotheses' strongest finding,
+# capped here: a settled hypothesis does not by itself answer the question (PI ruling Q2).
+CHILD_CAP     = "moderate"
+PARKED_FIELD  = "parked"
+EXPECT_SECTION = "Expect"
+FINDING_FIELDS = ("direction", "confidence", "null", "why", "vs_expect", "verifiables",
+                  "evidence")
+EVIDENCE_ROOTS = (RESULTS_DIR, TASK_DIR)              # where an evidence link may point
+# id allocation is serialized across processes (risk R2: the capture run, autopilot and the
+# main agent can write at once). A plain O_EXCL lock file, stdlib only.
+LOCK_FILE     = ".crux.lock"
+LOCK_TIMEOUT  = 30.0      # seconds to wait for the lock; an older lock whose holder is dead is stale
+LOCK_FOREIGN_STALE = 3600.0   # a holder on another host cannot be probed: break only after this
+
+# Verbs spec 19 removes. Each prints ONE pointer line and writes nothing (not even the
+# version stamp), so an agent or a habit that still types one is redirected, never broken.
+REMOVED_VERBS = {
+    "review":      "`review` is removed (spec 19): there is no review gate — a node's state "
+                   "(open, leaning, settled, parked) is derived from its findings; read it "
+                   "with `crux status`.",
+    "answer":      "`answer` is removed (spec 19): a question is answered by a finding on it — "
+                   "`crux finding <qid> --answer \"…\" -c <confidence>`.",
+    "pursue":      "`pursue` is removed (spec 19): a question stays open until a finding "
+                   "settles it — add a hypothesis with `crux hypothesize`, or unpark it with "
+                   "`crux park <id> --undo`.",
+    "approve":     "`approve` is removed (spec 19): nothing waits for sign-off — findings are "
+                   "recorded directly with `crux finding`.",
+    "synthesize":  "`synthesize` is removed (spec 19): record what a question settled as a "
+                   "finding on it — `crux finding <qid> --answer \"…\" -c <confidence>`.",
+    "close":       "`close` is removed (spec 19): a hypothesis is concluded by a finding — "
+                   "`crux finding <hid> -d <direction> -c <confidence> -w \"why\"`.",
+    "approve-null": "`approve-null` is removed (spec 19): the null is no longer approved — "
+                    "write it under `## Null`, and record on the finding whether it was ruled "
+                    "out (`crux finding … --null ruled-out|not-ruled-out`).",
+    "task review": "`task review` is removed (spec 19): experiment tasks wait for no one — "
+                   "attach the task's output as evidence on a finding "
+                   "(`crux finding <hid> -e tasks/<file>`).",
+    "task accept": "`task accept` is removed (spec 19): experiment tasks wait for no one — "
+                   "attach the task's output as evidence on a finding "
+                   "(`crux finding <hid> -e tasks/<file>`).",
+}
+# every spelling that reaches a removed verb, aliases included
+REMOVED_ALIASES = {
+    "review": "review", "gate": "review", "decide": "review",
+    "answer": "answer", "resolve": "answer", "settle": "answer",
+    "pursue": "pursue", "branch": "pursue", "extend": "pursue", "reopen": "pursue",
+    "approve": "approve", "sign-off": "approve", "signoff": "approve",
+    "synthesize": "synthesize", "weave": "synthesize", "rollup": "synthesize",
+    "close": "close", "verdict": "close",
+    "approve-null": "approve-null", "approve_null": "approve-null",
+}
+REMOVED_TASK_ALIASES = {"review": "task review", "accept": "task accept",
+                        "sign-off": "task accept", "signoff": "task accept"}
 
 # `validation_report`'s third tier. `info` is neither a problem nor a warning: it never
 # affects `ok`, so a legacy vault is never put into red by a boundary it could not have
@@ -413,7 +507,7 @@ PROSE_SECTIONS = {
 # must ignore entirely (spec 11 §9) — a vault lint must not slow down or warn on derived
 # documents nobody asked about.
 CHECKS     = ("tree", "wiki", "economy", "fanout", "rd", "tasks", "glossary")
-OPT_CHECKS = ("decks", "gate")
+OPT_CHECKS = ("decks",)
 PRESENTATIONS_DIR = "presentations"     # derived decks live here; never evidence, never
                                         # linked from `## Artifacts`
 STORIES_DIR = "stories"                 # derived stories (storify): the same standing as
@@ -550,12 +644,18 @@ def natkey(nid):
     return (m.group(1), int(m.group(2)) if m.group(2) else 0)
 
 def find_vault(start=None):
+    """The vault at `start` or an ancestor. Failing that, the vault named by `CRUX_VAULT`
+    (set by the background capture run, whose cwd is the repo while the vault may sit one
+    level down in `./cruxvault`)."""
     d = os.path.abspath(start or os.getcwd())
     while True:
         if os.path.exists(os.path.join(d, VAULT_MARKER)):
             return d
         parent = os.path.dirname(d)
         if parent == d:
+            env = os.environ.get("CRUX_VAULT")
+            if env and os.path.exists(os.path.join(env, VAULT_MARKER)):
+                return os.path.abspath(env)
             raise CruxError("not inside a crux vault (no .crux.yaml found). Run `crux init` first.")
         d = parent
 
@@ -569,8 +669,13 @@ def check_and_stamp_version(root):
     stamped = None if stamped is None else str(stamped)
     if stamped == ENGINE_VERSION:
         return None
+    import migrate4                    # spec 19: a 3.x vault becomes 4.0 here, with a backup
+    migrated = migrate4.migrate_on_load(root, stamped)
+    cfg = yaml_load(read(cfg_path))    # re-read: the migration advanced counter_f
     cfg["engine_version"] = ENGINE_VERSION
     write_if_changed(cfg_path, yaml_dump(cfg) + "\n")
+    if migrated:
+        return migrated
     if stamped is None:
         return None  # pre-versioned vault; silently adopt the stamp
     # Third person, like every other line the CLI prints (spec 16): this is written ABOUT
@@ -611,8 +716,6 @@ type: question
 schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
-status: open
-stale: false
 created: <<now>>
 updated: <<now>>
 ---
@@ -620,6 +723,14 @@ updated: <<now>>
 # <<id>> — <<title>>
 
 Parent:: [[<<parent_basename>>]]
+
+## ELI5
+
+_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_
+
+## TL;DR
+
+_(one paragraph: what this asks, and what would settle it)_
 
 ## Question
 
@@ -631,10 +742,6 @@ Parent:: [[<<parent_basename>>]]
      scope — fixed BEFORE any run. `crux deck` surfaces this as the pre-registration note. -->
 _(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
 
-## Answer so far
-
-_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
-
 <<ledger_start>>
 _(no children yet)_
 <<ledger_end>>
@@ -645,12 +752,9 @@ type: idea
 schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
-status: idea
 rule:
 measurement:
 replicates:
-verdict:
-metric:
 created: <<now>>
 updated: <<now>>
 ---
@@ -659,9 +763,24 @@ updated: <<now>>
 
 Parent:: [[<<parent_basename>>]]
 
+## ELI5
+
+_(one sentence a science undergraduate follows — the correct terms, any beyond that glossed in 10 words or fewer)_
+
+## TL;DR
+
+_(one paragraph: what this claims, and what would settle it)_
+
+## Expect
+
+<<expect>>
+
 ## Null
 
-_(one line: the cheapest way this result could be trivially true — name a family from capacity, chance, leakage, selection, normalization, instrumentation)_
+<!-- optional (spec 19): the null hypothesis — the most parsimonious alternative explanation
+     under which this result appears although the claim is false. One line, naming a family.
+     A finding records whether it was ruled out; a null NOT ruled out caps confidence at weak. -->
+_(optional: one line naming the null hypothesis — a family from capacity, chance, leakage, selection, normalization, instrumentation)_
 
 ## Problem Statement
 
@@ -673,8 +792,8 @@ _(one line: the cheapest way this result could be trivially true — name a fami
 
 ## Verifiables
 
-<!-- on close, tick each box met/unmet/could-not-evaluate; the verdict is derived from them. -->
-- [ ] <<verifiable>>
+<!-- optional (spec 19): checks that inform the closure judgment; they do not compute it. -->
+<<verifiables>>
 
 ## Planned Intervention
 
@@ -689,29 +808,20 @@ _(none yet)_
 <!-- what the run produced. Keep files under results/<<id>>/ and link at least the report:
      - [Report](results/<<id>>/report.md)   - results/<<id>>/curve.png -->
 _(none yet)_
-
-## Findings
-
-_(written by the PI/agent when the case is closed)_
 """,
-"synthesis": """---
+"finding": """---
 id: <<id>>
-type: synthesis
+type: finding
+schema: <<schema>>
 title: <<title>>
-approved:
+parent: <<parent_id>>
 created: <<now>>
 updated: <<now>>
 ---
 
-# Synthesis — <<title>>
+# <<id>> — <<title>>
 
-Related:: <<related>>
-
-## Headline conclusions
-
-## Cross-run table
-
-## Implications for next batch
+Parent:: [[<<parent_basename>>]]
 """,
 "wiki": """---
 type: wiki
@@ -848,13 +958,18 @@ class Vault:
             if "id" not in fm:
                 continue
             self.nodes[fm["id"]] = Node(path=os.path.join(root, fn), fn=fn, fm=fm, body=body)
+        # Findings are NOT tree children (spec 19, ruling Q1): they hang off their parent in
+        # `findings`, so every walk over `children` — the views, the ledger, the cockpit tree
+        # — sees questions and hypotheses only, exactly as before.
         self.children = {nid: [] for nid in self.nodes}
+        self.findings = {nid: [] for nid in self.nodes}
         for nid, n in self.nodes.items():
             p = n.parent
             if p and p in self.children:
-                self.children[p].append(nid)
+                (self.findings if n.type == "finding" else self.children)[p].append(nid)
         for k in self.children:
             self.children[k].sort(key=natkey)
+            self.findings[k].sort(key=lambda f: _finding_order(self.nodes[f]))
 
     def get(self, nid):
         if nid not in self.nodes:
@@ -864,10 +979,91 @@ class Vault:
     def root_node(self):
         return self.get(self.cfg["root_id"])
 
-def is_terminal(node):
-    if node.type == "idea":     return node.status == TERMINAL_IDEA
-    if node.type == "question": return node.status == TERMINAL_QUESTION
-    return True
+# ----------------------------------------------------------------------------- findings / derived state (spec 19)
+def _finding_order(f):
+    """Oldest first: by `created`, then by id. The same key breaks ties in the roll-up, so
+    "newest" means one thing everywhere."""
+    return (str(f["fm"].get("created") or ""), natkey(f.id))
+
+def node_findings(v, nid):
+    """The findings attached to `nid`, oldest first."""
+    v.get(nid)
+    return [v.nodes[f] for f in v.findings.get(nid, [])]
+
+def finding_evidence(f):
+    """A finding's evidence links, in the order they were written."""
+    return [x.strip() for x in str(f["fm"].get("evidence") or "").split(",") if x.strip()]
+
+def confidence_rank(c):
+    """weak 0 · moderate 1 · strong 2; -1 for anything else, which never wins."""
+    return CONFIDENCES.index(c) if c in CONFIDENCES else -1
+
+def effective_confidence(f):
+    """The confidence a finding counts with: the stored one, re-capped at weak when a SUPPORTS
+    finding's null was not ruled out (PI ruling: the null is the rival explanation of a positive
+    result, so it never caps against, mixed or no-answer-yet). The cap is enforced on write; applying it again here means a hand edit
+    past it can be FLAGGED by validate but can never raise a node's confidence."""
+    c = f["fm"].get("confidence")
+    if c not in CONFIDENCES:
+        return None
+    if f["fm"].get("null") == NULL_NOT_RULED_OUT and f["fm"].get("direction") == "supports" \
+            and confidence_rank(c) > confidence_rank(NULL_CAP):
+        return NULL_CAP
+    return c
+
+def _counts(f, on_question):
+    """Does this finding set its parent's state? A `no answer yet` finding is recorded but
+    never does (ruling Q3), and one with no readable confidence cannot."""
+    if effective_confidence(f) is None:
+        return False
+    return on_question or f["fm"].get("direction") != NO_ANSWER
+
+def _strongest(fs):
+    """The strongest finding; among equals the newest (created, then id)."""
+    return max(fs, key=lambda f: (confidence_rank(effective_confidence(f)), _finding_order(f)),
+               default=None)
+
+def derive_state(v, nid):
+    """{state, confidence, finding} for a question or hypothesis — a pure function of the
+    findings on disk. The engine never stores the result and never judges: the agent writes
+    the finding, the engine reads it.
+
+      hypothesis  its strongest counting finding decides: strong → settled, else leaning.
+      question    its own findings decide (strongest wins). With none, the strongest counting
+                  finding among its DIRECT child hypotheses counts, capped at moderate.
+                  Sub-questions never count.
+      parked      wins over all of the above as the state; the confidence is still reported.
+    """
+    n = v.get(nid)
+    if n.type not in ("question", "idea"):
+        raise CruxError(f"'{nid}' is a '{n.type}': only questions and hypotheses have a state")
+    own = [f for f in node_findings(v, nid) if _counts(f, n.type == "question")]
+    best, cap = _strongest(own), None
+    if best is None and n.type == "question":
+        kids = [f for c in v.children.get(nid, []) if v.nodes[c].type == "idea"
+                for f in node_findings(v, c) if _counts(f, False)]
+        best, cap = _strongest(kids), CHILD_CAP
+    conf = effective_confidence(best) if best is not None else None
+    if conf is not None and cap is not None and confidence_rank(conf) > confidence_rank(cap):
+        conf = cap
+    if n["fm"].get(PARKED_FIELD) is True:
+        state = "parked"
+    elif conf is None:
+        state = "open"
+    else:
+        state = "settled" if conf == "strong" else "leaning"
+    return {"state": state, "confidence": conf, "finding": best.id if best is not None else None}
+
+def finding_json(f):
+    """One finding as plain JSON — the shape the cockpit and the CLI read."""
+    return {"id": f.id, "parent": f.parent, "direction": f["fm"].get("direction") or None,
+            "confidence": f["fm"].get("confidence") or None,
+            "effective_confidence": effective_confidence(f),
+            "why": f["fm"].get("why") or None, "answer": _section(f["body"], "Answer") or None,
+            "evidence": finding_evidence(f), "null": f["fm"].get("null") or None,
+            "vs_expect": f["fm"].get("vs_expect") or None,
+            "verifiables": f["fm"].get("verifiables") or None,
+            "created": str(f["fm"].get("created") or "") or None}
 
 def node_schema(node):
     """The node's schema generation; 0 means it predates evidence semantics. Total — a
@@ -1218,10 +1414,13 @@ def results_files(root, hid):
         out += [os.path.join(dirpath, fn) for fn in sorted(filenames) if not fn.startswith(".")]
     return out
 
-def artifact_problems(root, n):
+def artifact_problems(root, n, evidence=()):
     """Lint for one idea node: paths must stay in the vault and resolve, and a hypothesis
-    that has produced files must link a report among them."""
+    that has produced files must link a report among them. `evidence` is the links its
+    findings carry (spec 19): a report linked as a finding's evidence counts as linked."""
     problems, arts = [], parse_artifacts(n["body"])
+    arts = arts + [{"label": "", "path": e, "kind": artifact_kind(e)} for e in evidence
+                   if not artifact_escapes(e) and os.path.isfile(os.path.join(root, e))]
     for a in arts:
         if artifact_escapes(a["path"]):
             problems.append((n.id, f"hypothesis '{n.id}': artifact path must be inside the "
@@ -1245,56 +1444,45 @@ def artifact_warnings(root, nid):
 # ----------------------------------------------------------------------------- ledger / gate / refresh
 def ledger_counts(v, qid):
     """Pure roll-up of a question's direct children into JSON-able counts. Single source
-    of truth shared by `ledger_block` (the markdown view) and `snapshot` (the GUI JSON)."""
+    of truth shared by `ledger_block` (the markdown view) and `snapshot` (the GUI JSON).
+    Counts DERIVED states (spec 19); a stored status is history and is not read."""
     kids = v.children[qid]
-    ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
-    subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
-    # Generated from VERDICTS, never a hand-picked list of names: hard-coding the four
-    # meant adding a fifth raised KeyError here and rendered nowhere in META.md.
-    vc = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
-    return dict({"children": len(kids),
-                 "ideas_total": len(ideas),
-                 "ideas_done": sum(1 for n in ideas if n.status == "done"),
-                 "subq_total": len(subqs),
-                 "subq_resolved": sum(1 for n in subqs if n.status == "resolved")}, **vc)
+    ideas = [k for k in kids if v.nodes[k].type == "idea"]
+    subqs = [k for k in kids if v.nodes[k].type == "question"]
+    states = [derive_state(v, k)["state"] for k in ideas + subqs]
+    return dict({"children": len(kids), "ideas_total": len(ideas), "subq_total": len(subqs),
+                 "findings": len(v.findings.get(qid, []))},
+                **{s: states.count(s) for s in STATES})
+
+def _state_label(d):
+    return d["state"] + (f" · {d['confidence']}" if d["confidence"] and d["state"] != "open"
+                         else "")
 
 def ledger_block(v, qid):
     kids = v.children[qid]
-    if not kids:
+    own = node_findings(v, qid)
+    if not kids and not own:
         return "_(no children yet)_"
-    ideas = [v.nodes[k] for k in kids if v.nodes[k].type == "idea"]
-    subqs = [v.nodes[k] for k in kids if v.nodes[k].type == "question"]
     c = ledger_counts(v, qid)
-    summary = (f"**{c['children']} children** · ideas {c['ideas_done']}/{c['ideas_total']} done "
-               f"({', '.join(f'{x} {c[x]}' for x in VERDICTS)})")
-    if subqs:
-        summary += f" · sub-questions {c['subq_resolved']}/{c['subq_total']} resolved"
+    summary = (f"**{c['children']} children** · " + ", ".join(f"{s} {c[s]}" for s in STATES)
+               + (f" · {c['findings']} finding(s) on this question" if c["findings"] else ""))
     rows = []
-    for n in (ideas + subqs):
-        if n.type == "idea":
-            extra = []
-            if n["fm"].get("verdict"): extra.append(f"verdict **{n['fm']['verdict']}**")
-            if n["fm"].get("metric"):  extra.append(f"metric `{n['fm']['metric']}`")
-            tail = (" — " + ", ".join(extra)) if extra else ""
-            rows.append(f"- `{n.id}` [[{n.basename}|{n.title}]] — *{n.status}*{tail}")
-        else:
-            rows.append(f"- `{n.id}` _(Q)_ [[{n.basename}|{n.title}]] — *{n.status}*")
+    for k in kids:
+        n = v.nodes[k]
+        kind = "" if n.type == "idea" else "_(Q)_ "
+        rows.append(f"- `{n.id}` {kind}[[{n.basename}|{n.title}]] — *{_state_label(derive_state(v, k))}*")
+    for f in own:
+        rows.append(f"- `{f.id}` finding ({f['fm'].get('confidence') or '—'}) "
+                    f"[[{f.basename}|{f.title}]]")
     return summary + "\n\n" + "\n".join(rows)
 
 def refresh(root):
-    """Recompute all derived content from the nodes. Idempotent. Returns True if anything changed on disk."""
+    """Recompute all derived content from the nodes. Idempotent. Returns True if anything changed on disk.
+
+    Spec 19 removed the review gate: nothing here writes a question's status any more. A
+    state is derived on read (`derive_state`), so there is nothing to keep in sync."""
     v = Vault(root)
     changed = False
-    # review gate (two-directional): a non-resolved question is in `review` iff it has
-    # >=1 child and all direct children are terminal; otherwise `open`. Recomputing both
-    # directions each refresh corrects an intermediate trip — e.g. during a bulk seed
-    # materialize, a question can momentarily have only a terminal child before its later
-    # (non-terminal) children are added. `resolved` is human-set and never auto-changed.
-    for qid, n in v.nodes.items():
-        if n.type == "question" and n.status in ("open", "review"):
-            kids = v.children[qid]
-            terminal = bool(kids) and all(is_terminal(v.nodes[k]) for k in kids)
-            n["fm"]["status"] = "review" if terminal else "open"
     # evidence ledger into each question file (engine-owned block only)
     for qid, n in v.nodes.items():
         if n.type == "question":
@@ -1345,8 +1533,11 @@ def prose_words(body, node_type):
 def unrun_children(v, qid):
     """Hypotheses under `qid` that have never been staged, run or closed — the ones that are
     pure intent. A question stockpiling these is the fan-out failure mode."""
+    # spec 19: "unrun" is read from the record, not from a stored status — no finding, no
+    # run link and no lock means nothing has happened to it yet
     return [c for c in v.children.get(qid, [])
-            if v.nodes[c].type == "idea" and v.nodes[c].status == "idea"]
+            if v.nodes[c].type == "idea" and not v.findings.get(c)
+            and not _run_links(v.nodes[c]["body"]) and not v.nodes[c]["fm"].get(LOCK_FIELD)]
 
 def economy_warnings(v):
     """Nodes whose counted prose exceeds PROSE_CAP."""
@@ -1464,25 +1655,6 @@ def scenario_gap(n):
                 f"one, which is the whole failure the null exists to catch.")
     return None
 
-def null_gap(n):
-    """The `validate`/gate message for a hypothesis' null, or None. Gated on the stamp, so a
-    pre-15 hypothesis is never asked for one."""
-    if n.type != "idea" or not binds_evidence_semantics(n):
-        return None
-    p = null_problem(_null_text(n) or "", node_schema(n))
-    if p:
-        return f"hypothesis '{n.id}': {p}"
-    if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") != _null_hash(n):
-        return (f"hypothesis '{n.id}': the null was EDITED after approval, so the approval no "
-                f"longer stands. A different null is a different alternative "
-                f"explanation, and checks written against the old one discriminate against "
-                f"nothing. Re-approve with `crux approve-null {n.id}`.")
-    if not str(n["fm"].get(NULL_APPROVED) or "").strip():
-        return (f"hypothesis '{n.id}': the null is declared but not approved. The null IS the "
-                f"threshold restated, and the threshold is the PI's call — `crux approve-null {n.id}` "
-                f"once they have read it. Checks are written against an APPROVED null.")
-    return None
-
 def _fm_text(n, field):
     txt = str(n["fm"].get(field) or "").strip()
     return txt or None
@@ -1517,12 +1689,64 @@ def neutral_gap(n):
             f"opt-out in frontmatter: `{NEUTRAL_OPTOUT}: <why this claim has no meaningful "
             f"positive control>`.")
 
+def expect_text(n):
+    """The hypothesis' stated expectation, or '' when absent or still the placeholder."""
+    text = _section(n["body"], EXPECT_SECTION)
+    return text if _prose_tokens(text) else ""
+
+def _evidence_problem(root, link):
+    """Why an evidence link is unacceptable, or None. A link stays inside the vault and
+    resolves to a file or directory under results/ or tasks/ (ruling Q8)."""
+    if artifact_escapes(link):
+        return f"evidence '{link}' points outside the vault"
+    head = link.replace("\\", "/").split("/", 1)[0]
+    if head not in EVIDENCE_ROOTS:
+        return (f"evidence '{link}' is not under {' or '.join(r + '/' for r in EVIDENCE_ROOTS)}"
+                f" — keep run output under {RESULTS_DIR}/<id>/, or link the task that made it")
+    if not os.path.exists(os.path.join(root, link)):
+        return f"evidence '{link}' does not resolve"
+    return None
+
+def finding_problems(v, f):
+    """Every problem one finding carries, as messages. One function, so the verb refuses
+    exactly what `validate` would flag and a written finding can never be red on arrival."""
+    out = []
+    parent = v.nodes.get(f.parent)
+    if parent is None or parent.type not in ("question", "idea"):
+        out.append(f"finding '{f.id}': its parent must be a question or a hypothesis, got "
+                   + (f"a '{parent.type}'" if parent else f"'{f.parent}', which does not exist"))
+    d, c, nul = (f["fm"].get(k) for k in ("direction", "confidence", "null"))
+    if c not in CONFIDENCES:
+        out.append(f"finding '{f.id}': confidence '{c}' is not one of {', '.join(CONFIDENCES)}")
+    if parent is not None and parent.type == "question" and d not in (None, ""):
+        out.append(f"finding '{f.id}': a finding on a question carries no direction (got "
+                   f"'{d}') — it carries answer text, a confidence and evidence")
+    if parent is not None and parent.type == "idea" and d not in DIRECTIONS:
+        out.append(f"finding '{f.id}': a finding on a hypothesis needs a direction, one of "
+                   f"{', '.join(DIRECTIONS)} (got '{d}')")
+    if nul not in (None, "") and nul not in NULL_STATES:
+        out.append(f"finding '{f.id}': null '{nul}' is not one of {', '.join(NULL_STATES)}")
+    if nul == NULL_NOT_RULED_OUT and d == "supports" and c in CONFIDENCES and \
+            confidence_rank(c) > confidence_rank(NULL_CAP):
+        out.append(f"finding '{f.id}': the null was not ruled out, so confidence is capped at "
+                   f"{NULL_CAP} (stored '{c}') — like a non-significant p-value")
+    if not str(f["fm"].get("why") or "").strip() and not _section(f["body"], "Answer"):
+        out.append(f"finding '{f.id}': says nothing — a hypothesis finding needs a why, a "
+                   f"question finding its answer text")
+    if f["fm"].get(PARKED_FIELD) not in (None, ""):
+        out.append(f"finding '{f.id}': only a question or a hypothesis can be parked")
+    for link in finding_evidence(f):
+        p = _evidence_problem(v.root, link)
+        if p:
+            out.append(f"finding '{f.id}': {p}")
+    return out
+
 def validate(v):
     problems = []
     req = {"project": ["id","type","title","status"],
-           "question":["id","type","title","status","parent"],
-           "idea":    ["id","type","title","status","parent"],
-           "synthesis":["id","type","title"]}
+           "question":["id","type","title","parent"],
+           "idea":    ["id","type","title","parent"],
+           "finding": ["id","type","parent","confidence"]}
     for nid, n in v.nodes.items():
         t = n.type
         if t == "task":
@@ -1532,17 +1756,21 @@ def validate(v):
             problems.append((nid, f"task '{nid}': a task must live under {TASK_DIR}/ "
                                   f"(found at the vault root); move the file, or create it "
                                   f"with `crux task add`")); continue
+        if t in LEGACY_TYPES:
+            continue                        # reported as info until the 4.0 migration runs
         if t not in TYPES:
             problems.append((nid, f"unknown type '{t}'")); continue
         for k in req[t]:
             if n["fm"].get(k) in (None, ""):
                 problems.append((nid, f"missing required field '{k}'"))
-        if t == "question" and n.status not in QUESTION_STATUS:
-            problems.append((nid, f"bad question status '{n.status}'"))
-        if t == "idea" and n.status not in IDEA_STATUS:
-            problems.append((nid, f"bad idea status '{n.status}'"))
-        if t == "idea" and n["fm"].get("verdict") not in (None, "", *VERDICTS):
-            problems.append((nid, f"bad verdict '{n['fm'].get('verdict')}'"))
+        if t == "finding":
+            problems += [(nid, m) for m in finding_problems(v, n)]
+            continue
+        if n["fm"].get(PARKED_FIELD) not in (None, "", True, False):
+            problems.append((nid, f"'{nid}': parked is true or absent, got "
+                                  f"'{n['fm'].get(PARKED_FIELD)}'"))
+        if t == "project" and n["fm"].get(PARKED_FIELD) not in (None, ""):
+            problems.append((nid, "only a question or a hypothesis can be parked"))
         # parent integrity
         if t in ("question", "idea"):
             p = n.parent
@@ -1554,32 +1782,12 @@ def validate(v):
                     problems.append((nid, f"idea parent must be a question, got '{pt}'"))
                 if t == "question" and pt not in ("project", "question"):
                     problems.append((nid, f"question parent must be project/question, got '{pt}'"))
-        # running/done ideas need verifiables
-        if t == "idea" and n.status in ("running", "done"):
-            if sum(count_verifiables(n["body"])) == 0:
-                problems.append((nid, f"idea is '{n.status}' but has no verifiables"))
-        if t == "idea" and node_schema(n) >= 2 and n.status not in ("running", "done"):
-            g = scenario_gap(n)
-            if g and "SAME failure scenario" in g:
-                problems.append((nid, g))     # redundancy is wrong on sight, not at run time
-        # a malformed null is wrong the moment it is written, not when the run starts —
-        # otherwise a draft accumulates nulls nobody can act on
-        if t == "idea" and binds_evidence_semantics(n):
-            written = _null_text(n)
-            if written:
-                p = null_problem(written, node_schema(n))
-                if p:
-                    problems.append((nid, f"hypothesis '{nid}': {p}"))
-        # a declared rule crux will not honor is wrong the moment it is written, not the
-        # moment the run starts — `ordered` in particular is reserved, and a vault must never
-        # be able to carry one
-        if t == "idea" and binds_evidence_semantics(n):
-            declared = str(n["fm"].get(RULE_FIELD) or "").strip()
-            if declared and declared not in COMBINATION_RULES:
-                why = ("is reserved, not implemented — see spec 15"
-                       if declared in RESERVED_RULES else "is not a combination rule")
-                problems.append((nid, f"hypothesis '{nid}': rule '{declared}' {why}. Use one "
-                                      f"of {', '.join(COMBINATION_RULES)}."))
+        # spec 19: an expectation is stated before any evidence. Required on a hypothesis
+        # created by a 4.0 engine; one written before it is reported as info, never red.
+        if t == "idea" and node_schema(n) >= SCHEMA_GENERATION and not expect_text(n):
+            problems.append((nid, f"hypothesis '{nid}': no expectation. State under "
+                                  f"`## {EXPECT_SECTION}` the expected result, before any "
+                                  f"evidence (`crux hypothesize … --expect \"…\"`)."))
         # evidence semantics: a kind tag crux does not recognize is a typo, not a kind. It
         # is left on the line rather than swallowed, and raised here.
         if t == "idea" and binds_evidence_semantics(n):
@@ -1589,17 +1797,13 @@ def validate(v):
                     problems.append((nid, f"hypothesis '{nid}': unknown verifiable kind "
                                           f"'[{bad}]' — use "
                                           f"{' or '.join('[%s]' % k for k in VERIFIABLE_KINDS)}"))
-        # ...and once a run has actually started, the control requirement bites
-        if t == "idea" and n.status in ("running", "done"):
-            for gap in (neutral_gap(n), rule_gap(n), null_gap(n), scenario_gap(n)):
-                if gap:
-                    problems.append((nid, gap))
         # lineage (spec 05). Exactly one problem per node, and only when the field is
         # written: its ABSENCE is the norm and must read as it always did.
         if t == "idea" and node_builds_on(n):
             g = builds_on_problem(v, n)
             if g:
                 problems.append((nid, g))
+        # the lock stays a flag the closure judgment reads (ruling Q7)
         if t == "idea" and lock_drift(n):
             problems.append((nid, f"hypothesis '{nid}': DRIFT — the verifiables, their kinds "
                                   f"or the combination rule changed after the commitment was "
@@ -1609,7 +1813,8 @@ def validate(v):
         # evidence artifacts: paths resolve, stay in the vault, and a hypothesis that
         # produced files links a report among them
         if t == "idea":
-            problems += artifact_problems(v.root, n)
+            problems += artifact_problems(v.root, n, [e for f in node_findings(v, nid)
+                                                      for e in finding_evidence(f)])
         # ledger markers present in questions
         if t == "question" and (LEDGER_START not in n["body"] or LEDGER_END not in n["body"]):
             problems.append((nid, "missing ledger markers"))
@@ -3300,105 +3505,31 @@ def cmd_task_drop(root, tid):
     refresh(root)
     return "dropped"
 
-# --- the gating split (2.3) ---------------------------------------------------------------
-# The original rule was "a task may never create direction". It was doing double duty and it
-# breaks the first time someone observes that a RUN is a task. Replaced by:
-#
-#     Work never creates direction. Work produces outputs — and an output that is evidence
-#     about a hypothesis enters the gated tier.
-#
-# The line moves from WHICH LAYER to WHICH OUTPUT, and it becomes computable:
-#   - a task with no hypothesis_refs is act-and-report. Ticking "fetched the antibody lot"
-#     sets no direction, spends no compute, records no scientific result.
-#   - a task WITH them concluded something about a claim, so the PI accepts it — exactly as
-#     `answer` and `approve` are accepted today.
-#
-# What accepting does, and what it deliberately does NOT do: it records the PI's signature on
-# the task and marks the parent question of each refed hypothesis `stale` — the existing
-# "new evidence landed, your interpretation may be out of date" signal that `cmd_close`
-# already sets and `cmd_answer` already clears. It writes no verdict, no status, no tick, and
-# touches no roll-up. Feeding the derivation was considered and DECLINED: spec 15 rules that
-# only `cmd_close` writes a verdict, and a task feeding it would let an agent set a verdict
-# the PI never ticked. Work informs; it does not decide.
+# --- the experiment gate, removed (spec 19) ------------------------------------------------
+# 2.3 made an experiment task wait for the PI's `task accept`. Spec 19 removes that gate: an
+# experiment's output is attached as EVIDENCE to a Finding, silently, and the Finding is what
+# moves a node's state. `accepted:` on a task written before 4.0 stays as history and is read
+# by nothing that decides anything.
 TASK_ACCEPTED = "accepted"
 
 def task_pending_gate(t):
-    """Is this task waiting for the PI? An experiment that has completed and not been
-    accepted. A chore is never here, however large; an experiment always is, however small."""
-    return (task_is_experiment(t) and t["status"] == "done"
-            and not t["fm"].get(TASK_ACCEPTED))
-
-def cmd_task_review(root):
-    """(id, title, hypothesis_refs, drifted) for every experiment awaiting the PI's
-    acceptance.
-
-    A SEPARATE queue from `cmd_review`, deliberately. That function returns 15's
-    `(id, title, drift)` three-tuple and is rendered in three places including
-    `snapshot()["queue"]`; reshaping it would be a contract change on a surface the cockpit
-    already draws. And the two decisions are not the same decision: "is this question
-    settled" is not "do you accept what this run concluded".
-
-    `drifted` lists the refed hypotheses whose commitment was edited after the run. Surfaced
-    HERE because this is the exact moment the PI is deciding — and it BLOCKS NOTHING."""
-    v = Vault(root)
-    out = []
-    for t in scan_tasks(root):
-        if not task_pending_gate(t):
-            continue
-        drifted = [hid for hid, _ in t["hypothesis_refs"]
-                   if hid in v.nodes and lock_drift(v.nodes[hid])]
-        out.append((t["id"], t["title"], t["hypothesis_refs"], drifted))
-    return out
-
-def cmd_task_accept(root, tid):
-    """The PI's signature on what an experiment concluded. Returns the timestamp.
-
-    Idempotent: the first acceptance's timestamp is the record, so re-accepting never
-    rewrites history — the same contract `cmd_approve` has for a synthesis."""
-    t = _get_task(root, tid)
-    if not task_is_experiment(t):
-        raise CruxError(f"'{tid}' is not an experiment — it concluded nothing about a "
-                        f"hypothesis, so there is nothing to accept. Ordinary tasks are "
-                        f"act-and-report: `crux task done {tid}` is the whole of it.")
-    existing = t["fm"].get(TASK_ACCEPTED)
-    if existing:
-        return str(existing)
-    stamp = now()
-    t["fm"][TASK_ACCEPTED] = stamp
-    _write_task(t)
-    # New evidence has landed against these hypotheses, so their questions' standing
-    # interpretations may be out of date. This is the ONLY thing acceptance writes outside
-    # the task, it is a pre-existing flag with pre-existing meaning, and it moves no verdict.
-    v = Vault(root)
-    for hid, _ in t["hypothesis_refs"]:
-        n = v.nodes.get(hid)
-        parent = v.nodes.get(n.parent) if n else None
-        if parent and parent.type == "question" and not parent["fm"].get("stale"):
-            parent["fm"]["stale"] = True
-            write_if_changed(parent["path"], render_doc(parent["fm"], parent["body"]))
-    refresh(root)
-    return stamp
+    """Always False from 4.0: no task waits for the PI. Kept as a function so every reader
+    of `pending_gate` gets a defined answer rather than a missing key."""
+    return False
 
 def task_gate_info(root, tasks=None):
-    """`info` lines for the gate. Both are information, never problems: an unaccepted dropped
-    experiment is a real record, and a nested experiment is legitimate."""
+    """`info` lines about experiment tasks. Information, never a problem: a nested experiment
+    is legitimate."""
     out = []
     tasks = tasks if tasks is not None else scan_tasks(root)
     by = {t["id"]: t for t in tasks}
-    unacc = [t for t in tasks if task_is_experiment(t) and t["status"] == "dropped"
-             and not t["fm"].get(TASK_ACCEPTED)]
-    if unacc:
-        out.append(("task:unaccepted",
-                    f"{len(unacc)} dropped experiment{'' if len(unacc) == 1 else 's'} "
-                    f"({', '.join(t['id'] for t in unacc)}) recorded a conclusion that was "
-                    f"never accepted — it is history, not evidence.", len(unacc)))
     nested = [t for t in tasks if task_is_experiment(t) and t["parent"] in by
               and task_is_experiment(by[t["parent"]])]
     if nested:
         out.append(("task:nested-experiment",
                     f"{len(nested)} experiment{'' if len(nested) == 1 else 's'} sit under "
-                    f"another experiment ({', '.join(t['id'] for t in nested)}) — each fires "
-                    f"its own review gate.", len(nested)))
+                    f"another experiment ({', '.join(t['id'] for t in nested)}) — each is its "
+                    f"own evidence.", len(nested)))
     return out
 
 def cmd_task_categories(root, add=None):
@@ -3549,7 +3680,7 @@ def _task_snapshot(root, v=None):
     if not task_active(root):
         return {"active": False, "categories": list(DEFAULT_TASK_CATEGORIES),
                 "reserved_category": TASK_RESERVED_CATEGORY, "conclusions": list(CONCLUSIONS),
-                "items": [], "frontier": [], "queue": []}
+                "items": [], "frontier": []}
     v = v or Vault(root)
     tasks = scan_tasks(root)
     by = {t["id"]: t for t in tasks}
@@ -3565,11 +3696,7 @@ def _task_snapshot(root, v=None):
             "reserved_category": TASK_RESERVED_CATEGORY,
             "conclusions": list(CONCLUSIONS),
             "items": items,
-            "frontier": [t["id"] for t in task_frontier(root, tasks)],
-            "queue": [{"id": i, "title": ti,
-                       "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
-                       "drifted": d}
-                      for i, ti, hr, d in cmd_task_review(root)]}
+            "frontier": [t["id"] for t in task_frontier(root, tasks)]}
 
 def task_json(root, tid, v=None):
     """One task's read-only JSON — the shape `snapshot` will publish under `tasks.items`
@@ -3736,7 +3863,7 @@ def cmd_init(title, dirpath=".", goal=""):
         raise CruxError("a crux vault already exists here")
     slug = slugify(title)
     cfg = {"title": title, "slug": slug, "root_id": "root", "engine_version": ENGINE_VERSION,
-           "counter_q": 0, "counter_h": 0, "counter_s": 0, "counter_t": 0,
+           "counter_q": 0, "counter_h": 0, "counter_f": 0, "counter_t": 0,
            # the declared task-category list: seeded here so a vault is usable from minute
            # one, and grown only by `crux task categories --add` — an explicit act with a
            # diff, which is what makes "declared" mean anything. Without a declared list you
@@ -3830,7 +3957,7 @@ def parse_seed(text):
             if m:
                 tested, val = True, m.group(1).strip()
             node = {"type": "hypothesis", "title": val, "tested": tested,
-                    "problem": "", "finding": "", "verifiables": []}
+                    "problem": "", "finding": "", "expect": "", "verifiables": []}
             parent["children"].append(node)
         elif key in ("v", "vn"):
             if parent is None or parent["type"] != "hypothesis":
@@ -3840,13 +3967,13 @@ def parse_seed(text):
                 vf["kind"] = NEUTRAL_KIND
             parent["verifiables"].append(vf)
             node = None
-        elif key in ("finding", "problem"):
+        elif key in ("finding", "problem", "expect"):
             if parent is None or parent["type"] != "hypothesis":
                 raise CruxError(f"seed: `{key}` must sit under an H (got {val!r})")
             parent[key] = val
             node = None
         else:
-            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/vn/finding/problem)")
+            raise CruxError(f"seed: unknown node type '{key}:' (use Project/Q/H/v/vn/expect/finding/problem)")
         if node is not None:
             stack.append((indent, node))
     if project is None:
@@ -3864,6 +3991,9 @@ def _render_verifiables(body, verifiables):
     return re.sub(r"(## Verifiables\n\n)(?:<!--.*?-->\n)?(?:- \[.\].*\n?)+",
                   lambda m: m.group(1) + block + "\n", body, count=1)
 
+# `- finding: [supports, moderate] why…` — the 4.0 seed shape of a reconstructed result
+_SEED_FINDING_RE = re.compile(r"^\[\s*([a-z][a-z _-]*?)\s*,\s*([a-z]+)\s*\]\s*(.+)$", re.I)
+
 def _materialize(root, project):
     cmd_init(project["title"], root, goal=project["goal"] or "")
     def walk_question(node, parent_id):
@@ -3876,10 +4006,14 @@ def _materialize(root, project):
     def _add_hypothesis(root, h, qid):
         if h["tested"] and not h["verifiables"]:
             raise CruxError(f"seed: [tested] hypothesis {h['title']!r} needs at least one verifiable")
+        # A seed predating spec 19 carries no `expect:` line. It still materializes — the
+        # node then lacks its expectation, and `validate` says so — rather than the engine
+        # inventing one.
         hid, _, _ = cmd_hypothesize(
             root, h["title"], parent=qid, problem=h["problem"],
             verifiables=[vf["text"] for vf in h["verifiables"] if vf["kind"] != NEUTRAL_KIND],
-            neutral=[vf["text"] for vf in h["verifiables"] if vf["kind"] == NEUTRAL_KIND])
+            neutral=[vf["text"] for vf in h["verifiables"] if vf["kind"] == NEUTRAL_KIND],
+            expect=h.get("expect") or None, require_expect=False)
         if not h["tested"]:
             return
         n = Vault(root).get(hid)
@@ -3893,7 +4027,11 @@ def _materialize(root, project):
         n["fm"][RECONSTRUCTED] = True
         n["body"] = _render_verifiables(n["body"], h["verifiables"])
         write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
-        cmd_close(root, hid, findings=h["finding"] or None)
+        m = _SEED_FINDING_RE.match(h["finding"] or "")
+        if m:       # the 4.0 shape: the seed GIVES the direction and the confidence
+            cmd_finding(root, hid, m.group(2), why=m.group(3), direction=m.group(1))
+        else:
+            _seal_reconstructed(root, hid, h["finding"] or None)
     for child in project["children"]:
         if child["type"] != "question":
             raise CruxError("seed: the Project's direct children must be questions (Q)")
@@ -3922,17 +4060,170 @@ def cmd_init_from(seed_path, dirpath="."):
 def _save_cfg(v):
     write_if_changed(os.path.join(v.root, VAULT_MARKER), yaml_dump(v.cfg) + "\n")
 
+def _pid_alive(pid):
+    """True / False when this host can tell whether `pid` runs, None when it cannot. POSIX
+    probes with signal 0. On Windows `os.kill` would TERMINATE the process, so it asks
+    OpenProcess + GetExitCodeProcess through ctypes instead, and answers None on any doubt."""
+    if pid <= 0:
+        return None
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True                 # it exists; it belongs to another user
+        except (OSError, OverflowError, ValueError):
+            return None                 # incl. a pid too large for the platform
+        return True
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False if k32.GetLastError() == 87 else None   # 87: no such process
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return (code.value == 259) if ok else None              # 259: STILL_ACTIVE
+    except Exception:
+        return None
+
+
+class id_lock:
+    """Serialize id allocation across processes: an O_EXCL lock file at the vault root.
+
+    Stdlib only, and it works the same on POSIX and Windows. The file records the holder's
+    `<pid> <host>`. A lock is broken only when its holder is shown dead: on this host, an old
+    lock whose pid no longer runs. Age alone never breaks a live holder's lock, because the
+    4.0 migration holds it while it copies a whole-vault backup, and a second process that
+    broke it would roll back a migration still running. A holder that cannot be probed (on
+    another host, or liveness unknown) is broken only after LOCK_FOREIGN_STALE; a lock with
+    no readable pid (written by a crashed or older writer) keeps the old LOCK_TIMEOUT rule.
+
+    Breaking is an atomic rename to a per-waiter tombstone, so of two waiters only one wins.
+    The winner re-reads the tombstone: if it is not the stamp it judged dead, another process
+    had already broken and re-taken the lock, so the winner links it back and retries. A
+    residual window stays: between that rename and the link back, a third process can take
+    the free path, and then two processes believe they hold the lock. It needs three
+    contenders racing a dead holder's lock within microseconds, and is accepted."""
+    _host = None
+
+    def __init__(self, root, timeout=LOCK_TIMEOUT):
+        self.path = os.path.join(root, LOCK_FILE)
+        self.timeout = timeout
+
+    @classmethod
+    def host(cls):
+        if cls._host is None:
+            import socket
+            cls._host = socket.gethostname() or "?"
+        return cls._host
+
+    def _stale_after(self):
+        """(seconds of age after which the current lock may be broken, or None for never;
+        the stamp text that judgement was made on)."""
+        try:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            return None, None           # gone already: the next O_EXCL attempt takes it
+        parts = text.split()
+        if not parts or not parts[0].isdigit():
+            return self.timeout, text   # no holder recorded: the pre-pid rule
+        if len(parts) > 1 and parts[1] != self.host():
+            return LOCK_FOREIGN_STALE, text
+        alive = _pid_alive(int(parts[0]))
+        if alive is None:
+            return LOCK_FOREIGN_STALE, text
+        return (None if alive else self.timeout), text
+
+    def _break(self, judged):
+        """Break the lock whose stamp was `judged` stale. Only one waiter's rename wins; a
+        winner that finds a different stamp in its tombstone put it back."""
+        tomb = f"{self.path}.{os.getpid()}.stale"
+        os.rename(self.path, tomb)      # OSError: another waiter won; the caller retries
+        try:
+            with open(tomb, encoding="utf-8", errors="replace") as f:
+                got = f.read()
+            if got != judged:           # a live holder's fresh lock: restore it
+                try:
+                    os.link(tomb, self.path)
+                except FileExistsError:
+                    pass
+        finally:
+            os.remove(tomb)
+
+    def __enter__(self):
+        import time
+        start = time.time()
+        stamp = f"{os.getpid()} {self.host()}\n".encode()
+        while True:
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, stamp)
+                os.close(fd)
+                return self
+            except PermissionError:
+                # Windows: a lock file just removed while another handle (a waiter's read,
+                # a virus scanner) is open on it stays "delete pending", and opening it is
+                # refused with access denied rather than exists. It is a held lock: wait.
+                if os.name != "nt":
+                    raise
+                if time.time() - start > self.timeout:
+                    raise CruxError(f"could not take the vault lock {self.path} within "
+                                    f"{self.timeout:.0f}s (access denied)")
+                time.sleep(0.005)
+            except FileExistsError:
+                try:
+                    age = time.time() - os.path.getmtime(self.path)
+                    after, judged = (self._stale_after() if age > self.timeout
+                                     else (None, None))
+                    if after is not None and age > after:
+                        self._break(judged)
+                        continue
+                except OSError:
+                    continue            # the holder released it between the two calls
+                if time.time() - start > self.timeout:
+                    raise CruxError(f"could not take the vault lock {self.path} within "
+                                    f"{self.timeout:.0f}s; another crux process holds it "
+                                    f"(the file names its pid and host; delete it only if "
+                                    f"that process is gone)")
+                time.sleep(0.005)
+
+    def __exit__(self, *exc):
+        import time
+        deadline = time.time() + 5.0
+        while True:
+            try:
+                os.remove(self.path)
+            except PermissionError:
+                # Windows refuses to delete a file another process holds open (a waiter
+                # reading the stamp); a lock left behind would wedge every waiter. Retry.
+                if os.name == "nt" and time.time() < deadline:
+                    time.sleep(0.005)
+                    continue
+            except OSError:
+                pass
+            return False
+
+_ID_KINDS = {"question": ("counter_q", "q"), "idea": ("counter_h", "h"),
+             "finding": ("counter_f", "f"), "task": ("counter_t", "t")}
+
 def _new_id(v, kind):
-    """Allocate the next id of `kind`. The counter is read with a DEFAULT rather than indexed:
-    every vault written before a counter existed simply lacks the key, and `v.cfg[key] += 1`
-    would raise KeyError on the first allocation after an upgrade — which is the most likely
-    first action a user takes. (`counter_t` on any pre-2.0 vault is exactly this case.)"""
-    key = {"question": "counter_q", "idea": "counter_h", "synthesis": "counter_s",
-           "task": "counter_t"}[kind]
-    v.cfg[key] = int(v.cfg.get(key) or 0) + 1
-    prefix = {"question": "q", "idea": "h", "synthesis": "s", "task": "t"}[kind]
-    _save_cfg(v)
-    return f"{prefix}{v.cfg[key]}"
+    """Allocate the next id of `kind`, under the vault lock (risk R2). The counter is re-read
+    from disk INSIDE the lock — `v.cfg` may be minutes old in a long-lived caller, and reading
+    it is exactly the race the lock exists to close.
+
+    The counter is read with a DEFAULT rather than indexed: every vault written before a
+    counter existed simply lacks the key (`counter_f` on any pre-4.0 vault is this case)."""
+    key, prefix = _ID_KINDS[kind]
+    with id_lock(v.root):
+        cfg = yaml_load(read(os.path.join(v.root, VAULT_MARKER)))
+        cfg[key] = int(cfg.get(key) or 0) + 1
+        write_if_changed(os.path.join(v.root, VAULT_MARKER), yaml_dump(cfg) + "\n")
+    v.cfg = cfg
+    return f"{prefix}{cfg[key]}"
 
 def cmd_ask(root, title, parent=None, body_text=""):
     v = Vault(root)
@@ -3950,19 +4241,32 @@ def cmd_ask(root, title, parent=None, body_text=""):
     refresh(root)
     return nid, fn
 
+_EXPECT_PLACEHOLDER = "_(the expected result, stated before any evidence)_"
+_VERIFIABLES_PLACEHOLDER = ("_(optional: falsifiable checks, added when they can be defined — "
+                            "they inform the closure judgment, they do not compute it)_")
+
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
                     rule=None, rule_m=None, null=None, fails_if=None, discriminates=None,
-                    measurement=None, replicates=None, builds_on=None, nid=None, claim=None):
+                    measurement=None, replicates=None, builds_on=None, nid=None, claim=None,
+                    expect=None, require_expect=True):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
     number out loud and lets the PI decide.
 
+    Spec 19: `expect` is REQUIRED — a hypothesis states the result it expects before any
+    evidence. A null and verifiables are optional, added when they can be defined.
+    `require_expect=False` is the seed path only: an old seed outline has no expectation to
+    give, and the engine must not invent one, so the node is written without and `validate`
+    says so.
+
     `nid` (05.2) files at an id that was ALREADY allocated — the one autopilot reserved under
-    the lock before any node existed — instead of allocating a second. The counter does not
-    move, because it already moved when the id was handed out. `claim` puts the whole claim in
-    `## Idea / Hypothesis` while the title stays the short form. Both absent is 05.1's
-    behaviour, byte for byte."""
+    the lock before any node existed — instead of allocating a second. `claim` puts the whole
+    claim in `## Idea / Hypothesis` while the title stays the short form."""
+    expect = (expect or "").strip()
+    if require_expect and not expect:
+        raise CruxError("a hypothesis states its expectation before any evidence: pass "
+                        "--expect \"<the expected result>\"")
     v = Vault(root)
     p = v.get(parent)
     if p.type != "question":
@@ -3990,42 +4294,10 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         if natkey(nid)[1] > allocated:
             raise CruxError(f"hypothesis id '{nid}' was never allocated "
                             f"(counter_h is {allocated})")
-    warning = fanout_pressure(v, parent)
-    if nid is None:
-        nid = _new_id(v, "idea")
-    fn = f"{nid}_{slugify(title)}.md"
-    text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
-                parent_basename=p.basename, problem=problem or "_(why this is worth testing)_",
-                verifiable=(verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"))
-    # claim-directed checks first, then the outcome-neutral controls — the controls gate the
-    # run, and a reader should meet the claim before the apparatus check for it
-    # scenarios are positional over (claim checks..., controls...) — the same order the
-    # lines are written in, which is the order the lock hashes them in
-    fi = list(fails_if or []); dz = list(discriminates or [])
-    def _scen(i):
-        s = fi[i] if i < len(fi) else None
-        if not s:
-            return ""
-        line = f"\n      fails-if:: {s}"
-        if i < len(dz) and dz[i]:
-            line += "\n      discriminates:: true"
-        return line
-    rest = [f"- [ ] {x}{_scen(i + 1)}" for i, x in enumerate((verifiables or [])[1:])]
-    noff = len(verifiables or [])
-    rest += [f"- [ ] [{NEUTRAL_KIND}] {x}{_scen(noff + i)}" for i, x in enumerate(neutral or [])]
-    if rest or fi:
-        lead = verifiables[0] if verifiables else "_(state a falsifiable, pre-registered check)_"
-        text = text.replace(f"- [ ] {lead}",
-                            f"- [ ] {lead}{_scen(0)}" + ("\n" + "\n".join(rest) if rest else ""))
-    if claim is not None:
-        text = text.replace(f"## Idea / Hypothesis\n\n{title}\n",
-                            f"## Idea / Hypothesis\n\n{claim.strip()}\n", 1)
     if null is not None:
-        p = null_problem(null, SCHEMA_GENERATION)
-        if p:
-            raise CruxError(f"null: {p}")
-        fm_t, body_t = parse_doc(text)
-        text = render_doc(fm_t, set_null(body_t, null))
+        np_ = null_problem(null, SCHEMA_GENERATION)
+        if np_:
+            raise CruxError(f"null: {np_}")
     if rule is not None:
         if rule in RESERVED_RULES:
             raise CruxError(f"combination rule '{rule}' is reserved, not implemented — see "
@@ -4033,25 +4305,48 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
         if rule not in COMBINATION_RULES:
             raise CruxError(f"unknown combination rule '{rule}' — use one of "
                             f"{', '.join(COMBINATION_RULES)}")
-        fm, body = parse_doc(text)
+    warning = fanout_pressure(v, parent)
+    if nid is None:
+        nid = _new_id(v, "idea")
+    fn = f"{nid}_{slugify(title)}.md"
+    # claim-directed checks first, then the outcome-neutral controls. Scenarios are
+    # positional over (claim checks..., controls...) — the same order the lines are written
+    # in, which is the order the lock hashes them in.
+    fi = list(fails_if or []); dz = list(discriminates or [])
+    def _scen(i):
+        sc = fi[i] if i < len(fi) else None
+        if not sc:
+            return ""
+        line = f"\n      fails-if:: {sc}"
+        if i < len(dz) and dz[i]:
+            line += "\n      discriminates:: true"
+        return line
+    checks = [(x, "") for x in (verifiables or [])] + \
+             [(x, f"[{NEUTRAL_KIND}] ") for x in (neutral or [])]
+    block = "\n".join(f"- [ ] {tag}{x}{_scen(i)}" for i, (x, tag) in enumerate(checks))
+    text = fill(load_template("idea"), id=nid, title=title, parent_id=parent,
+                parent_basename=p.basename, problem=problem or "_(why this is worth testing)_",
+                expect=expect or _EXPECT_PLACEHOLDER,
+                verifiables=block or _VERIFIABLES_PLACEHOLDER)
+    if claim is not None:
+        text = text.replace(f"## Idea / Hypothesis\n\n{title}\n",
+                            f"## Idea / Hypothesis\n\n{claim.strip()}\n", 1)
+    fm, body = parse_doc(text)
+    if null is not None:
+        body = set_null(body, null)
+    if rule is not None:
         fm[RULE_FIELD] = rule
         if rule_m is not None:
             fm[RULE_M_FIELD] = int(rule_m)
-        text = render_doc(fm, body)
     # the methodology slots (spec 13). Declared here or later by hand — either way they are
     # ordinary frontmatter, never part of the commitment the run locks.
-    if measurement is not None or replicates is not None:
-        fm, body = parse_doc(text)
-        if measurement is not None:
-            fm[MEASUREMENT_FIELD] = measurement
-        if replicates is not None:
-            fm[REPLICATES_FIELD] = replicates
-        text = render_doc(fm, body)
+    if measurement is not None:
+        fm[MEASUREMENT_FIELD] = measurement
+    if replicates is not None:
+        fm[REPLICATES_FIELD] = replicates
     if builds_on:
-        fm, body = parse_doc(text)
         fm[BUILDS_ON_FIELD] = builds_on
-        text = render_doc(fm, body)
-    write_if_changed(os.path.join(root, fn), text)
+    write_if_changed(os.path.join(root, fn), render_doc(fm, body))
     refresh(root)
     return nid, fn, warning
 
@@ -4081,23 +4376,22 @@ def append_bullet(body, heading, text):
     seg.append(f"- {text}")
     return "\n".join(lines[:start + 1] + seg + [""] + lines[end:])
 
+
 def cmd_test(root, nid, to=None, run=None):
+    """Record that a hypothesis is being run: append the run link and take the lock.
+
+    Spec 19 (ruling Q7): no refusal. A null, a rule and verifiables are optional now, so
+    there is nothing to gate on. The lock is taken only when there are checks to lock — a
+    hypothesis run before its checks were defined must stay free to gain them. No status is
+    written (ruling Q14): "is it running" is read from the taskhub, not from the node."""
     v = Vault(root)
     n = v.get(nid)
     if n.type != "idea":
-        raise CruxError("test applies to ideas/hypotheses only")
-    order = IDEA_STATUS
-    target = to or order[min(order.index(n.status) + 1, len(order) - 1)]
+        raise CruxError("test applies to hypotheses only")
+    target = to or "running"
     if target not in ("staged", "running"):
-        raise CruxError("test moves an idea to 'staged' or 'running'")
-    if target == "running" and sum(count_verifiables(n["body"])) == 0:
-        raise CruxError(f"refusing to run {nid}: register at least one verifiable first")
-    if target == "running":
-        for gap in (neutral_gap(n), rule_gap(n), null_gap(n), scenario_gap(n)):
-            if gap:
-                raise CruxError(f"refusing to run {nid}: " + gap.split(": ", 1)[1])
-    n["fm"]["status"] = target
-    if target == "running":
+        raise CruxError("test moves a hypothesis to 'staged' or 'running'")
+    if target == "running" and sum(count_verifiables(n["body"])):
         take_lock(n, "running")
     if run:
         n["body"] = append_bullet(n["body"], "Run Links", run)
@@ -4106,124 +4400,122 @@ def cmd_test(root, nid, to=None, run=None):
     refresh(root)
     return target
 
-def cmd_close(root, nid, metric=None, findings=None, no_claim=False):
-    """Close one hypothesis on its pre-registered checks. The verdict is DERIVED here and is
-    never an argument — that is most of what makes a crux verdict worth reading.
-
-    `no_claim` is the autopilot's no-claim path, and it is deliberately a FACT rather than a
-    verdict: the caller reports that this node carries no hypothesis, and the engine decides
-    what that means. A driver still cannot name a verdict, and no value of this argument
-    produces `supported`.
-
-    It exists because an autopilot attempt is now measured even when its REPORT was faulty — a
-    reporting mistake must not destroy a measurement — so a node whose claim is the
-    no-claim placeholder can arrive here carrying a real, fully graded tick vector. That
-    vector would derive `supported`, and the verdict would be a judgment about a hypothesis
-    nobody ever stated. So the measurement is kept, the metric is kept, and the judgment is
-    withheld: `invalid-run` already means "the apparatus ran and the claim cannot be read",
-    which is the honest reading of an attempt that claimed nothing."""
+def _seal_reconstructed(root, nid, findings=None):
+    """The seed path for a `[tested]` hypothesis written in the pre-4.0 seed shape (no
+    direction or confidence given). It records the history exactly as a 3.x engine did — the
+    verdict read from the ticks, `status: done`, the narrative — and writes NO finding: the
+    engine never invents a direction or a confidence. A seed line `- finding: [<direction>,
+    <confidence>] …` is the 4.0 shape and becomes a real finding instead."""
     v = Vault(root)
     n = v.get(nid)
-    if n.type != "idea":
-        raise CruxError("close applies to ideas/hypotheses (use `answer` to close a question)")
     met, unmet, na = count_verifiables(n["body"])
-    if met + unmet + na == 0:
-        raise CruxError("cannot close: no verifiables to evaluate")
-    # THE BOUNDARY. Dispatch on the node's stamp, never on "is it already done" —
-    # `cmd_close` has no status precondition and is re-runnable on a done node, so an old
-    # node re-closed after an upgrade must still get the old function. This is the line
-    # that stops the engine overturning recorded science.
-    if binds_evidence_semantics(n):
-        gap = rule_gap(n)
-        if gap:
-            raise CruxError(f"cannot close {nid}: " + gap.split(": ", 1)[1])
-        by = count_verifiables_by_kind(n["body"])
-        rule, m = node_rule(n)
-        verdict = derive_verdict_15(by[DEFAULT_KIND], by[NEUTRAL_KIND], rule, m)
-    else:
-        verdict = derive_verdict(met, unmet, na)
-    # AFTER the derivation, never instead of it: the gap that is checked, the rule that is
-    # read and the refusal on an unclosable node all still happen, so a no-claim attempt is
-    # held to every structural rule its siblings are. Only the reading of the vector is
-    # withheld, because there is no claim for it to be a reading OF.
-    if no_claim:
-        verdict = "invalid-run"
-    # `cmd_close` has no status precondition and is reachable straight from `idea`, so a
-    # lock taken only at `running` is bypassable by the shortest path the CLI offers. Lock
-    # here too, and record that it was never a pre-registration — refusing the close instead
-    # would just push the user through `test --to running` first, laundering the same thing.
-    take_lock(n, "close")
-    n["fm"]["status"] = "done"
-    n["fm"]["verdict"] = verdict
-    if metric is not None:
-        n["fm"]["metric"] = metric
+    n["fm"]["status"] = TERMINAL_IDEA
+    n["fm"]["verdict"] = derive_verdict(met, unmet, na)
     if findings:
-        n["body"] = re.sub(r"## Findings\n\n_\(written by the PI/agent when the case is closed\)_",
-                           f"## Findings\n\n{findings}", n["body"])
-    _bump(n)
+        n["body"] = n["body"].rstrip() + f"\n\n## Findings\n\n{findings}\n"
     write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
-    # new evidence -> parent question interpretation goes stale
-    parent = v.nodes.get(n.parent)
-    if parent and parent.type == "question":
-        parent["fm"]["stale"] = True
-        write_if_changed(parent["path"], render_doc(parent["fm"], parent["body"]))
     refresh(root)
-    return verdict
 
-def cmd_review(root):
-    """(id, title, drift) for every question awaiting a decision. `drift` is True when any
-    hypothesis under it has an edited commitment — surfaced HERE because this is the exact
-    moment the PI is deciding, and a flag they never see is a flag that did nothing."""
+def _norm_token(x):
+    return " ".join(str(x or "").strip().lower().replace("_", " ").split())
+
+def _one_line(x):
+    return " ".join(str(x or "").split())
+
+def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=None, null=None,
+                vs_expect=None, verifiables=None, answer=None):
+    """Record one Finding under a question or a hypothesis. Returns (id, filename, note);
+    `note` is the null-cap message when the stored confidence was lowered, else None.
+
+    The engine writes what it is GIVEN and derives nothing: the direction and the confidence
+    are the agent's judgment. The one rule it applies is the null cap (decision 7) — a null
+    not ruled out stores the confidence as weak, and says so. Every refusal happens before
+    any byte is written, and it refuses exactly what `validate` would flag."""
     v = Vault(root)
-    def drifted(qid):
-        return any(lock_drift(v.nodes[c]) for c in v.children.get(qid, ())
-                   if v.nodes[c].type == "idea")
-    return [(n.id, n.title, drifted(n.id)) for n in v.nodes.values()
-            if n.type == "question" and n.status == "review"]
-
-def gate_scope(v, near, ids):
-    """`{id: (relation, in_scope)}` for a batch of pending gates against `near`.
-
-    One helper so the two queues — questions at `review`, experiments at `task review` —
-    annotate identically. They are different decisions, but "is this any of the PI's business
-    right now" is the same question for both."""
+    p = v.get(parent)
+    if p.type not in ("question", "idea"):
+        raise CruxError(f"a finding hangs under a question or a hypothesis; '{parent}' is a "
+                        f"'{p.type}'")
+    conf = _norm_token(confidence)
+    if conf not in CONFIDENCES:
+        raise CruxError(f"confidence '{confidence}' — use one of {', '.join(CONFIDENCES)}")
+    d = _norm_token(direction) or None
+    if d is not None:
+        d = _DIRECTION_ALIASES.get(d, d.replace(" ", "-"))
+    nul = _norm_token(null).replace(" ", "-") or None
+    why, vs_expect, verifiables = _one_line(why), _one_line(vs_expect), _one_line(verifiables)
+    answer = (answer or "").strip()
+    if p.type == "question":
+        if d is not None:
+            raise CruxError("a finding on a question carries no direction — it carries the "
+                            "answer text (--answer), a confidence and evidence links")
+        if not answer:
+            raise CruxError("a finding on a question needs its answer text: --answer \"…\"")
+        if nul or vs_expect or verifiables:
+            raise CruxError("--null, --vs-expect and --verifiables describe a hypothesis' "
+                            "test; a finding on a question carries none of them")
+    else:
+        if d is None:
+            raise CruxError(f"a finding on a hypothesis needs a direction: one of "
+                            f"{', '.join(DIRECTIONS)}")
+        if not why:
+            raise CruxError("a finding on a hypothesis needs one sentence of why: --why \"…\"")
+    if d is not None and d not in DIRECTIONS:
+        raise CruxError(f"direction '{direction}' — use one of {', '.join(DIRECTIONS)} "
+                        f"('no answer yet' is accepted too)")
+    if nul is not None and nul not in NULL_STATES:
+        raise CruxError(f"null '{null}' — use one of {', '.join(NULL_STATES)}")
+    links = [str(x).strip() for x in (evidence or []) if str(x).strip()]
+    for link in links:
+        if "," in link:
+            raise CruxError(f"evidence '{link}': a link may not contain a comma")
+        prob = _evidence_problem(root, link)
+        if prob:
+            raise CruxError(prob)
+    note = None
+    stored = conf
+    if nul == NULL_NOT_RULED_OUT and d == "supports" and \
+            confidence_rank(conf) > confidence_rank(NULL_CAP):
+        stored = NULL_CAP
+        note = (f"confidence stored as {NULL_CAP}, not {conf}: the null was not ruled out, "
+                f"which caps confidence at {NULL_CAP}")
+    head = why or answer.splitlines()[0]
+    title = head if len(head) <= 80 else head[:77].rsplit(" ", 1)[0] + "…"
+    fid = _new_id(v, "finding")
+    fn = f"{fid}_{slugify(title)}.md"
+    fm, body = parse_doc(fill(load_template("finding"), id=fid, title=title,
+                              parent_id=parent, parent_basename=p.basename))
+    vals = {"direction": d, "confidence": stored, "null": nul, "why": why or None,
+            "vs_expect": vs_expect or None, "verifiables": verifiables or None,
+            "evidence": ", ".join(links) or None}
     out = {}
-    for i in ids:
-        rel = gate_relation(v, near, i)
-        out[i] = (rel, rel != "unrelated")
-    return out
+    for k, val in fm.items():
+        if k == "created":
+            out.update({f: vals[f] for f in FINDING_FIELDS if vals[f] is not None})
+        out[k] = val
+    if answer:
+        body = body.rstrip() + f"\n\n## Answer\n\n{answer}\n"
+    write_if_changed(os.path.join(root, fn), render_doc(out, body))
+    refresh(root)
+    return fid, fn, note
 
-def approved_synthesis(v, qid):
-    """The approved synthesis that closes `qid`, or None. Deterministic when several
-    relate to the same question: the lowest id wins."""
-    cands = [n for n in v.nodes.values()
-             if n.type == "synthesis" and n["fm"].get("approved")
-             and qid in _related_ids(v, n["body"])]
-    return min(cands, key=lambda n: natkey(n.id)).id if cands else None
-
-def cmd_approve_null(root, hid):
-    """The PI's sign-off on the null — the gate between `crux-null` and `crux-verifiables`.
-    Idempotent: the first approval's timestamp is the record.
-
-    The approval stores a hash of what was approved, so EDITING the null silently clears it.
-    That is not bookkeeping: a different null is a different alternative explanation,
-    and checks written against the old one no longer discriminate against anything."""
+def cmd_park(root, nid, undo=False):
+    """Park a question or hypothesis the conversation dropped, or unpark it. Returns whether
+    it is parked now. Parking is a state, not a deletion: the findings stay, and unparking
+    restores the derived state exactly."""
     v = Vault(root)
-    n = v.get(hid)
-    if n.type != "idea":
-        raise CruxError(f"approve-null applies to a hypothesis (got a '{n.type}' for '{hid}')")
-    p = null_problem(_null_text(n) or "", node_schema(n))
-    if p:
-        raise CruxError(f"cannot approve {hid}'s null: {p}")
-    if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") == _null_hash(n):
-        return str(n["fm"][NULL_APPROVED])
-    stamp = now()
-    n["fm"][NULL_APPROVED] = stamp
-    n["fm"]["null_hash"] = _null_hash(n)
+    n = v.get(nid)
+    if n.type not in ("question", "idea"):
+        raise CruxError(f"only a question or a hypothesis can be parked; '{nid}' is a "
+                        f"'{n.type}'")
+    if undo:
+        n["fm"].pop(PARKED_FIELD, None)
+    else:
+        n["fm"][PARKED_FIELD] = True
     _bump(n)
     write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
     refresh(root)
-    return stamp
+    return not undo
 
 def set_null(body, text):
     """Write `text` as the whole content of `## Null`, replacing the template's guidance
@@ -4244,85 +4536,10 @@ def set_null(body, text):
         out.append(""); out.append(text)
     return "\n".join(out)
 
+
 def _null_hash(n):
     return hashlib.sha256(" ".join((_null_text(n) or "").split()).encode("utf-8")).hexdigest()[:16]
 
-def cmd_approve(root, sid):
-    """The PI's sign-off on a synthesis — the second human touchpoint of the close
-    sequence, and the thing `answer` checks for. Idempotent: the first approval's
-    timestamp is the record, so re-approving never rewrites history."""
-    v = Vault(root)
-    n = v.get(sid)
-    if n.type != "synthesis":
-        raise CruxError(f"approve applies to a synthesis (got a '{n.type}' for '{sid}'); "
-                        f"draft one with `crux synthesize \"…\" --for <question-id>`")
-    existing = n["fm"].get("approved")
-    if existing:
-        return str(existing)
-    stamp = now()
-    n["fm"]["approved"] = stamp
-    _bump(n)
-    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
-    refresh(root)
-    return stamp
-
-def cmd_answer(root, qid, text=None):
-    v = Vault(root)
-    n = v.get(qid)
-    if n.type != "question":
-        raise CruxError("answer applies to questions")
-    # v0.5 close-gate: a question is closed by an APPROVED synthesis, never by a bare
-    # status flip. Questions already resolved by a pre-1.2 engine are grandfathered —
-    # this gate applies to new closes only (see docs/prd/v0.5-cockpit-evidence.md §I).
-    sid = approved_synthesis(v, qid)
-    if not sid:
-        raise CruxError(
-            f"cannot resolve {qid}: a question closes only on an approved synthesis.\n"
-            f"    1. crux synthesize \"what {qid} settled\" --for {qid}\n"
-            f"    2. the PI reads it, then: crux approve <sid>\n"
-            f"    3. crux answer {qid}")
-    n["fm"]["status"] = "resolved"
-    n["fm"]["synthesis"] = sid
-    n["fm"]["stale"] = False
-    if text:
-        n["body"] = re.sub(r"## Answer so far\n\n.*?\n\n(?=<!-- crux:ledger:start)",
-                           f"## Answer so far\n\n{text}\n\n", n["body"], flags=re.S)
-    _bump(n)
-    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
-    # resolving a sub-question is new evidence for its parent question
-    parent = v.nodes.get(n.parent)
-    if parent and parent.type == "question":
-        parent["fm"]["stale"] = True
-        write_if_changed(parent["path"], render_doc(parent["fm"], parent["body"]))
-    refresh(root)
-    return qid
-
-def cmd_pursue(root, qid, idea_title=None):
-    v = Vault(root)
-    n = v.get(qid)
-    if n.type != "question":
-        raise CruxError("pursue applies to questions")
-    n["fm"]["status"] = "open"
-    _bump(n)
-    write_if_changed(n["path"], render_doc(n["fm"], n["body"]))
-    new = None
-    if idea_title:
-        new = cmd_hypothesize(root, idea_title, qid)  # adds a non-terminal child, then refreshes → Q stays open
-    else:
-        refresh(root)
-    return new
-
-def cmd_synthesize(root, title, questions):
-    v = Vault(root)
-    for q in questions:
-        v.get(q)  # validate existence
-    nid = _new_id(v, "synthesis")
-    fn = f"{nid}_{slugify(title)}.md"
-    related = ", ".join(f"[[{v.get(q).basename}]]" for q in questions)
-    text = fill(load_template("synthesis"), id=nid, title=title, related=related)
-    write_if_changed(os.path.join(root, fn), text)
-    refresh(root)
-    return nid, fn
 
 def design_info(v):
     """The methodology slots, reported as INFORMATION — namespace `design:`.
@@ -4339,8 +4556,11 @@ def design_info(v):
              "what is measured, and with what instrument"),
             (REPLICATES_FIELD, "state replicates",
              "how many runs the claim rests on")):
+        # the design window, read from the record (spec 19 stores no status): the run has
+        # started — a run link or a lock — and no finding has landed yet
         gap = [x for x in v.nodes.values()
-               if x.type == "idea" and x.status in DESIGN_STATUSES
+               if x.type == "idea" and not v.findings.get(x.id)
+               and (_run_links(x["body"]) or x["fm"].get(LOCK_FIELD))
                and not _fm_text(x, field)]
         if gap:
             out.append((f"design:{field}",
@@ -4370,6 +4590,20 @@ def boundary_info(v):
                     f"{len(recon)} hypothes{'is was' if len(recon) == 1 else 'es were'} "
                     f"reconstructed from a seed and never pre-registered — the results "
                     f"existed before the checks were written down.", len(recon)))
+    # spec 19: a hypothesis written before 4.0 has no `## Expect`. Information, never red:
+    # it could not have known about the section, and the engine must not invent one.
+    noexp = [x for x in v.nodes.values() if x.type == "idea"
+             and node_schema(x) < SCHEMA_GENERATION and not expect_text(x)]
+    if noexp:
+        out.append(("boundary:expect",
+                    f"{len(noexp)} hypothes{'is' if len(noexp) == 1 else 'es'} written before "
+                    f"engine 4.0 state no expectation (no `## {EXPECT_SECTION}`).", len(noexp)))
+    legacy = [x for x in v.nodes.values() if x.type in LEGACY_TYPES]
+    if legacy:
+        out.append(("boundary:legacy-type",
+                    f"{len(legacy)} node(s) of a type engine 4.0 no longer writes "
+                    f"({', '.join(sorted({x.type for x in legacy}))}); the 4.0 migration "
+                    f"converts them.", len(legacy)))
     return out
 
 def _section_placeholder(name):
@@ -4619,22 +4853,6 @@ def cmd_doctor(root=None, skills_dirs=None, agents_dir=None, settings_paths=None
             "checks": checks, "crux_version": CRUX_VERSION, "engine_version": ENGINE_VERSION}
 
 
-def gate_warnings(v):
-    """The gate backlog: a question parked in `review` with no synthesis drafted for it. The
-    one item on spec 09's audit list that was not already a check — over-cap nodes,
-    unresolvable artifacts and unrun-idea pileup all shipped with specs 06 and v0.5."""
-    out = []
-    for nid, n in v.nodes.items():
-        if n.type != "question" or n.status != "review":
-            continue
-        drafted = any(s.type == "synthesis" and nid in _related_ids(v, s["body"])
-                      for s in v.nodes.values())
-        if not drafted:
-            out.append((nid, f"question '{nid}' has been awaiting a decision with no synthesis "
-                             f"drafted for it. `crux synthesize \"what {nid} settled\" --for "
-                             f"{nid}` is the first step; the PI approves it, then `crux answer`."))
-    return out
-
 def validation_report(root, checks=None, propose=None):
     """The full lint in two tiers. `problems` break the vault's integrity; `warnings` are the
     economy checks, which are advisory by design (see PROSE_CAP). `checks` selects a subset of
@@ -4659,7 +4877,6 @@ def validation_report(root, checks=None, propose=None):
         problems += validate_tasks(root)
         info += task_info(root) + task_gate_info(root)
     if "decks"   in names: warnings += deck_warnings(root)
-    if "gate"    in names: warnings += gate_warnings(v)
     # The glossary check is a FILTER, not a scan: with nothing proposed it has nothing to
     # filter and says nothing at all. That is what lets it sit in the default CHECKS without
     # changing one byte of output for every vault that exists today.
@@ -4681,12 +4898,18 @@ def cmd_validate(root, checks=None):
 
 # ----------------------------------------------------------------------------- text status view
 def status_text(root, node=None):
+    """The tree, or one node, with DERIVED states (spec 19) — never a stored status."""
     v = Vault(root)
     if node:
         n = v.get(node)
-        out = [f"{n.id} [{n.type}] {n.title}  —  status: {n.status}"]
-        if n.type == "idea" and n["fm"].get("verdict"):
-            out.append(f"  verdict: {n['fm']['verdict']}   metric: {n['fm'].get('metric') or '—'}")
+        if n.type in ("question", "idea"):
+            out = [f"{n.id} [{n.type}] {n.title}  —  {_state_label(derive_state(v, n.id))}"]
+            for f in node_findings(v, n.id):
+                fj = finding_json(f)
+                out.append(f"  {f.id}: {fj['direction'] or 'answer'} · {fj['confidence']}"
+                           f" — {fj['why'] or fj['answer'] or ''}")
+        else:
+            out = [f"{n.id} [{n.type}] {n.title}"]
         if n.type == "question":
             out.append("  ledger:")
             out.append("    " + ledger_block(v, n.id).replace("\n", "\n    "))
@@ -4695,10 +4918,11 @@ def status_text(root, node=None):
     def walk(nid, depth):
         n = v.nodes[nid]
         tag = {"project": "▣", "question": "?", "idea": "•"}.get(n.type, "·")
-        extra = ""
-        if n.type == "idea" and n["fm"].get("verdict"):
-            extra = f"  ({n['fm']['verdict']})"
-        lines.append("  " * depth + f"{tag} {n.id} [{n.status}] {n.title}{extra}")
+        label = _state_label(derive_state(v, nid)) if n.type in ("question", "idea") \
+            else (n.status or "")
+        nf = len(v.findings.get(nid, []))
+        extra = f"  ({nf} finding{'' if nf == 1 else 's'})" if nf else ""
+        lines.append("  " * depth + f"{tag} {n.id} [{label}] {n.title}{extra}")
         for c in v.children.get(nid, []):
             walk(c, depth + 1)
     walk(v.cfg["root_id"], 0)
@@ -4762,16 +4986,6 @@ def _related_ids(v, body):
                     ids.append(nid)
     return ids
 
-def _ledger_summary(c):
-    """A compact one-line ledger summary for a review-queue row."""
-    parts = [f"{c['children']} children", f"{c['ideas_done']}/{c['ideas_total']} ideas done"]
-    verd = [f"{c[k]} {k}" for k in VERDICTS if c[k]]
-    if verd:
-        parts.append(", ".join(verd))
-    if c["subq_total"]:
-        parts.append(f"{c['subq_resolved']}/{c['subq_total']} sub-questions resolved")
-    return " · ".join(parts)
-
 def _rd_by_node(root):
     """{node id: active RD slug} in one scan. Passed into `_node_json` rather than looked up
     per node: the detail pane needs the pointer, and re-scanning rd/ once per node would make
@@ -4781,7 +4995,17 @@ def _rd_by_node(root):
 
 def _node_json(v, n, rd_map=None, task_map=None):
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
+    if n.type == "finding":
+        d.update(finding_json(n))
+        return d
     if n.type in ("question", "idea"):
+        # spec 19: the derived state and confidence, and the findings that produced them.
+        # Computed here and stored nowhere.
+        st = derive_state(v, n.id)
+        d["state"], d["confidence"], d["state_finding"] = st["state"], st["confidence"], \
+            st["finding"]
+        d["parked"] = n["fm"].get(PARKED_FIELD) is True
+        d["findings"] = [finding_json(f) for f in node_findings(v, n.id)]
         # the slug of this node's active RD, or None — so the pane can offer "open the
         # design" without walking the index
         d["rd"] = (_rd_by_node(v.root) if rd_map is None else rd_map).get(n.id)
@@ -4798,7 +5022,6 @@ def _node_json(v, n, rd_map=None, task_map=None):
     if n.type == "question":
         pre = n["body"].split(LEDGER_START)[0]
         d["parent"] = n.parent
-        d["stale"] = bool(n["fm"].get("stale"))
         # the summary pair leads the cockpit's detail pane; `detail` is the long form behind
         # it. Before 1.3 `detail` WAS the lead, which is how a 5,000-word question arrived in
         # the pane as a wall of text.
@@ -4807,14 +5030,12 @@ def _node_json(v, n, rd_map=None, task_map=None):
         d["words"] = prose_words(n["body"], "question")
         d["detail"] = _section(pre, "Question")
         d["answer"] = _section(pre, "Answer so far")
-        d["synthesis"] = n["fm"].get("synthesis") or None   # the approved synthesis that closed it
         d["ledger"] = ledger_counts(v, n.id)
         d["children"] = list(v.children[n.id])
     elif n.type == "idea":
-        verdict = n["fm"].get("verdict")
         d["parent"] = n.parent
-        d["verdict"] = verdict if verdict in VERDICTS else None   # only ever a valid enum or None
         d["metric"] = n["fm"].get("metric") or None
+        d["expect"] = expect_text(n) or None
         d["eli5"] = _summary(n["body"], "ELI5")
         d["tldr"] = _summary(n["body"], "TL;DR")
         d["words"] = prose_words(n["body"], "idea")
@@ -4836,7 +5057,6 @@ def _node_json(v, n, rd_map=None, task_map=None):
         d["rule"], d["rule_m"] = rule, m
         d["tally"] = {k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
         d["null"] = _null_text(n)
-        d["null_approved"] = str(n["fm"].get(NULL_APPROVED)) if n["fm"].get(NULL_APPROVED) else None
         d["locked"] = bool(n["fm"].get(LOCK_FIELD))
         d["lock_at"] = n["fm"].get(LOCK_WHERE_FIELD) or None
         d["drift"] = lock_drift(n)
@@ -4846,14 +5066,6 @@ def _node_json(v, n, rd_map=None, task_map=None):
                                        and os.path.isfile(os.path.join(v.root, a["path"]))),
                                servable=os.path.splitext(a["path"])[1].lower() in SERVABLE_EXT)
                           for a in parse_artifacts(n["body"])]
-        d["findings"] = _section(n["body"], "Findings")
-    elif n.type == "synthesis":
-        d["related"] = _related_ids(v, n["body"])
-        d["approved"] = n["fm"].get("approved") or None
-        # the written verdict itself — a synthesis is what closes a question, so the cockpit
-        # has to be able to show it. The `Related::` line is dropped: it's already `related`.
-        d["body"] = "\n".join(l for l in n["body"].splitlines()
-                              if not l.strip().startswith("Related::")).strip()
     return d
 
 def node_json(vault, nid):
@@ -4882,9 +5094,9 @@ def _update_snapshot():
 def snapshot(vault):
     """Read-only JSON snapshot of a vault. `vault` is a Vault or a root path.
     Keys: engine_version + crux_version, update (from the cache; never a live fetch),
-    project, nodes (flat map by id), tree (parent-link hierarchy from the root; synthesis
-    nodes are excluded — they attach via `related`), queue, wiki (index of the literature
-    layer — page bodies stay behind /wiki/<slug>.json)."""
+    project, nodes (flat map by id; questions and hypotheses carry state, confidence and
+    findings[]), tree (parent-link hierarchy from the root; findings are not tree nodes),
+    vocab, wiki (index of the literature layer — page bodies stay behind /wiki/<slug>.json)."""
     v = vault if isinstance(vault, Vault) else Vault(vault)
     root_id = v.cfg["root_id"]
     root = v.get(root_id)
@@ -4901,10 +5113,13 @@ def snapshot(vault):
         "limits": {"prose_cap": PROSE_CAP, "fanout_max": FANOUT_MAX},
         "project": {"id": root_id, "title": v.cfg.get("title"), "slug": v.cfg.get("slug"),
                     "status": root.status, "goal": _section(root["body"], "Goal")},
-        "nodes": {nid: _node_json(v, n, rd_map, task_map) for nid, n in v.nodes.items()},
+        # findings are not tree nodes: each one rides in its parent's `findings` list
+        "nodes": {nid: _node_json(v, n, rd_map, task_map) for nid, n in v.nodes.items()
+                  if n.type != "finding"},
         "tree": _subtree(v, root_id),
-        "queue": [{"id": n.id, "title": n.title, "summary": _ledger_summary(ledger_counts(v, n.id))}
-                  for n in v.nodes.values() if n.type == "question" and n.status == "review"],
+        # the 4.0 vocabulary, published so the cockpit never keeps its own copy
+        "vocab": {"states": list(STATES), "confidences": list(CONFIDENCES),
+                  "directions": list(DIRECTIONS), "nulls": list(NULL_STATES)},
         "wiki": _wiki_snapshot(v.root),
         "rd": _rd_snapshot(v.root),
         "tasks": _task_snapshot(v.root, v),
@@ -4999,35 +5214,73 @@ def _deck_text(body, heading):
     comments stripped — template guidance is not vault-authored content."""
     return re.sub(r"<!--.*?-->", "", _summary(body, heading), flags=re.S).strip()
 
-def _deck_question_fields(n):
-    pre = n["body"].split(LEDGER_START)[0]
-    return {"question": _deck_text(pre, "Question"),
-            "protocol": _deck_text(pre, "Protocol"),
-            "answer_so_far": _deck_text(pre, "Answer so far")}
+def _payload_findings(v, nid):
+    """findings[] for a payload (spec 19), oldest first: `finding_json` without its timestamp
+    or parent, because every payload here is byte-stable and carries no dates. A hypothesis'
+    Finding carries its direction; a question's carries its answer text and NO direction
+    (PI ruling) — the key is absent, not null, so no reader can mistake it for one."""
+    on_q = v.nodes[nid].type == "question"
+    out = []
+    for f in node_findings(v, nid):
+        d = finding_json(f)
+        for k in ("created", "parent") + (("direction", "null", "vs_expect", "verifiables")
+                                          if on_q else ("answer",)):
+            d.pop(k, None)
+        out.append(d)
+    return out
 
-def _deck_idea_fields(n):
-    verdict = n["fm"].get("verdict")
+def _payload_state(v, n):
+    """{state, confidence, finding, findings} for a question or hypothesis — derived, never
+    stored, the same rule the cockpit reads (`derive_state`). `finding` is the id of the
+    Finding that set the state (the strongest, not the newest). The project has none."""
+    if n.type not in ("question", "idea"):
+        return {"state": None, "confidence": None, "finding": None, "findings": []}
+    st = derive_state(v, n.id)
+    return {"state": st["state"], "confidence": st["confidence"], "finding": st["finding"],
+            "findings": _payload_findings(v, n.id)}
+
+def _answer_so_far(v, n):
+    """What this level currently tells us, as text ("" when nothing). A project's is its
+    goal. A question's is the answer of the Finding that sets its state, when that Finding is
+    the question's own (spec 19: a question is answered by a Finding on it); otherwise the
+    3.x `## Answer so far` section a migrated vault still carries."""
+    pre = n["body"].split(LEDGER_START)[0]
+    if n.type == "project":
+        return _deck_text(pre, "Goal")
+    if n.type == "question":
+        f = v.nodes.get(derive_state(v, n.id)["finding"] or "")
+        if f is not None and f.parent == n.id:
+            ans = _deck_text(f["body"], "Answer")
+            if ans:
+                return ans
+    return _deck_text(pre, "Answer so far")
+
+def _deck_question_fields(v, n):
+    pre = n["body"].split(LEDGER_START)[0]
+    return dict({"question": _deck_text(pre, "Question"),
+                 "protocol": _deck_text(pre, "Protocol"),
+                 "answer_so_far": _answer_so_far(v, n)}, **_payload_state(v, n))
+
+def _deck_idea_fields(v, n):
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
-    return {"verdict": verdict if verdict in VERDICTS else None,
-            "rule": rule, "rule_m": m, "drift": lock_drift(n),
-            # the null is the bar restated: what the checks had to rule out. A deck that
-            # reports a verdict without it is reporting a number with no scale.
-            "null": _null_text(n),
-            # a BOOLEAN, not the timestamp. The deck payload is byte-stable by contract and
-            # carries no dates; what a slide needs is "was this bar signed off", not when.
-            "null_approved": bool(n["fm"].get(NULL_APPROVED)),
-            "metric": n["fm"].get("metric") or None,
-            "verifiables": _deck_verifiables(n["body"]),
-            "findings": _deck_text(n["body"], "Findings"),
-            "artifacts": parse_artifacts(n["body"])}
+    return dict({"rule": rule, "rule_m": m, "drift": lock_drift(n),
+                 # the null is the bar restated: what the checks had to rule out. A deck that
+                 # reports a result without it is reporting a number with no scale.
+                 "null": _null_text(n),
+                 "metric": n["fm"].get("metric") or None,
+                 "verifiables": _deck_verifiables(n["body"]),
+                 # the `## Findings` prose a 3.x close wrote: narrative history. The Findings
+                 # themselves ride in `findings[]`.
+                 "narrative": _deck_text(n["body"], "Findings"),
+                 "artifacts": parse_artifacts(n["body"])}, **_payload_state(v, n))
 
 def _deck_child(v, cid):
     n = v.nodes[cid]
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
     if n.type == "question":
-        d.update(_deck_question_fields(n))
+        d.update(_deck_question_fields(v, n))
     else:
-        d.update(_deck_idea_fields(n))
+        d.update(_deck_idea_fields(v, n))
     d["children"] = [_deck_child(v, c) for c in v.children.get(cid, ())]
     return d
 
@@ -5062,25 +5315,24 @@ def deck_payload(root, anchor):
     lineage = ancestor_chain(v, n)          # root -> parent, cycle-guarded (shared, D3)
 
     def _line(m):
-        pre = m["body"].split(LEDGER_START)[0]
-        txt = _deck_text(pre, "Goal") if m.type == "project" else _deck_text(pre, "Answer so far")
         return {"id": m.id, "type": m.type, "title": m.title, "status": m.status,
-                "answer_so_far": txt}
+                "answer_so_far": _answer_so_far(v, m)}
 
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
-                "verdict": None, "rule": None, "rule_m": None, "drift": False,
-                "null": None, "null_approved": False,
-                "metric": None, "verifiables": [], "findings": None,
-                "artifacts": []}
-    anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
+                "rule": None, "rule_m": None, "drift": False, "null": None,
+                "metric": None, "verifiables": [], "narrative": None,
+                "artifacts": [], "state": None, "confidence": None, "findings": []}
+    anchor_d.update(_deck_question_fields(v, n) if n.type == "question"
+                    else _deck_idea_fields(v, n))
 
     siblings = [v.nodes[c] for c in v.children.get(n.parent, ()) if c != n.id] \
                if n.parent in v.nodes else []
 
     hids = _subtree_hids(v, n.id)
-    ideas = [v.nodes[h] for h in hids]
-    by_state = {s: sum(1 for i in ideas if i.status == s) for s in IDEA_STATUS}
+    # scope by DERIVED state (spec 19, ruling Q14: the stored status is history)
+    states = [derive_state(v, h)["state"] for h in hids]
+    by_state = {s: states.count(s) for s in STATES}
 
     # wiki pages linked from the anchor, then its ancestors (root -> parent), first-mention
     # order, de-duplicated; entries point at the page, bodies stay in the vault
@@ -5097,14 +5349,6 @@ def deck_payload(root, anchor):
     rds = [{"slug": r["slug"], "title": r["title"], "path": _rel(root, r["path"])}
            for mid in _subtree_ids(v, n.id)
            for r in sorted(rd_by_node.get(mid, ()), key=lambda x: x["slug"])]
-
-    sid = approved_synthesis(v, n.id) if n.type == "question" else None
-    synthesis = None
-    if sid:
-        s = v.nodes[sid]
-        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
-                     "text": "\n".join(l for l in s["body"].splitlines()
-                                       if not l.strip().startswith("Related::")).strip()}
 
     figures = []
     hids = sorted(hids, key=natkey)     # defined order: hid natkey, then file/key order
@@ -5132,9 +5376,9 @@ def deck_payload(root, anchor):
         "children": [_deck_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
         "rd": rds,  # spec 07: the anchor's subtree's design documents — the methods source
-        "synthesis": synthesis,
-        "scope": {"executed": by_state["running"] + by_state["done"],
-                  "parked": by_state["idea"] + by_state["staged"],
+        # executed = has a Finding that counts (leaning or settled); open = none yet
+        "scope": {"executed": by_state["leaning"] + by_state["settled"],
+                  "open": by_state["open"], "parked": by_state["parked"],
                   "by_state": by_state},
         "figures": figures,
         "metrics": metrics,
@@ -5222,14 +5466,15 @@ def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
     chain = ancestor_chain(v, n)
     anc = [{"id": m.id, "type": m.type, "title": m.title} for m in chain]
 
-    # the shared factual record: what CLOSED siblings under the same question found.
+    # the shared factual record: what siblings under the same question FOUND — every sibling
+    # hypothesis that carries a Finding (spec 19), with its derived state and its Findings.
     prior = []
     for cid in (v.children.get(n.parent, ()) if parent else ()):
         c = v.nodes[cid]
-        if cid == hid or c.type != "idea" or c.status != TERMINAL_IDEA:
+        if cid == hid or c.type != "idea" or not node_findings(v, cid):
             continue
-        prior.append({"id": c.id, "title": c.title, "verdict": c["fm"].get("verdict"),
-                      "findings": _section(c["body"], "Findings")})
+        prior.append(dict({"id": c.id, "title": c.title}, **_payload_state(v, c),
+                          narrative=_section(c["body"], "Findings") or None))
 
     # the pre-registered checks, stripped of their results
     vfs = []
@@ -5248,6 +5493,8 @@ def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
                                 # fields are absent is right until someone adds a field
         "id": n.id,
         "claim": _section(n["body"], "Idea / Hypothesis"),
+        # the expectation is setup, not argument: what the run is expected to show
+        "expect": expect_text(n) or None,
         "question": _section(parent["body"].split(LEDGER_START)[0], "Question") if parent else None,
         "ancestry": anc,
         "null": _null_text(n),
@@ -5373,18 +5620,20 @@ def _situate_child(v, cid):
     orientation that inlines 40,000 words of prose has failed at its only job. Findings ride
     only with a CLOSED hypothesis — an open node's half-written findings are not knowledge."""
     n = v.nodes[cid]
-    verdict = n["fm"].get("verdict")
+    st = _payload_state(v, n)
     return {
         "id": n.id, "type": n.type, "title": n.title, "status": n.status,
         "schema": node_schema(n),
         "eli5": _summary(n["body"], "ELI5") or None,
-        "verdict": (verdict if verdict in VERDICTS else None) if n.type == "idea" else None,
+        "state": st["state"], "confidence": st["confidence"],
         "tally": ({k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
                   if n.type == "idea" else None),
-        "findings": (_deck_text(n["body"], "Findings") or None
-                     if n.type == "idea" and n.status == TERMINAL_IDEA else None),
-        "answer_so_far": (_deck_text(n["body"].split(LEDGER_START)[0], "Answer so far") or None
-                          if n.type == "question" else None),
+        # spec 19: the Findings ARE the knowledge — they ride with every node that has one
+        "findings": st["findings"],
+        # the 3.x `## Findings` prose, as history, only beside a node that has a Finding
+        "narrative": (_deck_text(n["body"], "Findings") or None
+                      if n.type == "idea" and st["findings"] else None),
+        "answer_so_far": (_answer_so_far(v, n) or None if n.type == "question" else None),
         "children": [_situate_child(v, c) for c in v.children.get(cid, ())],
     }
 
@@ -5396,12 +5645,15 @@ def _situate_untested(v, ids):
     for nid in ids:
         n = v.nodes[nid]
         if n.type == "idea":
-            if n.status in ("idea", "staged"):
-                unrun.append({"id": n.id, "title": n.title, "status": n.status})
+            # unrun (spec 19, Q14 — the stored status is history): no Finding, not parked,
+            # and nothing the run path writes — no lock taken, no run link recorded
+            if derive_state(v, nid)["state"] == "open" and not n["fm"].get(LOCK_FIELD) \
+                    and not _run_links(n["body"]):
+                unrun.append({"id": n.id, "title": n.title, "state": "open"})
             for item in _verifiables(n["body"]):
                 if item["state"] == "unmet":
                     checks.append({"hid": n.id, "text": item["text"], "kind": item["kind"]})
-        elif n.type == "question" and n.status != TERMINAL_QUESTION:
+        elif n.type == "question" and derive_state(v, nid)["state"] in ("open", "leaning"):
             openq.append(n.id)
     return {"unrun_ideas": unrun, "open_checks": checks, "open_questions": openq}
 
@@ -5420,9 +5672,11 @@ def _situate_inbound(v, ids):
     names.update({nid: nid for nid in ids})
     out = []
     for nid in sorted(v.nodes, key=natkey):
-        if nid in inside:
-            continue
         n = v.nodes[nid]
+        # a Finding is not a tree node (spec 19): one on a node inside the subtree is part of
+        # that node, and its `Parent::` link is structure, not a citation
+        if nid in inside or (n.type == "finding" and n.parent in inside):
+            continue
         pre = n["body"].split(LEDGER_START)[0]
         if any(t in names for t in link_targets(pre)):
             out.append({"id": n.id, "type": n.type, "title": n.title})
@@ -5474,13 +5728,11 @@ def situate_brief(root, anchor=None):
     chain = ancestor_chain(v, n)
     lineage = []
     for cur in chain:
-        pre = cur["body"].split(LEDGER_START)[0]
         lineage.append({"id": cur.id, "type": cur.type, "title": cur.title,
                         "status": cur.status,
                         # a project's answer-so-far IS its goal; the field is one thing —
                         # "what this level is currently telling us" — not two
-                        "answer_so_far": (_deck_text(pre, "Goal") if cur.type == "project"
-                                          else _deck_text(pre, "Answer so far")) or None})
+                        "answer_so_far": _answer_so_far(v, cur) or None})
 
     pre = n["body"].split(LEDGER_START)[0]
     anchor_d = {
@@ -5493,32 +5745,21 @@ def situate_brief(root, anchor=None):
         # the advocacy lives. The PI wrote the advocacy. Reading it back cannot bias them.
         "problem": _deck_text(n["body"], "Problem Statement") or None,
         "question": _deck_text(pre, "Question") or None,
-        "answer_so_far": (_deck_text(pre, "Goal") if n.type == "project"
-                          else _deck_text(pre, "Answer so far")) or None,
-        "verdict": None, "rule": None, "rule_m": None,
-        "verifiables": [], "findings": None,
+        "answer_so_far": _answer_so_far(v, n) or None,
+        "rule": None, "rule_m": None, "verifiables": [], "narrative": None,
     }
+    anchor_d.update(_payload_state(v, n))
     if n.type == "idea":
-        verdict = n["fm"].get("verdict")
         rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
-        anchor_d.update({"verdict": verdict if verdict in VERDICTS else None,
-                         "rule": rule, "rule_m": m,
+        anchor_d.update({"rule": rule, "rule_m": m,
                          "verifiables": _verifiables(n["body"]),
-                         "findings": _deck_text(n["body"], "Findings") or None})
+                         "narrative": _deck_text(n["body"], "Findings") or None})
 
     ids = _subtree_ids(v, n.id)
     # the shared wiki walk (D3), over the anchor's body then its ancestors' — the same bodies
     # the isolated brief scans, because "what has been read about this" does not change with
     # who is asking
     wiki = wiki_refs(root, [n["body"]] + [m["body"] for m in chain])
-
-    sid = approved_synthesis(v, n.id) if n.type == "question" else None
-    synthesis = None
-    if sid:
-        s = v.nodes[sid]
-        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
-                     "text": "\n".join(l for l in s["body"].splitlines()
-                                       if not l.strip().startswith("Related::")).strip()}
 
     return {
         "engine_version": ENGINE_VERSION,
@@ -5527,7 +5768,6 @@ def situate_brief(root, anchor=None):
         "ancestry": lineage,
         "subtree": [_situate_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
-        "synthesis": synthesis,
         "untested": _situate_untested(v, ids),
         "inbound": _situate_inbound(v, ids),
         "work": _situate_work(root, v, ids),

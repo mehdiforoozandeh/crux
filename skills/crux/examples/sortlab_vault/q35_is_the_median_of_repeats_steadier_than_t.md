@@ -39,8 +39,8 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 I ran the three slow sorts repeatedly and looked at both the average and the middle value. The median did turn out to be less jumpy than the mean. When one run was much slower—maybe I looked at the screen wrong, or the laptop did something else—the mean got dragged up, but the median barely moved. I'm now confident the median is my better tool.
 
 <!-- crux:ledger:start -->
-**2 children** · ideas 2/2 done (supported 1, partial 0, refuted 0, inconclusive 0, invalid-run 1)
+**2 children** · open 1, leaning 0, settled 1, parked 0
 
-- `h107` [[h107_the_median_of_thirty_repeats_moves_less_|The median of thirty repeats moves less than the mean]] — *done* — verdict **supported**, metric `First run: median 0.514 ms, mean 0.523 ms. Second run: median 0.508 ms, mean 0.548 ms.`
-- `h108` [[h108_throwing_away_the_slowest_three_runs_is_|Throwing away the slowest three runs is as good as the median]] — *done* — verdict **invalid-run**, metric `Median was 0.514 ms. Trimmed mean (27 fastest) was 0.519 ms. Difference: one percent.`
+- `h107` [[h107_the_median_of_thirty_repeats_moves_less_|The median of thirty repeats moves less than the mean]] — *settled · strong*
+- `h108` [[h108_throwing_away_the_slowest_three_runs_is_|Throwing away the slowest three runs is as good as the median]] — *open*
 <!-- crux:ledger:end -->

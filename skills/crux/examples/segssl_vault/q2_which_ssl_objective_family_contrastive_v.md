@@ -7,7 +7,6 @@ status: resolved
 stale: false
 created: "2026-07-11T19:38:54"
 updated: "2026-07-24T15:26:44"
-synthesis: s2
 ---
 
 # q2 — Which SSL objective family (contrastive vs masked-image-modeling vs self-distillation) transfers best to dense prediction?
@@ -23,9 +22,10 @@ SegSSL pretrains ViT-B/16 encoders under three SSL families — contrastive (MoC
 Self-distillation is the clear winner for dense-prediction transfer: iBOT/DINO pretraining beat both the best masked-image-modeling method (MAE, +1.5 mIoU ADE20K) and the best contrastive method (DenseCL, +2.6 mIoU ADE20K) with a UPerNet decoder, and the margin held under Cityscapes->ACDC domain shift (H1, supported). The intuitive bet that pixel-level contrastive objectives would transfer best because their pretext task is already "dense" was wrong — DenseCL/PixPro trailed iBOT everywhere and degraded worst under domain shift, so we're deprioritizing further dense-contrastive investment (H2, refuted). MAE is a viable fallback but only under full fine-tuning with an expressive decoder: it comes within 1.5-1.9 mIoU of iBOT on ADE20K and Cityscapes->ACDC, but collapses to a 9.4 mIoU gap under frozen linear probing, so it's unsuitable for light-decoder or feature-frozen settings (H3, partial). Net: standardize the SegSSL default pretraining recipe on iBOT/DINO (self-distillation) for dense-prediction downstream tasks, keep MAE as a fallback only when full fine-tuning budget is available, and shelve dense contrastive objectives (DenseCL/PixPro) for this program (see [[wiki/ibot]]).
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 1, refuted 1, inconclusive 0)
+**3 children** · open 0, leaning 1, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h4` [[h4_self_distillation_ibot_dino_transfers_be|Self-distillation (iBOT/DINO) transfers best to dense prediction under UPerNet]] — *done* — verdict **supported**, metric `+2.6 mIoU ADE20K, +1.5 mIoU Cityscapes (iBOT vs best rival family, UPerNet)`
-- `h5` [[h5_dense_pixel_contrastive_densecl_pixpro_t|Dense-pixel contrastive (DenseCL/PixPro) transfers best to dense prediction]] — *done* — verdict **refuted**, metric `-2.6 mIoU ADE20K vs iBOT (DenseCL, UPerNet)`
-- `h6` [[h6_mae_mim_matches_self_distillation_only_u|MAE (MIM) matches self-distillation only under full fine-tuning, not linear probe]] — *done* — verdict **partial**, metric `-1.5 UPerNet / -9.4 linear-probe mIoU gap (MAE vs iBOT)`
+- `h4` [[h4_self_distillation_ibot_dino_transfers_be|Self-distillation (iBOT/DINO) transfers best to dense prediction under UPerNet]] — *settled · strong*
+- `h5` [[h5_dense_pixel_contrastive_densecl_pixpro_t|Dense-pixel contrastive (DenseCL/PixPro) transfers best to dense prediction]] — *settled · strong*
+- `h6` [[h6_mae_mim_matches_self_distillation_only_u|MAE (MIM) matches self-distillation only under full fine-tuning, not linear probe]] — *leaning · weak*
+- `f16` finding (strong) [[f16_objective_family_self_distillation_wins_|Objective family — self-distillation wins dense transfer, dense-contrastive…]]
 <!-- crux:ledger:end -->

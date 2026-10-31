@@ -22,8 +22,8 @@ How to design the JEPA encoder?
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <!-- crux:ledger:start -->
-**2 children** · ideas 2/2 done (supported 1, partial 1, refuted 0, inconclusive 0, invalid-run 0)
+**2 children** · open 0, leaning 1, settled 1, parked 0
 
-- `h1` [[h1_masked_token_beats_masked_stem|masked-token beats masked-stem]] — *done* — verdict **supported**, metric `imp +0.012`
-- `h2` [[h2_post_conv_film_beats_per_conv|post_conv FiLM beats per_conv]] — *done* — verdict **partial**, metric `imp +0.003`
+- `h1` [[h1_masked_token_beats_masked_stem|masked-token beats masked-stem]] — *settled · strong*
+- `h2` [[h2_post_conv_film_beats_per_conv|post_conv FiLM beats per_conv]] — *leaning · weak*
 <!-- crux:ledger:end -->

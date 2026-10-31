@@ -24,8 +24,8 @@ eval: a proposed hypothesis is a plain hypothesis, not a tested one with empty b
 | id | tier | class | the evidence it must rest on |
 |---|---|---|---|
 | `q:vocabulary` | node | question | `repo/notes/vocab.md` asks whether 64k beats 32k for the 120M model |
-| `h:vocab-64k[tested]` | node | tested | ran, and cleared its stated bar: 18.9 → 18.2, a 0.7 improvement against a pre-agreed 0.4, in `repo/results/vocab.csv` |
-| `h:latency[tested]` | node | tested | ran, and **missed** its bar: median decode latency rose 11% against a 5% ceiling, in `repo/results/latency.csv`. The unticked box is the finding. |
+| `h:vocab-64k[tested]` | node | tested | ran, and cleared its stated bar: 18.9 → 18.2, a 0.7 improvement against a pre-agreed 0.4, in `repo/results/vocab.csv`. Its 4.0 seed line is `finding: [supports, …]`. |
+| `h:latency[tested]` | node | tested | ran, and **missed** its bar: median decode latency rose 11% against a 5% ceiling, in `repo/results/latency.csv`. The unticked box is the evidence, and its 4.0 seed line is `finding: [against, …]`. |
 | `h:morphology` | node | untested | `repo/notes/morphology.md` says it in as many words: no runs, no numbers, nobody started. A plain hypothesis, never `[tested]` with empty boxes. |
 
 `node_band: 4, 8` — the reconstruction is scored on landing inside a band, not on an exact

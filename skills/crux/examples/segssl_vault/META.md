@@ -32,4 +32,4 @@ Root: [[segssl_label_efficient_segmentation]]
 
 - **Questions** (5): open 1 · review 0 · resolved 4
 - **Hypotheses** (16): idea 1 · staged 0 · running 1 · done 14
-- **Verdicts**: supported 4 · partial 4 · refuted 5 · inconclusive 1
+- **Verdicts**: supported 4 · partial 4 · refuted 5 · inconclusive 1 · invalid-run 0

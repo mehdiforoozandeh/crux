@@ -8,7 +8,6 @@ status: resolved
 stale: true
 created: "2026-08-16T16:06:22"
 updated: "2026-08-16T16:07:14"
-synthesis: s5
 ---
 
 # q34 — Does the doubling ratio settle down at big sizes?
@@ -40,8 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 From 1,000 to 100,000 items, insertion quadruples every time I double. From 100,000 to 1,000,000, it still quadruples, about 4.1 times. The pattern holds all the way up. The growth rate is stable.
 
 <!-- crux:ledger:start -->
-**2 children** · ideas 2/2 done (supported 1, partial 0, refuted 0, inconclusive 1, invalid-run 0)
+**2 children** · open 0, leaning 1, settled 1, parked 0 · 1 finding(s) on this question
 
-- `h105` [[h105_the_doubling_ratio_settles_above_one_hun|The doubling ratio settles above one hundred thousand items]] — *done* — verdict **inconclusive**, metric `Ratios: 1k to 2k was 3.8. 10k to 20k was 4.1. 500k to 1M was 4.2.`
-- `h106` [[h106_the_measured_ratio_is_closer_to_four_tha|The measured ratio is closer to four than to two for insertion sort]] — *done* — verdict **supported**, metric `Doubling ratio averaged 4.1 across four size pairs from 10k to 1M.`
+- `h105` [[h105_the_doubling_ratio_settles_above_one_hun|The doubling ratio settles above one hundred thousand items]] — *leaning · moderate*
+- `h106` [[h106_the_measured_ratio_is_closer_to_four_tha|The measured ratio is closer to four than to two for insertion sort]] — *settled · strong*
+- `f96` finding (strong) [[f96_what_doubling_the_list_settled|What doubling the list settled]]
 <!-- crux:ledger:end -->

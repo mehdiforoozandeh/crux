@@ -19,6 +19,13 @@
   --v-invalid-run: #b8873a;   /* amber: the apparatus, not the claim — deliberately not red */
   --drift: #d98c3f;           /* the commitment was edited after it was locked */
   --root: #8a8f98; --synth: #57c8c0;
+  /* spec 19 — the 4.0 model. STATE is the fill (open grey · leaning gold · settled teal ·
+     parked faded); CONFIDENCE is the outline's weight (weak dotted · moderate · strong
+     heavy); DIRECTION is the glyph a hypothesis carries (✓ supports · ✕ against · ◐ mixed ·
+     ~ no answer yet). Three facts, three channels, so none of them overrides another. */
+  --s-open: #5a6470; --s-leaning: #d9a13b; --s-settled: #2f9e8f; --s-parked: #4a4f57;
+  --c-weak: #8a8f98; --c-moderate: #a9b4c2; --c-strong: #e6ebf0;
+  --d-supports: #3fa06a; --d-against: #d75a5a; --d-mixed: #8b5cf6; --d-no-answer-yet: #6b7794;
   /* taskhub (spec 08): ONE COLOUR PER CATEGORY is the layer's visual language. The tokens
      are per-vault and open-ended, so these are the declared defaults plus the reserved
      `experiment`, which deliberately borrows the tree's accent — an experiment is the one
@@ -53,6 +60,9 @@
   --v-invalid-run: #9a6b1f;
   --drift: #b3641a;
   --root: #9aa0a8; --synth: #2fa39a;
+  --s-open: #6e7a86; --s-leaning: #c08a1e; --s-settled: #1f8f80; --s-parked: #b9bec6;
+  --c-weak: #a3a9b1; --c-moderate: #6e7a86; --c-strong: #1f2328;
+  --d-supports: #2f8a57; --d-against: #d14b4b; --d-mixed: #7c4fd0; --d-no-answer-yet: #77839a;
   --t-default: #7a8290;
   --t-data-acquisition: #2f87cf; --t-hpc-setup: #1f8f80; --t-implementation: #5570c4;
   --t-visualization: #9a5fbe;    --t-manuscript: #c08a1e; --t-admin: #6e7a86;
@@ -68,12 +78,12 @@ body {
   display: flex; flex-direction: column;
 }
 /* smooth theme cross-fade on the major surfaces */
-body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
+body, #topbar, #detail-pane, #search, #overview-btn, #theme-btn { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
 /* interactive-chrome micro-transitions */
-#review-btn, #theme-btn, #zoom-ctl button, #legend .lg, .rowlink {
+#overview-btn, #theme-btn, #zoom-ctl button, #legend .lg, .rowlink {
   transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .1s ease;
 }
-.rowlink:active, #review-btn:active, #theme-btn:active { transform: translateY(1px); }
+.rowlink:active, #overview-btn:active, #theme-btn:active { transform: translateY(1px); }
 .node .toggle circle { transition: stroke .16s ease, fill .3s ease; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
@@ -148,13 +158,19 @@ body, #topbar, #detail-pane, #search, #review-btn, #theme-btn { transition: back
   #view-btn { min-width: 0; }
   .viewctl button { padding: 0 8px; }
 }
-#review-btn {
+#overview-btn {
   flex: 0 0 auto; white-space: nowrap; height: 28px; padding: 0 12px; border-radius: 7px;
-  border: 1px solid var(--q-review); background: transparent; color: var(--ink);
+  border: 1px solid var(--line); background: transparent; color: var(--ink);
   font-size: var(--fs-ui); font-weight: 600; cursor: pointer;
 }
-#review-btn.active { background: var(--q-review); color: #1a1305; }
-#review-btn.has-queue { box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-review) 28%, transparent); }
+#overview-btn.active { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
+/* spec 19, ruling Q9: a vault written before 4.0 is shown as it is; the cockpit cannot
+   migrate it (it never writes), so it says so in one line under the toolbar */
+#migrate-banner { flex: 0 0 auto; padding: 6px 14px; font-size: var(--fs-ui);
+  color: var(--ink); border-bottom: 1px solid var(--s-leaning);
+  background: color-mix(in srgb, var(--s-leaning) 16%, var(--panel)); }
+#migrate-banner[hidden] { display: none; }
 #theme-btn {
   flex: 0 0 auto; width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--ink-dim); font-size: var(--fs-ui); line-height: 1;
@@ -320,7 +336,7 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
   color: var(--ink-dim); font-size: var(--fs-ui-sm); font-weight: 550; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: var(--shadow); transition: border-color .16s ease, color .16s ease;
 }
 #legend-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px;
-  background: linear-gradient(135deg, var(--v-supported) 50%, var(--q-review) 50%); }
+  background: linear-gradient(135deg, var(--s-settled) 50%, var(--s-leaning) 50%); }
 #legend-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* svg tree */
@@ -334,9 +350,10 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .node .box.k-idea { stroke-width: 1.25; }
 .node .box.k-project { stroke-width: 2; }
 .node .qbar { stroke: none; }   /* solid status-coloured accent stripe on questions */
-.node .qbar.q-open { fill: var(--q-open); }
-.node .qbar.q-review { fill: var(--q-review); }
-.node .qbar.q-resolved { fill: var(--q-resolved); }
+.node .qbar.s-open { fill: var(--s-open); }
+.node .qbar.s-leaning { fill: var(--s-leaning); }
+.node .qbar.s-settled { fill: var(--s-settled); }
+.node .qbar.s-parked { fill: var(--s-parked); }
 /* hover parity with the wiki graph: the touched node lights up, its edges heat, and
    everything unrelated cools. app.js marks the hovered node (.hov) and its direct
    neighbors (.nbr) and puts ONE `spot` class on the canvas; this rule dims the rest.
@@ -375,23 +392,22 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .node .toggle text { fill: var(--ink-dim); font-size: 11px; font-weight: 700; pointer-events: none; }
 .node .toggle:hover circle { stroke: var(--accent); }
 
-/* status fills — the color IS the meaning (see the legend):
-   amber = awaiting review · green = supported/resolved · red = refuted · root = colorless */
+/* state fills — the color IS the meaning (see the legend). Spec 19: the state is derived
+   from a node's findings — open (none) · leaning (weak or moderate) · settled (strong) ·
+   parked (the conversation dropped it). Root = colorless. */
 .n-project { fill: var(--panel); stroke: var(--root); stroke-width: 2; }
-.n-synth   { fill: color-mix(in srgb, var(--synth) 26%, var(--panel)); stroke: var(--synth); }
-.q-open     { fill: color-mix(in srgb, var(--q-open) 34%, var(--panel));     stroke: var(--q-open); }
-.q-review   { fill: color-mix(in srgb, var(--q-review) 38%, var(--panel));   stroke: var(--q-review); }
-.q-resolved { fill: color-mix(in srgb, var(--q-resolved) 38%, var(--panel)); stroke: var(--q-resolved); }
-.h-idea    { fill: color-mix(in srgb, var(--h-idea) 26%, var(--panel));    stroke: var(--h-idea); }
-.h-staged  { fill: color-mix(in srgb, var(--h-staged) 30%, var(--panel));  stroke: var(--h-staged); }
-.h-running { fill: color-mix(in srgb, var(--h-running) 36%, var(--panel)); stroke: var(--h-running); }
-.h-supported    { fill: color-mix(in srgb, var(--v-supported) 36%, var(--panel));    stroke: var(--v-supported); }
-.h-partial      { fill: color-mix(in srgb, var(--v-partial) 36%, var(--panel));      stroke: var(--v-partial); }
-.h-refuted      { fill: color-mix(in srgb, var(--v-refuted) 36%, var(--panel));      stroke: var(--v-refuted); }
-.h-inconclusive { fill: color-mix(in srgb, var(--v-inconclusive) 36%, var(--panel)); stroke: var(--v-inconclusive); }
-.h-invalid-run  { fill: color-mix(in srgb, var(--v-invalid-run) 36%, var(--panel));  stroke: var(--v-invalid-run); }
-/* DRIFT is orthogonal to the verdict — a drifted node keeps its verdict fill and gains a
-   dashed edge, so "what was concluded" and "was the commitment edited" stay separable. */
+.s-open    { fill: color-mix(in srgb, var(--s-open) 30%, var(--panel));    stroke: var(--s-open); }
+.s-leaning { fill: color-mix(in srgb, var(--s-leaning) 34%, var(--panel)); stroke: var(--s-leaning); }
+.s-settled { fill: color-mix(in srgb, var(--s-settled) 40%, var(--panel)); stroke: var(--s-settled); }
+.s-parked  { fill: color-mix(in srgb, var(--s-parked) 22%, var(--panel));  stroke: var(--s-parked);
+             opacity: .7; }
+/* confidence — the outline's weight, never the fill: weak is dotted, strong is heavy */
+.node .box.c-weak     { stroke-width: 1.2; stroke-dasharray: 2 2.5; }
+.node .box.c-moderate { stroke-width: 1.9; }
+.node .box.c-strong   { stroke-width: 3; }
+/* DRIFT is orthogonal to the state — a drifted node keeps its state fill and gains a
+   drift-coloured dashed edge, so "what we found" and "was the commitment edited" stay
+   separable. */
 .box.drifted    { stroke: var(--drift); stroke-width: 2; stroke-dasharray: 5 3; }
 .drift-mark     { fill: var(--drift); font-size: var(--fs-ui-sm); text-anchor: end; pointer-events: none; }
 .badge.drift    { color: var(--drift); border-color: var(--drift); }
@@ -402,8 +418,6 @@ body[data-pane="right"] #detail-pane { flex: 1 1 100% !important; max-width: non
 .vkind          { margin-left: .45em; padding: 0 .38em; border-radius: 4px; font-size: .72em;
                   letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px;
                   color: var(--v-inconclusive); border: 1px solid var(--v-inconclusive); }
-.node.running .box { animation: pulse 1.8s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { filter: none; } 50% { filter: brightness(1.35); } }
 
 /* detail pane — all sizes in em so the text-size control scales them together */
 .d-empty { color: var(--ink-mute); margin-top: 30px; text-align: center; }
@@ -784,3 +798,19 @@ a.ext { color: var(--accent); }
 /* the ring on the anchor question (§I): a run-level mark, not a second per-node status —
    an outline change only, so the node's box geometry (width/height, layout) never shifts */
 .node.run-anchor .box { stroke: var(--accent); stroke-dasharray: 3 2; }
+
+/* spec 19 — findings, listed in the node pane (never drawn as tree nodes, ruling Q1) */
+.findings { list-style: none; margin: 0; padding: 0; }
+.findings .fd { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel2); }
+.findings .fd.decides { border-color: var(--s-settled); }
+.fd-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.fd-dir { font-weight: 700; color: var(--b, var(--ink)); }
+.fd-date { margin-left: auto; color: var(--ink-mute); font-size: .8em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.fd-why { color: var(--ink); }
+.fd-row { color: var(--ink-dim); font-size: .9em; }
+.fd-row .pk { color: var(--ink-mute); margin-right: .5em; }
+.fd-ev { margin-top: 4px; }
+.fd-note { color: var(--ink-mute); font-size: .88em; margin: 0 0 8px; }
+.ov-counts { display: flex; flex-wrap: wrap; gap: 7px; margin: 4px 0 10px; }

@@ -1,0 +1,14 @@
+### session capture-01
+PI: Let's drop the watering idea for now. I've changed it three times and nothing moves, so I don't think it's going anywhere.
+AGENT: Understood. The watering schedule looked flat across all three changes, so I'll stop treating it as the main lead.
+PI: I think the real issue is light. Does the number of light hours per day change how fast the seedlings grow?
+AGENT: That's a good question to put to the trays directly. What do you expect to see?
+PI: My guess is that sixteen hours of light beats twelve. Something like 20% taller after two weeks.
+AGENT: So the expectation is that seedlings under 16 hours a day are about 20% taller at day 14 than seedlings under 12 hours. One thing to watch: if the two groups sit in different spots, the spot could matter as much as the light.
+PI: I already ran it. The heights are in results/light-trial/heights.csv. The 16-hour trays averaged about 9.1 cm and the 12-hour trays about 7.9 cm.
+AGENT: That is roughly 15% taller: the direction you expected, a bit short of the size you expected. The file also says all three 16-hour trays were on the top shelf, and the top shelf is the warmer one.
+PI: Yeah, the lamp rig only reaches the top shelf. So warmth could be doing some of it.
+AGENT: Then the result leans your way, but it cannot yet tell light apart from warmth. Swapping the shelves, or putting a heat mat under the 12-hour trays, would separate the two.
+PI: Also, does the watering schedule change how tall they get? I feel like we asked that before.
+AGENT: We did, and it is still open; you set it aside at the start of today.
+PI: Right. Tomorrow I need to fix the timer on the lamp and order more seed trays.

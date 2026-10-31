@@ -1,0 +1,33 @@
+{
+ "fixture": "prerun-01",
+ "agent": "crux-prerun",
+ "agent_sha": "98bb5a9ef95e9b7e047d287f25161a03e6a9df122fbe42914a406693319ba241",
+ "_note": "CANNED — names the planted family.",
+ "runs": [
+  {
+   "findings": [
+    "capacity"
+   ]
+  },
+  {
+   "findings": [
+    "capacity"
+   ]
+  },
+  {
+   "findings": [
+    "capacity"
+   ]
+  },
+  {
+   "findings": [
+    "capacity"
+   ]
+  },
+  {
+   "findings": [
+    "capacity"
+   ]
+  }
+ ]
+}

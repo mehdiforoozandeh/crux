@@ -1,9 +1,15 @@
 /* crux cockpit — read-only. Polls /snapshot.json (~1s), lays out a deterministic
-   hierarchical tree, and shows a review queue / node detail on the right.
+   hierarchical tree, and shows an overview / node detail on the right.
    No writes, no build step, no dependencies. */
 "use strict";
 
-const VERDICTS = ["supported", "partial", "refuted", "inconclusive", "invalid-run"];
+// Spec 19 (engine 4.0). A question or hypothesis is painted by its DERIVED state — open (no
+// finding), leaning (weak or moderate), settled (strong), parked — as the fill, and by its
+// confidence as the outline's weight. A hypothesis also carries the direction of the finding
+// that decides its state, as a glyph. The engine computes all three; the cockpit only reads.
+const DIR_GLYPH = { supports: "✓", against: "✕", mixed: "◐", "no-answer-yet": "~" };
+const DIR_LABEL = { supports: "supports", against: "against", mixed: "mixed",
+                    "no-answer-yet": "no answer yet" };
 
 // Node geometry comes in two densities. "detail" (the default) sizes every box to fit its
 // full title, word-wrapped up to MAX_LINES, so a question or hypothesis is readable without
@@ -23,9 +29,6 @@ const KIND = {
 };
 const MAX_LINES = 4;
 const geomOf = (id) => state.nodeGeom[id];
-// verdict glyph shown inside a done hypothesis (colored by verdict)
-const GLYPH = { supported: "✓", partial: "◐", refuted: "✕", inconclusive: "~",
-                "invalid-run": "⊘" };
 // Every question & hypothesis carries its short code (Q10 / H13) on the LEFT of the node —
 // monospace so digits align, measured with the same font the CSS renders so the left gutter
 // fits it snugly. Root/synthesis have no code. In compact density the code is ALL a node shows.
@@ -109,7 +112,7 @@ const state = {
   lastJSON: "",
   etag: "",                 // /snapshot.json validator — echoed as If-None-Match; 304 = unchanged
   collapsed: new Set(),     // node ids whose subtree is hidden (client-only)
-  selected: null,           // node id, or null => review queue
+  selected: null,           // node id, or null => the overview
   view: { tx: 60, ty: 40, k: 1 },
   positions: {},            // id -> {x, y, depth}
   childCount: {},           // id -> number of tree children (drives the ± toggle)
@@ -206,8 +209,9 @@ async function poll() {
 //   geo — anything that can change structure or geometry: the walk order itself, type,
 //         title, verifiable COUNT, child count, the collapsed marker. geo changed →
 //         the old full path (layout + renderTree), unchanged in behavior.
-//   cos — drawn fields that only recolor an existing group: status, verdict,
-//         verifiable STATES. cos-only changes patch just the changed node groups.
+//   cos — drawn fields that only recolor an existing group: state, confidence, the
+//         deciding finding's direction, drift, verifiable STATES. cos-only changes patch
+//         just the changed node groups.
 // A selftest ties these field lists to the actual `n.<field>` reads in nodeSVG /
 // computeGeom / statusClass / verifDots — a new drawn field cannot be forgotten
 // silently (the failure mode of every diff is the field it forgot).
@@ -221,7 +225,9 @@ function treeSignatures() {
     const vs = n.verifiables || [];
     geo.push(n.id, n.type, n.title, vs.length, (node.children || []).length,
              state.collapsed.has(node.id) ? 1 : 0);
-    cosMap[n.id] = n.status + "|" + (n.verdict || "") + "|" + (n.drift ? "D" : "") + "|"
+    // dirOf reads n.state_finding and n.findings; the count rides too (vBadgeClass reads it)
+    cosMap[n.id] = n.state + "|" + (n.confidence || "") + "|" + (n.state_finding || "") + "|"
+                 + dirOf(n) + "|" + (n.findings || []).length + "|" + (n.drift ? "D" : "") + "|"
                  + vs.map((v) => v.state).join(",");
     if (state.collapsed.has(node.id)) return;
     for (const c of node.children || []) walk(c);
@@ -229,7 +235,7 @@ function treeSignatures() {
   return { geo: JSON.stringify(geo), cosMap };
 }
 
-// Regenerate ONE node's group in place (status/verdict/dot flips — geometry-neutral by
+// Regenerate ONE node's group in place (state/confidence/dot flips — geometry-neutral by
 // construction, the geo key pinned everything else). nodeSVG bakes the current cosmetic
 // classes and ARIA, so the patched group is exactly what a full render would emit; the
 // sim's element cache is re-pointed and the group is put back on its live position.
@@ -258,12 +264,13 @@ function detailKeyOf() {
     if (sel && sel.startsWith("rd:")) return "taskrd";   // the RD reader keys itself
     if (sel) return "task:" + sel + ":" +
       JSON.stringify(taskById(sel) || null);             // re-render when THE task changes
-    return "taskgate:" + JSON.stringify((state.snap.tasks || {}).queue || []);
+    return "taskhome";
   }
   if (state.report) return "report:" + state.report.path;
   if (state.selected)
     return "node:" + state.selected + ":" + JSON.stringify(state.snap.nodes[state.selected]);
-  return "queue:" + JSON.stringify(state.snap.queue);
+  return "overview:" + JSON.stringify(state.snap.migration || null) + ":" +
+    Object.values(state.snap.nodes).map((n) => n.id + "=" + n.state).join(",");
 }
 
 let _legendRendered = false;
@@ -290,7 +297,8 @@ function onSnapshot() {
   renderCrumb();
   updateTabs();
   updateToolbar();     // the focus button's label is contextual — keep it honest
-  updateReviewBtn();
+  updateOverviewBtn();
+  renderMigrateBanner();
   // ---- two-tier diff (see treeSignatures above): full path only on structural change
   const sig = treeSignatures();
   const structural = sig.geo !== _treeSig.geo;
@@ -358,7 +366,7 @@ function layout() {
     pos[id] = horiz ? { x: crossAt[d], y: center[id] }
                     : { x: center[id] - g.w / 2, y: crossAt[d] + g.h / 2 };
   }
-  // synthesis nodes are intentionally NOT laid out or drawn in the cockpit — they add clutter
+  // a pre-4.0 synthesis node is intentionally NOT laid out or drawn — it adds clutter
   // without helping navigation. (They still exist in the vault and the JSON snapshot.)
   state.positions = pos;
   state.childCount = kids;
@@ -423,10 +431,22 @@ function layoutRadial() {
 // ------------------------------------------------------------------ tree render
 function statusClass(n) {
   if (n.type === "project") return "n-project";
-  if (n.type === "synthesis") return "n-synth";
-  if (n.type === "question") return "q-" + n.status;
-  if (n.status === "done") return "h-" + (n.verdict || "inconclusive");
-  return "h-" + n.status;
+  if (!n.state) return "s-open";        // a pre-4.0 node type the engine gives no state
+  return "s-" + n.state;
+}
+// confidence is the outline's weight; an open node has none
+function confClass(n) {
+  return n.confidence ? "c-" + n.confidence : "";
+}
+// the direction of the finding that decides a hypothesis' state ("" when none decides it)
+function dirOf(n) {
+  if (n.type !== "idea" || !n.state_finding) return "";
+  const f = (n.findings || []).find((x) => x.id === n.state_finding);
+  return (f && f.direction) || "";
+}
+// the legend filter: a chip is either a state ("s-…") or a confidence ("c-…")
+function filterHit(n) {
+  return !state.filter || statusClass(n) === state.filter || confClass(n) === state.filter;
 }
 
 // edge path between two nodes, from a position map (so it can be recomputed each frame while
@@ -462,13 +482,13 @@ function edgeD(paId, chId, pos) {
 
 // Verifiable badges on a hypothesis (LOCAL coords). Three meanings:
 //   met  -> filled green (approved)
-//   unmet on a CLOSED hypothesis -> filled red (tested & rejected)
+//   unmet on a hypothesis that has a finding -> filled red (tested & not met)
 //   anything else (unmet-but-not-yet-tested, or n/a) -> hollow circle (not decided)
 // Detail: their own row along the bottom-left, clear of the pill's rounded right cap.
 // Compact: inline near the right edge (there's no room for a row).
 function vBadgeClass(v, n) {
   if (v.state === "met") return "v-met";
-  if (v.state === "unmet" && n.status === "done") return "v-unmet";
+  if (v.state === "unmet" && (n.findings || []).length) return "v-unmet";
   return "v-pending";
 }
 function verifDots(n, g) {
@@ -488,10 +508,10 @@ function nodeSVG(n, p) {
   const g = geomOf(n.id), k = KIND[n.type] || KIND.question, cls = statusClass(n);
   const sel = state.selected === n.id ? " selected" : "";
   const matches = state.search && matchNode(n);
-  const dimmed = (state.search && !matches) || (state.filter && cls !== state.filter);
-  const wrap = "node" + (n.status === "running" ? " running" : "") +
-    (dimmed ? " dim" : "") + (matches ? " hit" : "");
-  const shape = `<rect class="box k-${n.type} ${esc(cls)}${sel}${n.drift ? " drifted" : ""}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`
+  const dimmed = (state.search && !matches) || !filterHit(n);
+  const wrap = "node" + (dimmed ? " dim" : "") + (matches ? " hit" : "");
+  const conf = confClass(n);
+  const shape = `<rect class="box k-${n.type} ${esc(cls)}${conf ? " " + esc(conf) : ""}${sel}${n.drift ? " drifted" : ""}" x="0" y="${-g.h / 2}" width="${g.w}" height="${g.h}" rx="${g.rx}"/>`
     // DRIFT: the verifiables, their kinds or the rule were edited after the commitment was
     // locked. Drawn on the node itself — a flag only visible once you open the pane is a flag
     // that does nothing for the reader skimming the tree.
@@ -517,8 +537,10 @@ function nodeSVG(n, p) {
     ? `<g class="toggle" data-toggle="${esc(n.id)}"><circle cx="${tcx}" cy="${tcy}" r="7.5"/>` +
       `<text x="${tcx}" y="${tcy + 3.5}" text-anchor="middle">${state.collapsed.has(n.id) ? "+" : "−"}</text></g>`
     : "";
-  const tipStatus = n.type === "idea" && n.verdict ? n.verdict : n.status;
-  const tip = `<title>${esc(n.title)} — ${esc(n.type)} · ${esc(tipStatus)}</title>`;
+  const dir = dirOf(n);
+  const tipStatus = n.type === "project" ? "project"
+    : [n.state, n.confidence, dir && DIR_LABEL[dir]].filter(Boolean).join(" · ");
+  const tip = `<title>${esc(n.title)} — ${esc(n.type === "idea" ? "hypothesis" : n.type)} · ${esc(tipStatus)}</title>`;
   // ARIA (spec 12, D7): every drawn node is a treeitem; the svg's aria-activedescendant
   // (set in renderTree) points at the selected one via this element id. Attributes only —
   // the group's structure is untouched.
@@ -555,7 +577,7 @@ function rootLabel(n, g, k) {
 }
 
 // question / hypothesis body. Compact: ONLY the code (Q10 / H13), centred. Detail: the code in
-// a left gutter, then the verdict glyph (ideas) plus the wrapped title, left-aligned beside it.
+// a left gutter, then the direction glyph (hypotheses) plus the wrapped title beside it.
 function bodyLabel(n, g, k) {
   const codeCls = n.type === "question" ? "t-code t-code-q" : "t-code t-code-h";
   if (state.density === "compact") {
@@ -568,8 +590,9 @@ function bodyLabel(n, g, k) {
   const divEl = g.code ? `<line class="code-div" x1="${g.gutter - 6}" y1="${-g.h / 2 + 7}" x2="${g.gutter - 6}" y2="${g.h / 2 - 7}"/>` : "";
   const startX = g.gutter;
   const y0 = -g.dotsPad / 2 - ((g.lines.length - 1) * g.lh) / 2 + 4;
-  const glyph = n.type === "idea" && n.verdict
-    ? `<text class="glyph" x="${startX}" y="${y0}" style="fill:var(--v-${esc(n.verdict)})">${GLYPH[n.verdict]}</text>`
+  const dir = dirOf(n);
+  const glyph = dir && DIR_GLYPH[dir]
+    ? `<text class="glyph" x="${startX}" y="${y0}" style="fill:var(--d-${esc(dir)})">${DIR_GLYPH[dir]}</text>`
     : "";
   const lbl = g.lines.map((ln, i) => {
     const x = i === 0 && glyph ? startX + 13 : startX;
@@ -842,22 +865,16 @@ function stopViewTween() { cancelAnimationFrame(_viewRAF); }
 // be painted in has a chip here (a selftest derives this list from the engine's constants,
 // so the two can't drift again — `inconclusive` once existed on nodes with no key entry).
 const LEGEND = [
-  ["questions", [
-    ["q-open", "--q-open", "open", "Question — open, still being worked"],
-    ["q-review", "--q-review", "review", "Question — awaiting your decision (the review gate)"],
-    ["q-resolved", "--q-resolved", "resolved", "Question — resolved on an approved synthesis"],
+  ["state", [
+    ["s-open", "--s-open", "open", "No finding yet — the question or hypothesis is still open"],
+    ["s-leaning", "--s-leaning", "leaning", "The strongest finding is weak or moderate — the answer leans one way"],
+    ["s-settled", "--s-settled", "settled", "A strong finding answers it"],
+    ["s-parked", "--s-parked", "parked", "The conversation dropped it; its findings stay"],
   ]],
-  ["hypotheses", [
-    ["h-idea", "--h-idea", "idea", "Hypothesis — proposed, not yet staged to run"],
-    ["h-staged", "--h-staged", "staged", "Hypothesis — queued, waiting to run"],
-    ["h-running", "--h-running", "running", "Hypothesis — experiment running now"],
-  ]],
-  ["verdicts", [
-    ["h-supported", "--v-supported", "supported", "Verdict: supported — every verifiable met"],
-    ["h-partial", "--v-partial", "partial", "Verdict: partial — some verifiables met"],
-    ["h-refuted", "--v-refuted", "refuted", "Verdict: refuted — no verifiable met"],
-    ["h-inconclusive", "--v-inconclusive", "inconclusive", "Verdict: inconclusive — the combination rule was not met and not clearly failed"],
-    ["h-invalid-run", "--v-invalid-run", "invalid run", "Verdict: invalid run — an outcome-neutral check failed, so the run tells us nothing about the claim. Not a refutation; re-run."],
+  ["confidence", [
+    ["c-weak", "--c-weak", "weak", "Confidence: weak (dotted outline). A null not ruled out caps a finding here."],
+    ["c-moderate", "--c-moderate", "moderate", "Confidence: moderate"],
+    ["c-strong", "--c-strong", "strong", "Confidence: strong (heavy outline)"],
   ]],
 ];
 
@@ -937,7 +954,7 @@ function applyCosmeticState() {
     const id = el.getAttribute("data-id"), n = state.snap.nodes[id];
     if (!n) return;
     const matches = state.search && matchNode(n);
-    const dimmed = (state.search && !matches) || (state.filter && statusClass(n) !== state.filter);
+    const dimmed = (state.search && !matches) || !filterHit(n);
     el.classList.toggle("dim", !!dimmed);
     el.classList.toggle("hit", !!matches);
     const selected = state.selected === id;
@@ -954,28 +971,46 @@ function selectNode(id, opts) {
   state.selected = id;
   state.report = null;      // picking a node leaves any open report
   updateToolbar();
-  updateReviewBtn();
+  updateOverviewBtn();
   applyCosmeticState();     // selection is cosmetic — never a rebuild (see above)
   renderDetail();
-  if (opts && opts.center) centerOn(id);   // used when jumping from the queue / a detail link / search
+  if (opts && opts.center) centerOn(id);   // used when jumping from the overview / a detail link / search
 }
 
-function showQueue() {
-  if (state.tab !== "tree") setTab("tree");   // the review gate lives in the tree view
+// Spec 19 removed the review gate: no question waits on the PI any more. The empty-selection
+// pane is the overview instead — how much of the tree is open, leaning, settled or parked.
+function showOverview() {
+  if (state.tab !== "tree") setTab("tree");   // the overview lives in the tree view
   state.selected = null;
-  state.report = null;   // an open report otherwise wins the render and Review looks dead
+  state.report = null;   // an open report otherwise wins the render and the button looks dead
   updateToolbar();
-  updateReviewBtn();
+  updateOverviewBtn();
   applyCosmeticState();  // deselection is a class swap too — no rebuild
   renderDetail();
 }
 
-function updateReviewBtn() {
-  const n = state.snap ? state.snap.queue.length : 0;
-  const b = $("review-btn");
-  b.textContent = `Review (${n})`;
-  b.classList.toggle("active", state.tab === "tree" && state.selected === null);
-  b.classList.toggle("has-queue", n > 0);
+function updateOverviewBtn() {
+  $("overview-btn").classList.toggle("active", state.tab === "tree" && state.selected === null);
+}
+
+// Ruling Q9: the cockpit never writes, so it cannot migrate a vault stamped below 4.0. The
+// server previews the migration in memory (migrate4.plan is pure) and serves that tree, with
+// `preview: true`; when the preview fails it serves the vault as saved, `preview: false`.
+function renderMigrateBanner() {
+  const m = state.snap.migration || {};
+  const b = $("migrate-banner");
+  b.hidden = !m.needed;
+  if (!m.needed) return;
+  const head = "This notebook is not migrated yet (written by crux engine " +
+    (m.stamped ? "v" + m.stamped : "before versions were stamped") +
+    ") — any crux write command migrates it. ";
+  b.textContent = head + (m.preview
+    ? "Shown here is what that migration would make of it, computed in memory: " +
+      m.findings + " finding" + (m.findings === 1 ? "" : "s") + " from its old verdicts" +
+      (m.pending ? ", and " + m.pending + " candidate" + (m.pending === 1 ? "" : "s") +
+        " left for review" : "") + ". Nothing has been written."
+    : "Until then it is shown as saved: its old verdicts are not findings yet, so its " +
+      "nodes read as open.");
 }
 
 function badge(text, varName, cls) {
@@ -1049,7 +1084,7 @@ function renderDetail() {
     if (sel && sel.startsWith("rd:")) { renderPageReader(LAYERS.rd); return; }
     state.rd.readerKey = "";   // not showing the RD reader — force a fresh render on return
     const t = sel ? taskById(sel) : null;
-    pane.innerHTML = t ? taskDetail(t) : taskGateDetail();
+    pane.innerHTML = t ? taskDetail(t) : taskHomeDetail();
     return;
   }
   if (state.tab === "wiki") { renderWikiReader(); return; }
@@ -1057,7 +1092,7 @@ function renderDetail() {
   state.rd.readerKey = "";     // same for the RD reader — a stale key left the pane frozen (spec 07 audit)
   if (state.report) { pane.innerHTML = reportDetail(); return; }
   const n = state.selected ? state.snap.nodes[state.selected] : null;
-  pane.innerHTML = n ? nodeDetail(n) : queueDetail();
+  pane.innerHTML = n ? nodeDetail(n) : overviewDetail();
 }
 
 // ------------------------------------------------------------------ artifact report reader
@@ -1101,20 +1136,29 @@ function reportDetail() {
     `<div class="badges"><span class="badge">${esc(r.path)}</span></div>` + body;
 }
 
-function queueDetail() {
-  const q = state.snap.queue;
-  const head = `<div class="d-kind">review gate</div><div class="d-title">Awaiting your decision</div>`;
-  if (!q.length) return head + `<p class="d-empty">No questions are waiting on a decision.</p>`;
-  const rows = q.map((r) =>
-    `<button class="rowlink" data-go="${esc(r.id)}"><span class="rid">${esc(r.id)}</span>${esc(r.title)}` +
-    `<span class="rsum">${esc(r.summary)}</span></button>`).join("");
-  return head + `<div class="sec">${rows}</div>`;
+// Nothing selected: the overview. Counts by state for questions and hypotheses, then every
+// question with its state — the map a PI reads before picking a node. Read from the
+// snapshot's own vocabulary, so a state added to the engine shows up here unasked.
+function overviewDetail() {
+  const snap = state.snap, ns = Object.values(snap.nodes);
+  const states = (snap.vocab && snap.vocab.states) || ["open", "leaning", "settled", "parked"];
+  const counts = (type) => `<div class="ov-counts">` + states.map((s) =>
+    badge(`${ns.filter((n) => n.type === type && n.state === s).length} ${s}`, "--s-" + s)).join("") +
+    `</div>`;
+  const qs = ns.filter((n) => n.type === "question");
+  const hs = ns.filter((n) => n.type === "idea");
+  const rows = qs.map((n) => childLink(n.id)).join("");
+  return head("overview", snap.project.title || "") +
+    section(`Questions <span class="fold-n">${qs.length}</span>`, counts("question")) +
+    section(`Hypotheses <span class="fold-n">${hs.length}</span>`, counts("idea")) +
+    (rows ? section("Every question", `<div>${rows}</div>`)
+          : `<p class="d-empty">No questions yet.</p>`) +
+    `<p class="d-empty">Click a node to see its findings.</p>`;
 }
 
 function nodeDetail(n) {
   if (n.type === "question") return questionDetail(n);
   if (n.type === "idea") return ideaDetail(n);
-  if (n.type === "synthesis") return synthesisDetail(n);
   return projectDetail(n);
 }
 
@@ -1168,9 +1212,9 @@ function tasksSection(n) {
   return section("Work", `<ul class="linklist">${rows}</ul>`);
 }
 
-// A conclusion is WRITTEN about a run and PI-accepted; a verdict is DERIVED by the engine
-// from the ticks. Same four tokens, different mechanisms — so this deliberately reads
-// "concluded", never "verdict", and says when the run was accepted.
+// A conclusion is WRITTEN about a run, on its task. A node's state comes from its findings:
+// a run moves it only once its output is evidence on one. Same words, different records — so
+// this list reads "concluded", and the node's own state stays the badge at the top.
 function experimentsSection(n) {
   const exps = n.experiments || [];
   if (!exps.length) return "";
@@ -1179,46 +1223,114 @@ function experimentsSection(n) {
   items.forEach((t) => (byId[t.id] = t));
   const rows = exps.map((e) => {
     const t = byId[e.task] || {};
-    const acc = t.accepted
-      ? `<span class="tk-state">accepted</span>`
-      : `<span class="tk-pending">awaiting the PI</span>`;
     return `<li><span class="rid">${esc(e.task)}</span>` +
       `${esc(t.title || "")} — concluded ` +
-      `<span class="tk-concl tk-c-${esc(e.conclusion)}">${esc(e.conclusion)}</span> ${acc}</li>`;
+      `<span class="tk-concl tk-c-${esc(e.conclusion)}">${esc(e.conclusion)}</span> ` +
+      `<span class="tk-state">${esc(t.state || e.status || "")}</span></li>`;
   }).join("");
   return section("Experiments", `<ul class="linklist">${rows}</ul>` +
-    `<div class="body muted">What a run concluded, accepted by the PI. The verdict above is ` +
-    `derived by the engine from the ticks — the two are different facts.</div>`);
+    `<div class="body muted">What each run concluded, as written on its task. The state ` +
+    `above comes from its findings — the two are different records.</div>`);
 }
 
 function projectDetail(n) {
   return head("project", n.title) + section("Goal", bodyOr(state.snap.project.goal, "—"));
 }
 
+// The state, the confidence and (when the conversation dropped the node) the parking, as
+// the pane's headline badges. The engine derives all of it; nothing here is computed.
+function stateBadges(n) {
+  const parked = n.parked
+    ? `<span class="badge dot" style="--b:var(--s-parked)" title="The conversation dropped ` +
+      `this node. Parking is not deletion: its findings stay, and unparking restores the ` +
+      `state they give.">parked</span>`
+    : "";
+  return (n.parked ? parked : badge(n.state || "open", "--s-" + (n.state || "open"))) +
+    (n.confidence ? badge(n.confidence + " confidence", "--c-" + n.confidence) : "");
+}
+
+// One evidence link of a finding: a report opens in the reader, a file opens through the
+// read-only /file/ route, and a directory (a run's whole output) is named but inert.
+function evidenceLink(p) {
+  const name = String(p).split("/").filter(Boolean).pop() || String(p);
+  if (/\.md$/i.test(name))
+    return `<button class="rowlink" data-report="${esc(p)}"><span class="rid">report</span>` +
+      `${esc(name)}<span class="rsum">${esc(p)}</span></button>`;
+  if (/\.[a-z0-9]+$/i.test(name))
+    return `<a class="rowlink" href="${fileUrl(p)}" target="_blank" rel="noopener">` +
+      `<span class="rid">file</span>${esc(name)}<span class="rsum">${esc(p)}</span></a>`;
+  return `<div class="rowlink inert"><span class="rid">dir</span>${esc(p)}</div>`;
+}
+
+// Spec 19, ruling Q1: findings are listed HERE, in the node's pane — never drawn as tree
+// nodes. Newest first; the one that sets the node's state is marked. A question's finding
+// carries answer text, a confidence and evidence, and NO direction. A hypothesis' finding
+// carries a direction, a confidence, one sentence of why, and how the result compared with
+// the expectation, the null and the checks.
+function findingsSection(n) {
+  const fs = (n.findings || []).slice().reverse();
+  // a question with no finding of its own takes its state from a child hypothesis' finding,
+  // capped at moderate — say where the state came from, or "leaning" reads unexplained
+  const borrowed = n.type === "question" && n.state_finding
+    && !fs.some((f) => f.id === n.state_finding)
+    ? `<p class="fd-note">No finding of its own yet: its state comes from the strongest ` +
+      `finding on a child hypothesis (${esc(n.state_finding)}), capped at moderate.</p>`
+    : "";
+  if (!fs.length)
+    return section("Findings", borrowed ||
+      `<div class="body muted">none yet — it stays open until a finding lands</div>`);
+  const rows = fs.map((f) => {
+    const decides = f.id === n.state_finding;
+    let chips = "";
+    if (n.type === "idea" && f.direction)
+      chips += `<span class="fd-dir" style="--b:var(--d-${esc(f.direction)})">` +
+        `${DIR_GLYPH[f.direction] || ""} ${esc(DIR_LABEL[f.direction] || f.direction)}</span>`;
+    if (f.confidence) chips += badge(f.confidence, "--c-" + f.confidence);
+    // the null cap, re-applied on read: a finding counts with this confidence, not the stored one
+    if (f.effective_confidence && f.effective_confidence !== f.confidence)
+      chips += `<span class="badge warn" title="The null was not ruled out, which caps ` +
+        `confidence at weak.">counts as ${esc(f.effective_confidence)}</span>`;
+    if (decides) chips += `<span class="badge" title="The strongest finding sets the ` +
+      `node's state; the newest breaks a tie.">sets the state</span>`;
+    if (f.created) chips += `<span class="fd-date">${esc(String(f.created).replace("T", " "))}</span>`;
+    const text = (n.type === "idea" ? "" : bodyOr(f.answer, "no answer text")) +
+      (f.why ? `<div class="fd-why">${esc(f.why)}</div>` : "");
+    const comp = n.type === "idea"
+      ? [["vs expectation", f.vs_expect], ["null", f.null], ["checks", f.verifiables]]
+          .filter((x) => x[1])
+          .map(([k, x]) => `<div class="fd-row"><span class="pk">${k}</span>${esc(x)}</div>`).join("")
+      : "";
+    const ev = (f.evidence || []).length
+      ? `<div class="fd-ev">${f.evidence.map(evidenceLink).join("")}</div>` : "";
+    return `<li class="fd${decides ? " decides" : ""}"><div class="fd-head">` +
+      `<span class="rid">${esc(f.id)}</span>${chips}</div>${text}${comp}${ev}</li>`;
+  }).join("");
+  return section(`Findings <span class="fold-n">${fs.length}</span>`,
+    borrowed + `<ul class="findings">${rows}</ul>`);
+}
+
 function questionDetail(n) {
-  const qColor = { open: "--q-open", review: "--q-review", resolved: "--q-resolved" }[n.status];
-  let badges = badge(n.status, qColor);
-  if (n.stale) badges += badge("stale", null, "stale");
-  const l = n.ledger;
+  const l = n.ledger || {};
+  const states = (state.snap.vocab && state.snap.vocab.states) || [];
   const ledger = `<div class="body">` +
-    `${l.children} children · ${l.ideas_done}/${l.ideas_total} hypotheses done` +
-    (l.subq_total ? ` · ${l.subq_resolved}/${l.subq_total} sub-questions resolved` : "") + `<br>` +
-    VERDICTS.map((k) => `${l[k]} ${k}`).join(" · ") + `</div>`;
+    `${l.children || 0} children · ${l.ideas_total || 0} hypotheses` +
+    (l.subq_total ? ` · ${l.subq_total} sub-questions` : "") +
+    ` · ${l.findings || 0} findings<br>` +
+    states.map((k) => `${l[k] || 0} ${k}`).join(" · ") + `</div>`;
   const kids = n.children.map((cid) => childLink(cid)).join("");
   // the question's own framing (## Question); shown only when it adds to the title, and
   // folded when it runs long — the ELI5/TL;DR pair above is what the pane opens on
   const stmt = n.detail && n.detail.trim() && n.detail.trim() !== n.title.trim()
     ? foldedSection("Detail", n.detail, "") : "";
-  // a resolved question closed on an APPROVED synthesis — surface it, and make it openable
-  const syn = n.synthesis && state.snap.nodes[n.synthesis]
-    ? section("Closed on synthesis", childLink(n.synthesis)) : "";
-  return head("question", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` +
+  // `## Answer so far` is prose a pre-4.0 question may still carry; shown only when written
+  const ans = n.answer && n.answer.trim() ? section("Answer so far", bodyOr(n.answer, "")) : "";
+  return head("question", n.title) + `<div class="badges">${stateBadges(n)}${economyBadge(n)}</div>` +
     summaryLead(n) +
     stmt +
-    section("Answer so far", bodyOr(n.answer, "not yet interpreted")) +
+    findingsSection(n) +
+    ans +
     rdSection(n) +
-    syn +
-    section("Evidence ledger", ledger) +
+    section("Children by state", ledger) +
     tasksSection(n) +
     (kids ? section("Children", `<div>${kids}</div>`) : "");
 }
@@ -1254,15 +1366,10 @@ function artifactsSection(n) {
 }
 
 function ideaDetail(n) {
-  let badges = badge(n.status, { idea: "--h-idea", staged: "--h-staged", running: "--h-running", done: null }[n.status] || null);
-  if (n.verdict) badges += badge(n.verdict, "--v-" + n.verdict);
-  // The rule travels WITH the verdict, everywhere the hypothesis is read (spec 15 §5). A
-  // verdict without the rule that produced it is exactly the reading PLATO's authors gave
-  // themselves: "supported" with no account of what would have made it not.
+  let badges = stateBadges(n);
+  // The rule travels WITH the checks, everywhere the hypothesis is read (spec 15 §5). Spec
+  // 19 keeps it as an optional section: the checks inform the confidence, never compute it.
   if (n.rule) badges += `<span class="badge" title="how the claim-directed checks add up, declared before the run">rule <span class="inline">${esc(n.rule + (n.rule_m ? " (m=" + n.rule_m + ")" : ""))}</span></span>`;
-  // the NULL is the bar restated: the null hypothesis the checks had to discriminate
-  // against. Shown beside the verdict because a verdict is only as strong as what it ruled out.
-  if (n.null_approved === null && n.null) badges += `<span class="badge warn" title="This null has not been approved by the PI. Checks are written against an APPROVED null.">null unapproved</span>`;
   if (n.drift) badges += `<span class="badge drift" title="The verifiables, their kinds or the combination rule changed after the commitment was locked. The edit stands — research does discover a check was wrong — but the flag is permanent. git log -p the node for the diff.">\u26A0 drift</span>`;
   // A commitment hashed only at close was never a pre-registration: the checks and the
   // results became visible at the same moment. Say so rather than implying otherwise.
@@ -1273,7 +1380,7 @@ function ideaDetail(n) {
         const m = { met: ["met", "✓"], unmet: ["unmet", ""], na: ["na", "–"] }[v.state];
         // `outcome-neutral` is a control: it must pass whatever the claim turns out to be,
         // and its failure invalidates the RUN rather than refuting the claim. Unmarked, a
-        // reader of an `invalid-run` node sees "2 met, 1 unmet" and no reason for the verdict.
+        // reader sees "2 met, 1 unmet" and no reason the run tells us nothing.
         const kn = v.kind === "outcome-neutral"
           ? `<span class="vkind" title="outcome-neutral: a control that must pass whatever the claim turns out to be. Its failure invalidates the run, not the claim.">control</span>`
           : "";
@@ -1300,37 +1407,28 @@ function ideaDetail(n) {
     : "";
   return head("hypothesis", n.title) + `<div class="badges">${badges}${economyBadge(n)}</div>` + openReportBtn +
     summaryLead(n) +
+    // spec 19: a hypothesis states what it expects before any evidence (required); the null
+    // and the checks are added when they can be defined
+    section("Expected result", bodyOr(n.expect, "not stated")) +
     section("Null hypothesis — the alternative explanation the checks must rule out", bodyOr(n.null, "none declared")) +
     foldedSection("Problem", n.problem, "—") +
     plannedSection(n) +
     rdSection(n) +
     section("Verifiables", vs) +
+    findingsSection(n) +
     section("Run links", runs) +
     artifactsSection(n) +
-    section("Findings", bodyOr(n.findings, "not closed yet")) +
     experimentsSection(n) + tasksSection(n);
-}
-
-function synthesisDetail(n) {
-  const rel = n.related.length
-    ? n.related.map((cid) => childLink(cid)).join("")
-    : `<div class="body muted">none</div>`;
-  // a synthesis is what closes a question, so its approval state is the headline fact
-  const badges = n.approved
-    ? badge("approved " + String(n.approved).replace("T", " "), "--q-resolved")
-    : badge("awaiting the PI's approval", "--q-review");
-  return head("synthesis", n.title) + `<div class="badges">${badges}</div>` +
-    bodyOr(n.body, "empty") +
-    section("Related questions", `<div>${rel}</div>`);
 }
 
 function childLink(cid) {
   const c = state.snap.nodes[cid];
   if (!c) return "";
   const kind = c.type === "question" ? "Q" : c.type === "idea" ? "H" : c.type[0].toUpperCase();
-  const extra = c.type === "idea" && c.verdict ? ` — ${c.verdict}` : ` — ${c.status}`;
+  const dir = dirOf(c);
+  const extra = [c.state, c.confidence, dir && DIR_LABEL[dir]].filter(Boolean).join(" · ");
   return `<button class="rowlink" data-go="${esc(cid)}"><span class="rid">${esc(kind)} ${esc(cid)}</span>${esc(c.title)}` +
-    `<span class="rsum">${esc(extra.slice(3))}</span></button>`;
+    `<span class="rsum">${esc(extra)}</span></button>`;
 }
 
 // ------------------------------------------------------------------ helpers
@@ -1579,7 +1677,7 @@ svg.addEventListener("keydown", onTreeKeydown);
 $("detail-pane").addEventListener("click", (e) => {
   // Scope to the font BUTTONS: #detail-content also carries a data-font attribute (it drives the
   // text-size CSS), so a bare closest("[data-font]") swallows every click inside the detail
-  // content — including the review-queue rows and child links — and their data-go never fires.
+  // content — including the overview rows and child links — and their data-go never fires.
   const fbtn = e.target.closest("#detail-fontctl [data-font]");
   if (fbtn) { setDetailFont(fbtn.getAttribute("data-font")); return; }
   // a figure is width-limited by the pane — click it to open the full-size file
@@ -1612,7 +1710,7 @@ function setDetailFont(size) {
 }
 setDetailFont(localStorage.getItem("crux-detail-font") || "medium");
 
-$("review-btn").addEventListener("click", showQueue);
+$("overview-btn").addEventListener("click", showOverview);
 
 // legend chips: click to spotlight one status; click again (or another chip) to change/clear
 $("legend").addEventListener("click", (e) => {
@@ -1795,7 +1893,7 @@ $("focus-btn").addEventListener("click", () => {
   if (state.selected && state.selected !== state.snap.project.id) { setFocus(state.selected); return; }
   if (!state.focused) {
     state.collapsed = new Set(Object.values(state.snap.nodes)
-      .filter((n) => n.type === "question" && n.status !== "open").map((n) => n.id));
+      .filter((n) => n.type === "question" && n.state !== "open").map((n) => n.id));
     state.focused = true;
   } else {
     state.collapsed.clear();
@@ -2013,7 +2111,7 @@ function setTab(tab) {
     : tab === "auto"
     ? "Search the run's attempts — Enter / Shift+Enter cycle the matches, Esc clears"
     : "Search the tree — Enter / Shift+Enter cycle the matches, Esc clears";
-  updateReviewBtn();
+  updateOverviewBtn();
   applySearch();
   renderDetail();
   if (tab === "tasks") {
@@ -2722,9 +2820,8 @@ function taskRow(t, depth, ctx) {
   const concl = (t.hypothesis_refs || []).map((h) =>
     `<span class="tk-concl tk-c-${esc(h.conclusion)}">${esc(h.id)} → ${esc(h.conclusion)}` +
     (h.schema === 0 ? ' <span class="tk-state" title="This hypothesis predates evidence ' +
-      'semantics (spec 15). Its verdict is frozen; this conclusion is a record on the task.' +
-      '">pre-15</span>' : "") + `</span>`).join(" · ");
-  const pending = t.pending_gate ? `<span class="tk-pending">awaiting your acceptance</span>` : "";
+      'semantics (spec 15). Its state comes from its findings; this conclusion is a record ' +
+      'on the task, not a finding.">pre-15</span>' : "") + `</span>`).join(" · ");
   const prog = taskSubProgress(t);
   const dim = state.search && !matchTask(t) ? " tk-dim" : "";
   const on = state.tasks.selected === t.id ? " on" : "";
@@ -2738,7 +2835,7 @@ function taskRow(t, depth, ctx) {
     `<span class="tk-title">${esc(t.title)}</span>` +
     (prog ? `<span class="tk-prog" title="Subtasks discharged (done or dropped)">` +
       `${prog.done}/${prog.total} subtasks</span>` : "") +
-    (concl ? `<span>${concl}</span>` : "") + pending +
+    (concl ? `<span>${concl}</span>` : "") +
     `<span class="tk-state">${esc(t.state)}</span></button>`;
 }
 
@@ -2788,10 +2885,10 @@ function rdRows(pages) {
 
 function renderTasks() {
   if (!hubActive() || state.tab !== "tasks") return;
-  const tb = state.snap.tasks || { items: [], frontier: [], queue: [] };
+  const tb = state.snap.tasks || { items: [], frontier: [] };
   const view = state.tasks.view, status = state.tasks.status, rds = rdPages();
   const key = JSON.stringify([view, status, state.tasks.selected, state.search,
-    tb.items.map((t) => [t.id, t.state, t.pending_gate, t.parent]),
+    tb.items.map((t) => [t.id, t.state, t.parent]),
     rds.map((p) => [p.slug, p.status])]);
   if (key === state.tasks.key) return;
   state.tasks.key = key;
@@ -2813,20 +2910,6 @@ function renderTasks() {
   const byId = {};
   tb.items.forEach((t) => (byId[t.id] = t));
   const pick = (ts) => ts.filter((t) => status === "all" || t.state === status);
-  let html = "";
-  if (tb.queue.length) {
-    html += `<p class="tk-sec">Awaiting your acceptance</p>` +
-      tb.queue.map((r) => `<button type="button" class="tk-row` +
-        `${state.tasks.selected === r.id ? " on" : ""}" data-task="${esc(r.id)}">` +
-        `<span class="tk-id">${esc(r.id)}</span><span class="tk-title">${esc(r.title)}</span>` +
-        r.hypothesis_refs.map((h) => `<span class="tk-concl tk-c-${esc(h.conclusion)}">` +
-          `${esc(h.id)} → ${esc(h.conclusion)}</span>`).join(" ") +
-        (r.drifted.length ? `<span class="tk-drift" title="The commitment was edited after ` +
-          `the run. Flagged, never blocking.">⚠ drift: ${esc(r.drifted.join(", "))}</span>` : "") +
-        `</button>`).join("") +
-      `<p class="tk-note">Accepting is the PI's call: <code>crux task accept &lt;id&gt;</code>. ` +
-      `The cockpit is read-only.</p>`;
-  }
   let shown = 0;
   const rowsOf = (ts) => { shown += ts.length; return ts.map((t) => taskRow(t)).join(""); };
   // the tree views count MATCHES, not rendered rows — a filtered-out ancestor kept as
@@ -2844,9 +2927,8 @@ function renderTasks() {
       .sort((a, b) => String(a.updated).localeCompare(String(b.updated)));
     body = `<p class="tk-sec">Experiment timeline</p>` +
       `<p class="tk-note">Tasks whose output is evidence, in completion order — what we ` +
-      `actually ran, when, and what it concluded. A conclusion is written about a run and ` +
-      `accepted by the PI; a hypothesis's own verdict is derived by the engine from its ` +
-      `ticks and lives on the node.</p>` +
+      `actually ran, when, and what it concluded. A conclusion is written about a run; a ` +
+      `hypothesis's own state comes from its findings and lives on the node.</p>` +
       (rowsOf(exps) || `<p class="tk-note">no experiments yet</p>`);
   } else if (view === "category") {
     // grouped by the ROOT's category: a subtask follows its parent rather than being torn
@@ -2877,7 +2959,7 @@ function renderTasks() {
     `${tb.items.length === 1 ? "" : "s"}` +
     (rds.length ? ` · ${rds.length} RD${rds.length === 1 ? "" : "s"}` : "") +
     (status !== "all" ? ` · status: ${esc(status)}` : "") + `</p>`;
-  $("tasks-body").innerHTML = counted + html + body;
+  $("tasks-body").innerHTML = counted + body;
   // an open RD needs its page kept fresh by the poll, exactly as the RD tab used to do
   if (state.tasks.selected && state.tasks.selected.startsWith("rd:")) refreshRdPage();
 }
@@ -2903,14 +2985,12 @@ function taskDetail(t) {
   const cat = t.category || "default";
   let badges = badge(t.state) + badge(cat, taskCatVar(cat));
   if (t.is_experiment && cat !== "experiment") badges += badge("experiment");   // the reserved category already says it
-  if (t.pending_gate) badges += badge("awaiting your acceptance", "--q-review");
-  if (t.accepted) badges += badge("accepted");
   if (t.created) badges += `<span class="badge">created <span class="inline">${esc(t.created)}</span></span>`;
   if (t.updated) badges += `<span class="badge">updated <span class="inline">${esc(t.updated)}</span></span>`;
 
   // hypothesis refs link into the tree (PI ruling: chips navigate); the conclusion is
-  // narrated as concluded — a hypothesis's own verdict is derived by the engine from its
-  // ticks and lives on the node, never here
+  // narrated as concluded — a hypothesis's own state comes from its findings and lives on
+  // the node, never here
   const hyps = (t.hypothesis_refs || []).length
     ? section("Hypotheses — what this run concluded",
         t.hypothesis_refs.map((h) => {
@@ -2919,7 +2999,7 @@ function taskDetail(t) {
             `<span class="rid">${esc(h.id)}</span>${esc(n ? n.title : "")}` +
             `<span class="rsum"><span class="tk-concl tk-c-${esc(h.conclusion)}">` +
             `concluded ${esc(h.conclusion)}</span>` +
-            (h.schema === 0 ? " · pre-15 (verdict frozen on the node)" : "") +
+            (h.schema === 0 ? " · pre-15 (its state comes from its findings)" : "") +
             `</span></button>`;
         }).join(""))
     : "";
@@ -2935,31 +3015,17 @@ function taskDetail(t) {
         t.children.map(taskRefRow).join("")) : "");
   const outs = (t.outputs || []).length
     ? section("Outputs", t.outputs.map(taskRefRow).join("")) : "";
-  const gate = t.pending_gate
-    ? section("Acceptance", `<div class="body">This experiment's conclusion awaits your ` +
-        `acceptance: <code>crux task accept ${esc(t.id)}</code>. The cockpit is read-only.</div>`)
-    : t.accepted
-    ? section("Acceptance", `<div class="body">Accepted — <span class="inline">${esc(t.accepted)}</span></div>`)
-    : "";
   return head("taskhub · " + (t.is_experiment ? "experiment" : "task"), t.title) +
-    `<div class="badges">${badges}</div>` + hyps + gate + refs + deps + outs;
+    `<div class="badges">${badges}</div>` + hyps + refs + deps + outs;
 }
 
-// nothing selected yet: the taskhub's own gate — the PI-facing question this layer exists
-// to surface — plus a pointer at how the list works. Replaces the dead default pane.
-function taskGateDetail() {
-  const tb = state.snap.tasks || { queue: [], items: [] };
-  const hd = head("taskhub · gate", "Awaiting your acceptance");
-  const hint = `<p class="d-empty">Click a task to see its detail. The Views rail switches ` +
-    `between the frontier, the whole list, categories and the experiment timeline; the ` +
-    `status chips filter it.</p>`;
-  if (!tb.queue.length) return hd + `<p class="d-empty">No task awaits your acceptance.</p>` + hint;
-  const rows = tb.queue.map((r) =>
-    `<button class="rowlink" data-task="${esc(r.id)}"><span class="rid">${esc(r.id)}</span>${esc(r.title)}` +
-    `<span class="rsum">${r.hypothesis_refs.map((h) => esc(h.id) + " → " + esc(h.conclusion)).join(" · ")}</span></button>`).join("");
-  return hd + `<div class="sec">${rows}</div>` +
-    `<p class="tk-note">Accepting is the PI's call: <code>crux task accept &lt;id&gt;</code>. ` +
-    `The cockpit is read-only.</p>` + hint;
+// nothing selected yet: a pointer at how the list works. Spec 19 removed the gate this
+// pane used to lead with — no task waits for the PI any more.
+function taskHomeDetail() {
+  return head("taskhub", "Work") +
+    `<p class="d-empty">Click a task to see its detail. The Views rail switches between the ` +
+    `frontier, the whole list, categories and the experiment timeline; the status chips ` +
+    `filter it.</p>`;
 }
 
 // ------------------------------------------------------- the Autopilot tab (spec 18)

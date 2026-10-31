@@ -22,8 +22,8 @@ Everything above was measured in-distribution. In-distribution accuracy predicts
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <!-- crux:ledger:start -->
-**2 children** · ideas 0/2 done (supported 0, partial 0, refuted 0, inconclusive 0)
+**2 children** · open 2, leaning 0, settled 0, parked 0
 
-- `h6` [[h6_the_advantage_holds_on_data_from_a_diffe|The advantage holds on data from a different source]] — *running*
-- `h7` [[h7_less_data_is_needed_once_the_source_chan|Less data is needed once the source changes]] — *idea*
+- `h6` [[h6_the_advantage_holds_on_data_from_a_diffe|The advantage holds on data from a different source]] — *open*
+- `h7` [[h7_less_data_is_needed_once_the_source_chan|Less data is needed once the source changes]] — *open*
 <!-- crux:ledger:end -->

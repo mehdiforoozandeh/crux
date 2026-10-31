@@ -6,7 +6,102 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The background capture run now reaches a vault in `./cruxvault` (the engine falls back to
+  `CRUX_VAULT`, which the sweep sets); concurrent session starts no longer lose a sweep mark
+  (marks are written under the state lock); `crux init` adds a one-line pointer to the
+  always-on core in the project's `AGENTS.md` (spec 19 decision 10, for other agents).
+
+## [1.0.0] - 2026-10-31
+
+**Background memory** (spec 19; engine **3.5 → 4.0**). The tree now fills itself from the
+conversation, and a node's state comes from its findings rather than from a close step. A
+vault written by an older engine migrates on its first write, with a backup.
+
+### Changed
+
+- **Question / Hypothesis / Finding replaces the closure model of spec 15.** A Finding records
+  a direction (supports · against · mixed · no answer yet) for a hypothesis, or an answer for
+  a question, plus a confidence (strong · moderate · weak), one sentence of why, and evidence
+  links under `results/` or `tasks/`. `crux finding` (aliases `record`, `conclude`, `land`)
+  writes one. A node's state is derived: open (no finding), leaning (strongest finding weak
+  or moderate), settled (strongest strong), or parked (`crux park`, `--undo`). The strongest
+  finding decides and the newest breaks ties; `no answer yet` never sets the state. A
+  question takes its own findings first; with none, the strongest child-hypothesis finding
+  counts, capped at moderate. A null not ruled out caps a supports finding at weak; a failed
+  control caps any finding at weak.
+- **A hypothesis states an expectation first.** `crux hypothesize --expect` is required for a
+  new node; `## Null` and `## Verifiables` are optional. `crux test` records the run link and
+  takes the lock with no refusal; the lock and its drift inform the confidence.
+- **The always-on core.** `skills/crux/SKILL.md` is now the core: 7,265 bytes against a cap
+  of 8,192 (it was 36,401 against 34,000). It holds the capture rules, the tree/taskhub
+  boundary, the closure judgment, the voice rules and a router. Engine verbs, vault setup,
+  design and updating moved to `skills/crux/references/`.
+- **The autopilot writes each attempt's Finding mechanically**, with no model call: threshold
+  met → supports, else against; strong when the gain beats the threshold by more than the
+  scorer's noise, else moderate, and the same rule in the worse direction. `crux auto check`
+  scores the baseline 3 times and records the spread as `noise`; a zero spread uses
+  `min_gain`. A rejected or failed attempt is `no answer yet`, with its log as evidence.
+- **The cockpit renders state and confidence** and lists findings in the node pane. The
+  review queue, the synthesis reader and the acceptance badges are gone. On a vault not yet
+  migrated, `crux serve` renders the migration plan in memory under a banner and writes
+  nothing.
+- **`brief`, `deck` and `situate` payloads carry `findings[]`** with direction, confidence,
+  why and evidence, in place of verdict and synthesis. prezit and storify read them.
+- **Id allocation and node writes hold a file lock**, so the capture run, the autopilot and
+  the main agent can write at once without a duplicate id.
+
 ### Added
+
+- **Background capture.** A `SessionStart` hook (`crux hook session-start`) injects the core
+  as context in any repo with a vault (at the working directory, above it, or one level down,
+  such as `./cruxvault`). On `startup` and `clear` it also starts at most one catch-up sweep:
+  the transcript text written after each transcript's sweep mark, cut to 20,000 tokens and
+  handed to one detached `claude -p` capture run on haiku, with only crux verbs allowed and no
+  question to the PI. Nothing new means no run. Sweep marks, the pending list and the run log
+  live in `<vault>/.crux/`, which git ignores.
+- **`/crux-wrap`** (new skill `crux-wrap`) shows in plain words what this session recorded,
+  then asks one accept-or-reject question per pending candidate. `crux wrap --json` returns
+  the session's records (read from its own crux calls), the pending list and the unswept
+  text; `crux pending list|add|clear` manages the candidates.
+- **Two agents: `crux-capture`** records a transcript slice into the tree and never asks;
+  **`crux-prerun`** drafts the expectation, null and checks before compute, and states which
+  outcome would change the confidence.
+- **`./install.sh` registers the `SessionStart` hook** in `~/.claude/settings.json`,
+  idempotently and keeping every other key, and removes dangling `~/.claude/agents/crux-*.md`
+  links that point to removed agents.
+
+### Removed
+
+- **The review gate, synthesis nodes and the experiment-task accept gate.** `review`,
+  `answer`, `pursue`, `approve`, `approve-null`, `synthesize`, `task review` and `task accept`
+  print one line that points to the new model, and write nothing.
+- **Seven agents:** `crux-close`, `crux-critic`, `crux-audit`, `crux-glossary`, `crux-design`,
+  `crux-null` and `crux-verifiables`. Design, null and verifiables merge into `crux-prerun`.
+  The roster is capture, prerun, situate and migrate. `crux-tests` moved to
+  `skills/evolve-crux/agents/`, because it builds crux, not research.
+- **The rule, neutral, null and scenario gaps** in `validate`, `gate_warnings` and
+  `--check=gate`.
+
+### Migration
+
+- **Automatic, on the first write-capable load.** A backup of the whole vault goes to
+  `<vault>/.crux/backup-<old version>-<stamp>` first, and the migration writes through a
+  journal, so a crash completes on the next load. supported/refuted → supports/against, with
+  confidence from the agreement count (all claim checks agree → strong, one missed →
+  moderate, two or more → weak); partial and inconclusive → mixed, weak; invalid-run → no
+  answer yet, with the run kept as evidence; an approved synthesis → a strong question
+  Finding that keeps its text; an accepted experiment conclusion → a moderate Finding linked
+  to the task output. An unapproved synthesis or an unaccepted experiment becomes a
+  `/crux-wrap` candidate. Checks edited after the run cap confidence at moderate. The report
+  goes to `<vault>/.crux/migrate-4.0-report.json`. A vault with nothing to convert is only
+  re-stamped. Read-only `crux serve` never migrates.
+- **The four example vaults are migrated** and stamped 4.0.
+- **Reinstall after you update** (`./install.sh`): it registers the hook and cleans the links
+  to removed agents.
+
+### Also in 1.0.0
 
 - **storify: a short private paper from a subtree** (engine **3.5**, unchanged; new skill
   `storify` **1.0**; no vault-format change). A new skill turns one question and its subtree,

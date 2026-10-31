@@ -6,8 +6,10 @@ Literature background compiled from the immutable sources in `raw/`. One-way: th
 
 ## Pages
 
-_(no pages compiled yet — ingest a source, then compile a page that cites it)_
+### method
+
+- [[pretraining\|Pretraining for dense prediction]] — Training on a large unlabelled corpus first, then fine-tuning on the labelled task.
 
 ## Sources
 
-- `raw/pretraining.txt` — Pretraining for dense prediction (uncompiled)
+- `raw/pretraining.txt` — Pretraining for dense prediction (1 page(s))

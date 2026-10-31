@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """crux views — fully-generated, never hand-edited.
 
-render_meta       -> META.md       : project header + the live question/idea tree + a status dashboard
-render_experiments-> EXPERIMENTS.md : a flat registry, one row per hypothesis
+render_meta       -> META.md       : project header + the question/hypothesis tree, each node
+                                    with its derived state and confidence + a dashboard
+render_experiments-> EXPERIMENTS.md : a flat registry, one row per hypothesis (state,
+                                    confidence, direction of the deciding finding)
 
 Both are pure functions of the vault's nodes (no timestamps, no volatile data),
 so re-rendering is byte-stable / idempotent.
 """
 import re
-from engine import VERDICTS, node_rule, binds_evidence_semantics
+from engine import (STATES, CONFIDENCES, derive_state, node_findings, node_rule,
+                    binds_evidence_semantics)
 
-_STATUS_MARK = {
-    "open": "○", "review": "◐", "resolved": "●",
-    "idea": "·", "staged": "▷", "running": "▶", "done": "✓",
-}
+# Spec 19: a node is marked by its DERIVED state — open (no finding), leaning (weak or
+# moderate), settled (strong), parked. The state is computed here from the findings on disk
+# and stored nowhere; the review gate, verdicts and stored statuses these views used to show
+# are gone from the model.
+_STATE_MARK = {"open": "○", "leaning": "◐", "settled": "●", "parked": "◌"}
+_TREE_TYPES = ("question", "idea")
 
 def _count_runs(node):
     n, in_sec = 0, False
@@ -25,6 +30,11 @@ def _count_runs(node):
             n += 1
     return n
 
+def _direction(v, st):
+    """The direction of the finding that decides a hypothesis' state, or None."""
+    f = v.nodes.get(st["finding"]) if st["finding"] else None
+    return (f["fm"].get("direction") or None) if f is not None else None
+
 def render_meta(v):
     cfg = v.cfg
     out = [f"# {cfg['title']} — research notebook",
@@ -35,6 +45,7 @@ def render_meta(v):
            "",
            "## Question tree",
            ""]
+    states = {}
 
     def walk(nid, depth):
         n = v.nodes[nid]
@@ -42,36 +53,45 @@ def render_meta(v):
             for c in v.children.get(nid, []):
                 walk(c, depth)
             return
-        mark = _STATUS_MARK.get(n.status, "·")
+        if n.type not in _TREE_TYPES:
+            return          # a pre-4.0 synthesis is not a tree node in the 4.0 model
+        st = states[nid] = derive_state(v, nid)
+        mark = _STATE_MARK.get(st["state"], "·")
         label = f"**{n.title}**" if n.type == "question" else n.title
-        extra = ""
-        if n.type == "idea" and n["fm"].get("verdict"):
-            extra = f" — _{n['fm']['verdict']}_"
+        extra = f" · {st['confidence']}" if st["confidence"] else ""
+        if n.type == "idea":
+            d = _direction(v, st)
+            if d:
+                extra += f" · {d}"
             if n["fm"].get("metric"):
                 extra += f" (`{n['fm']['metric']}`)"
         kind = "Q" if n.type == "question" else "H"
-        out.append("  " * depth + f"- {mark} `{n.id}` [{kind}] [[{n.basename}|{label}]] — *{n.status}*{extra}")
+        out.append("  " * depth + f"- {mark} `{n.id}` [{kind}] [[{n.basename}|{label}]] — "
+                   f"*{st['state']}*{extra}")
         for c in v.children.get(nid, []):
             walk(c, depth + 1)
 
     walk(cfg["root_id"], 0)
 
-    # dashboard
+    # dashboard — counted over every question and hypothesis, including any the walk did not
+    # reach, so the numbers always add up to the node count
     qs = [n for n in v.nodes.values() if n.type == "question"]
     ideas = [n for n in v.nodes.values() if n.type == "idea"]
-    qstat = {s: sum(1 for n in qs if n.status == s) for s in ("open", "review", "resolved")}
-    istat = {s: sum(1 for n in ideas if n.status == s) for s in ("idea", "staged", "running", "done")}
-    vstat = {x: sum(1 for n in ideas if n["fm"].get("verdict") == x) for x in VERDICTS}
+    for n in qs + ideas:
+        if n.id not in states:
+            states[n.id] = derive_state(v, n.id)
+    def by_state(ns):
+        return " · ".join(f"{s} {sum(1 for n in ns if states[n.id]['state'] == s)}"
+                          for s in STATES)
+    conf = {c: sum(1 for n in qs + ideas if states[n.id]["confidence"] == c)
+            for c in CONFIDENCES}
+    nfind = sum(len(node_findings(v, n.id)) for n in qs + ideas)
     out += ["", "## Dashboard", "",
-            f"- **Questions** ({len(qs)}): open {qstat['open']} · review {qstat['review']} · resolved {qstat['resolved']}",
-            f"- **Hypotheses** ({len(ideas)}): idea {istat['idea']} · staged {istat['staged']} · running {istat['running']} · done {istat['done']}",
-            # generated from VERDICTS: a verdict added to the engine must never be able
-            # to render nowhere, which is what a hand-written list of four names allowed
-            f"- **Verdicts**: " + " · ".join(f"{x} {vstat[x]}" for x in VERDICTS)]
-    review_q = [n for n in qs if n.status == "review"]
-    if review_q:
-        out += ["", "## ⚠ Awaiting your decision (`review`)", ""]
-        out += [f"- `{n.id}` [[{n.basename}|{n.title}]]" for n in review_q]
+            f"- **Questions** ({len(qs)}): {by_state(qs)}",
+            f"- **Hypotheses** ({len(ideas)}): {by_state(ideas)}",
+            # generated from CONFIDENCES: a level added to the engine can never render nowhere
+            f"- **Confidence**: " + " · ".join(f"{c} {conf[c]}" for c in CONFIDENCES),
+            f"- **Findings**: {nfind}"]
     return "\n".join(out).rstrip() + "\n"
 
 def render_experiments(v):
@@ -81,17 +101,22 @@ def render_experiments(v):
            "",
            "_Generated by `crux`. One row per hypothesis. Do not edit by hand._",
            "",
-           "| id | hypothesis | question | status | verdict | rule | metric | runs |",
-           "|----|------------|----------|--------|---------|------|--------|------|"]
+           "| id | hypothesis | question | state | confidence | direction | findings | rule | metric | runs | pre-4.0 verdict |",
+           "|----|------------|----------|-------|------------|-----------|----------|------|--------|------|-----------------|"]
     for n in ideas:
         q = v.nodes.get(n.parent)
         qlabel = f"[[{q.basename}\\|{q.id}]]" if q else "—"
         rule = (node_rule(n)[0] if binds_evidence_semantics(n) else None) or "—"
-        out.append(f"| `{n.id}` | [[{n.basename}\\|{n.title}]] | {qlabel} | {n.status} | "
-                   f"{n['fm'].get('verdict') or '—'} | {rule} | "
-                   f"{n['fm'].get('metric') or '—'} | {_count_runs(n)} |")
+        st = derive_state(v, n.id)
+        out.append(f"| `{n.id}` | [[{n.basename}\\|{n.title}]] | {qlabel} | {st['state']} | "
+                   f"{st['confidence'] or '—'} | {_direction(v, st) or '—'} | "
+                   f"{len(node_findings(v, n.id))} | {rule} | "
+                   f"{n['fm'].get('metric') or '—'} | {_count_runs(n)} | "
+                   # history only: a verdict recorded before 4.0 is kept on disk and read by
+                   # nothing that decides a state; the migration turns it into a finding
+                   f"{n['fm'].get('verdict') or '—'} |")
     if not ideas:
-        out.append("| — | _no hypotheses yet_ | | | | | | |")
+        out.append("| — | _no hypotheses yet_ | | | | | | | | | |")
     return "\n".join(out).rstrip() + "\n"
 
 def render_wiki(v, root):
@@ -206,9 +231,8 @@ def render_taskhub(v, root):
     exps = [t for t in tasks if E.task_is_experiment(t)]
     if exps:
         out += ["## Experiment timeline", "",
-                "_Tasks whose output is evidence. The conclusion is what the run showed and "
-                "was accepted; a hypothesis's own verdict is derived by the engine from its "
-                "ticks and lives on the node._", ""]
+                "_Tasks whose output is evidence. The conclusion is what the run showed; a "
+                "hypothesis's own state comes from its findings and lives on the node._", ""]
         for t in sorted(exps, key=lambda x: (x["fm"].get("updated") or "", E.natkey(x["id"]))):
             concl = ", ".join(f"{E.task_ref_link(hid, bn)} → **{c}**"
                               for hid, c in t["hypothesis_refs"])

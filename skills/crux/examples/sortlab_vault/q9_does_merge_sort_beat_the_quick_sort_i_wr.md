@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On 10,000 random items, merge took 2.1 milliseconds and quick took 2.4 milliseconds. Merge seems faster. But on nearly sorted lists, quick might do better. I am still testing different shapes before I decide on a final ranking.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 0, refuted 1, inconclusive 1, invalid-run 0)
+**3 children** · open 0, leaning 1, settled 2, parked 0
 
-- `h22` [[h22_my_merge_sort_beats_my_quick_sort_on_ran|My merge sort beats my quick sort on random lists]] — *done* — verdict **refuted**, metric `Quick sort 11 ms, merge sort 18 ms at 100k random.`
-- `h23` [[h23_my_quick_sort_uses_less_memory_than_my_m|My quick sort uses less memory than my merge sort]] — *done* — verdict **supported**, metric `At 100k: quick 1200 KB, merge 2800 KB. Quick uses 43 percent of merge's memory.`
-- `h24` [[h24_my_merge_sort_is_steadier_from_run_to_ru|My merge sort is steadier from run to run than my quick sort]] — *done* — verdict **inconclusive**, metric `At 50k: merge 2.1 ms stdev (12 percent), quick 3.4 ms stdev (31 percent).`
+- `h22` [[h22_my_merge_sort_beats_my_quick_sort_on_ran|My merge sort beats my quick sort on random lists]] — *settled · strong*
+- `h23` [[h23_my_quick_sort_uses_less_memory_than_my_m|My quick sort uses less memory than my merge sort]] — *settled · strong*
+- `h24` [[h24_my_merge_sort_is_steadier_from_run_to_ru|My merge sort is steadier from run to run than my quick sort]] — *leaning · moderate*
 <!-- crux:ledger:end -->

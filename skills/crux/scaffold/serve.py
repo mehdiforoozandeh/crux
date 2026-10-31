@@ -134,6 +134,94 @@ def auto_stat_key(root):
     return (latest, count)
 
 
+# ----------------------------------------------------------------------------- 4.0 migration banner
+# Spec 19, ruling Q9. A vault stamped below 4.0 still holds the old model (verdicts, the
+# review gate, syntheses). The engine migrates it on the first write — and the cockpit never
+# writes, so it cannot migrate. It shows the vault as it is and says why the tree looks
+# unfinished. The flag rides the served snapshot as one serve-side key, `migration`, so the
+# cockpit needs no new route (the webui's fetch count is a pre-registered contract).
+MIGRATION_FLOOR = (4, 0)
+
+
+def migration_status_of(stamped):
+    """{stamped, needed} for a stamped engine version (a string, or None). Pure.
+    Unstamped or unparseable means the vault predates 4.0: it is older than the stamp."""
+    stamped = None if stamped is None else str(stamped)
+    try:
+        parts = tuple(int(x) for x in stamped.split("."))
+        needed = parts < MIGRATION_FLOOR
+    except (AttributeError, ValueError):
+        needed = True
+    return {"stamped": stamped, "needed": needed}
+
+
+def migration_status(root):
+    """Read the vault's stamped engine version and say whether it awaits migration. A read
+    of .crux.yaml and nothing else — `check_and_stamp_version` is never called here, because
+    it re-stamps."""
+    cfg = engine.yaml_load(engine.read(os.path.join(root, engine.VAULT_MARKER))) or {}
+    return migration_status_of(cfg.get("engine_version"))
+
+
+# Ruling Q9 in full: on a pre-4.0 vault the cockpit shows what the migration WOULD make of it.
+# `migrate4.plan` is pure (it returns new file texts and never writes), so the preview is an
+# in-memory Vault: the on-disk node files, minus what the plan removes, plus what it writes.
+# Nothing reaches the disk — no temp copy either. A plan that raises, or one slower than
+# PREVIEW_TIMEOUT on a large vault, falls back to the as-is view under the same banner.
+PREVIEW_TIMEOUT = 5.0
+
+
+def preview_vault(root, p):
+    """An engine.Vault built in memory from `root` with plan `p` applied. Reads only; the
+    node loop mirrors engine.Vault.__init__ over an overlaid file map."""
+    v = engine.Vault.__new__(engine.Vault)
+    v.root = root
+    v.cfg = dict(engine.yaml_load(engine.read(os.path.join(root, engine.VAULT_MARKER))) or {})
+    v.cfg["counter_f"] = p["counter_f"]
+    gone = set(p["removes"])
+    texts = {fn: None for fn in os.listdir(root) if fn not in gone}
+    texts.update({fn: t for fn, t in p["writes"].items() if "/" not in fn and os.sep not in fn})
+    v.nodes = {}
+    for fn in sorted(texts):
+        if not fn.endswith(".md") or fn in engine.NON_NODE_FILES:
+            continue
+        text = texts[fn] if texts[fn] is not None else engine.read(os.path.join(root, fn))
+        fm, body = engine.parse_doc(text)
+        if "id" not in fm:
+            continue
+        v.nodes[fm["id"]] = engine.Node(path=os.path.join(root, fn), fn=fn, fm=fm, body=body)
+    v.children = {nid: [] for nid in v.nodes}
+    v.findings = {nid: [] for nid in v.nodes}
+    for nid, n in v.nodes.items():
+        par = n.parent
+        if par and par in v.children:
+            (v.findings if n.type == "finding" else v.children)[par].append(nid)
+    for k in v.children:
+        v.children[k].sort(key=engine.natkey)
+        v.findings[k].sort(key=lambda f: engine._finding_order(v.nodes[f]))
+    return v
+
+
+def preview_snapshot(root, timeout=PREVIEW_TIMEOUT):
+    """(snapshot, extra) of the vault as migration would leave it, or None when the plan
+    raises or runs past `timeout`. `extra` is merged into the `migration` key."""
+    out = []
+
+    def work():
+        try:
+            import migrate4
+            p = migrate4.plan(root)
+            snap = engine.snapshot(preview_vault(root, p))
+            out.append((snap, {"preview": True, "findings": len(p["findings"]),
+                               "pending": len(p["pending"])}))
+        except Exception:
+            pass
+    t = threading.Thread(target=work, daemon=True)   # pure work: safe to abandon on timeout
+    t.start()
+    t.join(timeout)
+    return out[0] if out else None
+
+
 # ----------------------------------------------------------------------------- context / opening
 def detect_context(env):
     """Return 'remote' | 'vscode' | 'plain' from an env mapping. Pure — no side effects.
@@ -228,7 +316,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             with srv.snap_lock:
                 key = vault_stat_key(srv.root)
                 if key != srv.snap_key:
-                    data = json.dumps(engine.snapshot(srv.root)).encode("utf-8")
+                    mig, snap = migration_status(srv.root), None
+                    if mig["needed"]:
+                        pv = preview_snapshot(srv.root)
+                        if pv:
+                            snap, extra = pv
+                            mig.update(extra)
+                        else:
+                            mig["preview"] = False
+                    if snap is None:
+                        snap = engine.snapshot(srv.root)
+                    snap["migration"] = mig
+                    data = json.dumps(snap).encode("utf-8")
                     srv.snap_key = key
                     srv.snap_data = data
                     # the ETag stays a CONTENT hash — identical across restarts and

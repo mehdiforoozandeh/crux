@@ -10,7 +10,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
 import render as R
-import selftest_auto
 
 # the suite prints → ⚠ ✓ and vault text; a cp1252 console would raise on the first one
 if hasattr(sys.stdout, "reconfigure"):
@@ -43,10 +42,10 @@ def node_path(root, nid):
 
 
 def declare_null(root, hid, text="capacity — the extra parameters alone explain the gain"):
-    """Bring a fixture hypothesis up to everything the pre-run gates require, the way the
-    real flow does: a declared and PI-approved null (`crux-null` + `crux approve-null`), and
-    a distinct failure scenario on every check with one marked as discriminating
-    (`crux-verifiables`). Idempotent, so it is safe before every `--to running`.
+    """Give a fixture hypothesis a declared null and a distinct failure scenario on every
+    check, one marked as discriminating — the full design a careful run carries. Spec 19
+    removed the gates and the null approval, so this no longer unblocks anything; it keeps
+    fixtures realistic. Idempotent.
 
     One helper rather than three, because a fixture that satisfies one gate and not the
     others is not a fixture of anything real."""
@@ -66,7 +65,7 @@ def declare_null(root, hid, text="capacity — the extra parameters alone explai
                     out.append("      discriminates:: true")
                     first = False
         E.write_if_changed(n["path"], E.render_doc(n["fm"], "\n".join(out)))
-    E.cmd_approve_null(root, hid)
+    # spec 19: no approval step exists any more; the null is declared and that is all
 
 
 
@@ -104,98 +103,69 @@ def run_demo(keep_dir=None):
     check("ask: Parent:: wikilink", f"Parent:: [[{v.get(q1).basename}]]" in read(v.get(q11)["path"]))
     check("ask: META lists q1", q1 in read(os.path.join(root, "META.md")))
 
-    # 3. hypothesize two leaves with 2 verifiables each
+    # 3. hypothesize two leaves; each states its expectation first (spec 19)
     h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11, rule="all",
                                  neutral=["the published stem baseline reproduces to ±0.005"],
-                              verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"])
-    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11, rule="all",
-                                 neutral=["the shared preprocessing pass reproduces the reference checksum"],
-                              verifiables=["imp-Spearman ≥ +0.005 vs per_conv", "calibration not worse"])
+                                 verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"],
+                                 expect="masked-token gains at least +0.01 Spearman over masked-stem")
+    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
+                                 expect="post_conv FiLM gains at least +0.005 over per_conv")
     check("hypothesize: h1 under q1.1", E.Vault(root).get(h1).parent == q11)
     check("hypothesize: 2 claim-directed verifiables + 1 control",
           E.count_verifiables_by_kind(read(node_path(root, h1)))
           == {"hypothesis": (0, 2, 0), "outcome-neutral": (0, 1, 0)})
+    check("hypothesize: h2 has no verifiables, and that is allowed",
+          sum(E.count_verifiables(read(node_path(root, h2)))) == 0)
+    expect_error("hypothesize: no expectation is refused",
+                 lambda: E.cmd_hypothesize(root, "temp bad idea", parent=q11))
 
-    # 4. NEGATIVE: running without verifiables is rejected (on a stripped idea)
-    h_bad, _, _ = E.cmd_hypothesize(root, "temp bad idea", parent=q11)
-    bp = node_path(root, h_bad)
-    edit(bp, "- [ ] _(state a falsifiable, pre-registered check)_", "(verifiables removed)")
-    expect_error("validator: no running without verifiables", lambda: E.cmd_test(root, h_bad, to="running"))
-    os.remove(bp); E.refresh(root)  # discard the throwaway idea
-
-    # 5. test transitions
-    E.cmd_test(root, h1, to="staged")
-    check("test: h1 staged", E.Vault(root).get(h1).status == "staged")
-    declare_null(root, h1)
+    # 4. test records run links and never refuses
     E.cmd_test(root, h1, to="running", run="job 40012")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
-    check("test: h1 running", E.Vault(root).get(h1).status == "running")
     check("test: run link recorded", "job 40012" in read(node_path(root, h1)))
     # REGRESSION: a second --run must APPEND, not vanish. The insert used to be decided by a
     # whole-body `_(none yet)_` probe, so the moment a second section shipped with a
     # placeholder of its own (## Artifacts), every run link after the first was silently
     # dropped — no error, and the CLI still printed success.
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running", run="job 40013")
     links = E._run_links(read(node_path(root, h1)).split("---", 2)[-1])
     check("test: a second --run appends rather than dropping the link",
           links == ["job 40012", "job 40013"])
     check("test: the Artifacts placeholder is untouched by a run link",
           "## Artifacts" in read(node_path(root, h1)))
-    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
+    check("test: a hypothesis with no checks runs without refusal",
+          E.derive_state(E.Vault(root), h2)["state"] == "open")
 
-    # 6. close: h1 all-met -> supported ; h2 one-unmet -> refuted.
-    #    Under evidence semantics (1.8) a declared `all` makes one unmet a veto, so this is
-    #    `refuted` where the pre-15 engine returned `partial`. A pre-15 node still gets
-    #    `partial` — asserted in run_combination_rule against the captured truth table.
-    edit(node_path(root, h1), "- [ ]", "- [x]")               # all met
-    v1 = E.cmd_close(root, h1, metric="imp +0.012")
-    check("close: h1 supported", v1 == "supported")
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)       # exactly one met
-    v2 = E.cmd_close(root, h2, metric="imp +0.003")
-    check("close: h2 refuted under a declared `all` rule (pre-15 this was `partial`)",
-          v2 == "refuted")
-    check("close: verdict in frontmatter", E.Vault(root).get(h1)["fm"]["verdict"] == "supported")
+    # 5. findings: h1 strong supports -> settled; h2 moderate against -> leaning
+    E.cmd_finding(root, h1, "strong", why="+0.012 Spearman over 5 seeds, control reproduced",
+                  direction="supports", null="ruled-out")
+    E.cmd_finding(root, h2, "moderate", why="+0.003, under the expected +0.005",
+                  direction="against")
+    v = E.Vault(root)
+    check("finding: h1 settled · strong",
+          (E.derive_state(v, h1)["state"], E.derive_state(v, h1)["confidence"]) == ("settled", "strong"))
+    check("finding: h2 leaning · moderate",
+          (E.derive_state(v, h2)["state"], E.derive_state(v, h2)["confidence"]) == ("leaning", "moderate"))
 
-    # 7. ledger roll-up walks up to the question + META
+    # 6. ledger roll-up walks up to the question + META
     q11_text = read(node_path(root, q11))
-    check("ledger: q1.1 shows supported", "supported" in q11_text and h1 in q11_text)
-    check("ledger: q1.1 shows metric", "imp +0.012" in q11_text)
-    check("ledger: META reflects verdicts", "supported" in read(os.path.join(root, "META.md")))
+    check("ledger: q1.1 shows h1 settled", "settled" in q11_text and h1 in q11_text)
+    check("ledger: META lists the hypotheses", h1 in read(os.path.join(root, "META.md")))
+    check("roll-up: q1.1 reads its children's strongest finding, capped at moderate",
+          E.derive_state(v, q11)["confidence"] == "moderate")
+    check("roll-up: q1 does not count its sub-question", E.derive_state(v, q1)["state"] == "open")
 
-    # 8. gate trips review when all children terminal; interpretation flagged stale
-    check("gate: q1.1 -> review", E.Vault(root).get(q11).status == "review")
-    check("gate: q1.1 stale flagged", E.Vault(root).get(q11)["fm"]["stale"] is True)
-    check("review: queue lists q1.1", q11 in [x[0] for x in E.cmd_review(root)])
+    # 7. a question is answered by a finding on it; a dropped one is parked
+    E.cmd_finding(root, q11, "strong", answer="mask_token is the load-bearing knob; FiLM placement is noise.")
+    check("answer: q1.1 settled by its own finding", E.derive_state(E.Vault(root), q11)["state"] == "settled")
+    E.cmd_park(root, h2)
+    check("park: h2 parked", E.derive_state(E.Vault(root), h2)["state"] == "parked")
 
-    # 9a. answer (resolve) is GATED on an approved synthesis (ENGINE 1.2), then propagates:
-    #     q1.1 resolved -> q1 trips review
-    expect_error("gate: answer refused without a synthesis",
-                 lambda: E.cmd_answer(root, q11, text="premature"))
-    syn, _ = E.cmd_synthesize(root, "what q1.1 settled", [q11])
-    expect_error("gate: answer refused while the synthesis is unapproved",
-                 lambda: E.cmd_answer(root, q11, text="still premature"))
-    E.cmd_approve(root, syn)
-    check("gate: approve stamps a timestamp", bool(E.Vault(root).get(syn)["fm"].get("approved")))
-    E.cmd_answer(root, q11, text="mask_token is the load-bearing knob; FiLM placement is noise.")
-    check("gate: resolved question records its synthesis",
-          E.Vault(root).get(q11)["fm"].get("synthesis") == syn)
-    check("answer: q1.1 resolved", E.Vault(root).get(q11).status == "resolved")
-    check("answer: stale cleared", E.Vault(root).get(q11)["fm"]["stale"] is False)
-    check("answer: propagates -> q1 review", E.Vault(root).get(q1).status == "review")
-
-    # 9b. pursue (reopen) + spawn a fresh child
-    new = E.cmd_pursue(root, q11, idea_title="try mask_token + larger encoder")
-    check("pursue: q1.1 reopened", E.Vault(root).get(q11).status == "open")
-    check("pursue: spawned a child", new is not None and E.Vault(root).get(new[0]).parent == q11)
-
-    # 10. idempotency: re-running refresh changes nothing
+    # 8. idempotency: re-running refresh changes nothing
     check("idempotent: refresh #1 no-op", E.refresh(root) is False)
     check("idempotent: refresh #2 no-op", E.refresh(root) is False)
 
-    # 12. EXPERIMENTS.md has a row per hypothesis
+    # 9. EXPERIMENTS.md has a row per hypothesis
     exp = read(os.path.join(root, "EXPERIMENTS.md"))
     check("experiments: h1 row", h1 in exp)
     check("experiments: h2 row", h2 in exp)
@@ -213,6 +183,7 @@ SEED = """\
       - finding: A helps in aggregate.
     - Q: Which variant of A is best?
       - H: variant A1 beats baseline
+        - expect: A1 beats the baseline by at least 0.01
         - v: metric >= +0.01 vs baseline
         - v: no regression on control
       - H: [tested] variant A2 already beat baseline
@@ -246,20 +217,20 @@ def run_seed():
     check("seed: h2 under q2", v.get("h2").parent == "q2")
     check("seed: h4 under q3", v.get("h4").parent == "q3")
     # fresh hypothesis stays an open idea with its verifiables registered
-    check("seed: h2 is a fresh idea", v.get("h2").status == "idea")
+    check("seed: h2 is fresh — no finding, derived state open",
+          E.node_findings(v, "h2") == [] and E.derive_state(v, "h2")["state"] == "open")
     check("seed: h2 has 2 verifiables", sum(E.count_verifiables(read(node_path(root, "h2")))) == 2)
     # tested hypotheses are closed with mechanically-derived verdicts
     check("seed: h1 done+supported", v.get("h1").status == "done" and v.get("h1")["fm"]["verdict"] == "supported")
     check("seed: h4 done+partial", v.get("h4").status == "done" and v.get("h4")["fm"]["verdict"] == "partial")
     check("seed: h3 finding kept", "cleared both bars" in read(node_path(root, "h3")))
     check("seed: h3 evidence kept", "+0.03" in read(node_path(root, "h3")))
-    check("seed: q2 ledger shows supported", "supported" in read(node_path(root, "q2")))
-    # gate: q3's only child (h4) is terminal -> review
-    check("seed: q3 tripped to review", v.get("q3").status == "review")
-    # REGRESSION (two-directional gate): q1 momentarily had only a terminal child (h1)
-    # during materialize, but its later subquestion q2 is non-terminal -> q1 must stay open
-    check("seed: q1 not prematurely in review", v.get("q1").status == "open")
-    check("seed: q2 open (fresh child h2 pending)", v.get("q2").status == "open")
+    q2_ledger = read(node_path(root, "q2")).split(E.LEDGER_START)[1]
+    check("seed: q2 ledger lists both children with their derived states",
+          "h2" in q2_ledger and "h3" in q2_ledger and "*open*" in q2_ledger)
+    # spec 19 removed the review gate: materializing a seed never stores a `review` status
+    check("seed: no question is tripped to review (the gate is gone)",
+          all(v.get(q).status != "review" for q in ("q1", "q2", "q3")))
     check("seed: META reflects seed", "Demo Seeded" in read(os.path.join(root, "META.md")))
     check("seed: vault validates clean", E.cmd_validate(root) == [])
 
@@ -396,7 +367,8 @@ def run_wiki():
 
     # broken tree→wiki link (direction 2): explicit wiki/ path form in a node body
     n = E.Vault(root).get(q1)
-    edit(n["path"], "## Answer so far", "## Answer so far\n\nSee [[wiki/nonexistent]].")
+    # (spec 19 dropped `## Answer so far` from the question template; `## Question` is prose too)
+    edit(n["path"], "## Question", "## Question\n\nSee [[wiki/nonexistent]].")
     check("wiki: broken tree→wiki link caught", any("broken" in m and "nonexistent" in m for m in wiki_probs(root)))
     edit(n["path"], "\n\nSee [[wiki/nonexistent]].", "")
 
@@ -481,7 +453,8 @@ def run_integrity():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Integrity", root)
     q1, _ = E.cmd_ask(root, "root q")
-    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     check("integrity: clean baseline", E.cmd_validate(root) == [])
     # bad parent
     edit(node_path(root, h1), f"parent: {q1}", "parent: q999")
@@ -517,32 +490,26 @@ def run_snapshot():
         shutil.rmtree(root, ignore_errors=True)
         return
 
-    # a vault with a nested question, two closed hypotheses, and a synthesis
+    # a vault with a nested question, two hypotheses carrying findings, and a question finding
     E.cmd_init("Snap", root, goal="Test the snapshot contract.")
     q1, _ = E.cmd_ask(root, "Q one")
     q2, _ = E.cmd_ask(root, "Q two", parent=q1)
     h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"],
-                                 neutral=["control"], rule="all")
+                                 neutral=["control"], rule="all", expect="a and b both hold")
     h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"],
-                                 neutral=["control"], rule="all")
-    declare_null(root, h2)
-    declare_null(root, h1)
+                                 neutral=["control"], rule="all", expect="a and b both hold")
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
-    E.cmd_close(root, h1, metric="imp +0.012")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] control",
-                              "- [x] [outcome-neutral] control")   # the run was valid...
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # ...one claim met -> refuted
-    E.cmd_close(root, h2, metric="imp +0.003")
-    syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
+    f1, _, _ = E.cmd_finding(root, h1, "strong", why="both held", direction="supports")
+    f2, _, _ = E.cmd_finding(root, h2, "moderate", why="one missed", direction="against")
+    fq, _, _ = E.cmd_finding(root, q1, "weak", answer="Leaning yes.")
 
     v = E.Vault(root)
     snap = E.snapshot(v)
 
     # -- top-level shape / serializability
-    check("snapshot: top-level keys exact",
+    check("snapshot: top-level keys exact (no `queue`; `vocab` published)",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki", "rd", "tasks"})
+                               "project", "nodes", "tree", "vocab", "wiki", "rd", "tasks"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -557,52 +524,53 @@ def run_snapshot():
     check("snapshot: project id/title", snap["project"]["id"] == "root" and snap["project"]["title"] == "Snap")
     check("snapshot: accepts a root path too", E.snapshot(root)["project"]["id"] == "root")
 
-    # -- tree nesting exactly matches parent links
+    # -- tree nesting exactly matches parent links; findings ride on their parent
     def tree_ids(t):
         yield t["id"]
         for c in t["children"]:
             yield from tree_ids(c)
     ids = list(tree_ids(snap["tree"]))
-    nonsyn = {nid for nid, n in v.nodes.items() if n.type != "synthesis"}
+    tree_nodes = {nid for nid, n in v.nodes.items() if n.type != "finding"}
     check("snapshot: tree root is the project root", snap["tree"]["id"] == v.cfg["root_id"])
     check("snapshot: tree has no duplicate nodes", len(ids) == len(set(ids)))
-    check("snapshot: tree covers each parent-linked node once", set(ids) == nonsyn)
+    check("snapshot: tree covers each non-finding node once", set(ids) == tree_nodes)
     def children_match(t):
         return ([c["id"] for c in t["children"]] == v.children[t["id"]]
                 and all(children_match(c) for c in t["children"]))
     check("snapshot: tree children match v.children in order", children_match(snap["tree"]))
-    check("snapshot: synthesis in nodes but not in the tree",
-          syn in snap["nodes"] and syn not in ids)
-    check("snapshot: synthesis relates to q1,q2 in order", snap["nodes"][syn]["related"] == [q1, q2])
-
-    # -- queue == cmd_review
-    check("snapshot: queue ids == cmd_review output",
-          [r["id"] for r in snap["queue"]] == [x[0] for x in E.cmd_review(root)])
-    check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
-    check("snapshot: queue rows carry title + summary",
-          bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
+    check("snapshot: findings are neither tree nodes nor `nodes` entries",
+          not {f1, f2, fq} & set(ids) and not {f1, f2, fq} & set(snap["nodes"]))
     check("snapshot: question node surfaces its own statement ('detail')", "detail" in snap["nodes"][q2])
 
-    # -- idea nodes carry status; done ideas carry a consistent verdict + metric
-    h1n = snap["nodes"][h1]
-    met, unmet, na = E.count_verifiables(read(node_path(root, h1)))
-    check("snapshot: h1 status is done", h1n["status"] == "done")
-    check("snapshot: h1 verdict consistent with derive_verdict",
-          h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
-    check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
-    check("snapshot: h2 verdict refuted", snap["nodes"][h2]["verdict"] == "refuted")
+    # -- derived state and confidence on every question and hypothesis
+    h1n, h2n = snap["nodes"][h1], snap["nodes"][h2]
+    check("snapshot: h1 settled · strong, carrying its one finding",
+          (h1n["state"], h1n["confidence"]) == ("settled", "strong")
+          and [x["id"] for x in h1n["findings"]] == [f1])
+    check("snapshot: h2 leaning · moderate, direction carried",
+          (h2n["state"], h2n["confidence"]) == ("leaning", "moderate")
+          and h2n["findings"][0]["direction"] == "against")
+    check("snapshot: q2 (no own finding) reads its children, capped at moderate",
+          (snap["nodes"][q2]["state"], snap["nodes"][q2]["confidence"]) == ("leaning", "moderate"))
+    check("snapshot: q1 is decided by its own finding",
+          (snap["nodes"][q1]["state"], snap["nodes"][q1]["confidence"]) == ("leaning", "weak")
+          and snap["nodes"][q1]["findings"][0]["answer"] == "Leaning yes.")
+    check("snapshot: every state is in the published vocabulary",
+          all(n["state"] in snap["vocab"]["states"] for n in snap["nodes"].values()
+              if n["type"] in ("question", "idea")))
+    check("snapshot: no node carries a stored verdict", not any("verdict" in n
+                                                                 for n in snap["nodes"].values()))
 
     # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
     q2n = snap["nodes"][q2]
     lc = E.ledger_counts(v, q2)
     lb = E.ledger_block(v, q2)
     check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
-    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 refuted)",
-          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1
-          and lc["refuted"] == 1)
+    check("snapshot: q2 counts (2 children: 1 settled, 1 leaning)",
+          lc["children"] == 2 and lc["settled"] == 1 and lc["leaning"] == 1 and lc["open"] == 0)
     check("snapshot: ledger_counts consistent with ledger_block text",
           f"**{lc['children']} children**" in lb
-          and f"supported {lc['supported']}" in lb and f"refuted {lc['refuted']}" in lb)
+          and f"settled {lc['settled']}" in lb and f"leaning {lc['leaning']}" in lb)
 
     # -- pure read: constructing a snapshot mutates nothing on disk
     before = _dir_bytes(root)
@@ -610,11 +578,10 @@ def run_snapshot():
     check("snapshot: pure read (byte-for-byte identical vault)", _dir_bytes(root) == before)
 
     check("snapshot: source vault validates clean", E.cmd_validate(root) == [])
-    # a non-VERDICT verdict string in frontmatter must never reach the snapshot verbatim
-    # (clean data contract + defense-in-depth against attribute injection in the GUI)
-    edit(node_path(root, h1), "verdict: supported", "verdict: bogus")
-    check("snapshot: non-VERDICT verdict is clamped to None",
-          E.snapshot(E.Vault(root))["nodes"][h1]["verdict"] is None)
+    # a confidence outside the vocabulary must never decide a state (clean data contract)
+    edit(node_path(root, f1), "confidence: strong", "confidence: bogus")
+    check("snapshot: a non-vocabulary confidence never counts",
+          E.snapshot(E.Vault(root))["nodes"][h1]["state"] == "open")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -627,7 +594,7 @@ def run_artifacts():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Artifacts", root)
     q1, _ = E.cmd_ask(root, "does it work")
-    h1, _, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"])
+    h1, _, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"], expect="the claim holds")
 
     # -- parsing is pure: both bullet forms, placeholder ignored, order preserved
     body = ("## Artifacts\n\n"
@@ -688,7 +655,7 @@ def run_artifacts():
         p = node_path(root, nid)
         t = read(p)
         t = t.replace("## Findings", "## Artifacts\n\n" + block + "\n\n## Findings", 1) \
-             if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## )",
+             if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## |\Z)",
                                                     "## Artifacts\n\n" + block + "\n", t, flags=re.S)
         with open(p, "w", encoding="utf-8") as f: f.write(t)
     set_artifacts(h1, "- results/h1/report.md")
@@ -717,16 +684,17 @@ def run_artifacts():
           E.cmd_validate(root) == [])
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
 
-    # -- close still WARNS rather than blocking when the report is missing
-    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"])
+    # -- recording a result still WARNS rather than blocking when the report is missing
+    #    (spec 19: a finding replaces `close`; the warning reader is unchanged)
+    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"], expect="the claim holds")
     write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
     declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ]", "- [x]")
-    verdict = E.cmd_close(root, h2)
-    check("artifacts: close still closes without a report (warn, not block)",
-          verdict == "supported" and E.Vault(root).get(h2).status == "done")
-    check("artifacts: close surfaces a warning about the unlinked results",
+    E.cmd_finding(root, h2, "moderate", why="x held", direction="supports")
+    check("artifacts: a finding records the result without a report (warn, not block)",
+          E.derive_state(E.Vault(root), h2)["state"] == "leaning")
+    check("artifacts: the unlinked results still surface as a warning",
           any("no report" in w for w in E.artifact_warnings(root, h2)))
     check("artifacts: no warning once a report is linked", E.artifact_warnings(root, h1) == [])
 
@@ -748,77 +716,6 @@ def run_artifacts():
     check("artifacts: the servable set is the file route's allowlist, exactly",
           set(__import__("serve").FILE_TYPES) == set(E.SERVABLE_EXT))
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
-    shutil.rmtree(root, ignore_errors=True)
-
-
-def run_close_gate():
-    """The question close-gate (§I): a question resolves only through an APPROVED
-    synthesis, and pre-1.2 vaults that resolved questions the old way still validate."""
-    print("\n# close-gate (synthesize -> approve -> answer)")
-    root = tempfile.mkdtemp(prefix="crux_gate_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Gated", root)
-    q1, _ = E.cmd_ask(root, "the question")
-    q2, _ = E.cmd_ask(root, "another question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"], neutral=["control"])
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    edit(node_path(root, h1), "- [ ]", "- [x]")
-    E.cmd_close(root, h1)
-
-    expect_error("gate: no synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
-    s1, _ = E.cmd_synthesize(root, "s for q1", [q1])
-    expect_error("gate: unapproved synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
-    # the error must be actionable: it names the approve verb
-    try:
-        E.cmd_answer(root, q1)
-        msg = ""
-    except E.CruxError as e:
-        msg = str(e)
-    check("gate: refusal names `crux approve`", "approve" in msg)
-
-    ts = E.cmd_approve(root, s1)
-    check("gate: approve returns/stamps an ISO timestamp",
-          bool(ts) and E.Vault(root).get(s1)["fm"]["approved"] == ts)
-    again = E.cmd_approve(root, s1)
-    check("gate: approve is idempotent (first timestamp stands)", again == ts)
-    expect_error("gate: approve rejects a non-synthesis id", lambda: E.cmd_approve(root, q1))
-    expect_error("gate: approve rejects an unknown id", lambda: E.cmd_approve(root, "s404"))
-
-    E.cmd_answer(root, q1, text="settled")
-    v = E.Vault(root)
-    check("gate: question resolved", v.get(q1).status == "resolved")
-    check("gate: question stamped with its synthesis", v.get(q1)["fm"]["synthesis"] == s1)
-    # the cockpit has to be able to SHOW what closed a question, so the snapshot carries the
-    # link from the question and the synthesis' own text + approval stamp
-    snap = E.snapshot(root)
-    check("gate: snapshot links the question to its synthesis",
-          snap["nodes"][q1]["synthesis"] == s1)
-    check("gate: snapshot carries the synthesis' approval stamp",
-          snap["nodes"][s1]["approved"] == ts)
-    check("gate: snapshot carries the synthesis body without the Related:: line",
-          "Headline conclusions" in snap["nodes"][s1]["body"]
-          and "Related::" not in snap["nodes"][s1]["body"])
-    check("gate: an unresolved question has no synthesis link",
-          snap["nodes"][q2]["synthesis"] is None)
-    check("gate: an approved synthesis for q1 does not unlock q2",
-          _refused(lambda: E.cmd_answer(root, q2)))
-    check("gate: gated vault validates clean", E.cmd_validate(root) == [])
-
-    # -- grandfathering: a question resolved by a pre-1.2 engine has no `synthesis:` field
-    #    and no synthesis node. It must keep its status and never be flagged.
-    old = tempfile.mkdtemp(prefix="crux_gate_old_")
-    shutil.rmtree(old); os.makedirs(old)
-    E.cmd_init("Legacy", old)
-    oq, _ = E.cmd_ask(old, "legacy question")
-    edit(node_path(old, oq), "status: open", "status: resolved")
-    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.1")
-    E.refresh(old)
-    check("gate: pre-1.2 resolved question keeps its status",
-          E.Vault(old).get(oq).status == "resolved")
-    check("gate: pre-1.2 resolved question is not flagged (grandfathered)",
-          E.cmd_validate(old) == [])
-    shutil.rmtree(old, ignore_errors=True)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1156,7 +1053,7 @@ def run_serve():
     stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
         "os", "sys", "json", "socket", "http", "socketserver", "webbrowser",
         "functools", "threading", "urllib", "io", "re", "datetime", "argparse"}
-    bad = mods - stdlib - {"engine", "render", "auto"}
+    bad = mods - stdlib - {"engine", "render", "auto", "migrate4"}
     check("serve: stdlib-only imports", not bad)
 
     # -- context detection returns the right mode for faked env combos, no browser spawned
@@ -1212,7 +1109,12 @@ def run_serve():
         with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as r:
             ctype = r.headers.get("Content-Type"); snap = json.loads(r.read())
         check("serve: /snapshot.json is application/json", ctype == "application/json")
-        check("serve: /snapshot.json == engine.snapshot", snap == E.snapshot(root))
+        # the served payload is engine.snapshot plus ONE serve-side key, `migration` (spec
+        # 19, ruling Q9): whether this vault still awaits the 4.0 migration
+        check("serve: /snapshot.json == engine.snapshot + the migration key",
+              {k: x for k, x in snap.items() if k != "migration"} == E.snapshot(root))
+        check("serve: a 4.0 vault is reported migrated",
+              snap.get("migration") == {"stamped": E.ENGINE_VERSION, "needed": False})
         with urllib.request.urlopen(base + "/", timeout=5) as r2:
             html = r2.read().decode("utf-8", "replace").lower()
         check("serve: serves the cockpit HTML at /", "<html" in html or "crux" in html)
@@ -1350,6 +1252,145 @@ def run_serve():
 
     shutil.rmtree(root, ignore_errors=True)
 
+    # ---- spec 19 (C5): the 4.0 model through the live server, and the read-only contract
+    # over a FULL click-through — every route the cockpit can reach, plus every write verb a
+    # client could try. Run twice: on a 4.0 vault, and on a pre-4.0 vault the cockpit cannot
+    # migrate (ruling Q9: show it as-is with a banner, and never write).
+    mst = getattr(S, "migration_status_of", lambda s: {"needed": None})
+    check("serve: the pre-4.0 test is a pure function of the stamp",
+          mst(None)["needed"] is True and mst("3.5")["needed"] is True
+          and mst("1.2")["needed"] is True and mst("4.0")["needed"] is False
+          and mst("4.1")["needed"] is False and mst("10.0")["needed"] is False
+          and mst("not-a-version")["needed"] is True)
+    check("serve: the handler defines no write verb (POST/PUT/DELETE/PATCH)",
+          not any(hasattr(S.Handler, m) for m in ("do_POST", "do_PUT", "do_DELETE", "do_PATCH")))
+    fs = tempfile.mkdtemp(prefix="crux_serve4_")
+    shutil.rmtree(fs); os.makedirs(fs)
+    E.cmd_init("Four States", fs, goal="every state renders")
+    fq, _ = E.cmd_ask(fs, "does the cockpit show every state?")
+    hs, _, _ = E.cmd_hypothesize(fs, "the settled one", parent=fq, expect="it holds")
+    hl, _, _ = E.cmd_hypothesize(fs, "the leaning one", parent=fq, expect="it holds")
+    ho, _, _ = E.cmd_hypothesize(fs, "the open one", parent=fq, expect="it holds")
+    hp, _, _ = E.cmd_hypothesize(fs, "the parked one", parent=fq, expect="it holds")
+    write(os.path.join(fs, E.RESULTS_DIR, hs, "report.md"), "# r\n")
+    E.cmd_finding(fs, hs, "strong", why="clear margin", direction="supports",
+                  evidence=[f"{E.RESULTS_DIR}/{hs}/report.md"])
+    E.cmd_finding(fs, hl, "weak", why="one thin run", direction="against")
+    E.cmd_park(fs, hp)
+
+    def click_through(vroot, label):
+        httpd = S.make_server(vroot, port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        codes, snap = {}, None
+        before = _dir_bytes(vroot)
+        try:
+            for path in ("/", "/index.html", "/app.js", "/style.css", "/vendor/motion.js",
+                         "/favicon.svg", "/snapshot.json", "/auto.json", "/wiki/_index.json",
+                         "/wiki/nope.json", "/rd/nope.json", "/file/.crux.yaml",
+                         f"/file/{E.RESULTS_DIR}/{hs}/report.md", "/nope"):
+                try:
+                    with urllib.request.urlopen(base + path, timeout=5) as r:
+                        codes[path] = r.status
+                        body = r.read()
+                        if path == "/snapshot.json":
+                            snap = json.loads(body)
+                except urllib.error.HTTPError as he:
+                    codes[path] = he.code
+            writes = []
+            for verb in ("POST", "PUT", "DELETE", "PATCH"):
+                for path in ("/snapshot.json", "/", "/file/x.md"):
+                    req = urllib.request.Request(base + path,
+                                                 data=None if verb == "DELETE" else b"x",
+                                                 method=verb)
+                    try:
+                        with urllib.request.urlopen(req, timeout=5) as r:
+                            writes.append((verb, path, r.status))
+                    except urllib.error.HTTPError as he:
+                        writes.append((verb, path, he.code))
+        finally:
+            httpd.shutdown(); httpd.server_close()
+        check(f"serve: [{label}] every write verb is refused (501/405)",
+              all(c in (405, 501) for _, _, c in writes))
+        check(f"serve: [{label}] the click-through reaches the page and the snapshot",
+              codes.get("/") == 200 and codes.get("/snapshot.json") == 200
+              and codes.get("/app.js") == 200)
+        check(f"serve: [{label}] a full click-through writes no byte (byte-map identical)",
+              _dir_bytes(vroot) == before)
+        return snap or {}
+
+    s4 = click_through(fs, "4.0 vault")
+    st4 = {nid: (s4.get("nodes") or {}).get(nid, {}).get("state") for nid in (hs, hl, ho, hp)}
+    check(f"serve: the served snapshot carries all four states ({st4})",
+          st4 == {hs: "settled", hl: "leaning", ho: "open", hp: "parked"})
+    check("serve: the served snapshot carries confidence and findings, and no queue",
+          (s4.get("nodes") or {}).get(hs, {}).get("confidence") == "strong"
+          and ((s4.get("nodes") or {}).get(hl, {}).get("findings") or [{}])[0]
+              .get("direction") == "against"
+          and "queue" not in s4)
+    check("serve: a 4.0 vault needs no migration banner",
+          (s4.get("migration") or {}).get("needed") is False)
+
+    # a pre-4.0 vault: stamped 3.5. The cockpit shows it as it is and never writes — not the
+    # stamp, not a backup, not a migrated node.
+    cfg = os.path.join(fs, ".crux.yaml")
+    edit(cfg, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 3.5")
+    cfg_before = read(cfg)
+    s3 = click_through(fs, "pre-4.0 vault")
+    check("serve: a pre-4.0 vault is reported as awaiting migration (Q9)",
+          {k: (s3.get("migration") or {}).get(k) for k in ("stamped", "needed")}
+          == {"stamped": "3.5", "needed": True})
+    check("serve: the pre-4.0 vault is shown as-is (its tree still renders)",
+          hs in (s3.get("nodes") or {}))
+    check("serve: serving a pre-4.0 vault never re-stamps it", read(cfg) == cfg_before)
+    shutil.rmtree(fs, ignore_errors=True)
+
+    # Q9 in full: on a REAL pre-4.0 example (demo_vault as it was before the migration,
+    # re-stamped 3.5) the cockpit renders the migration's result in memory — migrate4.plan()
+    # is pure — so the tree shows the states, confidence and Findings the migration would
+    # write, under the "not migrated yet" banner, and not one byte moves.
+    import selftest_migrate as SM
+    import migrate4 as M4
+    pre = SM.captured_demo(os.path.join(tempfile.mkdtemp(prefix="crux_srvpre_"), "v"), "3.5")
+    pcfg = os.path.join(pre, ".crux.yaml")
+    pcfg_before = read(pcfg)
+    want = E.snapshot(os.path.join(HERE, "..", "examples", "demo_vault"))   # the migrated truth
+    sp = click_through(pre, "pre-4.0 example")
+    mig = sp.get("migration") or {}
+    check("serve: a pre-4.0 example is flagged and previewed (needed, preview, stamp 3.5)",
+          mig.get("needed") is True and mig.get("preview") is True and mig.get("stamped") == "3.5")
+    pn, wn = sp.get("nodes") or {}, want["nodes"]
+    shown = {nid: (pn.get(nid, {}).get("state"), pn.get(nid, {}).get("confidence"),
+                   len(pn.get(nid, {}).get("findings") or [])) for nid in wn}
+    truth = {nid: (n.get("state"), n.get("confidence"), len(n.get("findings") or []))
+             for nid, n in wn.items()}
+    check("serve: the preview shows the migrated states, confidence and Findings "
+          "(== the committed 4.0 demo_vault)",
+          shown == truth and any(c for _, _, c in truth.values()))
+    check("serve: the preview counts the Findings the migration would write",
+          mig.get("findings") == len(M4.plan(pre)["findings"]) > 0)
+    check("serve: previewing never writes — the stamp is unchanged", read(pcfg) == pcfg_before)
+    check("serve: previewing never writes — no backup, no .crux/ store",
+          not os.path.exists(os.path.join(pre, ".crux")))
+
+    # a plan() that raises: the cockpit falls back to the as-is view, banner still up
+    asis = E.snapshot(pre)
+    real_plan = M4.plan
+    def boom(root):
+        raise RuntimeError("plan blew up")
+    M4.plan = boom
+    try:
+        sf = click_through(pre, "pre-4.0 example, plan raises")
+    finally:
+        M4.plan = real_plan
+    check("serve: a plan() that raises falls back to the as-is view",
+          {k: x for k, x in sf.items() if k != "migration"} == asis)
+    check("serve: the fallback keeps the banner and says it is not a preview",
+          (sf.get("migration") or {}).get("needed") is True
+          and (sf.get("migration") or {}).get("preview") is False)
+    check("serve: the fallback never writes either", read(pcfg) == pcfg_before)
+    shutil.rmtree(os.path.dirname(pre), ignore_errors=True)
+
 
 def run_file_route():
     """`GET /file/<vault-relative-path>` (§C): the read-only route the report reader and
@@ -1362,7 +1403,7 @@ def run_file_route():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Files", root)
     q1, _ = E.cmd_ask(root, "q")
-    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"], expect="x")
     report = "# Report\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![curve](curve.png)\n"
     write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), report)
     png = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(range(256)) * 4
@@ -1478,12 +1519,12 @@ def run_webui():
     #     Derived from the engine's own constants so the two can never drift again.
     m = re.search(r"const LEGEND = \[(.*?)\n\];", app_js, re.S)
     legend_src = m.group(1) if m else ""
-    expected = (["q-" + s for s in E.QUESTION_STATUS]
-                + ["h-" + s for s in E.IDEA_STATUS if s != E.TERMINAL_IDEA]
-                + ["h-" + x for x in E.VERDICTS])
+    # spec 19: the vocabulary is the 4.0 one — four node states and three confidences
+    expected = (["s-" + x for x in E.STATES] + ["c-" + x for x in E.CONFIDENCES])
     missing = [k for k in expected if f'"{k}"' not in legend_src]
     check(f"webui: legend covers the engine's whole vocabulary (missing: {missing})", not missing)
-    check("webui: legend includes the inconclusive verdict", '"h-inconclusive"' in legend_src)
+    stale = [k for k in re.findall(r'\["([a-z]-[a-z-]+)"', legend_src) if k not in expected]
+    check(f"webui: legend carries no pre-4.0 status or verdict chip (stale: {stale})", not stale)
     # every colour the legend names must exist in BOTH themes
     vars_used = re.findall(r'"(--[a-z-]+)"', legend_src)
     # match the RULES, not the prose: style.css mentions the light selector in its header
@@ -1500,10 +1541,9 @@ def run_webui():
     check("webui: the markdown renderer emits images", "<img" in app_js)
     check("webui: images resolve through the file route", "fileUrl(" in app_js)
     check("webui: idea detail shows an Artifacts section", '"Artifacts"' in app_js)
-    check("webui: a resolved question links the synthesis that closed it",
-          '"Closed on synthesis"' in app_js)
-    check("webui: the synthesis reader renders its body and approval state",
-          re.search(r"function synthesisDetail\([^)]*\)\s*\{.*?bodyOr\(n\.body", app_js, re.S) is not None)
+    # spec 19: synthesis is gone as a node type — no reader, no "closed on" link
+    check("webui: no synthesis reader or synthesis link survives",
+          "function synthesisDetail" not in app_js and '"Closed on synthesis"' not in app_js)
     check("webui: a .md artifact opens the report reader", "openReport(" in app_js)
     check("webui: a hypothesis with a report offers it as a primary action",
           "report-open" in app_js and "report-open" in style)
@@ -1576,7 +1616,9 @@ def run_webui():
     check("webui: the hypothesis pane leads with the summary too",
           "summaryLead(n) +" in idea_fn
           and idea_fn.index("summaryLead(n) +") < idea_fn.index('foldedSection("Problem"')
-          and between.strip().startswith('section("Null'))
+          # spec 19: the expectation (required) leads, then the optional null
+          and re.sub(r"\s*//[^\n]*", "", between).strip().startswith('section("Expected result"')
+          and 'section("Null' in between and between.count("section(") == 2)
     check("webui: the long question detail is folded, not dumped",
           'foldedSection("Detail", n.detail' in app_js and 'section("Detail", bodyOr(n.detail' not in app_js)
     check("webui: the cap comes from the engine, never hardcoded in the UI",
@@ -1720,8 +1762,8 @@ def run_webui():
           bool(sel_src) and "renderTree(" not in sel_src and "layout(" not in sel_src)
     check("webui: selectNode swaps cosmetic state in place",
           "applyCosmeticState(" in sel_src)
-    sq_src = fn_src("showQueue")
-    check("webui: showQueue never rebuilds — no renderTree()/layout() in its body",
+    sq_src = fn_src("showOverview")
+    check("webui: showOverview never rebuilds — no renderTree()/layout() in its body",
           bool(sq_src) and "renderTree(" not in sq_src and "layout(" not in sq_src
           and "applyCosmeticState(" in sq_src)
     cos_src = fn_src("applyCosmeticState")
@@ -1731,7 +1773,10 @@ def run_webui():
     check("webui: the in-place swap keeps the ARIA selection truthful (PR #13 contract)",
           "aria-selected" in cos_src and "aria-activedescendant" in cos_src)
     check("webui: the helper derives dim/hit from the SAME predicates nodeSVG bakes in",
-          "matchNode(" in cos_src and "statusClass(" in cos_src and "state.filter" in cos_src)
+          "matchNode(" in cos_src and "filterHit(" in cos_src
+          and "state.filter" in fn_src("filterHit")
+          and "filterHit(" in fn_src("nodeSVG")
+          and "statusClass(" in fn_src("filterHit") and "confClass(" in fn_src("filterHit"))
     as_src = fn_src("applySearch")
     check("webui: the tree search path dims by class toggle, not by rebuild",
           "applyCosmeticState(" in as_src and "renderTree(" not in as_src)
@@ -1791,8 +1836,8 @@ def run_webui():
     sig_src = fn_src("treeSignatures")
     check("webui: a structural/cosmetic snapshot signature exists", bool(sig_src))
     draw_src = "".join(fn_src(f) for f in
-                       ("nodeSVG", "computeGeom", "statusClass", "verifDots",
-                        "vBadgeClass", "bodyLabel", "rootLabel"))
+                       ("nodeSVG", "computeGeom", "statusClass", "confClass", "dirOf",
+                        "verifDots", "vBadgeClass", "bodyLabel", "rootLabel"))
     drawn_fields = sorted(set(re.findall(r"\bn\.([a-z_]+)\b", draw_src)))
     sig_missing = [f for f in drawn_fields if f not in sig_src]
     check(f"webui: every field the draw path reads is in the signature (missing: {sig_missing})",
@@ -1817,6 +1862,55 @@ def run_webui():
     check("webui: the match counter still rides every accepted snapshot (PR #13 contract)",
           "updateMatchCounter()" in os_src)
 
+    # ---- spec 19 (C5): the cockpit renders the 4.0 model. A node is painted by its DERIVED
+    # state (fill) and its confidence (stroke); a hypothesis also shows the direction of the
+    # finding that decides it. The review queue, the synthesis detail and the acceptance
+    # badges are gone — the engine no longer has any of them to publish.
+    check("webui: a question or hypothesis is classed by its derived state",
+          '"s-" + n.state' in fn_src("statusClass"))
+    check("webui: ... and by its confidence",
+          '"c-" + n.confidence' in fn_src("confClass") and "confClass(n)" in fn_src("nodeSVG"))
+    no_state_rule = [x for x in E.STATES if not re.search(r"\.s-%s\b[^{]*\{" % x, style)]
+    no_conf_rule = [x for x in E.CONFIDENCES if not re.search(r"\.c-%s\b[^{]*\{" % x, style)]
+    check(f"webui: style.css has a rule per state (missing: {no_state_rule})", not no_state_rule)
+    check(f"webui: style.css has a rule per confidence (missing: {no_conf_rule})", not no_conf_rule)
+    gm = re.search(r"const DIR_GLYPH = \{(.*?)\};", app_js, re.S)
+    no_glyph = [d for d in E.DIRECTIONS if not gm or f'"{d}"' not in gm.group(1)
+                and f"{d}:" not in gm.group(1)]
+    check(f"webui: every finding direction has a glyph (missing: {no_glyph})", not no_glyph)
+    dvars = ["--d-" + d for d in E.DIRECTIONS]
+    no_dvar = [x for x in dvars if f"{x}:" not in dark or f"{x}:" not in light]
+    check(f"webui: every direction colour is defined in both themes (missing: {no_dvar})",
+          not no_dvar)
+    gone = [w for w in ("review-btn", "showQueue", "updateReviewBtn", "queueDetail",
+                        "snap.queue", "tb.queue", "taskGateDetail") if w in app_js + index + style]
+    check(f"webui: the review queue is gone from the cockpit ({gone})", not gone)
+    gone = [w for w in ("awaiting your acceptance", "task accept", "pending_gate", "t.accepted",
+                        "awaiting the PI", "null_approved", "VERDICTS", "n.verdict")
+            if w in app_js]
+    check(f"webui: no acceptance badge or verdict reading survives ({gone})", not gone)
+    check("webui: the overview replaces the queue as the empty-selection pane",
+          "function overviewDetail" in app_js and 'id="overview-btn"' in index
+          and "overviewDetail()" in fn_src("renderDetail"))
+    fsec = fn_src("findingsSection")
+    check("webui: findings are listed in the node pane, not drawn as tree nodes",
+          bool(fsec) and "findingsSection(n)" in fn_src("questionDetail")
+          and "findingsSection(n)" in fn_src("ideaDetail")
+          and "finding" not in fn_src("layout"))
+    check("webui: a question finding shows its answer and no direction; a hypothesis "
+          "finding shows its direction",
+          "f.answer" in fsec and "f.direction" in fsec and 'n.type === "idea"' in fsec)
+    check("webui: the finding that decides the state is marked",
+          "state_finding" in fsec)
+    check("webui: a finding's evidence links open through the read-only file route",
+          "f.evidence" in fsec and "fileUrl(" in app_js.split("function evidenceLink")[1][:900]
+          if "function evidenceLink" in app_js else False)
+    check("webui: a parked node says so in the pane", "parked" in fn_src("stateBadges"))
+    # ruling Q9: a pre-4.0 vault is shown as-is, under a banner, and never migrated here
+    check("webui: the not-migrated banner exists and reads the serve-side flag",
+          'id="migrate-banner"' in index and "snap.migration" in app_js
+          and "not migrated yet" in app_js and "any crux write command migrates it" in app_js)
+
 
 def run_economy():
     """Spec 06 — node economy. The engine has always pushed toward more rigor and never
@@ -1828,7 +1922,7 @@ def run_economy():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Economy", root)
     q1, _ = E.cmd_ask(root, "Does the cap hold?")
-    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # -- 1. the summary schema ships in both templates
     qtext, htext = read(node_path(root, q1)), read(node_path(root, h1))
@@ -1882,18 +1976,18 @@ def run_economy():
     q2, _ = E.cmd_ask(root, "How many is too many?")
     ids, quiet = [], True
     for i in range(5):
-        hid, _, warn = E.cmd_hypothesize(root, f"idea {i}", parent=q2)
+        hid, _, warn = E.cmd_hypothesize(root, f"idea {i}", parent=q2, expect="the claim holds")
         ids.append(hid); quiet = quiet and warn is None
     check("economy: no back-pressure while under the cap", quiet)
     check("economy: exactly 5 unrun hypotheses is within the cap",
           [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
-    h6, _, warn6 = E.cmd_hypothesize(root, "idea 6", parent=q2)
+    h6, _, warn6 = E.cmd_hypothesize(root, "idea 6", parent=q2, expect="the claim holds")
     check("economy: hypothesize warns when the new node breaches the cap", warn6 is not None)
     check("economy: the back-pressure names the cap", warn6 is not None and "5" in warn6)
     check("economy: 6 unrun hypotheses trips one fan-out warning",
           len([w for w in E.validation_report(root)["warnings"] if w["id"] == q2]) == 1)
-    E.cmd_test(root, ids[0], "staged")
-    E.cmd_test(root, ids[1], "staged")
+    E.cmd_test(root, ids[0], "staged", run="queued job 1")
+    E.cmd_test(root, ids[1], "staged", run="queued job 2")
     check("economy: staged children do not count as unrun",
           [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
 
@@ -1936,7 +2030,8 @@ def run_economy_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Format", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     # strip the 1.3 schema back out and stamp the old engine version
     for nid in (q1, h1):
         p = node_path(root, nid)
@@ -1956,7 +2051,8 @@ def run_economy_migration():
     check("emig: a missing ELI5 reads as empty string", snap["nodes"][q1]["eli5"] == "")
     check("emig: a missing TL;DR reads as empty string", snap["nodes"][h1]["tldr"] == "")
     check("emig: status still renders the tree", "an old question" in E.status_text(root))
-    check("emig: review still runs", isinstance(E.cmd_review(root), list))
+    check("emig: the derived state still reads (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
     check("emig: drift re-stamps to the current ENGINE_VERSION",
@@ -1998,43 +2094,31 @@ def run_agent_cli():
             "-n", "the parser round-trips a known-good payload",
             "--fails-if", "the parser accepts anything", "--discriminates",
             "--fails-if", "the known-good payload was itself broken",
-            "--null", "chance — the payload happened to parse", "--json")
+            "--null", "chance — the payload happened to parse",
+            "--expect", "stdout parses as JSON", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
     check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
 
-    rn = cli("approve-null", h1["id"], "--json")
-    check("json: approve-null emits parseable JSON",
-          isinstance(as_json(rn), dict) and as_json(rn).get("null_approved"))
     r = cli("test", h1["id"], "--to", "running", "--json")
     t = as_json(r)
     check("json: test emits parseable JSON", isinstance(t, dict) and t.get("status") == "running")
 
-    edit(node_path(root, h1["id"]), "- [ ] stdout parses", "- [x] stdout parses")
-    edit(node_path(root, h1["id"]), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
-    r = cli("close", h1["id"], "--json")
-    cl = as_json(r)
-    check("json: close emits parseable JSON", isinstance(cl, dict) and cl.get("verdict") == "supported")
+    r = cli("finding", h1["id"], "-d", "supports", "-c", "strong", "-w", "it parsed",
+            "--null", "ruled-out", "--json")
+    fi = as_json(r)
+    check("json: finding emits parseable JSON with the derived state",
+          isinstance(fi, dict) and fi.get("state") == "settled" and fi.get("id"))
 
-    r = cli("review", "--json")
-    rv = as_json(r)
-    check("json: review emits a JSON list", isinstance(rv, list))
+    r = cli("finding", q1["id"], "-c", "moderate", "-a", "Yes, it parses.", "--json")
+    fq = as_json(r)
+    check("json: a question finding emits parseable JSON",
+          isinstance(fq, dict) and fq.get("state") == "leaning")
 
-    r = cli("synthesize", "what it settled", "--for", q1["id"], "--json")
-    sy = as_json(r)
-    check("json: synthesize emits parseable JSON", isinstance(sy, dict) and "id" in sy)
-
-    r = cli("approve", sy["id"], "--json")
-    ap = as_json(r)
-    check("json: approve emits parseable JSON", isinstance(ap, dict) and "approved" in ap)
-
-    r = cli("answer", q1["id"], "--json")
-    an = as_json(r)
-    check("json: answer emits parseable JSON", isinstance(an, dict) and an.get("status") == "resolved")
-
-    r = cli("pursue", q1["id"], "--json")
-    pu = as_json(r)
-    check("json: pursue emits parseable JSON", isinstance(pu, dict) and pu.get("status") == "open")
+    r = cli("park", h1["id"], "--json")
+    pk = as_json(r)
+    check("json: park emits parseable JSON", isinstance(pk, dict) and pk.get("state") == "parked")
+    cli("park", h1["id"], "--undo")
 
     r = cli("status", "--json")
     st = as_json(r)
@@ -2106,8 +2190,9 @@ def run_deck():
                                  fails_if=["the width-matched arm also clears it",
                                            "bar two moves on its own",
                                            "the shared preprocessing path changed"],
-                                 discriminates=[True, False, False])
-    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
+                                 discriminates=[True, False, False],
+                                 expect="bar one and bar two both clear")
+    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid, expect="it moves")
     # the optional ## Protocol section (new in 1.4) — fill it on the anchor
     edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
     # close h1 with a (found: …) parenthetical on the first bar
@@ -2116,7 +2201,10 @@ def run_deck():
     edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
     declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
-    E.cmd_close(root, h1, metric="imp +0.02")
+    # the headline metric: frontmatter the 3.x close step wrote, which a 4.0 vault keeps
+    n1 = E.Vault(root).get(h1)
+    n1["fm"]["metric"] = "imp +0.02"
+    E.write_if_changed(n1["path"], E.render_doc(n1["fm"], n1["body"]))
     # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
     rd = os.path.join(root, "results", h1)
     write(os.path.join(rd, "metrics.json"), json.dumps({
@@ -2127,6 +2215,10 @@ def run_deck():
     edit(node_path(root, h1), f"results/{h1}/curve.png -->\n_(none yet)_",
          f"results/{h1}/curve.png -->\n- [Report](results/{h1}/report.md)\n"
          f"- results/{h1}/curve.png the loss curve")
+    # spec 19: no close step — the run's result is a Finding on the hypothesis
+    E.cmd_finding(root, h1, "strong", why="both bars cleared and the control held",
+                  direction="supports", null="ruled-out",
+                  evidence=[f"results/{h1}/report.md"])
     E.refresh(root)
 
     # determinism — in-process and through the CLI
@@ -2142,6 +2234,10 @@ def run_deck():
     check("deck: engine_version stamped in the payload", p1["engine_version"] == E.ENGINE_VERSION)
     check("deck: payload carries no absolute path and no timestamp",
           root not in s1 and E.now()[:10] not in s1)
+    # spec 19: synthesis and verdict are gone; the payload reads Findings and derived state
+    check("deck: no payload key is named verdict or synthesis",
+          '"verdict":' not in s1 and '"synthesis":' not in s1
+          and '"verdict":' not in json.dumps(E.deck_payload(root, h1)))
 
     # lineage / siblings / children
     check("deck: lineage is root -> parent, in order",
@@ -2153,8 +2249,16 @@ def run_deck():
     kids = p1["children"]
     check("deck: children are the anchor's subtree in order", [x["id"] for x in kids] == [h1, h2])
     k1 = kids[0]
-    check("deck: closed child carries verdict + metric",
-          k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
+    check("deck: a child with a Finding carries its derived state, confidence + metric",
+          k1["state"] == "settled" and k1["confidence"] == "strong"
+          and k1["metric"] == "imp +0.02")
+    check("deck: a hypothesis child carries findings[] with direction, confidence, why, evidence",
+          [(f["direction"], f["confidence"], f["why"], f["evidence"]) for f in k1["findings"]]
+          == [("supports", "strong", "both bars cleared and the control held",
+               [f"results/{h1}/report.md"])])
+    check("deck: a child with no Finding is open and carries an empty findings[]",
+          kids[1]["state"] == "open" and kids[1]["confidence"] is None
+          and kids[1]["findings"] == [])
     check("deck: verifiable `found` parsed from the (found: …) parenthetical",
           k1["verifiables"][0] == {"text": "bar one", "state": "met", "kind": "hypothesis",
                                    "found": "+0.02",
@@ -2184,9 +2288,10 @@ def run_deck():
           p1["anchor"]["question"] == "Mid question"
           and p1["anchor"]["protocol"] == "Rules locked up front.")
     check("deck: placeholder answer-so-far reads as empty", p1["anchor"]["answer_so_far"] == "")
-    check("deck: scope counts executed vs parked",
-          p1["scope"]["executed"] == 1 and p1["scope"]["parked"] == 1
-          and p1["scope"]["by_state"]["done"] == 1 and p1["scope"]["by_state"]["idea"] == 1)
+    check("deck: scope counts hypotheses by derived state",
+          p1["scope"]["executed"] == 1 and p1["scope"]["open"] == 1
+          and p1["scope"]["parked"] == 0
+          and p1["scope"]["by_state"] == {"open": 1, "leaning": 0, "settled": 1, "parked": 0})
 
     # figures + metrics
     figs = p1["figures"]
@@ -2220,14 +2325,20 @@ def run_deck():
     check("deck: unresolvable — not a leaf (no value)", kind_of(f"{h1}#task_a") == "missing-value")
     check("deck: unresolvable — malformed address", kind_of("no-hash-here") == "bad-address")
 
-    # synthesis: only an APPROVED one enters the payload
-    syn, _ = E.cmd_synthesize(root, "what qmid settled", [qmid])
-    check("deck: unapproved synthesis stays out of the payload",
-          E.deck_payload(root, qmid)["synthesis"] is None)
-    E.cmd_approve(root, syn)
-    ps = E.deck_payload(root, qmid)["synthesis"]
-    check("deck: approved synthesis lands with its text",
-          bool(ps) and ps["id"] == syn and bool(ps["approved"]) and "Related::" not in ps["text"])
+    # spec 19: a question is answered by a Finding on it (synthesis is gone). Before one
+    # exists the anchor is open; after, its answer text rides in findings[] with NO direction
+    check("deck: a question anchor with no Finding of its own leans on its child's, capped",
+          p1["anchor"]["findings"] == [] and p1["anchor"]["state"] == "leaning"
+          and p1["anchor"]["confidence"] == "moderate")
+    E.cmd_finding(root, qmid, "strong", answer="what qmid settled",
+                  evidence=[f"results/{h1}/report.md"])
+    pa = E.deck_payload(root, qmid)["anchor"]
+    check("deck: a question Finding lands with its answer text and no direction",
+          [(f["answer"], f["confidence"], f["evidence"]) for f in pa["findings"]]
+          == [("what qmid settled", "strong", [f"results/{h1}/report.md"])]
+          and all("direction" not in f for f in pa["findings"]))
+    check("deck: the question anchor reads its own Finding — settled, strong",
+          pa["state"] == "settled" and pa["confidence"] == "strong")
 
     # wiki pages linked from the anchor
     E.ensure_wiki(root)
@@ -2241,8 +2352,10 @@ def run_deck():
 
     # hypothesis / childless anchors — always emit (PI ruling #1)
     ph = E.deck_payload(root, h1)
-    check("deck: hypothesis anchor — no children, no synthesis",
-          ph["children"] == [] and ph["synthesis"] is None)
+    check("deck: hypothesis anchor — no children, its own findings[] and state",
+          ph["children"] == [] and "synthesis" not in ph
+          and ph["anchor"]["state"] == "settled"
+          and [f["direction"] for f in ph["anchor"]["findings"]] == ["supports"])
     check("deck: hypothesis anchor carries its own evidence fields",
           len(ph["anchor"]["verifiables"]) == 3 and ph["anchor"]["question"] is None)
     check("deck: hypothesis anchor scopes metrics to itself",
@@ -2301,6 +2414,22 @@ def run_deck():
           any(f["path"] == "results/h1/report.md" for f in sp["figures"]))
     check("deck fixture: formatted display value stored as a string",
           E.resolve_address(svc, "h1#design.train_n_baseline")["value"] == "1.20M")
+    # the migrated (4.0) scaling vault: verdicts became Findings, the synthesis a q1 Finding
+    sj = json.dumps(sp)
+    check("deck fixture: the migrated payload carries no verdict or synthesis key",
+          '"verdict":' not in sj and '"synthesis":' not in sj)
+    sk = {c["id"]: c for c in sp["children"]}
+    check("deck fixture: migrated hypotheses carry their Findings with direction + confidence",
+          [(f["direction"], f["confidence"]) for f in sk["h1"]["findings"]]
+          == [("supports", "strong")]
+          and [(f["direction"], f["confidence"]) for f in sk["h2"]["findings"]]
+          == [("mixed", "weak")]
+          and all(f["why"] and isinstance(f["evidence"], list)
+                  for c in sk.values() for f in c["findings"]))
+    check("deck fixture: q1's migrated synthesis is a strong question Finding, no direction",
+          sp["anchor"]["state"] == "settled" and len(sp["anchor"]["findings"]) == 1
+          and "direction" not in sp["anchor"]["findings"][0]
+          and sp["anchor"]["findings"][0]["answer"])
     shutil.rmtree(base, ignore_errors=True)
 
 
@@ -2341,7 +2470,8 @@ def run_deck_verify():
     root = os.path.join(base, "vault")
     E.cmd_init("Verify Demo", root, goal="g")
     qv, _ = E.cmd_ask(root, "Check question")
-    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"])
+    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"],
+                                 expect="the bar clears")
     write(os.path.join(root, "results", hv, "metrics.json"), json.dumps({
         "m": {"delta": {"value": 3.3, "ci": [1.9, 4.7]},
               "share": {"value": 50000},
@@ -3045,7 +3175,7 @@ def run_rd():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD Demo", root, goal="Exercise the RD layer.")
     q1, _ = E.cmd_ask(root, "Does the RD layer hold?")
-    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # -- 1. creation + the backlink
     slug, fn = E.cmd_rd(root, h1, "Probe ladder and estimand")
@@ -3073,8 +3203,9 @@ def run_rd():
     check("rd: an RD may attach to a hypothesis", E.scan_rd_pages(root)[0]["node"] in (q1, h1))
     expect_error("rd: an RD may not attach to the project root",
                  lambda: E.cmd_rd(root, "root", "nope"))
-    s1, _ = E.cmd_synthesize(root, "a synthesis", [q1])
-    expect_error("rd: an RD may not attach to a synthesis", lambda: E.cmd_rd(root, s1, "nope"))
+    # spec 19 removed synthesis; a finding is the non-tree node type an RD must still refuse
+    s1, _, _ = E.cmd_finding(root, q1, "weak", answer="a provisional answer")
+    expect_error("rd: an RD may not attach to a finding", lambda: E.cmd_rd(root, s1, "nope"))
 
     # -- 3. one ACTIVE RD per node (D11), and the refusal names the remedy (D12)
     try:
@@ -3105,11 +3236,12 @@ def run_rd():
     check("rd: an RD page never becomes a node", set(v.nodes) == {"root", q1, h1, s1})
     check("rd: no node has type rd", not any(n.type == "rd" for n in v.nodes.values()))
     led_before = E.ledger_counts(E.Vault(root), q1)
-    st_before = E.Vault(root).get(q1).status
+    st_before = E.derive_state(E.Vault(root), q1)
     E.cmd_rd(root, h1, "third cut", supersedes=slug2)
     E.refresh(root)
     check("rd: an RD does not move ledger_counts", E.ledger_counts(E.Vault(root), q1) == led_before)
-    check("rd: an RD does not trip the review gate", E.Vault(root).get(q1).status == st_before)
+    check("rd: an RD does not move the question's derived state",
+          E.derive_state(E.Vault(root), q1) == st_before)
 
     # -- 6. the generated index
     idx = os.path.join(root, "RD.md")
@@ -3171,11 +3303,12 @@ def run_rd_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Vault", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"], expect="x holds")
     check("rdmig: a pre-07 vault has no rd/", not os.path.isdir(os.path.join(root, "rd")))
     check("rdmig: a pre-07 vault grows no RD.md", not os.path.exists(os.path.join(root, "RD.md")))
     check("rdmig: status still renders on a pre-07 vault", "an old question" in E.status_text(root))
-    check("rdmig: review still runs on a pre-07 vault", isinstance(E.cmd_review(root), list))
+    check("rdmig: the derived state still reads on a pre-07 vault (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
 
     # an rd/ directory full of pages changes nothing until something looks at it
     before = _dir_bytes(root)
@@ -3215,7 +3348,7 @@ def run_rd_lint():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD Lint", root)
     q1, _ = E.cmd_ask(root, "a question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # the check is registered, and it is always-on rather than opt-in: an RD is vault
     # content, not a derived document like a deck
@@ -3366,9 +3499,13 @@ def run_rd_skill():
           "git log -p" in s)
     check("rdskill: the skill declares disable-model-invocation",
           "disable-model-invocation: true" in fm)
+    # spec 19: the verb table moved out of the always-on core; the core routes to crux-rd
     crux_skill = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
-    check("rdskill: the crux verb table lists rd",
-          os.path.isfile(crux_skill) and "| `rd` |" in read(crux_skill))
+    verbs_ref = os.path.abspath(os.path.join(HERE, "..", "references", "verbs.md"))
+    check("rdskill: the crux verb reference lists rd",
+          os.path.isfile(verbs_ref) and "| `rd` |" in read(verbs_ref))
+    check("rdskill: the always-on core routes to crux-rd",
+          os.path.isfile(crux_skill) and "**crux-rd**" in read(crux_skill))
     # every invocation the skill shows must be one the CLI actually accepts
     bad = []
     for m in re.findall(r"crux rd ([^\n`\"']*)", s):
@@ -3400,7 +3537,8 @@ def run_deck_rd():
     q1, _ = E.cmd_ask(root, "the ancestor")
     q2, _ = E.cmd_ask(root, "the anchor", parent=q1)
     q4, _ = E.cmd_ask(root, "the sibling", parent=q1)
-    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"],
+                                 expect="x holds")
 
     check("rddeck: rd is present and empty with no RD layer", E.deck_payload(root, q2)["rd"] == [])
 
@@ -3452,7 +3590,8 @@ def run_rd_gui():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD GUI", root)
     q1, _ = E.cmd_ask(root, "a question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"],
+                                 expect="x")
 
     snap = E.snapshot(root)
     check("rdgui: snapshot reports an inactive RD layer",
@@ -3574,7 +3713,8 @@ def pre15_vault(prefix, engine_version="1.5"):
     E.cmd_init("Legacy Evidence", root)
     q, _ = E.cmd_ask(root, "a pre-15 question")
     h, _, _ = E.cmd_hypothesize(root, "a pre-15 hypothesis", parent=q,
-                                verifiables=["first check", "second check"])
+                                verifiables=["first check", "second check"],
+                                require_expect=False)
     _strip_schema(root)
     edit(os.path.join(root, E.VAULT_MARKER),
          f"engine_version: {E.ENGINE_VERSION}", f"engine_version: {engine_version}")
@@ -3641,7 +3781,8 @@ def run_evidence_boundary():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Boundary", root)
     q1, _ = E.cmd_ask(root, "a stamped question")
-    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"])
+    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"],
+                                 expect="a holds")
 
     v = E.Vault(root)
     check("boundary: a new hypothesis is stamped with the current schema generation",
@@ -3665,7 +3806,8 @@ def run_evidence_boundary():
     seed = os.path.join(sd, "seed.md")
     with open(seed, "w", encoding="utf-8") as f:
         f.write("- Project: Seeded — a goal\n  - Q: a seeded question\n"
-                "    - H: a seeded hypothesis\n      - v: a check\n")
+                "    - H: a seeded hypothesis\n      - expect: the check holds\n"
+                "      - v: a check\n")
     sroot = os.path.join(sd, "vault")
     E.cmd_init_from(seed, sroot)
     sv = E.Vault(sroot)
@@ -3689,7 +3831,15 @@ def run_evidence_boundary():
     shutil.rmtree(root, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary itself
-    old, oq, oh = pre15_vault("crux_bmig_")
+    old = tempfile.mkdtemp(prefix="crux_bmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                verifiables=["first check", "second check"],
+                                expect="both checks hold")
+    _strip_schema(old)
+    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 1.5")
     check("evmig: the fixture really is unstamped",
           "schema:" not in read(node_path(old, oh)))
 
@@ -3714,29 +3864,33 @@ def run_evidence_boundary():
     # -- nothing retro-stamps. Run every read/write path there is, then re-check.
     before = fingerprint(old)
     E.refresh(old); E.cmd_validate(old); E.validation_report(old)
-    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old); E.cmd_review(old)
-    E.cmd_close(old, oh)
+    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old)
+    E.cmd_test(old, oh, to="running")
+    E.cmd_finding(old, oh, "moderate", why="both held", direction="supports")
     after_v = E.Vault(old)
-    check("evmig: no command retro-stamps an existing node",
-          all("schema" not in n["fm"] for n in after_v.nodes.values()))
+    check("evmig: no command retro-stamps an existing node (a new finding is a new node)",
+          all("schema" not in n["fm"] for n in after_v.nodes.values() if n.type != "finding"))
     shutil.rmtree(old, ignore_errors=True)
 
-    # -- the captured pre-upgrade fixture: byte-identical after the version bump
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
-    dst = tempfile.mkdtemp(prefix="crux_bdemo_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    # -- the captured pre-upgrade fixture: byte-identical after the version bump. The shipped
+    #    demo_vault is 4.0 now (spec 19 regenerated it); `captured_demo` rebuilds its 1.2 form
+    #    exactly. The upgrade MIGRATES it (new Finding nodes); every node that existed before
+    #    must keep its authored bytes, its verdict and its status.
+    import selftest_migrate as SM
+    dst = SM.captured_demo(tempfile.mkdtemp(prefix="crux_bdemo_"))
     f0, v0, s0 = fingerprint(dst)
-    g0 = generated_verdicts(dst)
     warn = E.check_and_stamp_version(dst)
     E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     f1, v1, s1 = fingerprint(dst)
+    new = E.Vault(dst)
     check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
-          f0 == f1)
-    check("evmig: pre-15 vault — no verdict is re-labelled or lost in anything generated",
-          generated_verdicts(dst) == g0)
+          f0 and {k: f1.get(k) for k in f0} == f0)
+    check("evmig: pre-15 vault — the upgrade only ADDS nodes, and only Findings",
+          all(new.nodes[n].type == "finding" for n in set(v1) - set(v0)) and set(v0) <= set(v1))
     check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
-          v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
-    check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
+          {k: v1[k] for k in v0} == v0 and v0["h1"] == "supported" and v0["h2"] == "partial")
+    check("evmig: pre-15 vault — every status is unchanged after upgrade",
+          {k: s1[k] for k in s0} == s0)
     check("evmig: an older vault reports drift and re-stamps to current",
           warn is not None and "1.2" in warn
           and E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
@@ -3828,40 +3982,26 @@ def run_verifiable_kind():
     q1, _ = E.cmd_ask(root, "a question")
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "with a control", "--parent", q1, "-v", "the claim check",
-                        "-n", "the positive control"],
+                        "-n", "the positive control", "--expect", "the claim holds"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = E.Vault(root).get("h1")
     check("kind: the CLI -n flag writes an outcome-neutral verifiable",
           r.returncode == 0 and "- [ ] [outcome-neutral] the positive control" in hc["body"]
           and "- [ ] the claim check" in hc["body"])
 
-    # -- the gate: a stamped hypothesis needs a control, or a written opt-out
-    h2, _, _ = E.cmd_hypothesize(root, "no control at all", parent=q1, verifiables=["only a claim check"])
-    expect_error("kind: running is refused with no outcome-neutral check",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    check("kind: the refusal names the opt-out route",
-          "opt-out" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
-    check("kind: validate flags a stamped node with no control and no opt-out",
-          any("outcome-neutral" in m for _, m in E.cmd_validate(root)) is False)  # not yet running
-
-    n2 = E.Vault(root).get(h2)
-    n2["fm"]["neutral_optout"] = ""
-    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
-    expect_error("kind: an empty opt-out does not unblock running",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    n2 = E.Vault(root).get(h2)
-    n2["fm"]["neutral_optout"] = "the assay IS the claim; a positive control would beg the question"
-    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
-    declare_null(root, h2)
-    check("kind: a written opt-out unblocks running",
+    # -- spec 19: no gate. A control, a rule and a null are optional; running never refuses
+    h2, _, _ = E.cmd_hypothesize(root, "no control at all", parent=q1,
+                                 verifiables=["only a claim check"], expect="the claim holds")
+    check("kind: running is NOT refused with no outcome-neutral check (spec 19)",
           E.cmd_test(root, h2, to="running") == "running")
-
-    declare_null(root, "h1")
-    check("kind: a hypothesis WITH a control runs with no opt-out",
+    check("kind: validate does not flag a running node with no control and no opt-out",
+          not any("outcome-neutral" in m for _, m in E.cmd_validate(root)))
+    check("kind: a hypothesis WITH a control runs too",
           E.cmd_test(root, "h1", to="running") == "running")
 
     # -- an unknown tag is a validate problem on a stamped node
-    hb, _, _ = E.cmd_hypothesize(root, "bad tag", parent=q1, verifiables=["[banana] a check"])
+    hb, _, _ = E.cmd_hypothesize(root, "bad tag", parent=q1, verifiables=["[banana] a check"],
+                                 expect="the check holds")
     check("kind: an unknown kind tag is a validate problem",
           any(i == hb and "banana" in m for i, m in E.cmd_validate(root)))
 
@@ -3876,7 +4016,8 @@ def run_verifiable_kind():
                 "    - H: [tested] work done before crux was watching\n"
                 "      - v: [x] the check that was met\n"
                 "      - finding: it held\n"
-                "    - H: genuinely new work\n      - v: a check\n")
+                "    - H: genuinely new work\n      - expect: the check holds\n"
+                "      - v: a check\n")
     sroot2 = os.path.join(sd2, "vault")
     E.cmd_init_from(seed2, sroot2)
     sv2 = E.Vault(sroot2)
@@ -3891,7 +4032,15 @@ def run_verifiable_kind():
     shutil.rmtree(sd2, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_kmig_")
+    old = tempfile.mkdtemp(prefix="crux_kmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                verifiables=["first check", "second check"],
+                                expect="both checks hold")
+    _strip_schema(old)
+    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 1.5")
     check("evmig: an unstamped hypothesis runs with no outcome-neutral check",
           E.cmd_test(old, oh, to="running") == "running")
     check("evmig: a pre-15 vault raises no kind problem",
@@ -4031,95 +4180,45 @@ def run_combination_rule():
     check(f"rule: partial is unreachable under evidence semantics "
           f"(reachable: {bad_partial[:2]})", not bad_partial)
 
-    # -- the roll-up and the views survive a new verdict
+    # -- spec 19: the rule is recorded and published, but it gates nothing and closes nothing
     root = tempfile.mkdtemp(prefix="crux_rule_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Rules", root)
     q1, _ = E.cmd_ask(root, "does the rule bind?")
-    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1,
-                                 verifiables=["c one", "c two"], neutral=["control"])
-    n = E.Vault(root).get(h1); n["fm"]["rule"] = "all"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1, rule="all",
+                                 verifiables=["c one", "c two"], neutral=["control"],
+                                 expect="both checks hold")
     edit(node_path(root, h1), "- [ ] c one", "- [x] c one")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    check("rule: all with one unmet closes refuted (was partial before 1.8)",
-          E.cmd_close(root, h1) == "refuted")
-
-    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1,
-                                 verifiables=["c one"], neutral=["control"])
-    n = E.Vault(root).get(h2); n["fm"]["rule"] = "all"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
-    edit(node_path(root, h2), "- [ ] c one", "- [x] c one")
-    declare_null(root, h2)
-    E.cmd_test(root, h2, to="running")
-    check("rule: a failed control closes invalid-run end to end",
-          E.cmd_close(root, h2) == "invalid-run")
-
-    lc = E.ledger_counts(E.Vault(root), q1)
-    check("rule: ledger_counts is generated from VERDICTS",
-          all(x in lc for x in E.VERDICTS) and lc["invalid-run"] == 1 and lc["refuted"] == 1)
-    check("rule: _ledger_summary survives a new verdict",
-          "1 invalid-run" in E._ledger_summary(lc))
-    meta = R.render_meta(E.Vault(root))
-    check("rule: the META dashboard covers the whole verdict vocabulary",
-          all(f"{x} " in meta.split("**Verdicts**")[1].split("\n")[0] for x in E.VERDICTS))
     exp = R.render_experiments(E.Vault(root))
     check("rule: EXPERIMENTS carries a rule column",
           "| rule |" in exp and "| all |" in exp)
-
     snap = E.snapshot(root)
     check("rule: snapshot exposes the combination rule",
-          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None
-          and snap["nodes"][h1]["verdict"] == "refuted")
+          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None)
     check("rule: snapshot exposes the per-kind tallies",
-          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [1, 0, 0]})
-    dp = E.deck_payload(root, q1)
-    check("rule: the deck payload carries the combination rule",
-          [c["rule"] for c in dp["children"]] == ["all", "all"])
-
-    # -- the gate: a stamped multi-check hypothesis must declare how they add up
-    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1,
+          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [0, 1, 0]})
+    check("rule: ticks alone never move the state — only a finding does (spec 19)",
+          snap["nodes"][h1]["state"] == "open")
+    expect_error("rule: a reserved rule is still refused at creation",
+                 lambda: E.cmd_hypothesize(root, "ordered", parent=q1, rule="ordered",
+                                           verifiables=["a", "b"], expect="a then b"))
+    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1, expect="both hold",
                                  verifiables=["c one", "c two"], neutral=["control"])
-    expect_error("rule: running is refused with no combination rule",
-                 lambda: E.cmd_test(root, h3, to="running"))
-    h4, _, _ = E.cmd_hypothesize(root, "single check", parent=q1,
-                                 verifiables=["only one"], neutral=["control"])
-    declare_null(root, h4)
-    check("rule: a single claim-directed check needs no declaration",
-          E.cmd_test(root, h4, to="running") == "running")
-    n = E.Vault(root).get(h3); n["fm"]["rule"] = "ordered"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
-    check("rule: validate refuses a reserved rule on a stamped node",
-          any("ordered" in m for _, m in E.cmd_validate(root)))
-
+    check("rule: running is NOT refused with no combination rule (spec 19)",
+          E.cmd_test(root, h3, to="running") == "running")
+    check("rule: validate raises no rule problem on a running multi-check node",
+          not any(i == h3 for i, _ in E.cmd_validate(root)))
     check("rule: ENGINE_VERSION at or past 1.8", at_least_version("1.8"))
     shutil.rmtree(root, ignore_errors=True)
 
-    # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_rmig_")
-    edit(node_path(old, oh), "- [ ] first check", "- [x] first check")
-    check("evmig: a pre-15 node closes through the LEGACY function",
-          E.cmd_close(old, oh) == "partial")
-    check("evmig: re-closing a pre-15 node still yields its legacy verdict",
-          E.cmd_close(old, oh) == "partial")
-    check("evmig: a pre-15 node needs no rule to run",
-          E.cmd_test(old, oh, to="running") == "running")
-    check("evmig: a pre-15 vault raises no rule problem", E.cmd_validate(old) == [])
-    shutil.rmtree(old, ignore_errors=True)
-
-    # the committed pre-15 fixture keeps its recorded partial through every view
+    # the committed pre-15 fixture keeps its recorded partial (history the 4.0 migration reads)
     src = os.path.join(HERE, "..", "examples", "demo_vault")
     dst = tempfile.mkdtemp(prefix="crux_rdemo_")
     shutil.rmtree(dst); shutil.copytree(src, dst)
     E.check_and_stamp_version(dst); E.refresh(dst)
     dv = E.Vault(dst)
-    check("evmig: partial survives in the vocabulary and every view",
+    check("evmig: a recorded partial survives on disk and in the experiments registry",
           dv.get("h2")["fm"]["verdict"] == "partial"
-          and E.snapshot(dst)["nodes"]["h2"]["verdict"] == "partial"
-          and "partial 1" in R.render_meta(dv)
-          and E.ledger_counts(dv, "q2")["partial"] == 1
           and "| partial |" in R.render_experiments(dv))
     shutil.rmtree(dst, ignore_errors=True)
 
@@ -4143,19 +4242,18 @@ def run_hash_lock():
         kw.setdefault("verifiables", ["alpha check", "beta check"])
         kw.setdefault("neutral", ["the control"])
         kw.setdefault("rule", "all")
+        kw.setdefault("expect", "both checks hold")
         hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
         return hid
 
     h1 = mk("locked at running")
     check("lock: an unrun hypothesis carries no lock",
           E.Vault(root).get(h1)["fm"].get("lock") is None)
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     first_lock, first_at = n["fm"].get("lock"), n["fm"].get("locked")
     check("lock: running takes the lock",
           bool(first_lock) and bool(first_at) and n["fm"].get("lock_at") == "running")
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     check("lock: re-running never re-locks",
@@ -4211,45 +4309,31 @@ def run_hash_lock():
     check("lock: reverting the edit clears drift",
           not E.lock_drift(E.Vault(root).get(h1)) and E.cmd_validate(root) == [])
 
-    # -- the hole `running` alone leaves: cmd_close has no status precondition
-    h2 = mk("closed straight from idea")
-    declare_null(root, h2)
-    edit(node_path(root, h2), "- [ ] alpha check", "- [x] alpha check")
-    edit(node_path(root, h2), "- [ ] beta check", "- [x] beta check")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control", "- [x] [outcome-neutral] the control")
-    check("lock: closing straight from idea still yields a verdict",
-          E.cmd_close(root, h2) == "supported")
+    # -- spec 19: a hypothesis with no checks is never locked, so it stays free to gain them
+    h2 = mk("checks added later", verifiables=[], neutral=[], rule=None)
+    E.cmd_test(root, h2, to="running")
+    check("lock: running a hypothesis with no checks takes no lock",
+          E.Vault(root).get(h2)["fm"].get("lock") is None)
     n2 = E.Vault(root).get(h2)
-    check("lock: closing without running locks and marks lock_at",
-          bool(n2["fm"].get("lock")) and n2["fm"].get("lock_at") == "close")
-    check("lock: a close-time lock is a warning, not a problem",
-          any("never pre-registered" in w["message"]
-              for w in E.validation_report(root)["warnings"])
-          and E.cmd_validate(root) == [])
+    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"].replace(
+        E._VERIFIABLES_PLACEHOLDER, "- [ ] a check defined after the run started")))
+    check("lock: adding the first checks later is not drift",
+          not E.lock_drift(E.Vault(root).get(h2)) and E.cmd_validate(root) == [])
 
     # -- surfaces
     snap = E.snapshot(root)
     check("lock: snapshot exposes lock state and drift",
           snap["nodes"][h1]["locked"] is True and snap["nodes"][h1]["drift"] is False)
     edit(node_path(root, h1), "an entirely", "an entirely")  # no-op, keep the file settled
-    dp = E.deck_payload(root, q1)
-    check("lock: the deck payload exposes drift on every child",
-          all("drift" in c for c in dp["children"]))
-
     # -- D7: drift warns loudly and blocks NOTHING
     edit(node_path(root, h1), "beta   check", "a rewritten check")
     check("lock: drift is a validate problem",
           any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
-    E.cmd_close(root, h1)
-    check("lock: drift does not block close", E.Vault(root).get(h1).status == "done")
-    check("lock: review flags the question holding a drifted child",
-          any(qid == q1 and drift for qid, _, drift in E.cmd_review(root)))
-    s, _ = E.cmd_synthesize(root, "what q1 settled", [q1])
-    E.cmd_approve(root, s)
-    check("lock: drift does not block answer (the engine flags; the PI decides)",
-          E.cmd_answer(root, q1) == q1
-          and E.Vault(root).get(q1).status == "resolved")
-    check("lock: and the flag survives the answer — it is permanent",
+    E.cmd_finding(root, h1, "moderate", why="held, though a check was rewritten after the run",
+                  direction="supports")
+    check("lock: drift does not block a finding (the engine flags; the judgment reads it)",
+          E.derive_state(E.Vault(root), h1)["state"] == "leaning")
+    check("lock: and the flag survives the finding — it is permanent",
           any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
     check("lock: no verb clears a drift flag",
           not any(hasattr(E, x) for x in ("cmd_unflag", "cmd_relock", "cmd_acknowledge")))
@@ -4259,7 +4343,7 @@ def run_hash_lock():
     #    must never inherit that class of bug: it hashes lock_material(), a string built from
     #    a body that `read()` already normalized in text mode. Pinned here so a future change
     #    to byte-hashing fails loudly instead of on someone else's runner.
-    lf = E.Vault(root).get(h2)
+    lf = E.Vault(root).get(h1)
     mat_lf = E.lock_material(lf)
     crlf = dict(lf); crlf["body"] = lf["body"].replace("\n", "\r\n")
     check("lock: lock_material is newline-invariant (CRLF == LF)",
@@ -4279,8 +4363,13 @@ def run_hash_lock():
     shutil.rmtree(root, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_lmig_")
-    declare_null(old, oh)
+    old = tempfile.mkdtemp(prefix="crux_lmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                 verifiables=["first check", "second check"],
+                                 expect="both checks hold")
+    _strip_schema(old)
     E.cmd_test(old, oh, to="running")
     check("evmig: a pre-15 node never locks",
           E.Vault(old).get(oh)["fm"].get("lock") is None)
@@ -4315,23 +4404,130 @@ def run_hash_lock():
 
 
 def run_rulebook():
-    """Spec 15 PRD 15.5 — the separability rulebook sentence into the crux skill, and the
-    skill's account of a verdict brought in line with what the engine now does.
+    """Spec 19 — `skills/crux/SKILL.md` is the ALWAYS-ON core (the SessionStart hook injects it
+    on every session in a vault repo), so it is held to a byte cap and a fixed set of parts.
+    Everything else lives behind a pointer; these asserts keep the pointers live, the removed
+    verbs out of every skill, and `/crux-wrap` showing records before it asks anything.
 
-    All greps, in the style the suite already uses for the cockpit legend: the point is that
-    the docs cannot silently drift from the constants."""
-    print("\n# evidence semantics — the rulebook and the skill (spec 15, PRD 15.5)")
-    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    The separability rulebook (spec 15, PRD 15.5) moved with the pre-run design material to
+    `references/design.md`; it is still compared with the spec word for word."""
+    import glob
+    print("\n# the always-on core and the skill text (spec 19, C8)")
+    sk_dir = os.path.join(HERE, "..")
+    core_path = os.path.join(sk_dir, "SKILL.md")
+    raw = open(core_path, "rb").read()
+    skill = raw.decode("utf-8")
+    check(f"core: SKILL.md is at most 8,192 bytes ({len(raw)})", len(raw) <= 8192)
+
+    def section(text, head):
+        """The body under the first `## ` heading that starts with `head`, up to the next."""
+        m = re.search(r"^## " + re.escape(head) + r".*?$(.*?)(?=^## |\Z)", text, re.M | re.S)
+        return m.group(1) if m else ""
+
+    cap = section(skill, "Capture")
+    check("core: the capture rules name question, hypothesis, finding and evidence",
+          all(w in cap.lower() for w in ("question", "hypothesis", "finding", "evidence")))
+    check("core: capture is silent, evidence is always recorded, an expectation comes first",
+          "silently" in cap and "always recorded" in cap and "expectation" in cap
+          and "before" in cap)
+    bd = section(skill, "The tree and the taskhub")
+    check("core: the tree/taskhub boundary is knowledge vs work, with the evidence route",
+          "knowledge" in bd.lower() and "work" in bd.lower()
+          and "only as evidence on a finding" in bd)
+    check("core: the boundary carries one example of each side",
+          bd.count("e.g.") >= 2 or bd.lower().count("example") >= 2 or bd.count("*\"") >= 2
+          or len(re.findall(r'"[^"]{8,}"', bd)) >= 2)
+    cl = section(skill, "Closure judgment")
+    low = cl.lower()
+    check("core: closure judges the evidence against expectation, null and verifiables",
+          all(w in low for w in ("expectation", "null", "verifiables")))
+    check("core: direction first, then confidence",
+          "direction" in low and "confidence" in low
+          and low.index("direction") < low.index("confidence"))
+    check("core: the null cap binds supports findings only",
+          "supports" in low and "only" in low and "not ruled out" in low)
+    check("core: a failed control caps at weak, in every direction",
+          "failed control" in low and "weak" in low)
+    check("core: a near miss lowers confidence", "near miss" in low)
+    check("core: a question finding has no direction", "no direction" in low)
+    check("core: state is derived — strongest wins, newest breaks ties",
+          "derived" in low and "strongest" in low and "newest" in low)
+    check("core: there is no close step, and dropped nodes are parked",
+          "no close step" in low and "park" in low)
+    vo = section(skill, "Voice — the invisible notebook")
+    check("core: the voice section is inline, under its own heading",
+          bool(vo) and "mirror rule" in vo)
+    pi = section(skill, "Still the PI's")
+    check("core: what stays the PI's — autopilot start, unasked compute, merge to main, "
+          "plain-words correction",
+          all(w in pi for w in ("autopilot", "compute", "`main`", "plain words"))
+          and "wins" in pi)
+    rt = section(skill, "Router")
+    router = ("crux-wrap", "crux-wiki", "crux-litsearch", "crux-autopilot", "crux-cockpit",
+              "prezit", "storify", "crux-rd", "evolve-crux",
+              "crux-capture", "crux-prerun", "crux-situate", "crux-migrate")
+    lines = [l for l in rt.splitlines() if l.startswith("- ")]
+    missing = [n for n in router
+               if not any(f"**{n}**" in l and len(l) > len(n) + 30 for l in lines)]
+    check(f"core: one router line, with its trigger, per skill and agent ({missing})",
+          not missing)
+    ptrs = sorted(set(re.findall(r"references/[\w.-]+\.md", skill)))
+    dead = [p for p in ptrs if not os.path.isfile(os.path.join(sk_dir, p))]
+    check(f"core: every references/*.md pointer resolves ({dead})", ptrs and not dead)
+    refs = sorted("references/" + f for f in os.listdir(os.path.join(sk_dir, "references"))
+                  if f.endswith(".md"))
+    orphan = [r for r in refs if r not in ptrs]
+    check(f"core: every references/*.md file is reached by a pointer in the core ({orphan})",
+          not orphan)
+    check("core: the agent-only prohibitions stay inline — glossary.md, the migration "
+          "guardrail, generated files, the update tripwire",
+          "never write to `glossary.md` directly" in skill.lower().replace("**", "")
+          and "cruxvault/" in skill and "META.md" in skill
+          and "stash" in skill)
+
+    # ---- no removed verb survives in any skill text, except as "removed"
+    repo = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+    gone = re.compile(r"crux (review|answer|pursue|approve|approve-null|synthesize|close)\b"
+                      r"|`(review|answer|pursue|approve|approve-null|synthesize|close)`"
+                      r"|task (accept|review)\b")
+    texts = sorted(glob.glob(os.path.join(repo, "skills", "*", "SKILL.md"))
+                   + glob.glob(os.path.join(repo, "skills", "crux", "references", "*.md")))
+    stale = [f"{os.path.relpath(p, repo)}:{i}" for p in texts
+             for i, l in enumerate(read(p).splitlines(), 1)
+             if gone.search(l) and "removed" not in l]
+    check(f"core: no removed verb appears in any skill text except as removed ({stale[:4]})",
+          len(texts) > 9 and not stale)
+
+    # ---- /crux-wrap: the capture agent, then the records, then one question per candidate
+    wp = os.path.join(repo, "skills", "crux-wrap", "SKILL.md")
+    check("wrap: skills/crux-wrap/SKILL.md exists", os.path.isfile(wp))
+    w = read(wp) if os.path.isfile(wp) else ""
+    fm = w.split("---")[1] if w.startswith("---") else ""
+    check("wrap: frontmatter names the skill and its slash command",
+          "name: crux-wrap" in fm and "description:" in fm and "/crux-wrap" in fm)
+    check("wrap: it runs the capture agent, told it was started by /crux-wrap",
+          "crux-capture" in w and "--source wrap" in w)
+    check("wrap: it reads the real verbs — wrap --json, pending list, pending clear",
+          all(x in w for x in ("crux wrap --json", "crux pending list", "crux pending clear")))
+    i_rec = w.find("already recorded")
+    i_ask = w.find("AskUserQuestion")
+    check("wrap: it shows what the session recorded BEFORE it asks anything",
+          0 <= i_rec < i_ask)
+    check("wrap: it asks only about the pending candidates, one question each, accept or reject",
+          "only" in w[i_ask - 400:i_ask + 400] and "pending" in w[i_ask - 400:i_ask + 400]
+          and "accept" in w.lower() and "reject" in w.lower())
+    for sub in ("list", "add", "clear"):
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "pending", sub,
+                            "--help"], capture_output=True, text=True, encoding="utf-8")
+        check(f"wrap: `crux pending {sub}` is a real verb", r.returncode == 0)
+
+    # ---- the separability rulebook, where the pre-run design material now lives
+    design = read(os.path.join(sk_dir, "references", "design.md")) \
+        if os.path.isfile(os.path.join(sk_dir, "references", "design.md")) else ""
     spec = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
 
     def sentence(text):
-        """The rulebook blockquote, unwrapped and whitespace-collapsed, with markdown
-        emphasis stripped — so the two copies are compared on CONTENT, and a re-wrap or a
-        bolded clause cannot make them look different when they are not."""
         head = "One experiment settles several hypotheses separately only when"
-        # the two copies are wrapped differently and the skill bolds two clauses, so the
-        # comparison is on CONTENT: unwrap, drop blockquote markers and emphasis, collapse
-        # whitespace. Anything short of identical wording still fails.
         flat = " ".join(text.replace(">", " ").replace("*", "").split())
         i = flat.find(head)
         if i < 0:
@@ -4339,41 +4535,23 @@ def run_rulebook():
         j = flat.find("answers.", i)
         return flat[i:j + len("answers.")] if j > 0 else None
 
-    a, b = sentence(spec), sentence(skill)
-    check("rulebook: the separability sentence is in the skill", b is not None)
+    a, b = sentence(spec), sentence(design)
+    check("rulebook: the separability sentence is in references/design.md", b is not None)
     check("rulebook: the separability sentence matches the spec word for word", a and a == b)
-    check("rulebook: the three separability lines are in the skill",
-          all(x in skill for x in ("**Different lever.**", "**Different failure.**",
-                                   "**Different verdict.**")))
-    check("rulebook: the skill says a shared control is the fix, not the flaw",
-          "the fix, not the" in skill)
-
-    check("rulebook: the skill no longer teaches the retired verdict rule",
-          "→ `refuted`/`partial`" not in skill)
-    check("rulebook: the skill covers the whole verdict vocabulary",
-          all(f"`{x}`" in skill for x in E.VERDICTS))
-    check("rulebook: the skill says invalid-run is not a refutation",
-          "never a refutation" in skill)
-    check("rulebook: the skill states the boundary is permanent",
-          "boundary is permanent" in skill and "schema: 1" in skill
-          and 'Do not "fix" an old node' in skill)
-    check("rulebook: the skill names the combination rule and its CLI flag",
-          "rule: all | any | m-of-n" in skill and "--rule" in skill)
-    check("rulebook: the skill explains inconclusive is derived, never chosen",
-          "derived, never chosen" in skill)
-    check("rulebook: the skill carries the drift rule and says it blocks nothing",
-          "drift" in skill and "blocks nothing" in skill)
-
-    joint = "64% joint power"
+    check("rulebook: the three separability lines are there",
+          all(x in design for x in ("**Different lever.**", "**Different failure.**",
+                                    "**Different verdict.**")))
+    check("rulebook: a shared control is the fix, not the flaw", "the fix, not the" in design)
     check("rulebook: the joint-power cost is stated with its constraint",
-          joint in skill and "may\n  not be loosened" in skill.replace("\n  ", "\n  "))
-
+          "64% joint power" in design and "not be loosened" in " ".join(design.split()))
+    check("rulebook: the drift rule says it blocks nothing",
+          "drift" in design and "blocks nothing" in design)
     spec09 = read(os.path.join(HERE, "..", "..", "..", ".spec", "09-specialized-agents.md"))
     check("rulebook: spec 09 carries the crux-verifiables amendment",
-          "`crux-verifiables` gains a job" in spec09 and joint in spec09
+          "`crux-verifiables` gains a job" in spec09 and "64% joint power" in spec09
           and "Choose the combination rule" in spec09)
     check("rulebook: spec 15's work items are ticked for what shipped",
-          spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
+          spec.count("- ☑ ") >= 10 and "**Status:** ◐" in spec)
 
 
 def _task_vault(prefix="crux_task_"):
@@ -4383,13 +4561,17 @@ def _task_vault(prefix="crux_task_"):
     E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
     q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
     h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
-                                verifiables=["ids never renumber"])
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     return root, q, h
 
 
 def run_taskhub():
     print("\n# taskhub — the task store (spec 08, PRD 08.0)")
-    root, q, h = _task_vault()
+    root = tempfile.mkdtemp(prefix="crux_task_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
 
     # -- 1. the record lands under tasks/ with an engine-allocated id
     t1, fn1 = E.cmd_task_add(root, "Dedupe the reused accessions", category="data-acquisition",
@@ -4416,7 +4598,7 @@ def run_taskhub():
     #       refresh's write set, which is the one thing spec-kit got wrong.
     before = _dir_bytes(os.path.join(root, E.TASK_DIR))
     E.refresh(root); E.cmd_validate(root); E.validation_report(root)
-    E.snapshot(root); E.status_text(root); E.cmd_review(root)
+    E.snapshot(root); E.status_text(root)
     check("task: a task file is byte-identical after every read path",
           _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
 
@@ -4520,7 +4702,11 @@ def run_taskhub():
     # -- 3. M3: every vault that exists today has no `counter_t`. The naive
     #       `v.cfg[key] += 1` raises KeyError on the FIRST task ever added after an upgrade,
     #       which is the most likely first action a user takes.
-    old, _, _ = _task_vault("crux_task_pre08_")
+    old = tempfile.mkdtemp(prefix="crux_task_pre08_")
+    E.cmd_init("Task Demo", old, goal="Ship the taskhub.")
+    _oq, _ = E.cmd_ask(old, "Can the taskhub hold months of work?")
+    _oh, _, _ = E.cmd_hypothesize(old, "one file per task survives churn", parent=_oq,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     cfg = os.path.join(old, ".crux.yaml")
     write(cfg, "\n".join(l for l in read(cfg).splitlines()
                          if not l.startswith(("counter_t", "task_categories"))) + "\n")
@@ -4549,7 +4735,7 @@ def run_taskhub():
     verdicts0 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
     E.check_and_stamp_version(dst); E.refresh(dst)          # settle spec 15's view drift
     b0 = _dir_bytes(dst)
-    E.refresh(dst); E.snapshot(dst); E.status_text(dst); E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.status_text(dst)
     rep0 = E.validation_report(dst)
     verdicts1 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
     b1 = _dir_bytes(dst)
@@ -4573,7 +4759,11 @@ def run_taskhub():
 def run_task_graph():
     import json
     print("\n# taskhub — the dependency graph and the frontier (spec 08, PRD 08.1)")
-    root, q, h = _task_vault("crux_taskdep_")
+    root = tempfile.mkdtemp(prefix="crux_taskdep_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
 
     #   t1 ─┬─> t2 ─> t3        t4 (free)      t5 blocked by a task that gets DROPPED
     #       └─> t6
@@ -4737,9 +4927,11 @@ def run_cockpit_evidence():
     E.cmd_init("Cockpit Evidence", root)
     q1, _ = E.cmd_ask(root, "does the cockpit narrate it?")
     h1, _, _ = E.cmd_hypothesize(root, "drifted", parent=q1, rule="m-of-n", rule_m=2,
-                                 verifiables=["alpha", "beta"], neutral=["the control"])
+                                 verifiables=["alpha", "beta"], neutral=["the control"],
+                                 expect="alpha and beta both hold")
     h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1, rule="all",
-                                 verifiables=["alpha"], neutral=["the control"])
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 expect="alpha holds")
     declare_null(root, h2)
     declare_null(root, h1)
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
@@ -4747,9 +4939,13 @@ def run_cockpit_evidence():
     edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
                               "- [x] [outcome-neutral] the control")
     edit(node_path(root, h1), "- [ ] beta", "- [x] a check nobody registered")   # -> DRIFT
-    edit(node_path(root, h2), "- [x] alpha", "- [x] alpha")
     edit(node_path(root, h2), "- [ ] alpha", "- [x] alpha")
-    E.cmd_close(root, h1); E.cmd_close(root, h2)
+    write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), "# run\n")
+    E.cmd_finding(root, h1, "strong", why="alpha cleared the bar", direction="supports",
+                  evidence=[f"{E.RESULTS_DIR}/{h1}/report.md"], null="ruled-out",
+                  vs_expect="as expected", verifiables="2 of 2")
+    E.cmd_finding(root, h2, "weak", why="the control failed", direction="no-answer-yet")
+    E.cmd_finding(root, q1, "moderate", answer="Mostly yes.")
     snap = E.snapshot(root)
     idea = snap["nodes"][h1]
 
@@ -4760,41 +4956,50 @@ def run_cockpit_evidence():
         "tally",                       # redundant: `verifiables` carries kind+state per item
         "schema",                      # the boundary is narrated by its ABSENCE of rule/kind
         "words",                       # already surfaced by economyBadge()
+        "status",                      # spec 19 (Q14): no longer read; the state replaces it
     }
     def referenced(key):
         return any(p in app_js for p in (f'"{key}"', f".{key}", f"['{key}']"))
     unrendered = sorted(k for k in idea if k not in NOT_RENDERED and not referenced(k))
     check(f"webui: every published idea field is consumed by the cockpit (missing: {unrendered})",
           not unrendered)
+    qn = snap["nodes"][q1]
+    unrendered = sorted(k for k in qn if k not in NOT_RENDERED and not referenced(k))
+    check(f"webui: every published question field is consumed by the cockpit "
+          f"(missing: {unrendered})", not unrendered)
     vitem = idea["verifiables"][0]
     vmissing = sorted(k for k in vitem if f'v.{k}' not in app_js and f'"{k}"' not in app_js)
     check(f"webui: every published verifiable field is consumed (missing: {vmissing})",
           not vmissing)
+    # spec 19: the same parity guard, one level down — every field a finding publishes
+    fitem = idea["findings"][0]
+    fmissing = sorted(k for k in fitem if k not in ("id", "parent")
+                      and f"f.{k}" not in app_js)
+    check(f"webui: every published finding field is consumed (missing: {fmissing})",
+          not fmissing)
 
-    # ---- the three findings, each asserted directly
+    # ---- the three spec-15 narrations, each asserted directly — they survive 4.0, because
+    # the null, the rule and the checks survive as optional sections
     check("webui: the drift flag is rendered",
           "drift" in app_js and "n.drift" in app_js)
     check("webui: drift is called drift in the UI, not something softer",
-          "drift" in re.sub(r"//.*", "", app_js).lower().split("badges +=")[-1][:0] + "drift"
-          and 'class="badge drift"' in app_js)
-    check("webui: the combination rule is rendered beside the verdict",
+          'class="badge drift"' in app_js)
+    check("webui: the combination rule is rendered",
           "n.rule" in app_js and "rule_m" in app_js)
     check("webui: whether the commitment was pre-registered is rendered",
           "lock_at" in app_js and "n.locked" in app_js)
     check("webui: an outcome-neutral verifiable is marked in the pane",
           "v.kind" in app_js and "outcome-neutral" in app_js)
+    check("webui: the expectation is rendered in the hypothesis pane",
+          "n.expect" in app_js.split("function ideaDetail")[1].split("\nfunction ")[0])
 
-    # ---- a drifted node must be distinguishable in the TREE, not only in the pane. The
-    # PLATO failure is a reader skimming past a node and never opening it, so a flag that
-    # only exists in the detail pane is a flag that did nothing.
+    # ---- a drifted node must be distinguishable in the TREE, not only in the pane
     svg = app_js.split("function nodeSVG")[-1][:4000]
     check("webui: the tree renderer emits a drift mark on the node",
           "n.drift" in svg and "drift-mark" in svg and "drifted" in svg)
     check("webui: the drift mark is styled in the stylesheet",
           ".box.drifted" in style and ".drift-mark" in style)
-    check("webui: drift is drawn WITHOUT overriding the verdict fill",
-          # the two facts are orthogonal — "what was concluded" and "was the commitment
-          # edited" must stay separately readable, so drift takes the stroke, not the fill
+    check("webui: drift is drawn WITHOUT overriding the state fill",
           "fill" not in style.split(".box.drifted")[1].split("}")[0])
     check("webui: a drift flip repaints the node in the in-place recolor path",
           'n.drift ? "D"' in app_js)
@@ -4802,31 +5007,60 @@ def run_cockpit_evidence():
     # ---- any new colour must exist in BOTH themes (the rule the legend guard already applies)
     _blk = lambda sel: (re.search(sel + r"\s*\{(.*?)\n\}", style, re.S | re.M) or [None, ""])[1]
     dark, light = _blk(r"^:root"), _blk(r'^:root\[data-theme="light"\]')
-    newvars = sorted(set(re.findall(r"var\((--drift[a-z-]*)\)", app_js + style)))
+    newvars = sorted(set(re.findall(r"var\((--(?:drift|s|c|d)-[a-z-]*)\)", app_js + style)))
     unstyled = [v for v in newvars if f"{v}:" not in dark or f"{v}:" not in light]
-    check(f"webui: every new drift colour is defined in both themes (missing: {unstyled})",
-          not unstyled)
+    check(f"webui: every state/confidence/direction/drift colour is defined in both themes "
+          f"(missing: {unstyled})", bool(newvars) and not unstyled)
 
     # ---- and the engine still publishes what the cockpit now claims to read
-    check("webui: the fixture really carries drift, a rule, and an outcome-neutral check",
+    check("webui: the fixture carries drift, a rule, a control, and the 4.0 fields",
           idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
           and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
-          and snap["nodes"][h2]["verdict"] == "invalid-run")
-    # 15.6 itself bumped nothing: it was webui-only, and at its own tip this read
-    # `== "1.9"`. That is the literal-equality form this file documents as expiring on the
-    # next PRD — spec 08 stacks on top and takes the engine to 2.x, so the claim is kept as
-    # the floor it was always making. What 15.6 guarantees is that the cockpit needs no
-    # engine support beyond 1.9, which the field checks above prove directly.
-    check("webui: the cockpit narration needs no engine support past 1.9",
-          at_least_version("1.9"))
+          and idea["state"] == "settled" and idea["confidence"] == "strong"
+          and snap["nodes"][h2]["state"] == "open" and qn["state"] == "leaning")
+
+    # ---- spec 19 (C5): the generated views carry the state and the confidence, and no
+    # review section — the gate they reported no longer exists
+    import render as R
+    E.cmd_park(root, h2)
+    v = E.Vault(root)
+    meta, exps = R.render_meta(v), R.render_experiments(v)
+    check("views: META.md names every node's state",
+          all(f"`{nid}`" in meta for nid in (q1, h1, h2))
+          and "*settled*" in meta and "*leaning*" in meta and "*parked*" in meta)
+    check("views: META.md names the confidence beside the state",
+          "strong" in meta and "moderate" in meta)
+    check("views: META.md has no review section",
+          "review" not in meta.lower() and "Awaiting your decision" not in meta)
+    check("views: META.md's dashboard counts by state and confidence, not by verdict",
+          "**Questions**" in meta and "settled" in meta.split("## Dashboard")[1]
+          and "**Confidence**" in meta and "Verdicts" not in meta)
+    hdr = next((l for l in exps.splitlines() if l.startswith("| id ")), "")
+    cols = [c.strip() for c in hdr.strip("|").split("|")]
+    check(f"views: EXPERIMENTS.md has state and confidence columns ({cols})",
+          cols[3:6] == ["state", "confidence", "direction"] and "status" not in cols
+          # the one verdict column left is history, named as such (run_combination_rule
+          # reads a recorded pre-15 partial from it)
+          and [c for c in cols if "verdict" in c] == ["pre-4.0 verdict"])
+    row = next((l for l in exps.splitlines() if l.startswith(f"| `{h1}`")), "")
+    check("views: a hypothesis row carries its state, confidence and direction",
+          "| settled |" in row and "| strong |" in row and "| supports |" in row)
+    row2 = next((l for l in exps.splitlines() if l.startswith(f"| `{h2}`")), "")
+    check("views: a parked hypothesis says parked", "| parked |" in row2)
+    check("views: both views stay byte-stable",
+          R.render_meta(E.Vault(root)) == meta and R.render_experiments(E.Vault(root)) == exps)
     shutil.rmtree(root, ignore_errors=True)
 
 
 def run_experiments():
     print("\n# taskhub — experiments are tasks (spec 08, PRD 08.2)")
-    root, q, h1 = _task_vault("crux_exp_")
+    root = tempfile.mkdtemp(prefix="crux_exp_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h1, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     h2, _, _ = E.cmd_hypothesize(root, "the pilot separates the arms", parent=q,
-                                 verifiables=["separation at n=3"])
+                                 verifiables=["separation at n=3"], expect="the arms separate")
 
     # -- the whole difference between a task and an experiment is ONE field: what the output
     #    is. A task that says what it concluded about a hypothesis IS an experiment, and
@@ -4979,174 +5213,17 @@ def run_experiments():
     check("taskmig: a pre-08 vault is unchanged at 2.2", _dir_bytes(dst) == b)
     shutil.rmtree(fx, ignore_errors=True)
 
-    check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
-    shutil.rmtree(root, ignore_errors=True)
-
-
-def run_experiment_gate():
-    print("\n# taskhub — the gating split: work never creates direction (spec 08, PRD 08.3)")
-    root, q, h1 = _task_vault("crux_gate_")
-    # h2/h3 are moved to `running` below, so they carry the outcome-neutral control spec 15
-    # requires of a stamped hypothesis — the taskhub consumes that gate, it does not bypass it
-    h2, _, _ = E.cmd_hypothesize(root, "the arm separates", parent=q, verifiables=["sep at n=3"],
-                                 neutral=["the known-good encoder reproduces 0.46"])
-    q2, _ = E.cmd_ask(root, "Does the loader matter?")
-    h3, _, _ = E.cmd_hypothesize(root, "the loader is the bottleneck", parent=q2,
-                                 verifiables=["throughput +20%"],
-                                 neutral=["the profiler reports a known baseline"])
-
-    # -- 1. an ordinary task is ACT-AND-REPORT. Ticking "fetched the antibody lot" sets no
-    #       direction, spends no compute and records no scientific result, so the PI needn't
-    #       be concerned with it — which is legal rather than a leash violation.
-    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
-                           blocked_by=None)
-    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
-    check("gate: completing a chore is not PI-gated",
-          E.cmd_task_review(root) == [] and E.task_by_id(root)[t1]["status"] == "done")
-
-    # -- 2/3. an experiment decomposes through the EXISTING parent link, and the gate fires
-    #         ONCE, on the parent — not once per sub-task. That is what keeps the layer's
-    #         founding promise (view it, never manage it) intact after the merge.
-    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
-                           hypothesis_refs=[(h1, "supported"), (h3, "refuted")])
-    for i, sub in enumerate(("Acquire the data", "Implement the arm", "Make the figures")):
-        s, _ = E.cmd_task_add(root, sub, category="implementation", blocked_by=None, parent=e1)
-        E.cmd_task_done(root, s, outputs=[f"[[{q}]]"])
-    check("gate: sub-tasks do not inherit the role",
-          not any(E.task_is_experiment(t) for t in E.scan_tasks(root) if t["parent"] == e1)
-          and E.cmd_task_review(root) == [])
-    E.cmd_task_done(root, e1, outputs=[f"[[{q}]]"])
-    queue = E.cmd_task_review(root)
-    check("gate: completing an experiment enters the acceptance queue",
-          [x[0] for x in queue] == [e1])
-    check("gate: one experiment with three sub-tasks fires one gate", len(queue) == 1)
-
-    # -- 4/5/6. THE LEASH, proven as three negatives and one positive.
-    v0 = E.Vault(root)
-    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
-    ledger0 = {x: E.ledger_counts(v0, x) for x in (q, q2)}
-    nodes0 = {n: read(node_path(root, n)) for n in (q, q2, h1, h2, h3)}
-    E.cmd_task_accept(root, e1)
-    v1 = E.Vault(root)
-    check("gate: accepting writes no verdict",
-          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
-    check("gate: acceptance never enters the ledger roll-up",
-          {x: E.ledger_counts(v1, x) for x in (q, q2)} == ledger0)
-    changed = [n for n, b in nodes0.items() if read(node_path(root, n)) != b]
-    check("gate: accepting edits only the stale flag, and only on the refed questions",
-          set(changed) == {q, q2}
-          and all(read(node_path(root, n)).replace("stale: true", "stale: false") == nodes0[n]
-                  for n in changed))
-    check("gate: acceptance stales every refed hypothesis's question",
-          v1.get(q)["fm"]["stale"] is True and v1.get(q2)["fm"]["stale"] is True)
-    check("gate: an accepted experiment leaves the queue", E.cmd_task_review(root) == [])
-    check("gate: accepting twice keeps the first signature",
-          E.cmd_task_accept(root, e1) == E.task_by_id(root)[e1]["fm"]["accepted"])
-    expect_error("gate: accept is refused on an ordinary task",
-                 lambda: E.cmd_task_accept(root, t1))
-
-    # -- 8. DRIFT: spec 15's ruling D7 is that drift warns loudly and blocks NOTHING. 08 adds
-    #       a SECOND PI touchpoint 15 could not have known about; blocking here would
-    #       reintroduce the block D7 declined, going around 15.3's own guard assert. This is
-    #       08's copy of that guard.
-    declare_null(root, h2)
-    E.cmd_test(root, h2, to="running")
-    hp = node_path(root, h2)
-    edit(hp, "- [ ] sep at n=3", "- [ ] a totally different check")
-    check("gate: the refed hypothesis really is drifted", E.lock_drift(E.Vault(root).get(h2)))
-    e2, _ = E.cmd_task_add(root, "Run the drifted arm", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
-    E.cmd_task_done(root, e2, outputs=[f"[[{q}]]"])
-    row = [x for x in E.cmd_task_review(root) if x[0] == e2][0]
-    check("gate: the queue carries the drift flag of every refed hypothesis", row[3] == [h2])
-    stamp = E.cmd_task_accept(root, e2)
-    check("gate: drift is printed at accept and never blocks",
-          bool(stamp) and E.task_by_id(root)[e2]["fm"].get("accepted")
-          and E.lock_drift(E.Vault(root).get(h2)))
-
-    # -- 9. tasks are outside the roll-up, so an open experiment does not hold its question
-    #       out of review. Pinned because the opposite is a plausible later "fix".
-    declare_null(root, h3)
-    E.cmd_test(root, h3, to="running")
-    edit(node_path(root, h3), "- [ ]", "- [x]")          # claim + control both met
-    E.cmd_close(root, h3)
-    E.cmd_task_add(root, "Still running the sweep", category="implementation",
-                   blocked_by=None, hypothesis_refs=[(h3, "inconclusive")])
-    E.refresh(root)
-    check("gate: an open experiment does not hold a question open",
-          E.Vault(root).get(q2).status == "review")
-
-    # -- 10. dropping an unaccepted experiment: leaves the queue, keeps its conclusions,
-    #        propagates nothing, and is reported as info so it never reads as accepted.
-    e3, _ = E.cmd_task_add(root, "Abandoned half-run", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h1, "inconclusive")])
-    E.cmd_task_done(root, e3, outputs=[f"[[{q}]]"])
-    v2 = E.Vault(root)
-    verdicts2 = {k: n["fm"].get("verdict") for k, n in v2.nodes.items()}
-    E.cmd_task_drop(root, e3)
-    info = {x["id"]: x for x in E.validation_report(root)["info"]}
-    check("gate: dropping an unaccepted experiment propagates nothing",
-          e3 not in [x[0] for x in E.cmd_task_review(root)]
-          and E.task_hypothesis_refs(E.task_by_id(root)[e3]) == [(h1, "inconclusive")]
-          and {k: n["fm"].get("verdict") for k, n in E.Vault(root).nodes.items()} == verdicts2)
-    # (`ok` is False here for an unrelated reason — h2's commitment is deliberately drifted
-    #  above, and 15.3 makes drift a problem. What this asserts is that the unaccepted
-    #  experiment is INFORMATION and never a problem or a warning of its own.)
-    rep = E.validation_report(root)
-    check("gate: an unaccepted dropped experiment is reported as info",
-          "task:unaccepted" in info and info["task:unaccepted"]["count"] == 1
-          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
-
-    # -- 13. a sub-task that declares its OWN conclusion is its own experiment and fires its
-    #        own gate. Refusing would make the spec's pilot-blocks-full-run example illegal
-    #        whenever both conclude.
+    # a sub-task that declares its OWN conclusion is its own experiment, and nesting is
+    # still reported as information (task_gate_info), never as a problem
+    e0, _ = E.cmd_task_add(root, "Full run", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported")])
     n1, _ = E.cmd_task_add(root, "Nested pilot", category="implementation", blocked_by=None,
-                           parent=e1, hypothesis_refs=[(h1, "inconclusive")])
-    E.cmd_task_done(root, n1, outputs=[f"[[{q}]]"])
-    check("gate: a nested experiment fires its own gate",
-          n1 in [x[0] for x in E.cmd_task_review(root)])
-    check("gate: nesting is reported as info",
-          any(x["id"] == "task:nested-experiment"
-              for x in E.validation_report(root)["info"]))
-
-    # -- 11. cmd_review is 15's THREE-tuple and stays exactly that. Extended, not reshaped.
-    qrows = E.cmd_review(root)
-    check("gate: the question review queue is untouched",
-          all(len(r) == 3 and isinstance(r[2], bool) for r in qrows)
-          and set(r[0] for r in qrows) <= set(E.Vault(root).nodes))
-    snap = E.snapshot(root)
-    check("gate: the question queue in snapshot is unchanged in shape",
-          all(set(x) == {"id", "title", "summary"} for x in snap["queue"]))
-
-    fx = tempfile.mkdtemp(prefix="crux_gate_fx_")
-    dst = os.path.join(fx, "demo")
-    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
-    E.check_and_stamp_version(dst); E.refresh(dst)
-    b = _dir_bytes(dst)
-    rev0 = E.cmd_review(dst)
-    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
-    check("taskmig: a pre-08 vault's gate behaviour is unchanged at 2.3",
-          _dir_bytes(dst) == b and E.cmd_review(dst) == rev0 and E.cmd_task_review(dst) == [])
-    shutil.rmtree(fx, ignore_errors=True)
-
-    # -- the CLI: the gate is visible where the PI stands, and drift is loud but never fatal
-    import json as _json
-    e4, _ = E.cmd_task_add(root, "Another drifted run", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
-    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "done", e4,
-                        "-o", f"[[{q}]]"], capture_output=True, text=True,
-                       encoding="utf-8", cwd=root)
-    check("gate: `task done` on an experiment prints the gate, not a verdict",
-          r.returncode == 0 and "crux task accept" in r.stdout
-          and "verdict" not in r.stdout.lower())
-    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "accept", e4,
-                        "--json"], capture_output=True, text=True, encoding="utf-8", cwd=root)
-    check("gate: the CLI accept prints drift to stderr and still succeeds",
-          r.returncode == 0 and h2 in r.stderr
-          and "edited after the run" in r.stderr
-          and _json.loads(r.stdout)["drifted"] == [h2]
-          and _json.loads(r.stdout)["accepted"])
-    check("gate: ENGINE_VERSION bumped to 2.3", at_least_version("2.3"))
+                           parent=e0, hypothesis_refs=[(h1, "inconclusive")])
+    rep = E.validation_report(root)
+    check("exp: nesting is reported as info",
+          any(x["id"] == "task:nested-experiment" and n1 in x["message"] for x in rep["info"])
+          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
+    check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -5161,7 +5238,7 @@ def run_task_gui():
     tb = snap["tasks"]
     check("ui: snapshot exposes the tasks block",
           set(tb) == {"active", "categories", "reserved_category", "conclusions",
-                      "items", "frontier", "queue"} and tb["active"] is True)
+                      "items", "frontier"} and tb["active"] is True)
     by = E.task_by_id(root)
     check("ui: snapshot's frontier and state match the engine",
           tb["frontier"] == [t["id"] for t in E.task_frontier(root)]
@@ -5195,9 +5272,9 @@ def run_task_gui():
     E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
     E.cmd_task_done(root, t2, outputs=[f"[[{q}]]"])
     tb = E.snapshot(root)["tasks"]
-    check("ui: the acceptance queue reaches the snapshot",
-          [x["id"] for x in tb["queue"]] == [t2]
-          and tb["queue"][0]["hypothesis_refs"][0]["conclusion"] == "supported")
+    # spec 19: no task waits for the PI any more — there is no queue to publish
+    check("ui: no acceptance queue reaches the snapshot",
+          "queue" not in tb and not any(i.get("pending_gate") for i in tb["items"]))
 
     # -- the webui must know every tab, category colour and conclusion the engine can emit.
     #    Derived from the constants rather than hand-listed, which is the one thing that made
@@ -5320,7 +5397,13 @@ def run_task_gui():
           and "experiments" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
                                              read(os.path.join(HERE, "selftest.py")), re.S).group(1))
     check("ui: a conclusion is narrated as concluded, never as a verdict",
-          "concluded" in ui and "derived by the engine from the ticks" in ui)
+          "concluded" in ui and "comes from its findings" in ui and "verdict" not in
+          ui.split("function experimentsSection")[1].split("\nfunction ")[0])
+    check("ui: no acceptance badge in the task row, the task pane or the experiments list",
+          not any(w in ui.split("function taskRow")[1].split("\nfunction ")[0]
+                  + ui.split("function taskDetail")[1].split("\nfunction ")[0]
+                  + ui.split("function experimentsSection")[1].split("\nfunction ")[0]
+                  for w in ("accept", "pending", "awaiting")))
 
     # ---- INTERSECTION: 15.6 narrates drift/rule/kind on the node; 08.4 adds backlinks to
     # the same pane. ONE node carrying both is the exact overlap, so it gets its own fixture.
@@ -5328,7 +5411,8 @@ def run_task_gui():
     E.cmd_init("Both", both, goal="g")
     bq, _ = E.cmd_ask(both, "does narration coexist with backlinks?")
     bh, _, _ = E.cmd_hypothesize(both, "it does", parent=bq, rule="all",
-                                 verifiables=["alpha"], neutral=["the control"])
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 expect="alpha holds")
     declare_null(both, bh)
     E.cmd_test(both, bh, to="running")
     edit(node_path(both, bh), "- [ ] alpha", "- [x] a check nobody registered")   # -> DRIFT
@@ -5340,13 +5424,10 @@ def run_task_gui():
           bn["drift"] is True and bn["rule"] == "all"
           and [x["task"] for x in bn["experiments"]] == [be]
           and any(v["kind"] == "outcome-neutral" for v in bn["verifiables"]))
-    # ---- INTERSECTION: drift is now narrated in TWO places, answering two questions —
-    # "this claim's commitment moved" (15.6, the node) and "do you accept this run" (08.3,
-    # the queue). Both must survive; neither replaces the other.
-    tq = E.snapshot(both)["tasks"]["queue"]
-    check("ui: queue drift survives 15.6's node-pane narration",
-          [x["id"] for x in tq] == [be] and tq[0]["drifted"] == [bh]
-          and E.lock_drift(E.Vault(both).get(bh)))
+    # ---- spec 19: the queue that once narrated drift a second time is gone; drift is
+    # narrated once, on the node, and the task block carries no queue to hold it
+    check("ui: drift lives on the node now that the acceptance queue is gone",
+          "queue" not in E.snapshot(both)["tasks"] and E.lock_drift(E.Vault(both).get(bh)))
     shutil.rmtree(both, ignore_errors=True)
 
     # -- a vault with no tasks/ : present, inert, and the tab hides itself
@@ -5355,7 +5436,7 @@ def run_task_gui():
     ptb = E.snapshot(plain)["tasks"]
     check("taskmig: snapshot on a pre-08 vault has an inactive tasks block",
           ptb["active"] is False and ptb["items"] == [] and ptb["frontier"] == []
-          and ptb["queue"] == [] and set(ptb) == set(tb))
+          and set(ptb) == set(tb))
     shutil.rmtree(plain, ignore_errors=True)
 
     fx = tempfile.mkdtemp(prefix="crux_taskui_fx_")
@@ -5372,38 +5453,52 @@ def run_task_gui():
 
 
 def run_taskhub_skill():
-    print("\n# taskhub — the skill rules and the spec amendments (spec 08, PRD 08.5)")
+    """Spec 08 PRD 08.5, re-pointed by spec 19: the tree holds knowledge, the taskhub holds
+    work, and a task's output reaches the tree only as evidence on a finding. The always-on
+    core states the boundary; `references/taskhub.md` carries the procedure. The experiment
+    accept gate is gone, so no skill may teach `task accept` or `task review` except as
+    removed."""
+    print("\n# taskhub — the boundary in the core, the procedure behind a pointer (spec 08, 19)")
     skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    tref_p = os.path.join(HERE, "..", "references", "taskhub.md")
+    tref = read(tref_p) if os.path.isfile(tref_p) else ""
     spec8 = read(os.path.join(HERE, "..", "..", "..", ".spec", "08-taskhub.md"))
     spec15 = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
     spec7 = os.path.join(HERE, "..", "..", "..", ".spec", "07-rd-layer.md")
 
-    check("skill: SKILL.md carries the work-never-creates-direction line",
-          "Work never creates direction" in skill
-          and "an output that is evidence\n> about a hypothesis enters the gated tier" in skill)
-    check("skill: SKILL.md states what gets in and what stays scratch",
-          "would you be annoyed if this vanished next week" in skill.lower()
-          and "session scratch" in skill and "one context window" in skill)
-    check("skill: SKILL.md marks accept as the PI's signature",
-          "crux task accept" in skill and "never run it on your own judgment" in skill.lower())
-    check("skill: SKILL.md distinguishes a derived verdict from a written conclusion",
-          "Two provenances" in skill
-          and "does **not** close h44" in skill)
-    check("skill: SKILL.md carries the escape hatch",
-          "stops being a task" in skill and "goes through the normal gate" in skill.lower()
-          or "go through the normal gate" in skill)
+    check("skill: the core points at references/taskhub.md, and it exists",
+          "references/taskhub.md" in skill and bool(tref))
+    check("skill: the core says a task's output enters the tree only as evidence on a finding",
+          "only as evidence on a finding" in skill)
+    check("skill: the taskhub reference states what gets in and what stays scratch",
+          "would you be annoyed if this vanished next week" in tref.lower()
+          and "session scratch" in tref and "one context window" in tref)
+    check("skill: a task that would open a question becomes a tree node",
+          "stops being a task" in tref)
+    check("skill: the accept gate is taught nowhere — no skill text says task accept/review "
+          "except as removed",
+          all("removed" in l for l in (skill + "\n" + tref).splitlines()
+              if re.search(r"task (accept|review)\b", l)))
 
-    # every task sub-verb the CLI exposes is documented, derived from argparse rather than
-    # hand-listed, so a verb added later cannot go undocumented silently
+    # every live task sub-verb the CLI exposes is documented, derived from argparse rather
+    # than hand-listed, so a verb added later cannot go undocumented silently
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "--help"],
                        capture_output=True, text=True, encoding="utf-8")
-    verbs = {"add", "done", "drop", "list", "show", "categories", "review", "accept"}
-    check("skill: every task verb is documented in CLI help",
-          r.returncode == 0 and all(v in r.stdout for v in verbs))
-    check("skill: the verb table matches the CLI's task verbs",
-          all(f"`task {v}`" in skill or f"`{v}`" in skill for v in ("add", "done", "accept")))
+    live = re.findall(r"^    ([a-z]+)\b", r.stdout, re.M)
+    check(f"skill: the CLI's task verbs are the 4.0 set ({live})",
+          r.returncode == 0 and {"add", "done", "drop", "list", "show", "categories"} <= set(live)
+          and not {"review", "accept"} & set(live))
+    undoc = [v for v in live if f"`task {v}`" not in tref]
+    check(f"skill: every live task verb is documented in references/taskhub.md ({undoc})",
+          live and not undoc)
+    for v in ("review", "accept"):
+        rr = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", v],
+                            capture_output=True, text=True, encoding="utf-8")
+        check(f"skill: `crux task {v}` prints a spec-19 pointer, not a traceback",
+              rr.returncode == 0 and f"`task {v}` is removed (spec 19)" in rr.stdout
+              and "Traceback" not in rr.stderr)
 
-    # -- the three .spec amendments (rulings D6 / D9 / D19)
+    # -- the .spec amendments (rulings D6 / D9 / D19) are history and stay as they were
     check("skill: .spec/08's conclusion vocabulary matches VERDICTS",
           all(c in spec8 for c in E.CONCLUSIONS)
           and "`supports` / `disputes`" not in spec8
@@ -5444,21 +5539,27 @@ def run_brief():
     SENTINEL = "ADVOCACY-LIVES-HERE-AND-MUST-NOT-LEAK"
     h1, _, _ = E.cmd_hypothesize(root, "the claim under test", parent=q1, rule="all",
                                  problem=SENTINEL, verifiables=["alpha check", "beta check"],
-                                 neutral=["the control"])
-    # a CLOSED sibling: its findings ARE the shared factual record a skeptical colleague reads
+                                 neutral=["the control"], expect="alpha and beta both clear")
+    # a sibling WITH A FINDING: its findings ARE the shared factual record a skeptical
+    # colleague reads
     h2, _, _ = E.cmd_hypothesize(root, "an earlier sibling", parent=q1, rule="all",
-                                 verifiables=["gamma"], neutral=["the control"])
+                                 verifiables=["gamma"], neutral=["the control"],
+                                 expect="gamma clears")
     edit(node_path(root, h2), "- [ ] gamma", "- [x] gamma   (found: 0.71)")
     edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
                               "- [x] [outcome-neutral] the control")
     declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
-    E.cmd_close(root, h2, findings="the earlier run settled the preprocessing question")
+    write(os.path.join(root, "results", h2, "report.md"), "# r\n\nsynthetic.\n")
+    E.cmd_finding(root, h2, "strong", why="the earlier run settled the preprocessing question",
+                  direction="supports", evidence=[f"results/{h2}/report.md"])
     # the anchor's OWN results: present in the vault, and they must not reach its own brief
     edit(node_path(root, h1), "- [ ] alpha check", "- [x] alpha check   (found: 0.99-ANCHORS-OWN)")
     os.makedirs(os.path.join(root, "results", h1), exist_ok=True)
     with open(os.path.join(root, "results", h1, "metrics.json"), "w", encoding="utf-8") as f:
         f.write('{"auroc": {"value": 0.815, "ci": [0.79, 0.84]}}')
+    E.cmd_finding(root, h1, "weak", why="ANCHORS-OWN-FINDING leaked into its own brief",
+                  direction="supports")
 
     b = E.brief(root, h1)
     blob = json.dumps(b, sort_keys=True)
@@ -5476,9 +5577,18 @@ def run_brief():
           b["claim"] == "the claim under test" and b["question"] == "the parent question")
     check("brief: ancestry is ids and titles, root -> parent",
           [a["id"] for a in b["ancestry"]] == ["root", q1])
-    check("brief: a closed sibling's findings are the shared record",
-          any(p["id"] == h2 and "preprocessing question" in p["findings"]
-              for p in b["prior_findings"]))
+    check("brief: a sibling's Findings are the shared record, with direction, confidence, "
+          "why and evidence",
+          [(p["id"], p["state"], p["confidence"],
+            [(f["direction"], f["confidence"], f["why"], f["evidence"]) for f in p["findings"]])
+           for p in b["prior_findings"]]
+          == [(h2, "settled", "strong",
+               [("supports", "strong", "the earlier run settled the preprocessing question",
+                 [f"results/{h2}/report.md"])])])
+    check("brief: a hypothesis' own Finding never reaches its brief",
+          "ANCHORS-OWN-FINDING" not in blob)
+    check("brief: the payload carries no verdict or synthesis key",
+          '"verdict":' not in blob and '"synthesis":' not in blob)
     check("brief: the anchor is never its own prior finding",
           all(p["id"] != h1 for p in b["prior_findings"]))
     check("brief: the pre-registered checks are present, with kinds and no results",
@@ -5522,6 +5632,19 @@ def run_brief():
     expect_error("brief: a question anchor is refused (the brief is per-hypothesis)",
                  lambda: E.brief(root, q1))
 
+    # the human summary names the Finding that SET the sibling's state (the strongest), not
+    # the newest: a later weak no-answer-yet Finding must not displace a strong one's why
+    h3, _, _ = E.cmd_hypothesize(root, "a later sibling", parent=q1, expect="it holds")
+    E.cmd_finding(root, h3, "strong", why="STRONG-WHY the decisive run", direction="supports")
+    E.cmd_finding(root, h3, "weak", why="NEWER-WEAK-WHY an aborted rerun",
+                  direction="no-answer-yet")
+    r3 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", h1],
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    line = [l for l in r3.stdout.splitlines() if l.strip().startswith("prior:") and h3 in l]
+    check("brief: the summary prints the why of the strongest Finding, not the newest",
+          r3.returncode == 0 and len(line) == 1 and "STRONG-WHY" in line[0]
+          and "NEWER-WEAK-WHY" not in line[0] and "settled · strong" in line[0])
+
     check("brief: ENGINE_VERSION at or past 2.4", at_least_version("2.4"))
     shutil.rmtree(root, ignore_errors=True)
 
@@ -5537,26 +5660,17 @@ def run_brief():
 
 
 def run_null():
-    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis, PI-gated.
-
-    The brief removes the parent's authored prompt, but one leak cannot be engineered away:
-    the hypothesis TITLE is directional. "masked-token beats masked-stem" presumes a winner.
-    The answer is not to neutralise it but to push against it — name the cheapest way this
-    result could be trivially true, then make the checks discriminate against THAT.
-
-    Three goalposts, all in code, because instructions will not hold this: the crux skill
-    already said "keep the science explicit" and produced 5,725-word nodes."""
-    print("\n# specialized agents — the null and its gate (spec 09, PRD 09.1)")
+    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis. Spec 19 keeps the null as an
+    OPTIONAL section and drops its approval gate: a finding records whether the null was
+    ruled out, and a null not ruled out caps the finding's confidence at weak."""
+    print("\n# the null — optional, ungated, and capping confidence (spec 09 → spec 19)")
     root = tempfile.mkdtemp(prefix="crux_null_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Nulls", root)
-    q1, _ = E.cmd_ask(root, "does the null gate hold?")
+    q1, _ = E.cmd_ask(root, "does the null still matter?")
 
     def mk(title, **kw):
-        kw.setdefault("verifiables", ["alpha"]); kw.setdefault("neutral", ["ctl"])
-        # this block is about the NULL, so the other gates are satisfied up front
-        kw.setdefault("fails_if", ["the width-matched arm also clears it", "the control broke"])
-        kw.setdefault("discriminates", [True, False])
+        kw.setdefault("verifiables", ["alpha"]); kw.setdefault("expect", "alpha holds")
         hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
         return hid
 
@@ -5573,11 +5687,7 @@ def run_null():
     # bar it was measured against is a number with no scale.
     dp = E.deck_payload(root, h1)
     check("null: the null reaches the deck payload",
-          dp["anchor"]["null"].startswith("capacity")
-          and dp["anchor"]["null_approved"] is False)
-    check("null: the deck reports approval as a boolean, never a timestamp",
-          isinstance(dp["anchor"]["null_approved"], bool)
-          and not re.search(r"\d{4}-\d\d-\d\dT", json.dumps(dp)))
+          dp["anchor"]["null"].startswith("capacity"))
 
     check("null: every confound family is accepted",
           all(E.null_problem(f"{fam} — the instance", 1) is None for fam in E.CONFOUND_FAMILIES))
@@ -5587,39 +5697,20 @@ def run_null():
           "25" in (E.null_problem("chance — " + " ".join(["word"] * 30), 1) or ""))
     check("null: a 25-word null is accepted (the cap is inclusive)",
           E.null_problem("chance — " + " ".join(["w"] * 23), 1) is None)
-    check("null: a pre-15 node is never asked for one", E.null_problem("", 0) is None)
+    expect_error("null: a malformed null is still refused when it is written",
+                 lambda: mk("bad family", null="the numbers came out nicer"))
 
-    expect_error("null: running is refused with no null at all",
-                 lambda: E.cmd_test(root, mk("no null"), to="running"))
-    expect_error("null: running is refused with an unapproved null",
-                 lambda: E.cmd_test(root, h1, to="running"))
-    check("null: the refusal names the approval route",
-          "approve-null" in _err_text(lambda: E.cmd_test(root, h1, to="running")))
-    stamp = E.cmd_approve_null(root, h1)
-    check("null: approval stamps a timestamp", bool(stamp) and "T" in stamp)
-    check("null: approval is idempotent", E.cmd_approve_null(root, h1) == stamp)
-    ran = E.cmd_test(root, h1, to="running")
-    check("null: an approved null unblocks running", ran == "running")
-
-    edit(node_path(root, h1), "capacity — the extra parameters alone explain it",
-                              "leakage — the split let the answer through")
-    check("null: editing an approved null voids the approval",
-          any(i == h1 and "EDITED after approval" in m for i, m in E.cmd_validate(root)))
-    E.cmd_approve_null(root, h1)
-    check("null: re-approving the edited null clears the flag", E.cmd_validate(root) == [])
-
-    h3 = mk("two nulls", null="chance — noise")
-    edit(node_path(root, h3), "chance — noise",
-                              "chance — noise\nselection — the sample was picked")
-    check("null: exactly one null",
-          any(i == h3 and "exactly one" in m for i, m in E.cmd_validate(root)))
-
-    h4 = mk("bad family")
-    n4 = E.Vault(root).get(h4)
-    E.write_if_changed(n4["path"],
-                       E.render_doc(n4["fm"], E.set_null(n4["body"], "the numbers came out nicer")))
-    check("null: a malformed null is a validate problem before any run",
-          any(i == h4 for i, m in E.cmd_validate(root)))
+    h2 = mk("no null")
+    check("null: running is NOT refused with no null (spec 19)",
+          E.cmd_test(root, h2, to="running") == "running")
+    check("null: running is NOT refused with an unapproved null (no approval exists)",
+          E.cmd_test(root, h1, to="running") == "running")
+    check("null: no approval verb remains", not hasattr(E, "cmd_approve_null"))
+    check("null: a vault with an unapproved null validates clean", E.cmd_validate(root) == [])
+    E.cmd_finding(root, h1, "strong", why="clean win, but the width-matched arm was not run",
+                  direction="supports", null="not-ruled-out")
+    check("null: a finding whose null was not ruled out lands at weak",
+          E.derive_state(E.Vault(root), h1)["confidence"] == "weak")
 
     check("null: ENGINE_VERSION at or past 2.5", at_least_version("2.5"))
     shutil.rmtree(root, ignore_errors=True)
@@ -5686,18 +5777,18 @@ def run_failure_scenarios():
           E.verifiable_scenarios("## Verifiables\n\n- [ ] a\n      fails-if:: w\n"
                                  "      discriminates:: false\n")[0]["discriminates"] is False)
 
-    # ---- the gate
+    # ---- writing them, and (spec 19) no gate on them
     root = tempfile.mkdtemp(prefix="crux_fs_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Scenarios", root)
-    q1, _ = E.cmd_ask(root, "do scenarios gate?")
+    q1, _ = E.cmd_ask(root, "do scenarios still gate?")
     h1, _, _ = E.cmd_hypothesize(root, "with scenarios", parent=q1, rule="all",
                                  null="capacity — width alone explains the gain",
                                  verifiables=["alpha", "beta"], neutral=["the control"],
                                  fails_if=["the width-matched arm also clears it",
                                            "beta moves for an unrelated reason",
                                            "the preprocessing path changed"],
-                                 discriminates=[True, False, False])
+                                 discriminates=[True, False, False], expect="alpha and beta hold")
     n1 = E.Vault(root).get(h1)
     check("fails: --fails-if writes continuation lines under each check",
           n1["body"].count("fails-if::") == 3 and n1["body"].count("discriminates:: true") == 1
@@ -5708,40 +5799,22 @@ def run_failure_scenarios():
     check("fails: scenarios reach the brief",
           E.brief(root, h1)["verifiables"][0]["fails_if"]
           == "the width-matched arm also clears it")
-    E.cmd_approve_null(root, h1)
     check("fails: a complete hypothesis runs", E.cmd_test(root, h1, to="running") == "running")
-
-    def mk(title, **kw):
-        kw.setdefault("verifiables", ["alpha", "beta"]); kw.setdefault("neutral", ["ctl"])
-        kw.setdefault("rule", "all"); kw.setdefault("null", "chance — noise explains it")
-        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
-        E.cmd_approve_null(root, hid)
-        return hid
-
-    h2 = mk("no scenarios")
-    expect_error("fails: running is refused with a missing scenario",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    check("fails: every verifiable needs a failure scenario",
-          "failure scenario" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
-    check("fails: a DRAFT is not nagged for scenarios it has not written yet",
-          not any(i == h2 and "failure scenario" in m for i, m in E.cmd_validate(root)))
-
-    h3 = mk("identical scenarios", fails_if=["the same world", "the same world", "ctl broke"],
-            discriminates=[True, False, False])
-    check("fails: two identical failure scenarios are flagged",
-          any(i == h3 and "same" in m.lower() for i, m in E.cmd_validate(root)))
-
-    h4 = mk("nothing discriminates", fails_if=["world a", "world b", "ctl broke"])
-    check("fails: at least one verifiable must discriminate against the null",
-          "discriminat" in _err_text(lambda: E.cmd_test(root, h4, to="running")))
-    expect_error("fails: running is refused when nothing discriminates",
-                 lambda: E.cmd_test(root, h4, to="running"))
+    h2, _, _ = E.cmd_hypothesize(root, "no scenarios", parent=q1, expect="alpha holds",
+                                 verifiables=["alpha", "beta"], neutral=["ctl"])
+    check("fails: running is NOT refused with missing scenarios (spec 19)",
+          E.cmd_test(root, h2, to="running") == "running")
+    h3, _, _ = E.cmd_hypothesize(root, "identical scenarios", parent=q1, expect="alpha holds",
+                                 verifiables=["alpha", "beta"], neutral=["ctl"],
+                                 fails_if=["the same world", "the same world", "ctl broke"])
+    check("fails: neither missing nor identical scenarios are a validate problem any more",
+          not any(i in (h2, h3) for i, _ in E.cmd_validate(root)))
 
     # ---- the CLI is additive: a bare -v still works (never a second -v argument)
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "cli built",
                         "-p", q1, "-v", "alpha", "--fails-if", "world a", "--discriminates",
                         "-n", "ctl", "--fails-if", "ctl broke",
-                        "--null", "chance — noise", "--rule", "all"],
+                        "--null", "chance — noise", "--rule", "all", "--expect", "alpha holds"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = [x for x in E.Vault(root).nodes if x.startswith("h")][-1]
     body = E.Vault(root).get(hc)["body"]
@@ -5749,13 +5822,13 @@ def run_failure_scenarios():
           r.returncode == 0 and "fails-if:: world a" in body
           and "discriminates:: true" in body and "fails-if:: ctl broke" in body)
     r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "bare v",
-                         "-p", q1, "-v", "alpha", "-n", "ctl"],
+                         "-p", q1, "-v", "alpha", "-n", "ctl", "--expect", "alpha holds"],
                         capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("fails: a bare -v is still accepted (no second positional argument)",
           r2.returncode == 0)
 
     check("fails: ENGINE_VERSION at or past 2.6", at_least_version("2.6"))
-    check("fails: SCHEMA_GENERATION is 2", E.SCHEMA_GENERATION == 2)
+    check("fails: SCHEMA_GENERATION is at least 2", E.SCHEMA_GENERATION >= 2)
     shutil.rmtree(root, ignore_errors=True)
 
     # ---- D1: the scenario IS the commitment, and generation 1 keeps its old material
@@ -5765,11 +5838,15 @@ def run_failure_scenarios():
     q1, _ = E.cmd_ask(root, "q")
     hg2, _, _ = E.cmd_hypothesize(root, "gen two", parent=q1, rule="all",
                                   null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
-    E.cmd_approve_null(root, hg2); E.cmd_test(root, hg2, to="running")
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                  expect="alpha holds")
+    E.cmd_test(root, hg2, to="running")
     n = E.Vault(root).get(hg2)
-    check("fails: a generation-2 node locks generation-2 material",
-          E.node_schema(n) == 2 and "world a" in E.lock_material(n))
+    check("fails: a generation-2+ node locks scenario material",
+          E.node_schema(n) >= 2 and "world a" in E.lock_material(n))
+    g3 = E.lock_material(n)
+    check("fails: generation 3 hashes exactly like generation 2 (the 4.0 bump drifts nothing)",
+          E.lock_material(E.Node(dict(n, fm=dict(n["fm"], schema=2)))) == g3)
     edit(node_path(root, hg2), "fails-if:: world a", "fails-if:: a completely different world")
     check("fails: a failure scenario added or changed after running is drift",
           E.lock_drift(E.Vault(root).get(hg2)))
@@ -5777,7 +5854,8 @@ def run_failure_scenarios():
     # a node stamped generation 1 keeps the material it was locked with — the whole of D1
     hg1, _, _ = E.cmd_hypothesize(root, "gen one", parent=q1, rule="all",
                                   null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                  expect="alpha holds")
     g1 = E.Vault(root).get(hg1)
     g1["fm"]["schema"] = 1
     E.write_if_changed(g1["path"], E.render_doc(g1["fm"], g1["body"]))
@@ -5795,9 +5873,9 @@ def run_failure_scenarios():
     oq, _ = E.cmd_ask(old, "q")
     oh, _, _ = E.cmd_hypothesize(old, "locked under gen 1", parent=oq, rule="all",
                                  null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
+                                 fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                 expect="alpha holds")
     # rewind it to generation 1 and lock it with generation-1 material, as 2.5 would have
-    E.cmd_approve_null(old, oh)
     g = E.Vault(old).get(oh)
     g["fm"]["schema"] = 1
     g["fm"]["lock"] = E.lock_hash(E.Node(dict(g, fm=dict(g["fm"], schema=1))))
@@ -5852,7 +5930,8 @@ def run_migrate():
     check("evmig: migrate never stamps a node across the boundary",
           all(E.node_schema(n) == 0 for n in v.nodes.values() if n.type in ("question", "idea")))
     check("evmig: migrate writes no evidence field",
-          all(f not in n["fm"] for n in v.nodes.values() for f in E.MIGRATE_FORBIDDEN))
+          all(f not in n["fm"] for n in v.nodes.values() if n.type in ("question", "idea")
+              for f in E.MIGRATE_FORBIDDEN))
     check("evmig: the Null it adds is EMPTY — naming the null hypothesis is a scientific act",
           E._null_text(v.get("h1")) is None)
     check("evmig: migrate changes no recorded verdict",
@@ -5891,37 +5970,19 @@ def run_migrate():
     check("migrate: ENGINE_VERSION at or past 2.7", at_least_version("2.7"))
     shutil.rmtree(root, ignore_errors=True)
 
-    # ---- the gate backlog, the one audit check spec 09 asked for that did not exist
+    # ---- spec 19 removed the review gate, and with it `--check=gate` and its backlog
+    #      warning. What remains to pin: `crux migrate` never touches a Finding.
     root = tempfile.mkdtemp(prefix="crux_gate_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Gate", root)
-    q1, _ = E.cmd_ask(root, "a question that will sit in review")
-    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, rule="all", null="chance — noise",
-                                 verifiables=["alpha"], neutral=["ctl"],
-                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] ctl", "- [x] [outcome-neutral] ctl")
-    E.cmd_close(root, h1)
-    # node-scoped checks carry the bare node id, matching `economy`/`fanout`
-    gate = E.validation_report(root, ["gate"])["warnings"]
-    check("migrate: a question parked in review with no synthesis is a gate-backlog warning",
-          any(w["id"] == q1 and "no synthesis drafted" in w["message"] for w in gate))
-    check("migrate: --check=gate is opt-in and does not fire on the default lint",
-          not any("no synthesis drafted" in w["message"]
-                  for w in E.validation_report(root)["warnings"]))
-    E.cmd_synthesize(root, "what q1 settled", [q1])
-    check("migrate: drafting the synthesis clears the backlog warning",
-          not E.validation_report(root, ["gate"])["warnings"])
+    shutil.rmtree(root); shutil.copytree(src, root)
+    fnd = {n.id: read(n["path"]) for n in E.Vault(root).nodes.values() if n.type == "finding"}
+    E.cmd_migrate(root, apply=True)
+    check("migrate: the structural migration never touches a Finding",
+          fnd and fnd == {n.id: read(n["path"]) for n in E.Vault(root).nodes.values()
+                          if n.type == "finding"})
+    check("migrate: --check=gate is gone with the review gate",
+          "gate" not in E.CHECKS + E.OPT_CHECKS)
     shutil.rmtree(root, ignore_errors=True)
 
-
-# The roster as it stood before 05.3, so the criterion can say the list grew by exactly two
-# rather than merely that it now holds twelve names.
-AG_ROSTER_052 = ("crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
-                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
-                 "crux-situate", "crux-design")
 
 # `crux doctor` warnings that are facts about the MACHINE the suite runs on, not about the
 # repository: `cmd_doctor` reads `~/.claude/settings.json` for the chat-time voice lint, and
@@ -5938,30 +5999,31 @@ AG_DOCTOR_PRE_WARNS = ("voice-hook", "skills")
 
 
 def run_agent_roster():
-    """Spec 09 PRD 09.4 — the agent-definition convention and the roster.
+    """Spec 09 PRD 09.4's convention, and spec 19's roster: exactly capture, pre-run, situate
+    and migrate (decision 9).
 
-    Six of 09's seven agents were described and none existed. More basic: crux had no
-    convention for what an agent definition IS. Spec 14's PARKED-09.md names exactly that as
-    its blocker — "the agent file format is a 09 deliverable; there is no convention to write
-    it against" — and spec 13 waits on the same thing plus `crux brief`.
+    09.4 made an agent definition checkable: the three fields carrying the architecture
+    (cold_input, toolbelt, excludes) are frontmatter, so a selftest can read them. Spec 19
+    keeps the convention and replaces the roster. capture is new and is the heart of
+    background memory; pre-run merges design, null and verifiables; close, critic, audit and
+    glossary go; crux-tests moves to evolve-crux, since it builds crux, not research (Q12).
 
-    Doc-only: no engine change, no version bump. What makes it assertable is that the three
-    fields carrying 09's architecture (cold_input, toolbelt, excludes) are checkable."""
-    print("\n# specialized agents — the roster (spec 09, PRD 09.4)")
+    The definition-derived properties live in `evals.roster_properties`, so that ONE source
+    of truth is both printed here and broken on purpose by the mutation harness."""
+    print("\n# specialized agents — the roster (spec 09 convention, spec 19 roster)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     adir = os.path.join(repo, "agents")
-    # AMENDED by spec 13, not replaced: 09.4's assert exists to stop a roster that describes
-    # agents nobody shipped and a directory of agents nobody described. 13 is the first spec
-    # to add to the directory, so the list grows and `.spec/09`'s roster grows with it.
-    # Spec 05 added two autopilot agents here; spec 18 deleted them (the lean driver sends
-    # its worker a brief it builds itself), so the roster is 09's ten again.
-    expected = list(AG_ROSTER_052)
-
-    # The definition-derived properties live in `evals.roster_properties` (spec 10, PRD 10.2),
-    # so that ONE source of truth is both printed here and broken on purpose by the mutation
-    # harness. The assert names below are unchanged by that extraction — `run_mutation_harness`
-    # pins that, because the evolve-crux gate counts asserts.
     import evals as V
+    import sweep as SW
+    expected = list(V.ROSTER)
+
+    on_disk = sorted(d for d in os.listdir(adir) if os.path.isdir(os.path.join(adir, d)))
+    check(f"agents: the roster is exactly capture, prerun, situate and migrate (on disk: {on_disk})",
+          on_disk == sorted(expected) == sorted(["crux-capture", "crux-prerun", "crux-situate",
+                                                 "crux-migrate"]))
+    back = [n for n in V.REMOVED_AGENTS if os.path.exists(os.path.join(adir, n))]
+    check(f"agents: the seven agents spec 19 removed are gone (back: {back})",
+          not back and len(V.REMOVED_AGENTS) == 7)
     defs = V.load_definitions(expected, repo)
     missing = [n for n in expected if n not in defs]
     check(f"agents: every roster entry has a definition file (missing: {missing})", not missing)
@@ -5969,72 +6031,77 @@ def run_agent_roster():
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
                        capture_output=True, text=True, encoding="utf-8")
     P = V.roster_properties(defs, r.stdout)
-    for slug in ([f"{k}:{n}" for n in sorted(defs) for k in ("fields", "dirname", "workflow")]
-                 + ["belt-verbs", "critic-isolated", "verifiables-exclusion"]):
-        check(*P[slug])
-    check("agents: and the brief really does enforce it (cross-checked, not just declared)",
-          "problem" not in E.brief(*_probe_vault()))
-    for slug in ("leash", "close-says-so", "glossary-contract"):
+    for slug in ([f"{k}:{n}" for n in sorted(defs)
+                  for k in ("fields", "dirname", "workflow", "trigger")]
+                 + ["belt-verbs", "leash", "writers", "no-version-pin"]):
         check(*P[slug])
 
-    spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
-    check("agents: the spec roster and the shipped roster agree",
-          all(n in spec for n in expected))
-    check("agents: spec 09 is flipped to done with its work items ticked",
-          "**Status:** \u2611" in spec and spec.count("- \u2611 ") >= 8)
-    readme = read(os.path.join(repo, ".spec", "README.md"))
-    check("agents: the backlog index shows 09 done",
-          re.search(r"\|\s*09\s*\|[^|]*\|[^|]*\|\s*\u2611\s*\|", readme) is not None)
-    # 09.4 was doc-only, and asserted that by pinning ENGINE_VERSION == "2.7" — a literal
-    # that any later, legitimate bump falsifies (spec 14's 14.0 is the first). The property
-    # actually worth locking is the durable one: the roster is VERSION-INDEPENDENT. An agent
-    # definition that named an engine version would have to be revised on every bump, which
-    # is precisely the coupling 09 avoided by putting the toolbelt in CLI verbs.
-    check(*P["no-version-pin"])
+    # ---- crux-capture: its toolbelt, its silence, and the brief the sweep hands it
+    for slug in ("capture-tools", "capture-belt", "capture-silent", "capture-boundary",
+                 "capture-ideation", "capture-closure", "capture-dedup", "capture-park",
+                 "capture-voice"):
+        check(*P[slug])
+    check("agents: the sweep launches crux-capture's brief, with the same tools it declares",
+          os.path.abspath(SW.CAPTURE_BRIEF)
+          == os.path.abspath(os.path.join(adir, "crux-capture", "AGENT.md"))
+          and set(SW.SWEEP_TOOLS.split(",")) == set(V.CAPTURE_TOOLS)
+          and "AskUserQuestion" in SW._launch_cmd("claude", "in.txt", "sid"))
+    cap_fm = defs.get("crux-capture", ({}, ""))[0]
+    check("agents: every crux-capture toolbelt entry is a crux command (Bash runs crux only)",
+          all(x.startswith("crux ") for x in V._belt(cap_fm)) and V._belt(cap_fm))
+
+    # ---- crux-prerun: drafts before the run, isolated from the argument for the claim
+    for slug in ("prerun-isolated", "prerun-drafts", "prerun-proposal"):
+        check(*P[slug])
+    root = tempfile.mkdtemp(prefix="crux_probe_")
+    try:
+        shutil.rmtree(root); os.makedirs(root)
+        E.cmd_init("Probe", root)
+        q, _ = E.cmd_ask(root, "q")
+        h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY",
+                                    verifiables=["a"], expect="it works")
+        b = E.brief(root, h)
+        check("agents: and the brief really does exclude the argument (cross-checked, not "
+              "just declared)", "problem" not in b and "ADVOCACY" not in json.dumps(b))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ---- crux-migrate, re-pointed to the 4.0 seed
+    check(*P["migrate-seed"])
+
+    # ---- crux-tests moved to evolve-crux (Q12)
+    tests_p = os.path.join(repo, "skills", "evolve-crux", "agents", "crux-tests.md")
+    tfm = E.parse_doc(read(tests_p))[0] if os.path.isfile(tests_p) else {}
+    check("agents: crux-tests lives with evolve-crux, outside the research roster",
+          os.path.isfile(tests_p) and tfm.get("name") == "crux-tests"
+          and bool(str(tfm.get("trigger") or "").strip())
+          and not os.path.exists(os.path.join(adir, "crux-tests"))
+          and "crux-tests" not in expected
+          and V.definition_path("crux-tests", repo) == tests_p)
+
+    spec = read(os.path.join(repo, ".spec", "19-background-memory.md"))
+    check("agents: spec 19's decision 9 names the shipped roster",
+          all(w in spec for w in ("**capture**", "**pre-run**", "**situate**", "**migrate**")))
+    # 09.4 asserted doc-only-ness by pinning an engine version literal; the durable property is
+    # that the roster is VERSION-INDEPENDENT, which `no-version-pin` above already checks.
 
     # The directory holds exactly the roster, and `crux doctor` counts it with no new warning.
     ag_links = tempfile.mkdtemp(prefix="crux_ag53_")
     try:
-        on_disk = sorted(d for d in os.listdir(adir)
-                         if os.path.isfile(os.path.join(adir, d, "AGENT.md")))
         for n in on_disk:
             os.symlink(os.path.join(adir, n, "AGENT.md"), os.path.join(ag_links, n + ".md"))
         try:
             doc = E.cmd_doctor(root=None, skills_dirs=None, agents_dir=ag_links)
         except Exception:
             doc = {"checks": []}
-        check("agents: the directory holds the ten roster agents and doctor counts ten with no new warning",
-              sorted(defs) == sorted(expected) and len(expected) == 10
-              and on_disk == sorted(expected)
-              and _level(doc, "agents") == "ok"
-              and _check(doc, "agents")["detail"].startswith("10 crux-*.md in ")
+        check("agents: doctor counts the four roster agents with no new warning",
+              _level(doc, "agents") == "ok"
+              and _check(doc, "agents")["detail"].startswith("4 crux-*.md in ")
               and [c["name"] for c in doc["checks"] if c["level"] == "warn"
                    and c["name"] not in AG_DOCTOR_PRE_WARNS] == []
               and [c["name"] for c in doc["checks"] if c["level"] == "error"] == [])
     finally:
         shutil.rmtree(ag_links, ignore_errors=True)
-
-    # PRD-3. The shas were read off disk at the base commit of this slice. A literal here is
-    # the point: `git diff --stat` proves nothing to a reader six months from now, and these
-    # four files are the ones the slice is most tempted to edit. crux-null was re-pinned on
-    # 2026-10-25, deliberately: "the boring explanation" became "the null hypothesis" when the
-    # register moved to a science undergraduate's (CHANGELOG, Unreleased). crux-null and
-    # crux-verifiables re-pinned 2026-10-29, deliberately: "one lucky split" became "sampling
-    # variability" and "bar" became "threshold" (the correct-terms rule, CHANGELOG).
-    REUSED_SHA = {
-        "crux-close": "24c0121a494c54d8fdfb18e661325f6ed58c5cfbb27079a7eac4f25ee5edad0d",
-        "crux-null": "b01de6adb00b8913bbbbf99f59a09a5e1d8df0757203ca82ddb67205fd9b3f68",
-        "crux-verifiables": "4b6ee757479fbc5aa2726f8f0cbd39a3298005fb63fbd027f1064eed4181fc20",
-        "crux-design": "01a9d2d7bb4f92e21aac04800a3f6edfc99b914b027458fd49fa2b6d3c9a5584"}
-    def _sha(p):
-        try:
-            return hashlib.sha256(open(p, "rb").read()).hexdigest()
-        except OSError:
-            return None
-    drifted = sorted(n for n, want in REUSED_SHA.items()
-                     if _sha(os.path.join(adir, n, "AGENT.md")) != want)
-    check(f"agents: crux-close, crux-null, crux-verifiables and crux-design are byte-identical by sha (drifted: {drifted})",
-          not drifted)
 
 
 def _situate_vault():
@@ -6050,22 +6117,27 @@ def _situate_vault():
     SENTINEL = "ADVOCACY-LIVES-HERE-AND-SITUATE-MAY-SEE-IT"
     hdone, _, _ = E.cmd_hypothesize(root, "the settled claim", parent=qmid, rule="all",
                                     problem=SENTINEL, verifiables=["alpha check"],
-                                    neutral=["the control"])
+                                    neutral=["the control"], expect="alpha clears")
     hidea, _, _ = E.cmd_hypothesize(root, "the untried claim", parent=qmid, rule="all",
-                                    verifiables=["gamma check"], neutral=["the control"])
+                                    verifiables=["gamma check"], neutral=["the control"],
+                                    expect="gamma clears")
     hrun, _, _ = E.cmd_hypothesize(root, "the claim in flight", parent=qmid, rule="all",
-                                   verifiables=["delta check"], neutral=["the control"])
+                                   verifiables=["delta check"], neutral=["the control"],
+                                   expect="delta clears")
     for h in (hdone, hrun):
         declare_null(root, h)
     edit(node_path(root, hdone), "- [ ] alpha check", "- [x] alpha check")
     edit(node_path(root, hdone), "- [ ] [outcome-neutral] the control",
                                  "- [x] [outcome-neutral] the control")
     E.cmd_test(root, hdone, to="running")
-    E.cmd_close(root, hdone, findings="the settled claim held at the declared threshold")
+    fdone, _, _ = E.cmd_finding(root, hdone, "strong",
+                                why="the settled claim held at the declared threshold",
+                                direction="supports", null="ruled-out")
     E.cmd_test(root, hrun, to="running")
-    # the parent's answer-so-far: "where we are" usually needs it
-    edit(node_path(root, qtop), "_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_",
-         "So far the direction looks right, on one settled claim.")
+    # the parent's answer-so-far: "where we are" usually needs it. Spec 19: a question's
+    # answer is a Finding on it
+    E.cmd_finding(root, qtop, "moderate",
+                  answer="So far the direction looks right, on one settled claim.")
     # a wiki page linked from the ANCHOR'S ANCESTOR, so the ancestor walk is what finds it
     E.ensure_wiki(root)
     wiki_page(root, "sit-bg", "Situate background", "why orientation is hard")
@@ -6077,7 +6149,7 @@ def _situate_vault():
          f"an unrelated question, which waits on [[{mid_base}]].\n\n## Protocol")
     E.refresh(root)
     return root, dict(qtop=qtop, qmid=qmid, qout=qout, hdone=hdone, hidea=hidea, hrun=hrun,
-                      sentinel=SENTINEL)
+                      fdone=fdone, sentinel=SENTINEL)
 
 
 def run_situate():
@@ -6137,9 +6209,19 @@ def run_situate():
           and s["wiki"] == E.wiki_refs(root, [vv.get(qmid)["body"]]
                                        + [m["body"] for m in
                                           E.ancestor_chain(vv, vv.get(qmid))]))
-    check("situate: findings travel only with a closed hypothesis",
-          s["subtree"][0]["findings"] and s["subtree"][1]["findings"] is None
-          and s["subtree"][2]["findings"] is None)
+    check("situate: a child's findings[] carry direction, confidence, why and evidence",
+          [(f["direction"], f["confidence"], f["why"], f["evidence"])
+           for f in s["subtree"][0]["findings"]]
+          == [("supports", "strong", "the settled claim held at the declared threshold", [])]
+          and s["subtree"][1]["findings"] == [] and s["subtree"][2]["findings"] == [])
+    check("situate: each child carries its derived state and confidence",
+          [(c["state"], c["confidence"]) for c in s["subtree"]]
+          == [("settled", "strong"), ("open", None), ("open", None)])
+    check("situate: the anchor question reads its children's Finding, capped at moderate",
+          (s["anchor"]["state"], s["anchor"]["confidence"], s["anchor"]["findings"])
+          == ("leaning", "moderate", []))
+    check("situate: the payload carries no verdict or synthesis key",
+          '"verdict":' not in blob and '"synthesis":' not in blob)
 
     # ---- what is yet to be tested is COMPUTED. This is the row the spec marks "engine".
     ut = s["untested"]
@@ -6167,22 +6249,25 @@ def run_situate():
     # ---- anchors: a hypothesis is legal, no argument means the whole programme
     ph = E.brief(root, hdone, mode="situate")
     check("situate: a hypothesis anchor is legal",
-          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and ph["synthesis"] is None
-          and ph["anchor"]["findings"])
+          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and "synthesis" not in ph
+          and [f["direction"] for f in ph["anchor"]["findings"]] == ["supports"]
+          and ph["anchor"]["state"] == "settled")
     whole = E.brief(root, None, mode="situate")
     check("situate: no argument means the whole programme",
           whole["anchor"]["id"] == "root"
           and [c["id"] for c in whole["subtree"]] == [ids["qtop"], ids["qout"]])
-    expect_error("situate: a synthesis anchor is refused",
-                 lambda: E.brief(root, E.cmd_synthesize(root, "x", [qmid])[0], mode="situate"))
+    expect_error("situate: a Finding anchor is refused (a Finding is not a tree node)",
+                 lambda: E.brief(root, ids["fdone"], mode="situate"))
 
-    # ---- only an APPROVED synthesis is an answer
-    syn, _ = E.cmd_synthesize(root, "what the mid question settled", [qmid])
-    check("situate: an unapproved synthesis stays out of the payload",
-          E.brief(root, qmid, mode="situate")["synthesis"] is None)
-    E.cmd_approve(root, syn)
-    check("situate: only an approved synthesis reaches the payload",
-          E.brief(root, qmid, mode="situate")["synthesis"]["id"] == syn)
+    # ---- spec 19: a question is answered by a Finding on it (synthesis is gone)
+    E.cmd_finding(root, qmid, "strong", answer="what the mid question settled")
+    sa = E.brief(root, qmid, mode="situate")["anchor"]
+    check("situate: a question Finding reaches the payload with its answer and no direction",
+          [(f["answer"], f["confidence"]) for f in sa["findings"]]
+          == [("what the mid question settled", "strong")]
+          and all("direction" not in f for f in sa["findings"]))
+    check("situate: the question's own Finding settles it",
+          (sa["state"], sa["confidence"]) == ("settled", "strong"))
 
     # ---- the taskhub: post-08, a queued run is the difference between untried and in flight
     check("situate: the work block is present-and-inert without a taskhub",
@@ -6238,8 +6323,8 @@ def run_situate():
     old, oq, oh = pre15_vault("crux_smig13_")
     os_ = E.brief(old, oq, mode="situate")
     check("smig: situate mode works on a pre-15 node",
-          os_["subtree"][0]["verdict"] is None and os_["subtree"][0]["schema"] == 0
-          and os_["anchor"]["schema"] == 0)
+          os_["subtree"][0]["state"] == "open" and os_["subtree"][0]["findings"] == []
+          and os_["subtree"][0]["schema"] == 0 and os_["anchor"]["schema"] == 0)
     check("smig: situate mode works on a vault with no side layers",
           os_["wiki"] == [] and os_["work"] == {"active": False, "open": [], "experiments": []}
           and os_["inbound"] == [])
@@ -6323,7 +6408,7 @@ def run_situate_agent():
     import evals as V
     P = V.roster_properties(V.load_definitions(["crux-situate"], repo))
     for slug in ("situate-mode", "situate-readonly", "situate-ephemeral",
-                 "situate-lints", "situate-shape"):
+                 "situate-lints", "situate-shape", "situate-title-anchor", "situate-state"):
         check(*P[slug])
     spec = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
     check("agents: spec 09's roster records crux-situate as spec 13's addition",
@@ -6357,11 +6442,14 @@ def run_methodology():
     h1, _, _ = E.cmd_hypothesize(root, "the declared claim", parent=q1, rule="all",
                                  verifiables=["alpha"], neutral=["the control"],
                                  measurement="imputation Spearman on held-out chr21",
-                                 replicates="5 seeds x 3 folds; n = 15 per arm")
+                                 replicates="5 seeds x 3 folds; n = 15 per arm",
+                                 expect="alpha holds")
     h2, _, _ = E.cmd_hypothesize(root, "the undeclared claim", parent=q1, rule="all",
-                                 verifiables=["beta"], neutral=["the control"])
+                                 verifiables=["beta"], neutral=["the control"],
+                                 expect="beta holds")
     hidea, _, _ = E.cmd_hypothesize(root, "a raw idea nobody has staged", parent=q1,
-                                    rule="all", verifiables=["gamma"], neutral=["the control"])
+                                    rule="all", verifiables=["gamma"], neutral=["the control"],
+                                    expect="gamma holds")
     v = E.Vault(root)
     check("design: the methodology slots parse, and absence is None",
           E.node_measurement(v.get(h1)) == "imputation Spearman on held-out chr21"
@@ -6374,12 +6462,12 @@ def run_methodology():
           E.Vault(root).get(h1)["fm"].get("metric") in (None, ""))
 
     # ---- the info tier: a nudge in the window where the design is still changeable
-    for h in (h1, h2):
-        declare_null(root, h)
-    E.cmd_test(root, h2, to="staged")
+    # spec 19 stores no status: the window is "the run has started (a run link or a lock) and
+    # no finding has landed yet"
+    E.cmd_test(root, h2, to="running", run="job 7")
     rep = E.validation_report(root)
     ids = {i["id"]: i for i in rep["info"]}
-    check("design: a staged hypothesis with no measurement is reported as info",
+    check("design: a running hypothesis with no measurement is reported as info",
           "design:measurement" in ids and ids["design:measurement"]["count"] == 1
           and "design:replicates" in ids)
     check("design: a thin design is never a problem and never a warning",
@@ -6433,28 +6521,20 @@ def run_methodology():
     check("design: declaring a design does not consume the prose budget",
           E.prose_words(E.Vault(root).get(h2)["body"], "idea") == words)
 
-    # ---- and they never touch the verdict
-    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
-                              "- [x] [outcome-neutral] the control")
-    E.cmd_close(root, h1)
-    E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h2), "- [ ] beta", "- [x] beta")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
-                              "- [x] [outcome-neutral] the control")
-    E.cmd_close(root, h2)
+    # ---- and they never touch the state
+    E.cmd_finding(root, h1, "strong", why="alpha held", direction="supports")
+    E.cmd_finding(root, h2, "strong", why="beta held", direction="supports")
     vv = E.Vault(root)
-    check("design: the slots never touch the verdict",
-          vv.get(h1)["fm"]["verdict"] == vv.get(h2)["fm"]["verdict"] == "supported")
-    check("design: a closed hypothesis is not retro-flagged — its design is history",
-          not [i for i in E.validation_report(root)["info"]
-               if i["id"].startswith("design:") and i["count"] > 1])
+    check("design: the slots never touch the derived state",
+          E.derive_state(vv, h1) ["state"] == E.derive_state(vv, h2)["state"] == "settled")
+    check("design: a hypothesis with a finding is not retro-flagged — its design is history",
+          not [i for i in E.validation_report(root)["info"] if i["id"].startswith("design:")])
 
     # ---- the CLI
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "from the CLI", "-p", q1, "-v", "delta", "-n", "the control",
                         "--rule", "all", "--measurement", "a named instrument",
-                        "--replicates", "3 seeds", "--json"],
+                        "--replicates", "3 seeds", "--expect", "delta holds", "--json"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("design: the CLI writes both slots",
           r.returncode == 0
@@ -6467,92 +6547,95 @@ def run_methodology():
 def run_methodology_migration():
     """The pre-13 boundary. Two optional frontmatter keys, absent everywhere in an existing
     vault, and their absence must stay legal forever: nothing retro-writes them, nothing
-    re-verdicts, nothing goes red."""
+    re-verdicts, nothing goes red.
+
+    From 4.0 the first write-capable load MIGRATES a pre-4.0 vault (spec 19): findings are
+    added and syntheses converted, but every hypothesis file — verdict, checks, null — stays
+    byte for byte, so the boundary this function guards still holds where it matters."""
     print("\n# design — the pre-13 boundary (spec 13, PRD 13.2)")
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    import selftest_migrate as SM
     dst = tempfile.mkdtemp(prefix="crux_dmig_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    SM.build_legacy_vault(dst, stamp="3.0")
 
     before, vbefore, sbefore = fingerprint(dst)
+    rep_before = E.validation_report(dst)
     E.check_and_stamp_version(dst)
-    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     after, vafter, safter = fingerprint(dst)
-    check("dmig: a pre-13 vault is byte-identical after the bump", before == after)
-    check("dmig: no recorded verdict moved", vbefore == vafter and sbefore == safter)
+    hyp = lambda fp: {k: h for k, h in fp.items() if re.match(r"h\d+_", k)}
+    check("dmig: a pre-13 vault's hypothesis files are byte-identical after the 4.0 migration",
+          hyp(before) and hyp(before) == hyp(after))
+    ideas = lambda d: {k: x for k, x in d.items() if k.startswith("h")}
+    check("dmig: no recorded verdict or status moved",
+          ideas(vbefore) == ideas(vafter) and ideas(sbefore) == ideas(safter))
     rep = E.validation_report(dst)
     check("dmig: a pre-13 vault reports no new problems and no new warnings",
-          rep["problems"] == [] and rep["warnings"] == [] and rep["ok"] is True)
+          {(p["id"], p["message"]) for p in rep["problems"]}
+          <= {(p["id"], p["message"]) for p in rep_before["problems"]}
+          and rep["warnings"] == [])
     check("dmig: no command retro-writes a methodology slot",
           all(x["fm"].get("measurement") in (None, "") for x in E.Vault(dst).nodes.values()))
     check("dmig: drift re-stamps to the current ENGINE_VERSION",
-          E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+          str(E.Vault(dst).cfg.get("engine_version")) == E.ENGINE_VERSION)
     shutil.rmtree(dst, ignore_errors=True)
 
 
 def run_design_agent():
-    """Spec 13 PRD 13.3 — `crux-design`, and the three-disease taxonomy into the skill.
+    """Spec 19 decision 9 — `crux-prerun`, which merges crux-design, crux-null and
+    crux-verifiables into one pre-run draft.
 
-    Spec 15 supplies the schema that makes a partial answer DETECTABLE after the run. Nothing
-    applied it BEFORE. This agent does, around one question — *is there any plausible outcome
-    of this run from which we would conclude nothing?*
-
-    It checks all three causes, because a partial answer does not announce which one it has,
-    and it FIXES only the third: (a) a compound claim is `crux-critic`'s, (b) a non-entailed
-    check is `crux-verifiables`'. Absorbing either would violate 09's one-job rule and rebuild
-    the bias problem those agents exist to solve.
-
-    Doc-only: no engine change, no version bump."""
-    print("\n# design — the crux-design agent and the taxonomy (spec 13, PRD 13.3)")
+    Spec 13's crux-design asked one question before the compute is spent: is there any
+    plausible outcome of this run from which we would conclude nothing? Spec 19 keeps that
+    question and folds the null and the checks into the same draft, because the 4.0 model has
+    no PI approval step between them. What it keeps from 09 is the isolation: the agent that
+    sets a threshold must not have read the argument for the claim. The name is kept for the
+    evolve-crux assert count; the subject is the merged agent."""
+    print("\n# pre-run — the crux-prerun agent (spec 19, decision 9)")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-    fm, body = E.parse_doc(read(os.path.join(repo, "agents", "crux-design", "AGENT.md")))
+    path = os.path.join(repo, "agents", "crux-prerun", "AGENT.md")
+    fm, body = E.parse_doc(read(path)) if os.path.isfile(path) else ({}, "")
     import evals as V
-    P = V.roster_properties(V.load_definitions(["crux-design"], repo))
-    for slug in ("design-isolated", "design-excludes", "design-readonly", "design-taskhub",
-                 "design-question", "design-taxonomy", "design-handoff", "design-proposal"):
+    P = V.roster_properties(V.load_definitions(["crux-prerun"], repo))
+    for slug in ("prerun-isolated", "prerun-drafts", "prerun-proposal", "trigger:crux-prerun"):
         check(*P[slug])
-    check("agents: crux-design fills the slots spec 13 gave the engine",
-          E.MEASUREMENT_FIELD in body and E.REPLICATES_FIELD in body)
-
-    # ---- the taxonomy, into the skill (the rulebook sentence shipped with spec 15's 15.5)
-    skill = read(os.path.join(HERE, "..", "SKILL.md"))
-    check("skill: the three-disease taxonomy is in SKILL.md, with its owners",
-          all(x in skill for x in ("compound claim", "crux-critic", "crux-verifiables",
-                                   "crux-design"))
-          and "could not discriminate" in skill)
-    check("skill: the taxonomy states the question that makes it operational",
-          "conclude nothing" in skill)
-    check("skill: the separability rulebook sentence spec 15 froze is still there",
-          "anything less means you ran one experiment with many labels, not many"
-          in re.sub(r"\s+", " ", skill.replace("**", "")).lower())
-    check("skill: SKILL.md tells the PI where a declared design lives",
-          "measurement:" in skill and "replicates:" in skill)
-
-    # ---- the spec, flipped, with the roster amendment recorded where a reader will find it
-    spec13 = read(os.path.join(repo, ".spec", "13-situate-and-design.md"))
-    check("agents: spec 13 is flipped to done", "**Status:** ☑" in spec13)
-    check("agents: spec 13's work items are ticked", spec13.count("- ☑ ") >= 7)
-    check("agents: spec 13 records the roster amendment it owes spec 09",
-          "09-specialized-agents.md" in spec13 and "roster" in spec13.lower()
-          and "crux-design" in spec13)
-    check("agents: spec 13 records what it PARKED rather than quietly dropping it",
-          "PARKED" in spec13 and "separability" in spec13.lower())
-    spec09 = read(os.path.join(repo, ".spec", "09-specialized-agents.md"))
-    check("agents: spec 09's roster carries both of spec 13's agents",
-          "crux-situate" in spec09 and "crux-design" in spec09)
-    readme = read(os.path.join(repo, ".spec", "README.md"))
-    check("agents: the backlog index shows 13 done",
-          re.search(r"\|\s*13\s*\|[^|]*\|[^|]*\|\s*☑\s*\|", readme) is not None)
-
-
-def _probe_vault():
-    """A throwaway vault whose hypothesis has a sentinel problem statement, for the
-    cross-check that the brief's behaviour matches what the roster declares."""
-    root = tempfile.mkdtemp(prefix="crux_probe_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Probe", root)
-    q, _ = E.cmd_ask(root, "q")
-    h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY", verifiables=["a"])
-    return root, h
+    low = body.lower()
+    check("prerun: it drafts all three — the expectation, the null, and the checks",
+          all(x in low for x in ("## expect", "## null", "## verifiables")))
+    check("prerun: it names the outcome that would change the confidence, and says a run "
+          "with no such outcome is not worth the compute",
+          "change the confidence" in low and "conclude nothing" in low)
+    check("prerun: the null it drafts uses the engine's closed confound vocabulary",
+          all(f in body for f in E.CONFOUND_FAMILIES))
+    check("prerun: the null cap is stated as the engine applies it — supports only",
+          "not ruled out" in low and "weak" in low and "supports" in low)
+    root = tempfile.mkdtemp(prefix="crux_prerun_")
+    try:
+        shutil.rmtree(root); os.makedirs(root)
+        E.cmd_init("Prerun", root)
+        q, _ = E.cmd_ask(root, "q")
+        h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY",
+                                    expect="accuracy rises by at least 2 points")
+        h2, _, _ = E.cmd_hypothesize(root, "bare claim", parent=q, problem="ADVOCACY",
+                                     require_expect=False)
+        b, b2 = E.brief(root, h), E.brief(root, h2)
+        check("prerun: the isolated brief carries the stated expectation (setup, not argument), "
+              "None when there is none, and still no argument",
+              b["expect"] == "accuracy rises by at least 2 points" and b2["expect"] is None
+              and "ADVOCACY" not in json.dumps(b) + json.dumps(b2))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    check("prerun: it reads a stated expectation and drafts one only when there is none",
+          "draft one only if there is none" in low)
+    check("prerun: it is isolated from why anyone believes the claim, not from what the "
+          "experiment is",
+          "never from what the experiment is" in low
+          and "run conditions" in str(fm.get("excludes") or ""))
+    check("prerun: it emits the crux hypothesize line that registers the draft, and runs nothing",
+          "crux hypothesize" in body and "--expect" in body and "--null" in body
+          and not any(w in str(fm.get("toolbelt") or "") for w in V.WRITE_VERBS))
+    check("prerun: the engine refuses a malformed null it might draft",
+          E.null_problem("capacity — the bigger arm has more parameters", 3) is None
+          and E.null_problem("it might not work for many reasons", 3) is not None)
 
 
 def run_glossary():
@@ -6647,7 +6730,8 @@ def run_glossary_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Format", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     gp = os.path.join(root, E.GLOSSARY_FILE)
     os.remove(gp)
     edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}",
@@ -6659,7 +6743,8 @@ def run_glossary_migration():
     check("gmig: parse_glossary tolerates the absent file",
           E.load_glossary(root) == {"terms": [], "declined": []})
     check("gmig: status still renders the tree", "an old question" in E.status_text(root))
-    check("gmig: review still runs", isinstance(E.cmd_review(root), list))
+    check("gmig: the derived state still reads (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
     check("gmig: snapshot still serializes", isinstance(E.snapshot(root), dict))
     E.refresh(root)
     check("gmig: no read path creates glossary.md", not os.path.exists(gp))
@@ -6669,19 +6754,27 @@ def run_glossary_migration():
           str(E.Vault(root).cfg.get("engine_version")) == E.ENGINE_VERSION)
     shutil.rmtree(root, ignore_errors=True)
 
-    # -- the shipped fixture, byte-compared. The strongest form of "old vaults still load":
-    #    every read path runs and NOTHING on disk moves except the version stamp.
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    # -- a pre-14 3.x vault, byte-compared. The strongest form of "old vaults still load":
+    #    every READ path runs and nothing on disk moves; then the first write-capable load
+    #    migrates it to 4.0 and still creates no glossary.md behind the PI's back.
+    import selftest_migrate as SM
     dst = tempfile.mkdtemp(prefix="crux_gdemo_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    SM.build_legacy_vault(dst, stamp="2.7")
+    os.remove(os.path.join(dst, E.GLOSSARY_FILE))
     before = _tree_hashes(dst)
-    E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst); E.snapshot(dst)
-    E.refresh(dst); E.check_and_stamp_version(dst)
+    E.cmd_validate(dst); E.status_text(dst); E.snapshot(dst)
+    check("gmig: a 2.7 vault — no read path moves a byte", _tree_hashes(dst) == before)
+    warn = E.check_and_stamp_version(dst)
     after = _tree_hashes(dst)
-    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
-    check(f"gmig: demo_vault byte-compare — only .crux.yaml moves (moved: {moved})",
-          moved in ([], [".crux.yaml"]))
-    check("gmig: demo_vault gained no glossary.md",
+    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)
+                   and not k.startswith(".crux/"))
+    check("gmig: the first write-capable load migrates a 2.7 vault to 4.0",
+          warn is not None and "migrated" in warn and "2.7" in warn)
+    check(f"gmig: the migration moves only findings, syntheses, questions, views and the "
+          f"stamp (moved: {[m for m in moved if not m.startswith(('f', 's', 'q'))]})",
+          all(m.startswith(("f", "s", "q")) or m in E.GENERATED + (E.VAULT_MARKER,)
+              for m in moved))
+    check("gmig: the migrated vault gained no glossary.md",
           not os.path.exists(os.path.join(dst, E.GLOSSARY_FILE)))
     shutil.rmtree(dst, ignore_errors=True)
 
@@ -6750,8 +6843,8 @@ def run_glossary_counting():
     E.cmd_init("Counting", root)
     q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
     h1, _, _ = E.cmd_hypothesize(root, "the detection floor is reachable", parent=q1,
-                                 problem="the detection floor again", verifiables=["x"])
-    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"])
+                                 problem="the detection floor again", verifiables=["x"], expect="the claim holds")
+    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"], expect="the claim holds")
     v = E.Vault(root)
     c = E.count_term(v, "detection floor")
     check("gcount: counts across two nodes", len(c["documents"]) == 2)
@@ -6833,17 +6926,23 @@ def run_glossary_oracle():
         case+plural guess. They are why the rule is what it is.
     Moved 2026-10-29, the CORPUS and not the rule: segssl_vault now says "pre-registered
     threshold" where it said "pre-registered bar" (the correct-terms rule), and the row
-    follows the words with the same 9/9/0."""
+    follows the words with the same 9/9/0.
+    Moved 2026-10-31, the CORPUS and not the rule: the 4.0 migration (spec 19) regenerated the
+    example vaults. Every closed hypothesis gained a Finding and every synthesis became a
+    Finding on its question, so the corpus grew (demo 8 -> 10, scaling 37 -> 42, segssl
+    43 -> 57). 'data floor' moved 1/2/1 -> 1/3/1: the s2 synthesis' title now also opens
+    the Answer of the Finding that replaced it. The row still separates the document gate
+    from the occurrence gate (1 document, more than 1 occurrence). No other row moved."""
     print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
     ex = os.path.join(HERE, "..", "examples")
     ORACLE = {
         "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
                          ("label efficiency", 17, 26, 0), ("pre-registered threshold", 9, 9, 0),
                          ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
-        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
+        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 3, 1)],
         "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
     }
-    SIZES = {"demo_vault": 8, "scaling_vault": 37, "segssl_vault": 43}
+    SIZES = {"demo_vault": 10, "scaling_vault": 42, "segssl_vault": 57}
     for vd, rows in sorted(ORACLE.items()):
         v = E.Vault(os.path.join(ex, vd))
         size = len(v.nodes) + len(E.scan_wiki_pages(v.root))
@@ -6869,28 +6968,44 @@ def run_sortlab_fixture():
     lesson from spec 08).
 
     SortLab is the worked example a newcomer reads before they touch a vault of their own:
-    150 nodes, 200 tasks, 60 wiki pages, and exactly two drifted locks that are the point
-    rather than a defect. Three things are asserted, and each one is a way the fixture could
-    go quietly wrong:
+    144 tree nodes, 154 findings migrated from engine 3.5 (spec 19), 200 tasks, 60 wiki pages, and
+    exactly two drifted locks that are the point rather than a defect. Everything runs on a
+    TEMP COPY: a suite that rewrites the committed example dirties every contributor's tree.
+    Three things are asserted, and each one is a way the fixture could go quietly wrong:
 
-      - the SHAPE: if a later engine change renumbers, drops or duplicates a node, a task or
-        a wiki page, the counts move and this fails before anyone reads a wrong example.
+      - the SHAPE: if a later engine change renumbers, drops or duplicates a node, a finding,
+        a task or a wiki page, the counts move and this fails before anyone reads a wrong
+        example.
       - the LINT: exactly two problems, both DRIFT, on h9 and h65, and ZERO warnings. Naming
-        the two ids is what makes a third problem visible instantly; a bare "2 problems"
-        would let one drift heal and another appear without a sound.
-      - the IDEMPOTENCE: `refresh()` on the committed bytes must write nothing. A fixture
-        that reformats itself on every command produces a dirty tree for every contributor
-        and trains everyone to ignore the diff."""
+        the two ids is what makes a third problem visible instantly.
+      - the IDEMPOTENCE: `refresh()` and a write-capable load on the committed bytes must
+        write nothing. A fixture that reformats itself on every command produces a dirty
+        tree for every contributor and trains everyone to ignore the diff."""
     print("\n# sortlab_vault — the worked example, pinned")
-    root = os.path.join(HERE, "..", "examples", "sortlab_vault")
-    check("sortlab: the vault is committed", os.path.isfile(os.path.join(root, ".crux.yaml")))
+    src = os.path.join(HERE, "..", "examples", "sortlab_vault")
+    check("sortlab: the vault is committed", os.path.isfile(os.path.join(src, ".crux.yaml")))
+    committed = _tree_bytes(src)
+    root = tempfile.mkdtemp(prefix="crux_sortlab_")
+    shutil.rmtree(root); shutil.copytree(src, root)
     v = E.Vault(root)
+    check("sortlab: the committed vault is stamped with the running engine",
+          str(v.cfg.get("engine_version")) == E.ENGINE_VERSION)
     kinds = collections.Counter(n.type for n in v.nodes.values())
-    check(f"sortlab: 150 nodes (got {len(v.nodes)})", len(v.nodes) == 150)
-    check(f"sortlab: 1 project / 35 questions / 108 hypotheses / 6 syntheses (got "
-          f"{kinds['project']}/{kinds['question']}/{kinds['idea']}/{kinds['synthesis']})",
-          (kinds["project"], kinds["question"], kinds["idea"], kinds["synthesis"])
-          == (1, 35, 108, 6))
+    check(f"sortlab: 298 records (got {len(v.nodes)})", len(v.nodes) == 298)
+    check(f"sortlab: 1 project / 35 questions / 108 hypotheses / 154 findings / 0 syntheses "
+          f"(got {kinds['project']}/{kinds['question']}/{kinds['idea']}/{kinds['finding']}/"
+          f"{kinds['synthesis']})",
+          (kinds["project"], kinds["question"], kinds["idea"], kinds["finding"],
+           kinds["synthesis"]) == (1, 35, 108, 154, 0))
+    grid = collections.Counter((n["fm"].get("direction") or "-", n["fm"].get("confidence"))
+                               for n in v.nodes.values() if n.type == "finding")
+    want = {("supports", "strong"): 32, ("supports", "moderate"): 35,
+            ("against", "strong"): 15, ("against", "moderate"): 24,
+            ("mixed", "moderate"): 12, ("mixed", "weak"): 19,
+            ("no-answer-yet", "moderate"): 3, ("no-answer-yet", "weak"): 4,
+            ("-", "strong"): 10}
+    check(f"sortlab: findings by direction x confidence are pinned (got {dict(grid)})",
+          dict(grid) == want)
     tasks = E.scan_tasks(root)
     check(f"sortlab: 200 tasks (got {len(tasks)})", len(tasks) == 200)
     pages = E.scan_wiki_pages(root)
@@ -6912,6 +7027,10 @@ def run_sortlab_fixture():
     before = _tree_bytes(root)
     E.refresh(root)
     check("sortlab: refresh() is a no-op on the committed bytes", _tree_bytes(root) == before)
+    check("sortlab: a write-capable load finds nothing left to migrate",
+          E.check_and_stamp_version(root) is None and _tree_bytes(root) == before)
+    check("sortlab: the suite never writes the committed example", _tree_bytes(src) == committed)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _tree_bytes(root):
@@ -6944,8 +7063,8 @@ def run_glossary_filter():
     E.cmd_init("Filter", root)
     q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
     h1, _, _ = E.cmd_hypothesize(root, "a claim", parent=q1,
-                                 problem="only here: capacity certificate", verifiables=["x"])
-    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"])
+                                 problem="only here: capacity certificate", verifiables=["x"], expect="the claim holds")
+    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"], expect="the claim holds")
 
     def survivors(*terms, **kw):
         rep = E.validation_report(root, ["glossary"], propose=list(terms), **kw)
@@ -6993,7 +7112,7 @@ def run_glossary_filter():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Filter Wiki", root)
     q1, _ = E.cmd_ask(root, "q", body_text="data pruning matters")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"], expect="the claim holds")
     E.ensure_wiki(root)
     with open(os.path.join(root, "wiki", "data-pruning.md"), "w", encoding="utf-8") as f:
         f.write("---\ntype: wiki\ntitle: Data pruning\nsummary: s\n---\n\n# Data pruning\n\nbody\n")
@@ -7023,7 +7142,7 @@ def run_glossary_filter():
     check("gfilter: a term in two wiki pages survives", "ridge estimator" in surv2("ridge estimator"))
     with open(os.path.join(root, "wiki", "gap-four.md"), "w", encoding="utf-8") as f:
         f.write("---\ntype: wiki\ntitle: Mixed\nsummary: s\n---\n\n# Mixed\n\nA kernel trick page.\n")
-    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"])
+    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"], expect="the claim holds")
     mixed = E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"]
     check("gfilter: a term in one node and one wiki page survives (the 'or' is inclusive)",
           len(mixed) == 1 and len(mixed[0]["documents"]) == 2
@@ -7078,7 +7197,7 @@ def run_glossary_filter():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Filter CLI", root)
     q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is used")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"], expect="the claim holds")
     def cli(*args):
         return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
                               capture_output=True, text=True, encoding="utf-8", cwd=root)
@@ -7100,7 +7219,7 @@ def run_glossary_filter():
     # already uses. Two terms in, two candidates out.
     E.cmd_ask(root, "second", body_text="the ridge estimator lives here")
     E.cmd_hypothesize(root, "third", parent=q1, problem="the ridge estimator again",
-                      verifiables=["x"])
+                      verifiables=["x"], expect="the claim holds")
     r = cli("validate", "--check=glossary", "--propose", "kernel trick",
             "--propose", "ridge estimator", "--json")
     got = {c["term"] for c in json.loads(r.stdout)["candidates"]}
@@ -7203,7 +7322,7 @@ def run_glossary_write():
 
     # the round trip: an accepted term stops being a candidate; a declined one stays gone
     q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is here")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"], expect="the claim holds")
     def surv(*t):
         return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
     check("gwrite: an accepted term is dropped by the filter afterwards", surv("kernel trick") == set())
@@ -7246,14 +7365,16 @@ def run_glossary_write():
     ghash = hashlib.sha256(read(gp).encode()).hexdigest()
     q2, _ = E.cmd_ask(root, "another question")
     h9, _, _ = E.cmd_hypothesize(root, "another idea", parent=q2, verifiables=["z"],
-                                 neutral=["the control reproduces the known value"])
+                                 neutral=["the control reproduces the known value"], expect="the claim holds")
     declare_null(root, h9)
     E.cmd_test(root, h9, to="running")
     edit(node_path(root, h9), "- [ ] z", "- [x] z")
     edit(node_path(root, h9), "- [ ] [outcome-neutral] the control reproduces the known value",
                               "- [x] [outcome-neutral] the control reproduces the known value")
-    E.cmd_close(root, h9)
-    E.cmd_review(root); E.cmd_validate(root); E.snapshot(root); E.refresh(root)
+    E.cmd_finding(root, h9, "strong", why="z held with the control reproduced",
+                  direction="supports")
+    E.cmd_park(root, h9); E.cmd_park(root, h9, undo=True)
+    E.cmd_validate(root); E.snapshot(root); E.refresh(root)
     E.status_text(root)
     check("gwrite: no other verb writes glossary.md",
           hashlib.sha256(read(gp).encode()).hexdigest() == ghash)
@@ -7345,29 +7466,32 @@ def _tree_hashes(root):
 
 def run_agent_evals():
     """Spec 10 PRD 10.0 — the fixture contract, and the certifier that keeps it honest.
+    Re-pointed by spec 19: the reference fixture is capture-01, since audit-01's agent and its
+    `--check=gate` are gone.
 
-    Ten agent definitions ship. `run_agent_roster` checks they are well-formed and leashed;
-    nothing checked that any of them DOES ITS JOB, which is spec 10's opening line — *"the
-    agent roster is unfalsifiable and drifts silently."*
-
-    Measuring one needs ground truth, and spec 10 is uncompromising about where it may come
-    from: *"the planted defects must be authored independently of the agent that finds them."*
-    Easy to write, easy to break by accident — a hand-authored fixture drifts the moment
-    someone edits the vault and forgets the manifest, and then the eval grades against a
-    ground truth that describes a vault which no longer exists.
-
-    So the ENGINE certifies the fixture: `validation_report` on the fixture vault must emit
-    exactly the planted id set. The manifest is written by a human; a program with no
-    knowledge of any agent says whether it is true.
-
-    No engine change, no version bump — a new sibling module and a tree of fixture data."""
-    print("\n# agent evals — the fixture contract (spec 10, PRD 10.0)")
+    Spec 10 is uncompromising about where ground truth may come from: *"the planted defects
+    must be authored independently of the agent that finds them."* A hand-authored fixture
+    drifts the moment someone edits the vault and forgets the manifest. So the ENGINE
+    certifies it: `capture_keys` over the record before and after a reference capture must
+    give exactly the planted id set. A human writes the manifest; a program with no knowledge
+    of any agent says whether it is true."""
+    print("\n# agent evals — the fixture contract (spec 10, PRD 10.0; capture-01, spec 19)")
     import evals as V
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    F = os.path.join(V.FIXTURES, "capture-01")
 
     names = V.fixture_names()
-    check(f"evals: the audit-01 fixture exists and its vault loads (found: {names})",
-          "audit-01" in names and len(E.Vault(os.path.join(V.FIXTURES, "audit-01", "vault")).nodes) > 3)
+    check(f"evals: the capture-01 fixture exists, with a transcript, a starting record and a "
+          f"reference capture (found: {names})",
+          "capture-01" in names and os.path.isfile(os.path.join(F, "transcript.txt"))
+          and len(E.Vault(os.path.join(F, "vault")).nodes) >= 3
+          and len(E.Vault(os.path.join(F, "reference")).nodes)
+              > len(E.Vault(os.path.join(F, "vault")).nodes))
+    retired = sorted(n for n in names if V.load_manifest(n)["agent"] in V.REMOVED_AGENTS)
+    check(f"evals: no fixture grades an agent spec 19 removed (found: {retired})",
+          not retired and not any(n in names for n in (
+              "audit-01", "close-01", "critic-01", "design-01", "glossary-01", "null-01",
+              "verifiables-01")))
 
     # -- the contract: seven fields, every one of them load-bearing somewhere below
     bad = []
@@ -7380,151 +7504,156 @@ def run_agent_evals():
             bad.append(f"{n}: missing a contract field")
     check(f"evals: a manifest declares the seven contract fields (bad: {bad[:2]})", not bad)
 
-    # a fixture's `agent` resolves to a real definition — one of the isolated ten under
-    # `agents/`, or (spec 16's persona eval) the orchestrating skill whose voice rules are
-    # what it measures. Either way the score is pinned to a prompt that exists.
-    ghosts = [n for n in names
-              if not (os.path.isfile(os.path.join(repo, "agents",
-                                                  V.load_manifest(n)["agent"], "AGENT.md"))
-                      or os.path.isfile(os.path.join(repo, "skills",
-                                                     V.load_manifest(n)["agent"], "SKILL.md")))]
+    # a fixture's `agent` resolves to a real definition — a roster agent, crux-tests under
+    # evolve-crux, or (spec 16's persona eval) the orchestrating skill.
+    ghosts = [n for n in names if V.definition_path(V.load_manifest(n)["agent"], repo) is None]
     check(f"evals: every fixture names a real definition (ghosts: {ghosts})", not ghosts)
 
-    # -- the checks list is the MANIFEST's, never a default. `gate` is opt-in: a certifier
-    #    running the defaults decides audit-01 has no gate backlog, and then scores a CORRECT
-    #    finding on q2 as an invention — precision 0.0 for the right answer.
-    m = V.load_manifest("audit-01")
-    check("evals: certification runs the manifest's declared checks, not the defaults",
-          "gate" in m["checks"] and "gate" not in E.CHECKS and "gate" in E.OPT_CHECKS
-          and "q2" in V.emitted_ids(m)
-          and "q2" not in {e["id"] for t in ("problems", "warnings")
-                           for e in E.validation_report(V.vault_of(m))[t]})
+    m = V.load_manifest("capture-01")
+    r = V.certify("capture-01")
+    check(f"evals: capture-01 certifies — the engine reads exactly what was planted "
+          f"(missing {r['missing']}, extra {r['extra']}, cross {r['cross_failed']})", r["ok"])
+    check("evals: capture-01 plants at least one question, one hypothesis with an "
+          "expectation, and one finding with evidence",
+          {"open:question", "open:hypothesis+expect", "finding:evidence"} <= m["planted_ids"])
+    ref = E.Vault(os.path.join(F, "reference"))
+    hyps = [n for i, n in ref.nodes.items() if n.type == "idea"
+            and i not in E.Vault(os.path.join(F, "vault")).nodes]
+    check("evals: ... and the engine agrees: the reference's new hypothesis states its "
+          "expectation and its finding resolves",
+          hyps and all(E.expect_text(h) for h in hyps)
+          and all(E._evidence_problem(os.path.join(F, "reference"), x) is None
+                  for f in ref.nodes.values() if f.type == "finding"
+                  for x in E.finding_evidence(f)))
 
-    r = V.certify("audit-01")
-    check(f"evals: audit-01 certifies — the engine finds exactly what was planted "
-          f"(missing {r['missing']}, extra {r['extra']})", r["ok"])
-
-    # -- the two ways a fixture rots, each proven on a COPY (the shipped tree is never touched)
+    # -- the ways a fixture rots, each proven on a COPY (the shipped tree is never touched)
     tmp = tempfile.mkdtemp(prefix="crux_evalfix_")
     try:
-        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
-        vault = os.path.join(tmp, "audit-01", "vault")
-        h2 = [p for p in os.listdir(vault) if p.startswith("h2_")][0]
-        edit(os.path.join(vault, h2), "- [Report](results/h2/report.md)", "")
-        c = V.certify("audit-01", root=tmp)
-        check(f"evals: a fixture that drifts from its manifest fails certification "
-              f"(missing {c['missing']})", not c["ok"] and c["missing"] == ["h2"])
+        def fresh():
+            shutil.rmtree(os.path.join(tmp, "capture-01"), ignore_errors=True)
+            shutil.copytree(F, os.path.join(tmp, "capture-01"))
+            return os.path.join(tmp, "capture-01", "reference")
+        refc = fresh()
+        os.unlink(os.path.join(refc, "results", "light-trial", "heights.csv"))
+        c = V.certify("capture-01", root=tmp)
+        check(f"evals: a reference that drifts from its manifest fails certification "
+              f"(missing {c['missing']})",
+              not c["ok"] and "finding:evidence" in c["missing"])
 
-        shutil.rmtree(os.path.join(tmp, "audit-01"))
-        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
-        vault = os.path.join(tmp, "audit-01", "vault")
-        h1 = [p for p in os.listdir(vault) if p.startswith("h1_")][0]
-        edit(os.path.join(vault, h1), "## Idea / Hypothesis",
-             "## Idea / Hypothesis\n\n" + ("an unplanted flood of prose. " * 220))
-        c = V.certify("audit-01", root=tmp)
-        check(f"evals: an unplanted defect fails certification as extra (extra {c['extra']})",
-              not c["ok"] and c["extra"] == ["h1"])
+        refc = fresh()
+        E.cmd_ask(refc, "Does the watering schedule affect how tall seedlings get?",
+                  parent="root")
+        c = V.certify("capture-01", root=tmp)
+        check(f"evals: an unplanted duplicate fails certification as extra (extra {c['extra']})",
+              not c["ok"] and c["extra"] == ["duplicate:q1"])
+
+        refc = fresh()
+        E.cmd_hypothesize(refc, "Fix the timer on the lamp", parent="q2",
+                          expect="the timer switches on time")
+        c = V.certify("capture-01", root=tmp)
+        check(f"evals: a node opened for work fails certification as extra (extra {c['extra']})",
+              not c["ok"] and c["extra"] == ["work-in-tree"])
+
+        fresh()
+        edit(os.path.join(tmp, "capture-01", "transcript.txt"), "results/light-trial/heights.csv",
+             "the spreadsheet")
+        c = V.certify("capture-01", root=tmp)
+        check("evals: a transcript that no longer names the evidence fails certification",
+              not c["ok"] and c["cross_failed"])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # -- one defect per id is what buys exact scoring with no engine change; load_manifest
-    #    refuses a duplicate, so this is a property of every fixture that parses at all
+    # -- one row per id is what buys exact scoring; load_manifest refuses a duplicate
     dupes = []
     for n in names:
         ids = [p["id"] for p in V.load_manifest(n)["planted"]]
         dupes += [f"{n}:{i}" for i in set(ids) if ids.count(i) > 1]
-    check(f"evals: at most one planted defect per emitted id (dupes: {dupes})", not dupes)
+    check(f"evals: at most one planted row per id (dupes: {dupes})", not dupes)
 
     before = _tree_hashes(V.FIXTURES)
-    V.certify_all()
+    for n in names:
+        try:
+            V.certify(n)
+        except Exception:
+            pass
     check("evals: certification is read-only", _tree_hashes(V.FIXTURES) == before)
 
-    # -- spec 10 names five defect families for crux-audit; all five are here, and the
-    #    ambiguous one is resolved in the fixture rather than in the reader's head (M4)
-    classes = " ".join(p["class"] for p in m["planted"])
-    check(f"evals: audit-01 plants every defect family the spec names ({classes})",
-          all(c in classes for c in ("economy:over-cap", "task:dangling-ref",
-                                     "artifact:missing", "gate:backlog", "tree:parent-cycle"))
-          and "parent cycle" in V.load_manifest("audit-01")["body"].lower())
-
-    # -- THE GATE-4 ARGUMENT, asserted rather than asserted-in-prose. Spec 10 alters no vault
-    #    format, no verdict/roll-up logic and no view, so the stamp does not move. Precedents:
-    #    09.4 and 13.3, both doc-only, both explicitly no-bump.
-    #
-    #    Written as `>= 3.1` rather than `== 3.1`: the claim is "spec 10 did not move the
-    #    stamp", and a literal equality restates it as "the stamp has never moved since",
-    #    which is a different claim that a LATER spec falsifies. Spec 16 falsified it — see
-    #    `at_least_version`'s own docstring, which predicted this exact failure.
     check(f"evals: the fixture contract did not bump the engine (spec 10 landed at 3.1; "
           f"now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
-    # -- gate 3 of the evolve-crux gate walks examples/ and asks "did anything break". These
-    #    vaults are validate-RED BY CONSTRUCTION, so putting them there would make the one
-    #    gate whose job is 'nothing broke' unreadable.
+    # -- gate 3 of the evolve-crux gate walks examples/ and asks "did anything break". The
+    #    fixtures are kept outside it, so a planted trap never reads as a broken example.
     ex = os.path.join(HERE, "..", "examples")
     check("evals: the fixture tree is outside the example-vault gate",
-          not os.path.isdir(os.path.join(ex, "audit-01"))
+          not os.path.isdir(os.path.join(ex, "capture-01"))
           and os.path.abspath(V.FIXTURES) != os.path.abspath(ex)
           and "evals/fixtures" in read(os.path.join(ex, "README.md")))
 
 
 def run_eval_scorer():
     """Spec 10 PRD 10.1 — precision and recall, banded over K runs, with no model call.
-
-    Spec 10 is blunt about the pair: *"'Did it find things' is not a result"*, and in its
-    rejected alternatives, *"Recall-only scoring. An agent optimizing recall alone learns to
-    report everything."* So both are computed or neither is.
+    Re-pointed by spec 19 to capture-01's submissions.
 
     THE STRUCTURAL DECISION: the scorer reads a SUBMITTED findings file and never invokes an
     agent. A program that launches an agent K times, decides when to stop and caps what it
-    spends is spec 05's three unbuilt work items pointed at a fixture — and `.spec/README.md`
-    says do not implement 05. The loop is the risk, not the target. That is not a promise
-    here; it is the assert below that reads evals.py's own source."""
+    spends is spec 05's unbuilt work pointed at a fixture. That is not a promise here; it is
+    the assert below that reads evals.py's own source."""
     print("\n# agent evals — the scorer (spec 10, PRD 10.1)")
     import evals as V
-    SUB = os.path.join(V.FIXTURES, "audit-01", "submissions")
-    m = V.load_manifest("audit-01")
+    SUB = os.path.join(V.FIXTURES, "capture-01", "submissions")
+    m = V.load_manifest("capture-01")
 
     def sc(name, mf=m):
         return V.score(mf, V.load_submission(os.path.join(SUB, name)))
 
     s = sc("perfect.json")
-    check("evals: a perfect submission scores 1.0 / 1.0",
-          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0)
+    check("evals: a perfect submission scores 1.0 / 1.0, and its hard checks pass",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0
+          and s["hard"] and all(ok for _n, ok, _w in s["hard"]))
 
     s = sc("noisy.json")
-    check(f"evals: invented findings cost precision, not recall "
+    check(f"evals: invented records cost precision, not recall "
           f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
           s["recall"]["min"] == 1.0 and s["precision"]["min"] < 1.0
-          and s["runs"][0]["fp"] == ["h1", "q1", "wiki:linear-probes"])
+          and s["runs"][0]["fp"] == ["duplicate:q1", "work-in-tree"])
 
     s = sc("partial.json")
-    check(f"evals: missed defects cost recall, not precision "
+    check(f"evals: missed records cost recall, not precision "
           f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
           s["recall"]["min"] < 1.0 and s["precision"]["min"] == 1.0
-          and s["runs"][0]["fn"] == ["q4", "wiki:detection-floor"])
+          and s["runs"][0]["fn"] == ["finding:null-open", "parked:h1"])
 
-    # the vacuous-truth trap: |tp|/|reported| is 0/0 for an empty report. Reading that as 1.0
-    # hands a perfect precision to an agent that did nothing.
+    # the vacuous-truth trap: |tp|/|reported| is 0/0 for an empty report
     s = sc("silent.json")
     check("evals: reporting nothing scores zero precision",
           s["precision"]["min"] == 0.0 and s["recall"]["min"] == 0.0)
+
+    # the two rules capture rests on are one bit each, beside the band
+    s = sc("asks-pi.json")
+    check("evals: a capture that asked the PI fails, whatever its recall and precision",
+          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0
+          and s["verdict"] == V.FAIL
+          and [n for n, ok, _w in s["hard"] if not ok][0].startswith("the capture asked"))
+    s = sc("id-led.json")
+    check("evals: a capture that wrote node ids or crux words into the record fails",
+          s["recall"]["min"] == 1.0 and s["verdict"] == V.FAIL
+          and any(n.startswith("the captured prose") and not ok for n, ok, _w in s["hard"]))
 
     # -- the band is the WORST run. Proven on a COPY with a band written in, because every
     #    shipped fixture ships `band: unset` and the numbers are the PI's.
     tmp = tempfile.mkdtemp(prefix="crux_evalband_")
     try:
-        shutil.copytree(os.path.join(V.FIXTURES, "audit-01"), os.path.join(tmp, "audit-01"))
-        edit(os.path.join(tmp, "audit-01", "PLANTED.md"),
+        shutil.copytree(os.path.join(V.FIXTURES, "capture-01"), os.path.join(tmp, "capture-01"))
+        edit(os.path.join(tmp, "capture-01", "PLANTED.md"),
              "band: unset", "band: recall>=0.9, precision>=0.9")
-        banded = V.load_manifest("audit-01", root=tmp)
+        banded = V.load_manifest("capture-01", root=tmp)
         ids = sorted(banded["planted_ids"])
-        sha = V.agent_sha("crux-audit")
-        # four perfect runs and one that misses two. The MEAN clears 0.9; the WORST does not.
-        four_good_one_bad = {"fixture": "audit-01", "agent": "crux-audit", "agent_sha": sha,
-                             "runs": [{"findings": ids}] * 4 + [{"findings": ids[:5]}]}
-        s = V.score(banded, four_good_one_bad)
-        mean_r = sum(r["recall"] for r in s["runs"]) / 5
+        sha = V.agent_sha("crux-capture")
+        # nine perfect runs and one that misses two. The MEAN clears 0.9; the WORST does not.
+        nine_good_one_bad = {"fixture": "capture-01", "agent": "crux-capture", "agent_sha": sha,
+                             "runs": [{"findings": ids}] * 9 + [{"findings": ids[:4]}]}
+        s = V.score(banded, nine_good_one_bad)
+        mean_r = sum(r["recall"] for r in s["runs"]) / len(s["runs"])
         check(f"evals: the band is the worst run, not the average "
               f"(min {s['recall']['min']:.2f} vs mean {mean_r:.2f})",
               s["verdict"] == V.FAIL and mean_r >= 0.9 and s["recall"]["min"] < 0.9)
@@ -7546,11 +7675,8 @@ def run_eval_scorer():
     check("evals: a submission is pinned to the definition that produced it",
           s["verdict"] == V.REFUSED and "different definition" in s["refusal"])
 
-    # -- THE LEASH, read off this module's own source rather than believed. P1 (the
-    #    model-invoking runner) and P3 (an agent write path) are parked, and a parked item
-    #    that is only parked in prose is a preference.
-    #    Read as an AST, not as text: the module's own prose SAYS "there is no --spawn", and a
-    #    grep over prose would flag the sentence that promises the property it is checking.
+    # -- THE LEASH, read off this module's own source rather than believed. Read as an AST,
+    #    not as text: the module's own prose SAYS "there is no --spawn".
     import ast
     tree = ast.parse(read(os.path.join(HERE, "evals.py")))
     BANNED = {"urllib", "http", "socket", "requests", "ssl", "ftplib", "telnetlib",
@@ -7567,9 +7693,8 @@ def run_eval_scorer():
     check(f"evals: the harness cannot invoke a model or reach the network (leaks: {leaks})",
           not leaks)
 
-    # -- spec 10: "Label the proxies as proxies… an eval that overstates its own rigour is the
-    #    same failure mode this whole backlog exists to fix." A label with a code path that
-    #    drops it is not a label.
+    # -- spec 10: "Label the proxies as proxies". A label with a code path that drops it is
+    #    not a label.
     proxy_m = dict(m, ground_truth="proxy")
     txt = V.format_score(V.score(proxy_m, V.load_submission(os.path.join(SUB, "perfect.json"))))
     check("evals: a proxy can never print as ground truth",
@@ -7588,37 +7713,37 @@ def run_eval_scorer():
 
     def rc(sub):
         return subprocess.run([sys.executable, os.path.join(HERE, "evals.py"),
-                               "--fixture", "audit-01", "--submission", os.path.join(SUB, sub)],
+                               "--fixture", "capture-01", "--submission", os.path.join(SUB, sub)],
                               capture_output=True, text=True, encoding="utf-8").returncode
     check("evals: the runner is exit-coded",
           rc("perfect.json") == 0 and rc("short.json") == 1 and rc("stale-sha.json") == 1)
+
+    # -- the submitter's helper: a run's entry is computed from the record, never hand-typed
+    y = subprocess.run([sys.executable, os.path.join(HERE, "evals.py"), "--fixture",
+                        "capture-01", "--yield",
+                        os.path.join(V.FIXTURES, "capture-01", "reference")],
+                       capture_output=True, text=True, encoding="utf-8")
+    got = json.loads(y.stdout) if y.returncode == 0 else {}
+    check("evals: `--yield` turns a captured record into a run entry the scorer accepts",
+          set(got.get("findings") or ()) == m["planted_ids"]
+          and got.get("prose") and E.voice_lint([("agent", t) for t in got["prose"]]) == [])
 
     check(f"evals: the scorer did not bump the engine (spec 10 landed at 3.1; now "
           f"{E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
 def run_mutation_harness():
-    """Spec 10 PRD 10.2 — prove the suite can actually detect a regression.
+    """Spec 10 PRD 10.2 — prove the suite can actually detect a regression, over spec 19's
+    roster.
 
-    Spec 10's fourth acceptance criterion is the only one a passing suite cannot fake:
-    *"A deliberately degraded agent prompt fails its eval — i.e. the suite can actually detect
-    regression."* Every other criterion is satisfiable by a suite that returns green on
-    anything. It is also the cheapest, because a degraded DEFINITION can be degraded in code:
-    zero model calls.
-
-    The need is concrete. `crux-design`'s handoff rule is guarded by
-    `"never invoke" in body.lower()`. Reword that sentence — *"you do not call `crux-critic`
-    yourself"* — and the property stops being checked while the suite stays green. A prose
-    assert with no demonstrated failure mode is a comment with a `check()` around it.
-
-    Not circular, for the same reason spec 10's own fixtures are not: the mutations are
-    hand-written, independent of the definitions, and each NAMES the property it must break
-    before it is run."""
+    A degraded DEFINITION can be degraded in code: zero model calls. Every property the
+    roster suites print is broken on purpose here, and each mutation NAMES the property it
+    must break before it is run — the mutations are hand-written and independent of the
+    definitions, which is what keeps this from being circular."""
     print("\n# agent evals — the mutation harness (spec 10, PRD 10.2)")
     import evals as V
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-    expected = ["crux-null", "crux-verifiables", "crux-critic", "crux-migrate", "crux-close",
-                "crux-audit", "crux-tests", "crux-glossary", "crux-situate", "crux-design"]
+    expected = list(V.ROSTER)
     defs = V.load_definitions(expected, repo)
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "--help"],
                        capture_output=True, text=True, encoding="utf-8")
@@ -7633,30 +7758,34 @@ def run_mutation_harness():
     absorbed = sorted(m["mutation"] for m in res if not m["broke"])
     check(f"evals: no mutation is absorbed without a failure (absorbed: {absorbed})", not absorbed)
 
-    check("evals: a toolbelt gaining a verdict verb breaks the leash check",
-          by["belt-adds-close"]["broke"] == ["leash"])
-    check("evals: giving the critic a toolbelt breaks its isolation check",
-          "critic-isolated" in by["critic-gains-belt"]["broke"])
-
-    # the two PROSE asserts, each now carrying a demonstrated failure mode (D9). A structural
-    # equivalent is preferred where one exists — the leash reads the toolbelt, not the prose —
-    # but "hand off by naming, never by invoking" has no frontmatter field, and inventing one
-    # to make it structural would be schema design driven by test convenience.
-    check("evals: the crux-close prose assert has a demonstrated failure mode",
-          by["close-drops-never-run"]["broke"] == ["close-says-so"])
-    check("evals: the crux-design handoff assert has a demonstrated failure mode",
-          by["design-drops-never-invoke"]["broke"] == ["design-handoff"])
+    check("evals: giving crux-capture a run verb breaks the leash check",
+          by["capture-starts-run"]["broke"] == ["leash"])
+    check("evals: giving crux-capture a third tool breaks its tools check",
+          by["capture-gains-tool"]["broke"] == ["capture-tools"])
+    check("evals: the never-ask-the-PI rule has a demonstrated failure mode",
+          by["capture-asks-pi"]["broke"] == ["capture-silent"])
+    check("evals: a write verb on crux-prerun breaks the writers check",
+          "writers" in by["prerun-gains-write"]["broke"])
     check("evals: pinning an engine version in a definition is still caught",
           by["pin-engine-version"]["broke"] == ["no-version-pin"])
 
-    # the shipped roster is clean, and the extraction that made this harness possible changed
-    # no assert: every name `roster_properties` returns is one the roster suites print.
+    # the shipped roster is clean, and every property is one the roster suites print
     P = V.roster_properties(defs, verbs)
     red = sorted(k for k, (_n, ok) in P.items() if not ok)
     printed = set(_PASS) | set(_FAIL)
     unprinted = sorted(n for _s, (n, _ok) in P.items() if n not in printed)
-    check(f"evals: the shipped roster is clean and the extraction preserved every assert "
+    check(f"evals: the shipped roster is clean and every property is printed "
           f"(red: {red}, unprinted: {unprinted})", not red and not unprinted)
+
+    targeted = {t for _a, t in V.MUTATIONS.values()}
+    shared = {"belt-verbs", "leash", "writers", "no-version-pin"}
+    untested = sorted(k for k in P if k not in targeted
+                      and not k.split(":")[0] in ("fields", "dirname", "workflow", "trigger")
+                      and k not in shared
+                      and k not in ("capture-belt", "prerun-proposal", "situate-ephemeral",
+                                    "situate-lints", "situate-shape"))
+    check(f"evals: every agent-specific rule spec 19 added has a mutation (untested: {untested})",
+          not untested)
 
     before = _tree_hashes(os.path.join(repo, "agents"))
     V.mutation_results(defs, verbs)
@@ -7671,18 +7800,12 @@ def run_mutation_harness():
 
 
 def run_ground_truth_fixtures():
-    """Spec 10 PRD 10.3 — the three fixtures whose answer the engine already holds.
+    """Spec 10 PRD 10.3 — the fixtures whose answer the engine already holds. Spec 19 retired
+    close-01 with crux-close, retargeted null-01 to crux-prerun as prerun-01, and added
+    capture-01.
 
-    Spec 10 divides its fixtures into genuine ground truth and proxies, and is blunt about why:
-    *"an eval that overstates its own rigour is the same failure mode this whole backlog exists
-    to fix."* Two things moved since it was written. `crux-tests` LOSES its ground truth — its
-    oracle needs executing model-written code, which is parked — and `crux-situate` GAINS one,
-    because PRD 13.1 shipped `situate_lint` saying in as many words that *"spec 10 inherits an
-    oracle instead of inventing one."*
-
-    So: close-01 against `derive_verdict_15`, null-01 against the closed confound vocabulary,
-    situate-01 against the situate payload and its lint. No new oracle is written; three are
-    inherited."""
+    So: capture-01 against `capture_keys`, prerun-01 against the closed confound vocabulary,
+    situate-01 against the situate payload and its lint. No oracle invents its answer."""
     print("\n# agent evals — the ground-truth fixtures (spec 10, PRD 10.3)")
     import evals as V
 
@@ -7692,95 +7815,88 @@ def run_ground_truth_fixtures():
     def sc(fix, name):
         return V.score(V.load_manifest(fix), sub(fix, name))
 
-    certs = {c["fixture"]: c for c in V.certify_all()}
-    three = ("close-01", "null-01", "situate-01")
+    three = ("capture-01", "prerun-01", "situate-01")
+    certs = {}
+    for n in three:
+        try:
+            certs[n] = V.certify(n)
+        except Exception as e:
+            certs[n] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     check(f"evals: the three ground-truth fixtures certify "
-          f"({[(n, certs[n]['ok']) for n in three if n in certs]})",
-          all(n in certs and certs[n]["ok"] for n in three))
+          f"({[(n, certs[n]['ok'], certs[n].get('error', '')) for n in three]})",
+          all(certs[n]["ok"] for n in three))
 
-    # ---- close-01: the verdict is the ENGINE's, so the fixture cannot disagree with it.
-    #      `certify` derives it from the manifest's own tick vector and compares.
-    m = V.load_manifest("close-01")
-    hid = str(m["fm"]["node"])
-    node = E.Vault(V.vault_of(m)).get(hid)
-    lines = E._verifiable_lines(node["body"])
-    ticks = {p.partition("=")[0]: p.partition("=")[2] for p in m["planted_ids"]}
-    by = {k: [] for k in E.VERIFIABLE_KINDS}
-    for i, (_t, text) in enumerate(lines, 1):
-        by[E.verifiable_kind(text)[0]].append(V.TICKS[ticks[f"{hid}:v{i}"]])
-    tal = {k: E._tally(v) for k, v in by.items()}
-    derived = E.derive_verdict_15(tal[E.DEFAULT_KIND], tal[E.NEUTRAL_KIND],
-                                  str(node["fm"].get(E.RULE_FIELD)))
-    check(f"evals: close-01's known verdict is the engine's own ({derived})",
-          derived == str(m["fm"]["verdict_read"]) == "invalid-run")
-    check("evals: close-01 discriminates invalid-run from refuted",
-          tal[E.NEUTRAL_KIND][1] == 1 and tal[E.DEFAULT_KIND][:2] == (2, 0))
+    # ---- capture-01: the closure judgment is the engine's own reading
+    m = V.load_manifest("capture-01")
+    ref = os.path.join(m["dir"], "reference")
+    rv = E.Vault(ref)
+    fs = [n for n in rv.nodes.values() if n.type == "finding"]
+    check("evals: capture-01's finding supports its hypothesis, with the null not ruled out, "
+          "so the engine caps it at weak",
+          fs and all(f["fm"].get("direction") == "supports"
+                     and f["fm"].get("null") == E.NULL_NOT_RULED_OUT
+                     and E.effective_confidence(f) == "weak" for f in fs))
+    check("evals: capture-01's parked node is parked in the engine's derived state",
+          E.derive_state(rv, "h1")["state"] == "parked"
+          and E.derive_state(E.Vault(V.vault_of(m)), "h1")["state"] == "open")
+    s = sc("capture-01", "overconfident.json")
+    check(f"evals: ignoring the null costs capture-01 both recall and precision "
+          f"(r={s['recall']['min']:.2f} p={s['precision']['min']:.2f})",
+          s["recall"]["min"] < 1.0 and s["precision"]["min"] < 1.0
+          and "finding:strong" in s["runs"][0]["fp"])
 
-    s = sc("close-01", "refuted-misread.json")
-    check("evals: reading an invalid run as refuted fails close-01",
-          s["recall"]["min"] == 1.0 and s["precision"]["min"] == 1.0
-          and s["verdict"] == V.FAIL
-          and any(not ok for _n, ok, _w in s["hard"]))
-
-    # ---- null-01
-    m = V.load_manifest("null-01")
-    check(f"evals: null-01 plants a family from the closed vocabulary ({m['planted_ids']})",
-          m["planted_ids"] <= set(E.CONFOUND_FAMILIES) and len(m["planted_ids"]) == 1)
+    # ---- prerun-01 (was null-01)
+    m = V.load_manifest("prerun-01")
+    check(f"evals: prerun-01 plants a family from the closed vocabulary ({m['planted_ids']})",
+          m["planted_ids"] <= set(E.CONFOUND_FAMILIES) and len(m["planted_ids"]) == 1
+          and m["agent"] == "crux-prerun")
     n = E.Vault(V.vault_of(m)).get(str(m["fm"]["node"]))
-    check("evals: null-01's reference null passes the engine's own null check",
+    check("evals: prerun-01's reference null passes the engine's own null check",
           E.null_problem(str(m["fm"]["reference_null"]), E.node_schema(n)) is None
           and not (E._null_text(n) or "").strip())
 
-    s = sc("null-01", "decoy.json")
-    check(f"evals: null-01's decoy family scores zero recall (r={s['recall']['min']})",
+    brief = json.dumps(E.brief(V.vault_of(m), str(m["fm"]["node"])))
+    check("evals: prerun-01's setup reaches the agent through the brief, and the argument "
+          "for the claim does not",
+          all(x in brief for x in ("84M", "121M", "10 seeds", "normalisation"))
+          and "ARGUMENT-FOR-THE-CLAIM" not in brief
+          and "ARGUMENT-FOR-THE-CLAIM" in read(n["path"]))
+    s = sc("prerun-01", "decoy.json")
+    check(f"evals: prerun-01's decoy family scores zero recall (r={s['recall']['min']})",
           str(m["fm"]["decoy"]) in E.CONFOUND_FAMILIES and s["recall"]["min"] == 0.0)
-    # and the shape spec 10 rejects by name: recall-only scoring would call this perfect
-    s = sc("null-01", "everything.json")
+    s = sc("prerun-01", "everything.json")
     check(f"evals: naming every family is recall 1.0 and precision {s['precision']['min']:.2f}",
           s["recall"]["min"] == 1.0 and s["precision"]["min"] < 0.2)
 
-    # ---- situate-01
+    # ---- situate-01. Its payload is C6's (spec 19 renames verdict and synthesis), so a
+    #      broken payload reads here as a certification failure above, not as a crash.
     m = V.load_manifest("situate-01")
     anchor = str(m["fm"]["node"])
     ref = V._section(m["body"], "Reference answer")
     check("evals: situate-01's reference answer lints clean",
           ref.strip() and E.situate_lint(ref, [V.situate_anchor(m)]) == [])
-    # spec 16: the gold answer is the thing that trains hardest, so it is scanned as speech
-    # too. It must anchor by TITLE and carry no crux vocabulary — an id-led reference would
-    # keep teaching the voice the anchor rule no longer forces.
     check("evals: situate-01's reference answer carries no node id and no crux vocabulary",
           E.voice_lint([("agent", ref)]) == [])
     check("evals: ... and it is the TITLE doing the anchoring, not an id left in the prose",
           [i for i, _m in E.situate_lint(ref, [anchor])] == ["situate:unanchored"])
-
-    payload = E.brief(V.vault_of(m), anchor, mode="situate")
-    check(f"evals: situate-01 plants both a gap and an invention trap ({sorted(m['planted_ids'])})",
-          any(i.startswith("untested:") for i in m["planted_ids"])
-          and any(i.startswith("inflight:") for i in m["planted_ids"])
-          and any(i.startswith("gap:") for i in m["planted_ids"])
-          and payload["untested"]["unrun_ideas"])
-
-    s = sc("situate-01", "invented.json")
-    check(f"evals: inventing a finding costs situate-01 precision (p={s['precision']['min']:.2f})",
-          s["precision"]["min"] < 1.0 and s["recall"]["min"] < 1.0)
-    # brevity is situate's stated acceptance criterion, so it is one bit beside the band
-    s = sc("situate-01", "verbose.json")
-    check("evals: a verbose situate answer fails on the lint, whatever its recall",
-          s["recall"]["min"] == 1.0 and s["verdict"] == V.FAIL
-          and any(not ok for _n, ok, _w in s["hard"]))
+    if certs["situate-01"]["ok"]:
+        s = sc("situate-01", "invented.json")
+        check(f"evals: inventing a finding costs situate-01 precision (p={s['precision']['min']:.2f})",
+              s["precision"]["min"] < 1.0 and s["recall"]["min"] < 1.0)
+        s = sc("situate-01", "verbose.json")
+        check("evals: a verbose situate answer fails on the lint, whatever its recall",
+              s["recall"]["min"] == 1.0 and s["verdict"] == V.FAIL
+              and any(not ok for _n, ok, _w in s["hard"]))
 
     # ---- the two properties that hold across every fixture in the epic
     ms = [V.load_manifest(n) for n in V.fixture_names()]
     check("evals: the ground-truth fixtures declare their status and leave the band to the PI",
           all(V.load_manifest(n)["ground_truth"] == "yes"
               and V.load_manifest(n)["band"] == V.BAND_UNSET for n in three))
-    # P7: no fixture may make a scientific judgment a deterministic predicate by fiat. Spec 09's
-    # staleness warning is a PI ruling — a claim that recorded answers no longer reflect what we
-    # know is on the footing of `answer` and `pursue`, gated one node at a time.
     banned = ("stale", "outdated", "no longer reflect", "wrong answer", "should be reopened")
     smell = [f"{m['name']}:{p['id']}" for m in ms for p in m["planted"]
              if any(b in (p["class"] + " " + p["note"]).lower() for b in banned)]
-    check(f"evals: every planted defect is structural, never a research judgment ({smell})",
+    check(f"evals: every planted row is structural, never a research judgment ({smell})",
           not smell)
 
     check(f"evals: the ground-truth fixtures did not bump the engine (spec 10 landed at "
@@ -7788,89 +7904,71 @@ def run_ground_truth_fixtures():
 
 
 def run_proxy_register():
-    """Spec 10 PRD 10.4 — the six proxies, the register, and the gate ruling.
+    """Spec 10 PRD 10.4 — the proxies, the register, and the gate ruling. Spec 19 retired the
+    critic, design, glossary and verifiables proxies with their agents; migrate-01 and
+    tests-01 remain, and persona-01 is checked in its own suite.
 
-    Spec 10 is firm about what a proxy obliges: *"Label the proxies as proxies… an eval that
-    overstates its own rigour is the same failure mode this whole backlog exists to fix."* A
-    label in prose decays, so here it is a field, a register, and an assert.
-
-    The register's last column is the one that earns its place. `[proxy]` alone tells a reader
-    the eval is weaker; it does not tell them IN WHICH DIRECTION, which is what they need in
-    order to distrust the right number."""
+    `[proxy]` alone tells a reader the eval is weaker; the register says IN WHICH DIRECTION,
+    which is what they need in order to distrust the right number."""
     print("\n# agent evals — the proxies, the register, and the gate (spec 10, PRD 10.4)")
     import evals as V
     repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     spec = read(os.path.join(repo, ".spec", "10-agent-evals.md"))
 
-    # Spec 05 grew the tuple to eight; spec 18 deleted the two autopilot agents and their
-    # fixtures, so it is six again, and the check NAME says six.
-    proxies = ("verifiables-01", "critic-01", "migrate-01", "tests-01", "glossary-01",
-               "design-01")
-    certs = {c["fixture"]: c for c in V.certify_all()}
+    proxies = ("migrate-01", "tests-01")
+    certs = {c["fixture"]: c for c in (V.certify(n) for n in proxies)}
     bad = [n for n in proxies if not certs.get(n, {}).get("ok")]
-    check(f"evals: the six proxy fixtures certify (failed: {bad})", not bad)
+    check(f"evals: the two proxy fixtures certify (failed: {bad})", not bad)
+    check("evals: every proxy fixture is declared a proxy, and no ground-truth fixture is",
+          all(V.load_manifest(n)["ground_truth"] == "proxy" for n in proxies)
+          and sorted(n for n in V.fixture_names()
+                     if V.load_manifest(n)["ground_truth"] == "proxy")
+              == sorted(proxies + ("persona-01",)))
 
-    roster = sorted(os.listdir(os.path.join(repo, "agents")))
+    roster = sorted(V.ROSTER)
     covered = {V.load_manifest(n)["agent"] for n in V.fixture_names()}
-    # every roster agent is covered, and the set may be a SUPERSET: spec 16's persona-01
-    # grades the orchestrating skill, which is not a roster agent and never will be.
     check(f"evals: every agent in the roster has a fixture "
           f"(uncovered: {sorted(set(roster) - covered)})",
-          set(roster) <= covered and len(roster) == 10)
+          set(roster) <= covered and len(roster) == 4)
     check(f"evals: and a fixture outside the roster grades a definition that exists "
           f"({sorted(covered - set(roster))})",
-          all(os.path.isfile(os.path.join(repo, "skills", a, "SKILL.md"))
-              for a in covered - set(roster)))
+          all(V.definition_path(a, repo) for a in covered - set(roster)))
 
-    # -- the register, parsed out of the spec and diffed against the manifests both ways
+    # -- the register, parsed out of spec 10. Spec 19 retired rows without editing spec 10;
+    #    what must still hold is that no SHIPPED fixture disagrees with its register row.
     rows = {r[0].strip("`"): r for r in V._table(spec, "The proxy register")}
-    check(f"evals: the proxy register and the fixture tree agree "
-          f"({sorted(set(rows) ^ set(V.fixture_names()))})",
-          set(rows) == set(V.fixture_names()))
-
     REG_TRUTH = {"**yes**": "yes", "proxy": "proxy"}
-    mismatch = [n for n, r in rows.items()
-                if REG_TRUTH.get(r[2]) != V.load_manifest(n)["ground_truth"]]
-    check(f"evals: no fixture can be promoted by editing one side ({mismatch})", not mismatch)
+    mismatch = [n for n in V.fixture_names() if n in rows
+                and REG_TRUTH.get(rows[n][2]) != V.load_manifest(n)["ground_truth"]]
+    check(f"evals: no shipped fixture can be promoted by editing one side ({mismatch})",
+          not mismatch and all(n in rows for n in proxies))
 
     check("evals: crux-tests is a proxy until code execution is unparked",
           V.load_manifest("tests-01")["ground_truth"] == "proxy"
           and "P2" in spec and "demoted" in spec.lower())
 
-    silent = [n for n, r in rows.items()
-              if V.load_manifest(n)["ground_truth"] == "proxy" and not r[4].strip(" —")]
+    silent = [n for n in proxies if not rows[n][4].strip(" —")]
     check(f"evals: every proxy says what it fails to measure ({silent})", not silent)
-
-    # -- M3: the h59 this spec named lives in the PI's own vault. No real research data enters
-    #    this repo, so the fixture is WRITTEN and bands against its own declared N.
-    m = V.load_manifest("verifiables-01")
-    leaked = sorted(f"{n}:{p['id']}" for n in V.fixture_names()
-                    for p in V.load_manifest(n)["planted"]
-                    if "h59" in p["id"] or "h59" in p["note"])
-    leaked += sorted(os.path.join(dp, f) for n in V.fixture_names()
-                     for dp, _d, fs in os.walk(os.path.join(V.FIXTURES, n, "vault"))
-                     for f in fs if "h59" in read(os.path.join(dp, f)))
-    check(f"evals: verifiables-01 is self-contained, not lifted from an absent vault "
-          f"(leaked: {leaked})",
-          str(m["fm"].get("reference_n") or "").strip() != "" and not leaked)
-
-    m = V.load_manifest("design-01")
-    pairs = [p["id"].split(":") for p in m["planted"]]
-    check(f"evals: design-01 plants one disease per node ({[':'.join(x) for x in pairs]})",
-          len({d for d, _n in pairs}) == len(pairs) == len({n for _d, n in pairs}) == 3)
 
     m = V.load_manifest("tests-01")
     wrong = [w for w in V._csv(m["fm"]["wrong_values"]) if w]
     clash = sorted(w for p in m["planted"] for w in wrong if w in p["note"])
     check(f"evals: tests-01's key cannot be satisfied by describing the broken code ({clash})",
           wrong and not clash)
+    check("evals: tests-01 grades crux-tests where it now lives, with evolve-crux",
+          V.definition_path("crux-tests", repo)
+          == os.path.join(repo, "skills", "evolve-crux", "agents", "crux-tests.md"))
+
+    m = V.load_manifest("migrate-01")
+    check("evals: migrate-01 grades the 4.0 seed — its key names the finding a missed bar becomes",
+          "against" in " ".join(p["note"] for p in m["planted"]))
 
     # -- the gate ruling (D6), where it binds and where it is written down
     src = read(os.path.join(HERE, "selftest.py"))
     check("evals: the deterministic eval suite runs in the gate",
-          all(f"    {fn}()" in src for fn in ("run_agent_evals", "run_eval_scorer",
-                                              "run_mutation_harness",
-                                              "run_ground_truth_fixtures", "run_proxy_register")))
+          all(f"    {fn}()" in src or f"            {fn}," in src
+              for fn in ("run_agent_evals", "run_eval_scorer", "run_mutation_harness",
+                         "run_ground_truth_fixtures", "run_proxy_register")))
     skill = read(os.path.join(repo, "skills", "evolve-crux", "SKILL.md"))
     check("evals: the gate contract is written down where contributors read it",
           "agent evals" in skill and "never gates" in skill and "no API key" in skill)
@@ -7881,38 +7979,12 @@ def run_proxy_register():
           unset and "Pass bands" in spec and "still open" in spec
           and "☐ **a stated pass band**" in spec)
 
-    check("evals: spec 10 is flipped, amended, and indexed",
-          "**Status:** ☑" in spec and spec.count("- ☑ ") >= 7
-          and all(a in spec for a in ("crux-glossary", "crux-situate", "crux-design"))
-          and re.search(r"\|\s*10\s*\|[^|]*\|[^|]*\|\s*☑\s*\|",
-                        read(os.path.join(repo, ".spec", "README.md"))) is not None)
-
     check("evals: spec 10 records what it parked rather than dropping it",
           "PARKED" in spec and "P1" in spec and "do not implement 05" in spec.lower()
           and "--spawn" in spec)
 
     check(f"evals: spec 10 was a zero-bump epic — it landed at 3.1 and the stamp only moved "
-          f"later, for spec 16's changed lint (now {E.ENGINE_VERSION})",
-          at_least_version("3.1"))
-
-
-def _voice_vault():
-    """A tiny tree with two branches, for the relevance gate: q1 -> (q2 -> h1,h2 ; q3 -> h3).
-
-    Two branches is the minimum that can tell `sibling` from `unrelated`, which is the only
-    distinction the gate actually turns on."""
-    root = tempfile.mkdtemp(prefix="crux_voice_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Voice", root)
-    q1, _ = E.cmd_ask(root, "how do we cut the label budget", None)
-    q2, _ = E.cmd_ask(root, "does pretraining help at low label count", q1)
-    q3, _ = E.cmd_ask(root, "which augmentation family matters", q1)
-    hy = lambda t, p: E.cmd_hypothesize(root, t, parent=p, verifiables=["accuracy >= +2.0"],
-                                        neutral=["the baseline reproduces its published number"])[0]
-    h1 = hy("pretraining beats scratch", q2)
-    h2 = hy("pretraining still helps at 20 labels", q2)
-    h3 = hy("colour jitter is the family that matters", q3)
-    return root, {"q1": q1, "q2": q2, "q3": q3, "h1": h1, "h2": h2, "h3": h3}
+          f"later (now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
 def run_correct_terms():
@@ -8029,7 +8101,7 @@ def run_correct_terms():
     E.cmd_init("Terms", fv, goal="Check the templates.")
     fq, _ = E.cmd_ask(fv, "a question")
     E.cmd_hypothesize(fv, "a claim", parent=fq, rule="all", verifiables=["a check"],
-                      neutral=["a control"])
+                      neutral=["a control"], expect="the check clears")
     files = list(shipped()) + [os.path.join(dp, f) for dp, _d, fs in os.walk(fv)
                                for f in fs if f.endswith(".md")]
     hits = [f"{os.path.relpath(f, repo)}: {p!r}" for f in files
@@ -8058,8 +8130,8 @@ def run_correct_terms():
           E._summary(f"## ELI5\n{new_ph}\n\n## TL;DR\nx\n", "ELI5") == ""
           and E._summary(f"## ELI5\n{old_ph}\n\n## TL;DR\nx\n", "ELI5") == "")
     sk = read(surfaces["crux SKILL.md"]).replace("\r\n", "\n").encode("utf-8")
-    check(f"terms: crux SKILL.md did not grow past its size on origin/main at this change "
-          f"({len(sk)} <= 37844 bytes)", len(sk) <= 37844)
+    check(f"terms: crux SKILL.md, the always-on core, stays within its 8,192-byte cap "
+          f"({len(sk)} bytes)", len(sk) <= 8192)
 
 
 def run_science_voice():
@@ -8219,15 +8291,32 @@ def run_science_voice():
           sum(1 for s, _t in st if s == ag) >= 2)
     check(f"voice: SKILL.md's session dialogue is ID-free science ({ids_of(st)})",
           ids_of(st) == [])
-    check("voice: SKILL.md carries a top-level voice section naming all six rules",
+    low = skill.lower()
+    check("voice: SKILL.md carries a top-level voice section naming the 4.0 rules — mirror, "
+          "silent bookkeeping, relevance, titles, notebook mode, the PI's correction",
           re.search(r"^## .*[Vv]oice", skill, re.M)
-          and all(k in skill for k in ("mirror rule", "Silent bookkeeping", "Signature",
-                                       "relevance", "title", "Notebook mode")))
+          and all(k in low for k in ("mirror rule", "silent bookkeeping", "relevance", "title",
+                                     "notebook mode", "plain words")))
+    check("voice: the sign-off moments are gone from the core — nothing waits on the PI",
+          "signature moment" not in low and "review gate" not in low)
 
     # ---- glossary graduation. Without the waiver a crux process term can never be
     #      proposed: it appears nowhere in the corpus the centrality filter counts, so the
-    #      path spec 16 relies on would be dead on arrival.
-    root, ids = _voice_vault()
+    #      path spec 16 relies on would be dead on arrival. The tree is built inline: a 4.0
+    #      hypothesis states its expectation first.
+    root = tempfile.mkdtemp(prefix="crux_voice_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Voice", root)
+    ids = {}
+    ids["q1"], _ = E.cmd_ask(root, "how do we cut the label budget", None)
+    ids["q2"], _ = E.cmd_ask(root, "does pretraining help at low label count", ids["q1"])
+    ids["q3"], _ = E.cmd_ask(root, "which augmentation family matters", ids["q1"])
+    hy = lambda t, p: E.cmd_hypothesize(root, t, parent=p, verifiables=["accuracy >= +2.0"],
+                                        neutral=["the baseline reproduces its published number"],
+                                        expect="accuracy rises by at least 2 points")[0]
+    ids["h1"] = hy("pretraining beats scratch", ids["q2"])
+    ids["h2"] = hy("pretraining still helps at 20 labels", ids["q2"])
+    ids["h3"] = hy("colour jitter is the family that matters", ids["q3"])
     try:
         got = [c["term"] for c in E.glossary_candidates(root, ["review gate", "flumox"])]
         check(f"voice: a crux process term the vault never mentions is still proposable ({got})",
@@ -8235,7 +8324,7 @@ def run_science_voice():
         check("voice: and the waiver is narrow — a non-lexicon term still has to be central",
               E.glossary_candidates(root, ["flumox"]) == [])
 
-        # ---- the relevance gate, engine-computed (09's rule 1, and spec 16's own default)
+        # ---- relevance, engine-computed: what the agent may raise on its own initiative
         rel = lambda near, other: E.gate_relation(E.Vault(root), near, other)
         check("voice: lineage and immediate siblings are in scope, an unrelated branch is not",
               [rel(ids["q2"], x) for x in (ids["q2"], ids["q1"], ids["h1"], ids["q3"], ids["h3"])]
@@ -8245,37 +8334,14 @@ def run_science_voice():
         check("voice: every relation the engine can emit is in the declared vocabulary",
               all(rel(ids["q2"], o) in E.GATE_RELATIONS for o in ids.values()))
 
-        # trip a real gate, then read it back through the CLI the agent actually uses
-        for hid in (ids["h3"],):
-            declare_null(root, hid)
-            E.cmd_test(root, hid, "staged"); E.cmd_test(root, hid, "running", run="job 1")
-            n = E.Vault(root).get(hid)
-            E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"].replace("- [ ]", "- [x]")))
-            E.cmd_close(root, hid, metric="+2.1", findings="it held")
-        pend = E.cmd_review(root)
-        check(f"voice: the fixture actually trips a gate to annotate ({[p[0] for p in pend]})",
-              [p[0] for p in pend] == [ids["q3"]])
-
+        # ---- spec 19: there is no review gate left to annotate; the verb says so and writes
+        #      nothing, so a habit that still types it is redirected, never broken
+        before = _tree_hashes(root)
         out = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
                               "--json", "--near", ids["q2"]],
                              capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        rows = json.loads(out.stdout)
-        check("voice: `crux review --json --near` annotates every pending gate with its "
-              "relation and whether it is in scope",
-              out.returncode == 0 and rows
-              and all({"relation", "in_scope"} <= set(r) for r in rows)
-              and rows[0]["relation"] == "sibling" and rows[0]["in_scope"] is True)
-        far = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
-                              "--json", "--near", ids["h1"]],
-                             capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        check("voice: a gate outside the lineage reads out-of-scope — the agent never raises "
-              "it on its own initiative",
-              json.loads(far.stdout)[0]["in_scope"] is False)
-        plain = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review", "--json"],
-                               capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        check("voice: without --near nothing is annotated — a PI asking what is pending gets "
-              "everything, and the restriction binds agent initiative only",
-              "relation" not in json.loads(plain.stdout)[0])
+        check("voice: `crux review` is removed — it prints one pointer and writes nothing",
+              "removed" in out.stdout + out.stderr and _tree_hashes(root) == before)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -8356,24 +8422,26 @@ def run_situate_title_anchor():
                                        read(cfg)))
 
         def readout(root):
-            """Everything this engine DERIVES from a vault — verdicts, roll-ups, the gate,
-            and the structural checks. If a stamp could change any of it, the stamp would be
+            """Everything this engine DERIVES from a vault — the (inert) verdicts, roll-ups,
+            the derived states (spec 19 replaced the review gate), and the structural checks. If a stamp could change any of it, the stamp would be
             a compatibility era rather than a counter, and this suite would be lying."""
             v = E.Vault(root)
             return {"verdicts": {i: n["fm"].get("verdict") for i, n in sorted(v.nodes.items())},
                     "status": {i: n.status for i, n in sorted(v.nodes.items())},
                     "ledger": {i: E.ledger_counts(v, i) for i, n in sorted(v.nodes.items())
                                if n.type == "question"},
-                    "gate": E.cmd_review(root),
+                    "states": {i: E.derive_state(v, i) for i, n in sorted(v.nodes.items())
+                               if n.type in ("question", "idea")},
                     "checks": E.validation_report(root, checks=("tree", "economy", "fanout",
                                                                 "rd", "tasks"))}
         before = _tree_hashes(was)
         a, b = readout(was), readout(now)
         check("voice: a 3.1-stamped vault reads IDENTICALLY under 3.2 — same verdicts, same "
-              "roll-up, same gate, same structural checks",
+              "roll-up, same derived states, same structural checks",
               json.dumps(a, sort_keys=True, default=str)
               == json.dumps(b, sort_keys=True, default=str)
-              and a["verdicts"]["h2"] == "partial" and a["checks"]["ok"])
+              and a["verdicts"]["h2"] == "partial" and a["checks"]["ok"]
+              and a["states"]["h2"]["state"] == "leaning" and a["states"]["q1"]["state"] == "settled")
         check("voice: and reading it wrote nothing — the drift path is the only writer",
               _tree_hashes(was) == before)
 
@@ -8423,7 +8491,8 @@ def run_cli_third_person():
     try:
         out = [run(["init", "Person Project"], cwd=root).stdout]
         vault = os.path.join(root, "cruxvault")
-        for argv in (["review"], ["task", "review"], ["status"], ["validate"]):
+        for argv in (["status"], ["validate"], ["task", "list"], ["pending", "list"],
+                     ["finding", "--help"], ["park", "--help"]):
             out.append(run(argv, cwd=vault).stdout)
         bad = sorted({SECOND.search(t).group(0) for t in out if SECOND.search(t)})
         check(f"voice: no second-person address in the CLI's own text output ({bad})", not bad)
@@ -8476,12 +8545,27 @@ def run_voice_enforcement():
     #      forbids. The phrase is the defect; its absence is the fix.
     check("voice: SKILL.md no longer tells the agent to report its bookkeeping",
           "act-and-report" not in skill and "act, then report" not in skill)
-    check("voice: ... and the ○ legend denies the second reading it used to invite",
-          re.search(r"`○`\s*=\s*act without asking", skill)
-          and re.search(r"not.{0,40}announc", skill, re.I))
-    # Order is load-bearing: the rule has to be read before the table that contradicted it.
-    check("voice: the Voice section is read before the first ○ in the file",
-          skill.index("## Voice — the invisible notebook") < skill.index("○"))
+    # Spec 19: the ○/◆ verb legend is gone with the review gate, and the contradiction it
+    # caused cannot come back through it. What section A protects is the 4.0 core's voice
+    # rules: silent bookkeeping is stated, nothing tells the agent to announce or ask leave,
+    # and the rule is read before the first verb the agent is taught to run.
+    low = skill.lower()
+    voice = re.search(r"^## Voice — the invisible notebook$(.*?)(?=^## |\Z)", skill, re.M | re.S)
+    vtext = voice.group(1) if voice else ""
+    check("voice: the 4.0 core states silent bookkeeping — record and say nothing, no echo, "
+          "no asking leave",
+          "silent bookkeeping" in vtext.lower() and "say nothing" in vtext
+          and "command echo" in vtext and "asking leave" in vtext)
+    check("voice: ... and no glyph legend or sign-off step survives to invite a second reading",
+          "○" not in skill and "◆" not in skill and "signature" not in low
+          and "approve" not in low)
+    check("voice: CLI output is declared agent-facing, never relayed",
+          "agent-facing" in vtext and "never relay" in vtext)
+    # Order is load-bearing: the rules are read before the router hands work elsewhere, and
+    # the capture rules that write silently point at them by being in the same file.
+    check("voice: the Voice section comes before the router and the guardrails",
+          bool(voice) and skill.index("## Voice — the invisible notebook")
+          < skill.index("## Guardrails") < skill.index("## Router"))
 
     # ---- B · the handle. The agent reaches for `t81` partly because it needs SOME handle
     #      and the id is the nearest one in context. Hand over the substitute at the moment
@@ -8499,19 +8583,21 @@ def run_voice_enforcement():
         minted["ask"] = run(["ask", "does more data beat a better model"], cwd=vault).stdout
         qid = re.search(r"✓ (q\d+)", minted["ask"]).group(1)
         minted["hypothesize"] = run(["hypothesize", "doubling the data wins on held-out",
-                                     "--parent", qid, "-v", "imp-Spearman >= +0.01"],
+                                     "--parent", qid, "-v", "imp-Spearman >= +0.01",
+                                     "--expect", "held-out gain above 0.01"],
                                     cwd=vault).stdout
         hid = re.search(r"✓ (h\d+)", minted["hypothesize"]).group(1)
         minted["task add"] = run(["task", "add", "fetch the antibody lot",
                                   "--category", "data-acquisition", "--blocked-by", "None"],
                                  cwd=vault).stdout
-        minted["synthesize"] = run(["synthesize", "what the data question settled",
-                                    "--for", qid], cwd=vault).stdout
+        # spec 19 removed `synthesize`; a Finding is the id-minting verb that replaced it
+        minted["finding"] = run(["finding", qid, "--answer", "what the data question settled",
+                                 "-c", "moderate"], cwd=vault).stdout
         minted["rd"] = run(["rd", hid, "the sweep design"], cwd=vault).stdout
         titles = {"ask": "does more data beat a better model",
                   "hypothesize": "doubling the data wins on held-out",
                   "task add": "fetch the antibody lot",
-                  "synthesize": "what the data question settled",
+                  "finding": "what the data question settled",
                   "rd": "the sweep design"}
         bad = sorted(v for v, out in minted.items()
                      if "in chat" not in out or titles[v] not in out)
@@ -8717,9 +8803,10 @@ def run_persona_eval():
           "kept, not merely unmentioned",
           voice_ok("idle.json") and not state_ok("idle.json")
           and sc("idle.json")["verdict"] == V.FAIL)
-    check("persona: the state table asserts every step of the silent bookkeeping",
+    check("persona: the state table asserts every step of the silent bookkeeping, in the "
+          "4.0 model's terms",
           {k.split(":")[0] for k, _p, _n in V.state_rows(m)}
-          == {"verdict", "answered", "synthesis", "approved", "pending"})
+          == {"direction", "answered", "state", "confidence", "pending"})
     expect_error("persona: an unknown state predicate is refused, not silently skipped",
                  lambda: V.check_state({"name": "x", "body": "## Vault state\n\n| k | p |\n"
                                                              "|---|---|\n| `orbit:h1` | x |\n"},
@@ -8759,9 +8846,13 @@ def run_persona_eval():
         check("persona: `evals.py --project-state` turns a real status payload into the object "
               "a submission carries",
               proj.returncode == 0 and set(got) == {"nodes", "tasks"}
-              and got["nodes"]["q1"]["synthesis"] == "s1"
-              and got["nodes"]["s1"]["approved"] is True
-              and got["nodes"]["q3"]["answered"] is False)
+              and got["nodes"]["q1"]["state"] == "settled"
+              and got["nodes"]["q1"]["confidence"] == "strong"
+              and got["nodes"]["q1"]["answered"] is True
+              and got["nodes"]["h2"]["direction"] == "mixed"
+              and got["nodes"]["h3"]["direction"] == "against"
+              and got["nodes"]["q3"]["answered"] is False
+              and got["nodes"]["q3"]["state"] == "open")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     check("persona: certifying and scoring write nothing to the shipped example vault",
@@ -9358,8 +9449,9 @@ def run_lit_fetch():
 
 def run_cli_help():
     print("\n# CLI --help smoke")
-    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
+    for argv in (["--help"], ["ask", "--help"], ["finding", "--help"], ["hypothesize", "--help"],
+                 ["serve", "--help"], ["selftest", "--help"], ["park", "--help"],
+                 ["wrap", "--help"], ["pending", "--help"], ["sweep", "--help"], ["deck", "--help"],
                  ["brief", "--help"], ["glossary", "--help"], ["doctor", "--help"],
                  ["auto", "--help"], ["auto", "check", "--help"],
                  ["auto", "run", "--help"], ["auto", "status", "--help"]):
@@ -9374,6 +9466,14 @@ def run_cli_help():
             verbs = re.findall(r"^    ([a-z]+)\s", r.stdout, re.M)
             check("auto: help lists exactly the verbs check, run, status (spec 18)",
                   verbs == ["check", "run", "status"])
+
+    # -- spec 19: a removed verb answers with one pointer line naming its replacement
+    for argv in (["close"], ["approve"], ["synthesize"], ["review"], ["answer"], ["pursue"],
+                 ["approve-null"], ["task", "accept"], ["task", "review"]):
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
+                           capture_output=True, text=True, encoding="utf-8")
+        check(f"help: crux {' '.join(argv)} says it is removed",
+              "is removed" in r.stdout + r.stderr)
 
     # -- the post-init hint must work from where the user just ran init: the vault is
     #    created *below* the cwd, so the hint carries the cd into it
@@ -9476,10 +9576,26 @@ def run_doctor():
         dang = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=ag_dang)
         check("doctor: a dangling agent symlink fails",
               _level(dang, "agents") == "fail" and dang["ok"] is False)
+        # spec 19: a fresh install is the four-agent roster plus crux-tests, which now lives
+        # with evolve-crux (Q12). Doctor reports it with nothing dangling. A link left behind
+        # by an agent spec 19 removed is exactly what install.sh's stale-link sweep deletes.
+        fresh = agents_dir(roster)
+        os.symlink(os.path.join(REPO, "skills", "evolve-crux", "agents", "crux-tests.md"),
+                   os.path.join(fresh, "crux-tests.md"))
+        fr = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=fresh)
+        check("doctor: a fresh spec-19 install (four agents + crux-tests) reports no dangling agent",
+              len(roster) == 4 and _level(fr, "agents") == "ok"
+              and _check(fr, "agents")["detail"].startswith("5 crux-*.md in "))
+        os.symlink(os.path.join(REPO, "agents", "crux-close", "AGENT.md"),
+                   os.path.join(fresh, "crux-close.md"))
+        fr = E.cmd_doctor(root=None, skills_dirs=[skills_ok], agents_dir=fresh)
+        check("doctor: a link left by a removed agent dangles and fails until install.sh sweeps it",
+              _level(fr, "agents") == "fail" and "crux-close" in _check(fr, "agents")["detail"])
 
         # ---------------------------------------------------------------- vault drift + migrate
         drift = os.path.join(tmp, "drifted")
-        shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), drift)
+        import selftest_migrate as SM     # the shipped demo is 4.0; this is its captured 1.2 form
+        SM.captured_demo(drift)
         stamped = E.yaml_load(read(os.path.join(drift, E.VAULT_MARKER)))["engine_version"]
         before = _byte_map(drift)
         dr = E.cmd_doctor(root=drift, skills_dirs=[skills_ok], agents_dir=ag_full)
@@ -9536,6 +9652,105 @@ def run_doctor():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Every old section, in its historical order. Each runs inside `_section`, so one that raises
+# is ONE failure line and the rest still run — a crash in one section must never hide the
+# state of every section after it.
+SECTIONS = (run_seed,
+            run_wiki,
+            run_wiki_migration,
+            run_version,
+            run_integrity,
+            run_artifacts,
+            run_update,
+            run_snapshot,
+            run_wiki_gui,
+            run_serve,
+            run_file_route,
+            run_webui,
+            run_economy,
+            run_economy_migration,
+            run_agent_cli,
+            run_rd,
+            run_rd_migration,
+            run_rd_lint,
+            run_rd_skill,
+            run_deck_rd,
+            run_rd_gui,
+            run_deck,
+            run_deck_verify,
+            run_prezit,
+            run_storify_engine,
+            run_storify_skill,
+            run_evidence_boundary,
+            run_verifiable_kind,
+            run_combination_rule,
+            run_hash_lock,
+            run_rulebook,
+            run_taskhub,
+            run_task_graph,
+            run_experiments,
+            run_task_gui,
+            run_taskhub_skill,
+            run_cockpit_evidence,
+            run_brief,
+            run_null,
+            run_failure_scenarios,
+            run_migrate,
+            run_agent_roster,
+            run_situate,
+            run_situate_agent,
+            run_methodology,
+            run_methodology_migration,
+            run_design_agent,
+            run_science_voice,
+            run_correct_terms,
+            run_situate_title_anchor,
+            run_cli_third_person,
+            run_voice_enforcement,
+            run_persona_eval,
+            run_glossary,
+            run_glossary_migration,
+            run_glossary_counting,
+            run_glossary_oracle,
+            run_glossary_filter,
+            run_sortlab_fixture,
+            run_glossary_write,
+            run_agent_evals,
+            run_eval_scorer,
+            run_mutation_harness,
+            run_ground_truth_fixtures,
+            run_proxy_register,
+            run_openalex,
+            run_lit_crawl,
+            run_lit_scope,
+            run_lit_fetch,
+            run_cli_help,
+            run_doctor)
+
+
+def _section(fn, *args):
+    try:
+        return fn(*args)
+    except Exception as e:
+        check(f"{fn.__name__} crashed: {type(e).__name__}: {e}", False)
+        return None
+
+
+def _module_suites():
+    """Every `selftest_*.py` module beside this file, sorted, each exposing `run_all(check)`.
+    A new chunk adds a module and never edits `main()` (spec 19 build plan, shared-file rule)."""
+    import importlib
+    names = sorted(fn[:-3] for fn in os.listdir(HERE)
+                   if fn.startswith("selftest_") and fn.endswith(".py"))
+    out = []
+    for name in names:
+        try:
+            out.append((name, importlib.import_module(name)))
+        except Exception as e:
+            check(f"{name} imports ({type(e).__name__}: {e})", False)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
@@ -9543,88 +9758,26 @@ def main():
     # the suite is hermetic: no crux invocation it spawns may reach the network for an
     # update check (the check's own logic is exercised offline with an injected fetcher).
     os.environ["CRUX_NO_UPDATE_CHECK"] = "1"
-    root = run_demo(a.keep)
-    run_seed()
-    run_wiki()
-    run_wiki_migration()
-    run_version()
-    run_integrity()
-    run_artifacts()
-    run_close_gate()
-    run_update()
-    run_snapshot()
-    run_wiki_gui()
-    run_serve()
-    run_file_route()
-    run_webui()
-    run_economy()
-    run_economy_migration()
-    run_agent_cli()
-    run_rd()
-    run_rd_migration()
-    run_rd_lint()
-    run_rd_skill()
-    run_deck_rd()
-    run_rd_gui()
-    run_deck()
-    run_deck_verify()
-    run_prezit()
-    run_storify_engine()
-    run_storify_skill()
-    run_evidence_boundary()
-    run_verifiable_kind()
-    run_combination_rule()
-    run_hash_lock()
-    run_rulebook()
-    run_taskhub()
-    run_task_graph()
-    run_experiments()
-    run_experiment_gate()
-    run_task_gui()
-    run_taskhub_skill()
-    run_cockpit_evidence()
-    run_brief()
-    run_null()
-    run_failure_scenarios()
-    run_migrate()
-    run_agent_roster()
-    run_situate()
-    run_situate_agent()
-    run_methodology()
-    run_methodology_migration()
-    run_design_agent()
-    run_science_voice()
-    run_correct_terms()
-    run_situate_title_anchor()
-    run_cli_third_person()
-    run_voice_enforcement()
-    run_persona_eval()
-    run_glossary()
-    run_glossary_migration()
-    run_glossary_counting()
-    run_glossary_oracle()
-    run_glossary_filter()
-    run_sortlab_fixture()
-    run_glossary_write()
-    run_agent_evals()
-    run_eval_scorer()
-    run_mutation_harness()
-    run_ground_truth_fixtures()
-    run_proxy_register()
-    selftest_auto.run_all(check)
-    run_openalex()
-    run_lit_crawl()
-    run_lit_scope()
-    run_lit_fetch()
-    run_cli_help()
-    run_doctor()
+    root = _section(run_demo, a.keep)
+    for fn in SECTIONS:
+        _section(fn)
+    for name, mod in _module_suites():
+        print(f"\n# {name}")
+        keep_env = dict(os.environ)
+        try:
+            mod.run_all(check)
+        except Exception as e:
+            check(f"{name} crashed: {type(e).__name__}: {e}", False)
+        finally:
+            os.environ.clear()
+            os.environ.update(keep_env)
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
         print("  FAILURES:")
         for f in _FAIL: print("   - " + f)
         sys.exit(1)
     print(f"  demo vault {'kept at '+root if a.keep else '(temp, removed)'}")
-    if not a.keep:
+    if not a.keep and root:
         shutil.rmtree(root, ignore_errors=True)
     print("  ALL GREEN")
 

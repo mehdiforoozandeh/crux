@@ -12,16 +12,17 @@ Quick tour:
     crux init "My project"                  # bootstrap a vault here
     crux ask "Can X improve Y?"             # open a question (alias: question, q, meta)
     crux hypothesize "A beats B" -p q1 \\
-        -v "metric ≥ +0.01 vs baseline"       # a leaf hypothesis (alias: hypothesis, idea)
-    crux test h1 --run "job 4012"           # idea→staged→running (alias: experiment, run, stage, launch)
-    crux close h1 -m "imp +0.012"           # verdict from verifiables (alias: record, conclude, verdict, land)
-    crux review                             # questions awaiting the PI's decision (alias: gate, decide)
-    crux answer q1 -t "..."                 # resolve a question (alias: resolve, settle)
-    crux pursue q1 --idea "next try"        # keep digging (alias: branch, extend, reopen)
-    crux status                             # the tree / a node's ledger (alias: map, tree, where, show)
+        --expect "A scores 2 points higher"   # a hypothesis states its expectation first
+    crux test h1 --run "job 4012"           # record a run link (alias: experiment, run, stage, launch)
+    crux finding h1 -d supports -c moderate \\
+        -w "three seeds agree"                # what was learned (alias: record, conclude, land)
+    crux finding q1 -c strong -a "Yes: …"   # a question's answer (no direction)
+    crux park h1                            # park a node the conversation dropped (--undo)
+    crux status                             # the tree with derived states (alias: map, tree, where, show)
 
-`close` reads the `## Verifiables` checkboxes the agent (or the PI) ticked:
-all `- [x]` -> supported · any `- [ ]` -> refuted/partial · `- [-]` -> inconclusive.
+A node's state is DERIVED from its findings (spec 19): open (none) · leaning (strongest is
+weak or moderate) · settled (strongest is strong) · parked. A null not ruled out caps a
+finding's confidence at weak.
 """
 import argparse, sys, os, json
 
@@ -47,8 +48,8 @@ NEUTRAL_KIND_LABEL = E.NEUTRAL_KIND
 def _vault():
     root = E.find_vault()
     warn = E.check_and_stamp_version(root)
-    if warn:
-        print(f"crux: ⚠ {warn}", file=sys.stderr)
+    if warn:   # a 4.0 migration is news, not a warning; drift is both
+        print(f"crux: {'' if warn.startswith('migrated') else '⚠ '}{warn}", file=sys.stderr)
     return root
 
 
@@ -85,6 +86,15 @@ def _pair_discriminates(argv):
             out[idx] = True
     return out
 
+def _removed_verb(raw):
+    """The REMOVED_VERBS key a command line reaches, or None."""
+    if not raw:
+        return None
+    if raw[0] in ("task", "todo", "work") and len(raw) > 1:
+        return E.REMOVED_TASK_ALIASES.get(raw[1])
+    return E.REMOVED_ALIASES.get(raw[0])
+
+
 def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
     return 0
@@ -120,11 +130,13 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
     s.add_argument("--problem", default="")
+    s.add_argument("-e", "--expect", default=None,
+                   help="REQUIRED: the expected result, stated before any evidence (spec 19)")
     # the methodology slots (spec 13): declared BEFORE the run, and deliberately not `--metric`
     # — that one is the result, written at close
     s.add_argument("--measurement", default=None,
                    help="what this hypothesis measures, and with what instrument — declared "
-                        "before the run. Not the result: that is `close -m`.")
+                        "before the run. Not the result: that is a finding.")
     s.add_argument("--replicates", default=None,
                    help="the declared n / replication plan (\"5 seeds x 3 folds\", "
                         "\"n = 12 per arm\")")
@@ -135,8 +147,7 @@ def main(argv=None):
                         "question. Recorded as a field, never as a tree edge.")
     s.add_argument("-n", "--neutral", action="append", default=[],
                    help="an OUTCOME-NEUTRAL verifiable: a positive control / sanity check that must "
-                        "pass whatever the hypothesis turns out to be. Its failure invalidates the "
-                        "run, not the claim. At least one is required before `test --to running`.")
+                        "pass whatever the hypothesis turns out to be. Optional.")
     # Additive, NOT a second argument to -v: `nargs=2` was measured to make `-v "a check"`
     # exit with "expected 2 arguments", breaking the skill's documented usage, the agent CLI
     # surface and every existing fixture. These attach to the most recent -v/-n instead, so a
@@ -144,55 +155,56 @@ def main(argv=None):
     s.add_argument("--fails-if", dest="fails_if", action="append", default=[],
                    help="the world in which the PRECEDING -v/-n check fails. Two checks are "
                         "redundant if they fail for the same reason; this is what makes that "
-                        "visible. Required on every check before `test --to running`.")
+                        "visible. Optional.")
     s.add_argument("--discriminates", dest="discriminates", action="append_const", const=True,
                    default=[], help="mark the preceding --fails-if as the one that "
-                                    "discriminates against the declared null (at least one must)")
+                                    "discriminates against the declared null")
     s.add_argument("--null", default=None,
-                   help="the null hypothesis: the most parsimonious alternative explanation of a "
-                        "positive result. One line, <=25 words, naming a confound family (capacity, chance, "
-                        "leakage, selection, normalization, instrumentation). The PI approves it "
-                        "with `crux approve-null` BEFORE checks are written against it.")
+                   help="optional: the null hypothesis, the most parsimonious alternative "
+                        "explanation of a positive result. One line, <=25 words, naming a confound "
+                        "family (capacity, chance, leakage, selection, normalization, "
+                        "instrumentation). A finding records whether it was ruled out.")
     s.add_argument("--rule", default=None, choices=None,
-                   help="how the claim-directed verifiables ADD UP, declared before the run: "
-                        "all | any | m-of-n. Required once there is more than one of them — "
-                        "without it, 'two of four passed' is an argument rather than "
-                        "arithmetic. Cost of `all`: two checks at 80%% power each give 64%% "
-                        "joint power, and thresholds may not be loosened to compensate.")
+                   help="optional: how the claim-directed verifiables add up, declared before "
+                        "the run: all | any | m-of-n.")
     s.add_argument("--rule-m", dest="rule_m", type=int, default=None,
                    help="the m in m-of-n (how many of the claim-directed checks must pass)")
     s.add_argument("-v", "--verifiable", action="append", default=[],
                                                             help="a falsifiable check (repeatable)")
 
-    s = _jsonable(sub.add_parser("test", aliases=["experiment", "run", "stage", "launch"], help="advance an idea: idea→staged→running"))
+    s = _jsonable(sub.add_parser("test", aliases=["experiment", "run", "stage", "launch"], help="record a run of a hypothesis: append a run link, lock its checks"))
     s.add_argument("id"); s.add_argument("--to", choices=["staged", "running"], default=None)
     s.add_argument("--run", default=None, help="a run link/job id to record")
 
-    s = _jsonable(sub.add_parser("close", aliases=["record", "conclude", "verdict", "land"], help="close a hypothesis: derive verdict from verifiables"))
-    s.add_argument("id"); s.add_argument("-m", "--metric", default=None); s.add_argument("-f", "--findings", default=None)
+    s = _jsonable(sub.add_parser("finding", aliases=["record", "conclude", "land"],
+                                 help="record what was learned under a question or hypothesis "
+                                      "(spec 19) — its state is derived from its findings"))
+    s.add_argument("parent", help="the question or hypothesis this finding is about")
+    s.add_argument("-c", "--confidence", required=True, help="strong | moderate | weak")
+    s.add_argument("-d", "--direction", default=None,
+                   help="hypothesis findings only: supports | against | mixed | no answer yet")
+    s.add_argument("-w", "--why", default=None,
+                   help="one sentence: why this direction and this confidence")
+    s.add_argument("-a", "--answer", default=None,
+                   help="question findings only: the answer text")
+    s.add_argument("-e", "--evidence", action="append", default=[], metavar="PATH",
+                   help="a link under results/ or tasks/ (repeatable)")
+    s.add_argument("--null", default=None,
+                   help="was the null ruled out? ruled-out | not-ruled-out | none — a null not "
+                        "ruled out caps a supports finding at weak")
+    s.add_argument("--vs-expect", dest="vs_expect", default=None,
+                   help="how the result compared with the expectation")
+    s.add_argument("--verifiables", default=None,
+                   help="how the result compared with the verifiables")
 
-    s = _jsonable(sub.add_parser("review", aliases=["gate", "decide"], help="list questions awaiting the PI's close/reopen decision"))
-    s.add_argument("--near", default=None, metavar="ID",
-                   help="annotate each pending gate with how it stands to this node "
-                        "(self/ancestor/descendant/sibling/unrelated) and whether it is in "
-                        "scope. Annotates only — nothing is filtered out, because a PI who "
-                        "asks what is pending gets everything (spec 16).")
-
-    s = _jsonable(sub.add_parser("answer", aliases=["resolve", "settle"], help="resolve a question (PI decision)"))
-    s.add_argument("id"); s.add_argument("-t", "--text", default=None, help="the standing answer")
-
-    s = _jsonable(sub.add_parser("pursue", aliases=["branch", "extend", "reopen"], help="keep a question open; optionally spawn a fresh hypothesis"))
-    s.add_argument("id"); s.add_argument("--idea", default=None, help="title of a new child hypothesis")
+    s = _jsonable(sub.add_parser("park", aliases=["shelve"],
+                                 help="park a question or hypothesis the conversation dropped "
+                                      "(--undo to unpark)"))
+    s.add_argument("id")
+    s.add_argument("--undo", action="store_true", help="unpark it")
 
     s = _jsonable(sub.add_parser("status", aliases=["map", "tree", "where", "show"], help="print the tree, or one node's ledger"))
     s.add_argument("id", nargs="?", default=None)
-
-    s = _jsonable(sub.add_parser("synthesize", aliases=["weave", "rollup"], help="draft the synthesis that closes a question (or weaves several)"))
-    s.add_argument("title"); s.add_argument("-q", "--questions", "--for", required=True,
-                                            help="comma-separated question ids (--for reads better for a single question)")
-
-    s = _jsonable(sub.add_parser("approve", aliases=["sign-off", "signoff"], help="PI signs off a synthesis — required before `answer` can resolve its question"))
-    s.add_argument("id")
 
     s = _jsonable(sub.add_parser("ingest", aliases=["source", "add-source"], help="register a PI-curated source (under raw/) into the literature wiki"))
     s.add_argument("path", help="path (under raw/, relative to the vault) to the source to register")
@@ -239,17 +251,6 @@ def main(argv=None):
     s = _jsonable(tsub.add_parser("drop", help="abandon a task (no output required)"))
     s.add_argument("id")
 
-    ts = _jsonable(tsub.add_parser("review", help="experiments awaiting the PI's acceptance"))
-    ts.add_argument("--near", default=None, metavar="ID",
-                    help="annotate each pending acceptance with how the hypothesis it "
-                         "concluded about stands to this node, and whether it is in scope "
-                         "(spec 16). Annotates only; nothing is filtered out.")
-
-    s = _jsonable(tsub.add_parser("accept", aliases=["sign-off", "signoff"],
-                                  help="the PI accepts what an experiment concluded — never "
-                                       "run this on the agent\'s own judgment"))
-    s.add_argument("id")
-
     s = _jsonable(tsub.add_parser("list", aliases=["ls"], help="query the taskhub — work the frontier"))
     s.add_argument("--frontier", action="store_true",
                    help="only tasks whose blockers are all discharged — the default question")
@@ -264,11 +265,6 @@ def main(argv=None):
 
     s = _jsonable(tsub.add_parser("categories", help="the declared category list, or grow it"))
     s.add_argument("--add", default=None, metavar="NAME", help="declare a new category")
-
-    s = _jsonable(sub.add_parser("approve-null", aliases=["approve_null"],
-                                 help="the PI's sign-off on a hypothesis' null — the gate between "
-                                      "naming the null hypothesis and writing checks against it"))
-    s.add_argument("id")
 
     s = _jsonable(sub.add_parser("migrate", help="add the structural sections a newer engine "
                                  "expects, empty. Never writes an evidence field, never fills a "
@@ -404,11 +400,48 @@ def main(argv=None):
     g.add_argument("--open", dest="open", action="store_true", help="force-open the system browser")
     g.add_argument("--no-open", dest="open", action="store_false", help="never open a browser")
 
+    # ---- capture plumbing (spec 19, C3): the SessionStart hook, the sweep, pending, wrap.
+    hp = sub.add_parser("hook", help="Claude Code hook entry points (read a hook payload on stdin)")
+    hsub = hp.add_subparsers(dest="hook_cmd", metavar="<event>", required=True)
+    s = hsub.add_parser("session-start", help="inject the always-on core when a vault is near; "
+                                              "start the catch-up sweep on startup or clear")
+    s.add_argument("--install-hook", dest="install_hook", action="store_true",
+                   help="register this hook in a Claude Code settings file (idempotent)")
+    s.add_argument("--settings", default=None,
+                   help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
+
+    _jsonable(sub.add_parser("sweep", help="run the catch-up sweep now: new transcript text since "
+                                           "the mark → one background capture run"))
+
+    pp = _jsonable(sub.add_parser("pending", help="the pending capture candidates /crux-wrap asks about"))
+    psub = pp.add_subparsers(dest="pending_cmd", metavar="<action>")
+    _jsonable(psub.add_parser("list", aliases=["ls"], help="list pending candidates (default)"))
+    s = _jsonable(psub.add_parser("add", help="append a candidate the capture was unsure of"))
+    s.add_argument("--kind", required=True, help="question | hypothesis | finding | ...")
+    s.add_argument("--parent", default=None, help="the node it would hang under")
+    s.add_argument("--text", required=True, help="the candidate, in plain words")
+    s.add_argument("--source", default="sweep", help="where it came from (default: sweep)")
+    s = _jsonable(psub.add_parser("clear", aliases=["rm", "resolve"],
+                                  help="remove candidates once accepted or rejected"))
+    s.add_argument("ids", nargs="+")
+
+    s = _jsonable(sub.add_parser("wrap", help="/crux-wrap's data: this session's records, the "
+                                              "pending list, and the session's new text"))
+    s.add_argument("--transcript", default=None,
+                   help="the session transcript (default: the newest in this cwd's projects folder)")
+
+    raw = list(sys.argv[1:] if argv is None else argv)
+    gone = _removed_verb(raw)
+    if gone:
+        # Before argparse and before any vault is resolved: a removed verb prints one pointer
+        # line, exits 0 and writes nothing — not even the engine-version stamp.
+        print(f"crux: {E.REMOVED_VERBS[gone]}")
+        return 0
     args = p.parse_args(argv)
     if not args.cmd:
         p.print_help(); return 0
 
-    if args.cmd != "voice":
+    if args.cmd not in ("voice", "hook"):
         _update_notice()
 
     try:
@@ -489,7 +522,9 @@ def _dispatch_auto(a):
         print(f"hours: {res['elapsed_hours']:.3f} elapsed of {res['budget_hours']:g} "
               f"\u00b7 {res['attempts_per_hour']} attempts/hour")
         for r in res["attempts"][-5:]:
-            print(f"  {r['n']}  {r['id'] or DASH}  {r['status']}  {r['score']}")
+            fnd = (f"{r['finding']} {r['direction'] or DASH} · {r['confidence'] or DASH}"
+                   if r.get("finding") else DASH)
+            print(f"  {r['n']}  {r['id'] or DASH}  {r['status']}  {r['score']}  → {fnd}")
         stop = res.get("stop")
         print(f"stop: {stop.get('reason')} \u2014 {stop.get('detail') or ''}" if stop
               else ("live" if res["live"] else "stop: none, and no line for a while"))
@@ -563,50 +598,6 @@ def _dispatch_task(a):
         if a.json:
             return _emit({"id": a.id, "status": st, "pending_gate": rec["pending_gate"]})
         print(f"✓ {a.id} → {st}")
-        if rec["pending_gate"]:
-            print(f"  ◐ this is an experiment: its output is evidence, so it waits for the "
-                  f"PI.\n    crux task accept {a.id}")
-    elif t == "review":
-        rows = E.cmd_task_review(root)
-        # an experiment's relevance runs through the hypothesis it concluded about — the task
-        # itself is not in the tree, so it has no lineage of its own. NEAREST relation wins:
-        # an experiment bearing on two hypotheses is in scope if either one is.
-        near = getattr(a, "near", None)
-        v = E.Vault(root) if near else None
-        def scope_of(hr):
-            rels = [E.gate_relation(v, near, h) for h, _c in hr] or ["unrelated"]
-            best = min(rels, key=lambda r: E.GATE_RELATIONS.index(r))
-            return best, best != "unrelated"
-        if a.json:
-            out = [{"id": i, "title": ti,
-                    "hypothesis_refs": [{"id": h, "conclusion": c} for h, c in hr],
-                    "drifted": d} for i, ti, hr, d in rows]
-            if near:
-                for r, (_i, _t, hr, _d) in zip(out, rows):
-                    r["relation"], r["in_scope"] = scope_of(hr)
-            return _emit(out)
-        if not rows:
-            print("no experiments awaiting the PI's acceptance.")
-            return 0
-        print("Awaiting the PI's acceptance (what these runs concluded):")
-        for i, ti, hr, d in rows:
-            print(f"  ◐ {i}  {ti}" + (f"  [{scope_of(hr)[0]}]" if near else ""))
-            for hid, concl in hr:
-                print(f"      {hid} → {concl}" + ("   ⚠ commitment drifted" if hid in d else ""))
-    elif t in ("accept", "sign-off", "signoff"):
-        # Drift is printed loudly and blocks NOTHING. Spec 15's ruling D7: the engine derives
-        # and flags, the PI decides. Blocking here would reintroduce, at a touchpoint 15 could
-        # not have known about, the block that ruling declined.
-        drifted = [d for i, _, _, d in E.cmd_task_review(root) if i == a.id]
-        stamp = E.cmd_task_accept(root, a.id)
-        warn = drifted[0] if drifted else []
-        for hid in warn:
-            print(f"  ⚠ {hid}'s commitment was edited after the run — what would have "
-                  f"settled it is not what was pre-registered. Accepting anyway; the flag "
-                  f"is permanent.", file=sys.stderr)
-        if a.json:
-            return _emit({"id": a.id, "accepted": stamp, "drifted": warn})
-        print(f"✓ {a.id} accepted at {stamp}")
     elif t == "drop":
         st = E.cmd_task_drop(root, a.id)
         if a.json:
@@ -636,16 +627,127 @@ def _dispatch_task(a):
     return 0
 
 
+def _capture_vault():
+    import sweep as SW
+    root = SW.find_vault_near(os.getcwd())
+    if not root:
+        raise E.CruxError("no crux vault here, above, or one level down. Run `crux init` first.")
+    return root
+
+
+def _dispatch_capture(a):
+    """`crux hook session-start | sweep | pending | wrap` (spec 19, C3). The hook exits 0 and
+    is silent on ANY failure: a hook that breaks a session is worse than a missed sweep."""
+    import sweep as SW
+    c = a.cmd
+    if c == "hook":
+        if a.install_hook:
+            path = a.settings or E.DOCTOR_SETTINGS_PATHS[0]
+            print(f"✓ session-start hook {SW.install_session_hook(path)}  "
+                  f"({os.path.expanduser(path)})")
+            return 0
+        try:
+            try:
+                payload = json.loads(sys.stdin.read() or "{}")
+            except Exception:
+                payload = {}
+            ctx = SW.session_start(payload)
+            if ctx:
+                _emit({"hookSpecificOutput": {"hookEventName": SW.HOOK_EVENT,
+                                              "additionalContext": ctx}})
+        except Exception:
+            pass
+        return 0
+    root = _capture_vault()
+    if c == "sweep":
+        cwd = os.getcwd()
+        r = SW.run_sweep(root, SW.project_dir(cwd), cwd=cwd)
+        if a.json:
+            return _emit(r)
+        print(f"✓ sweep launched ({r['chars']} chars from {len(r['transcripts'])} transcripts)"
+              if r["launched"] else f"sweep: nothing launched — {r['reason']}")
+        return 0
+    if c == "pending":
+        pc = a.pending_cmd or "list"
+        if pc == "add":
+            rec = SW.pending_add(root, a.kind, a.parent, a.text, a.source)
+            if a.json:
+                return _emit(rec)
+            print(f"✓ pending {rec['id']}")
+            return 0
+        if pc in ("clear", "rm", "resolve"):
+            gone = SW.pending_clear(root, a.ids)
+            if a.json:
+                return _emit({"cleared": gone})
+            print(f"✓ cleared {len(gone)}")
+            return 0
+        items = SW.pending_list(root)
+        if a.json:
+            return _emit({"pending": items})
+        for i in items:
+            print(f"{i['id']}  {i['kind']:<10} {i.get('parent') or DASH:<6} {i['text']}")
+        return 0
+    if c == "wrap":
+        tr = a.transcript or SW.newest_transcript(SW.project_dir(os.getcwd()), root)
+        r = SW.wrap(root, os.path.abspath(tr) if tr else None)
+        if a.json:
+            return _emit(r)
+        print(f"recorded this session: {len(r['records'])}")
+        for x in r["records"]:
+            print(f"  {x['id'] or DASH}  {x['verb']}  {x['result']}")
+        print(f"pending: {len(r['pending'])}")
+        for i in r["pending"]:
+            print(f"  {i['id']}  {i['kind']}  {i['text']}")
+        return 0
+    return 0
+
+
+AGENTS_POINTER_TAG = "crux always-on core"
+
+
+def _agents_md_pointer(root):
+    """Spec 19 decision 10, for agents other than Claude Code: one line in the project's
+    AGENTS.md telling any agent to read the always-on core. The project is the cwd when the
+    vault IS the cwd, else the vault's parent (where the hook finds `./cruxvault`). Created
+    if absent, appended if present, never duplicated (matched by its tag). The path is
+    repo-relative when the core lives inside the project; else the shared skills dir that
+    install.sh links for non-Claude agents (`~/.agents/skills/crux`), when it resolves to
+    this core; else the core's absolute path, the file the SessionStart hook injects."""
+    import sweep as SW
+    root = os.path.abspath(root)
+    proj = root if root == os.path.abspath(os.getcwd()) else os.path.dirname(root)
+    core, rproj = os.path.realpath(SW.CORE_PATH), os.path.realpath(proj)
+    shared = os.path.join("~", ".agents", "skills", "crux", "SKILL.md")
+    if core.startswith(rproj + os.sep):
+        ref = os.path.relpath(core, rproj).replace(os.sep, "/")
+    elif os.path.realpath(os.path.expanduser(shared)) == core:
+        ref = "~/.agents/skills/crux/SKILL.md"
+    else:
+        ref = core.replace(os.sep, "/")     # forward slashes: Windows reads them too
+    path = os.path.join(proj, "AGENTS.md")
+    text = E.read(path) if os.path.isfile(path) else ""
+    if AGENTS_POINTER_TAG in text:
+        return None
+    if text and not text.endswith("\n"):
+        text += "\n"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text + f"Before working in this project, read `{ref}` (the {AGENTS_POINTER_TAG}: "
+                       f"it keeps this project's research record).\n")
+    return path
+
+
 def dispatch(a):
     c = a.cmd
     if c in ("init", "start", "new"):
         if a.seed:
             root, fn = E.cmd_init_from(a.seed, a.dir)
+            _agents_md_pointer(root)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ materialized vault at {root} from {a.seed}\n  root node: {fn}\n"
-                  f"  next: {cd}crux status   — review the tree, then crux review for questions awaiting the PI")
+                  f"  next: {cd}crux status   — review the tree and its derived states")
         elif a.title:
             root, fn = E.cmd_init(a.title, a.dir, a.goal)
+            _agents_md_pointer(root)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: {cd}crux ask \"the first question\"")
         else:
@@ -660,11 +762,10 @@ def dispatch(a):
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
                                           a.fails_if, _pair_discriminates(sys.argv),
                                           measurement=a.measurement, replicates=a.replicates,
-                                          builds_on=a.builds_on)
+                                          builds_on=a.builds_on, expect=a.expect)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
-        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title)
-              + ("" if a.verifiable else "\n  ⚠ no verifiables yet — add them before `test --to running`"))
+        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
         if warn:
             print(f"  ⚠ {warn}", file=sys.stderr)
     elif c in ("test", "experiment", "run", "stage", "launch"):
@@ -673,68 +774,38 @@ def dispatch(a):
         if a.json:
             return _emit({"id": a.id, "status": st})
         print(f"✓ {a.id} → {st}")
-    elif c in ("close", "record", "conclude", "verdict", "land"):
+    elif c in ("finding", "record", "conclude", "land"):
         root = _vault()
-        verdict = E.cmd_close(root, a.id, a.metric, a.findings)
-        # closing is never blocked by missing paperwork — but unlinked results get said out loud
-        warns = E.artifact_warnings(root, a.id)
+        fid, fn, note = E.cmd_finding(root, a.parent, a.confidence, why=a.why,
+                                      direction=a.direction, evidence=a.evidence, null=a.null,
+                                      vs_expect=a.vs_expect, verifiables=a.verifiables,
+                                      answer=a.answer)
+        v = E.Vault(root)
+        st = E.derive_state(v, a.parent)
+        stored = v.get(fid)["fm"].get("confidence")
         if a.json:
-            return _emit({"id": a.id, "status": "done", "verdict": verdict, "warnings": warns})
-        print(f"✓ {a.id} closed → verdict: {verdict}")
-        for w in warns:
-            print(f"  ⚠ {w}", file=sys.stderr)
-    elif c in ("review", "gate", "decide"):
+            return _emit({"id": fid, "file": fn, "parent": a.parent,
+                          "direction": v.get(fid)["fm"].get("direction") or None,
+                          "stored_confidence": stored, "capped": bool(note), "note": note,
+                          "state": st["state"], "confidence": st["confidence"]})
+        print(f"✓ {fid} on {a.parent}  ({fn}) → {a.parent} {st['state']}"
+              + (f" · {st['confidence']}" if st["confidence"] else ""))
+        print(E.chat_handle(fid, v.get(fid).title))
+        if note:
+            print(f"  ⚠ {note}", file=sys.stderr)
+    elif c in ("park", "shelve"):
         root = _vault()
-        pend = E.cmd_review(root)
-        scope = E.gate_scope(E.Vault(root), a.near, [n for n, _t, _d in pend]) if a.near else {}
+        parked = E.cmd_park(root, a.id, undo=a.undo)
+        st = E.derive_state(E.Vault(root), a.id)
         if a.json:
-            rows = [{"id": nid, "title": title, "drift": drift}
-                    for nid, title, drift in pend]
-            for r in rows:
-                if r["id"] in scope:
-                    r["relation"], r["in_scope"] = scope[r["id"]]
-            return _emit(rows)
-        if not pend:
-            print("no questions awaiting a decision.")
-        else:
-            print("Awaiting the PI's decision (close with `answer`, or `pursue` to keep digging):")
-            for nid, title, drift in pend:
-                # the drift flag belongs HERE, at the moment the PI is deciding. It never
-                # blocks: the engine flags, the PI decides.
-                rel = f"  [{scope[nid][0]}]" if nid in scope else ""
-                print(f"  ◐ {nid}  {title}{rel}"
-                      + ("   ⚠ a child hypothesis has DRIFT — its "
-                         "verifiables changed after the run started" if drift else ""))
-    elif c in ("answer", "resolve", "settle"):
-        root = _vault()
-        E.cmd_answer(root, a.id, a.text)
-        sid = E.Vault(root).get(a.id)["fm"].get("synthesis")
-        if a.json:
-            return _emit({"id": a.id, "status": "resolved", "synthesis": sid})
-        print(f"✓ {a.id} resolved (synthesis {sid})")
-    elif c in ("approve", "sign-off", "signoff"):
-        stamp = E.cmd_approve(_vault(), a.id)
-        if a.json:
-            return _emit({"id": a.id, "approved": stamp})
-        print(f"✓ {a.id} approved at {stamp}\n  next: crux answer <question-id>")
-    elif c in ("pursue", "branch", "extend", "reopen"):
-        new = E.cmd_pursue(_vault(), a.id, a.idea)
-        if a.json:
-            return _emit({"id": a.id, "status": "open", "spawned": new[0] if new else None,
-                          "warning": new[2] if new else None})
-        print(f"✓ {a.id} reopened" + (f"; spawned {new[0]}" if new else ""))
-        if new and new[2]:
-            print(f"  ⚠ {new[2]}", file=sys.stderr)
+            return _emit({"id": a.id, "parked": parked, "state": st["state"],
+                          "confidence": st["confidence"]})
+        print(f"✓ {a.id} → {st['state']}")
     elif c in ("status", "map", "tree", "where", "show"):
         if a.json:
             root = _vault()
             return _emit(E.node_json(root, a.id) if a.id else E.snapshot(root))
         print(E.status_text(_vault(), a.id))
-    elif c in ("synthesize", "weave", "rollup"):
-        nid, fn = E.cmd_synthesize(_vault(), a.title, [x.strip() for x in a.questions.split(",")])
-        if a.json:
-            return _emit({"id": nid, "file": fn})
-        print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
     elif c in ("ingest", "source", "add-source"):
         _root, _wid, _title = _vault(), None, a.title
         if a.doi:                       # lazy: a plain ingest never loads the network module
@@ -823,12 +894,6 @@ def dispatch(a):
         print(f"✓ {E.RD_DIR}/{fn}  (RD for {a.node})\n" + E.chat_handle(slug, a.title)
               + (f"\n  superseded {a.supersedes}" if a.supersedes else "")
               + "\n  next: write the design into it — the node's TL;DR must still stand alone")
-    elif c in ("approve-null", "approve_null"):
-        root = _vault()
-        stamp = E.cmd_approve_null(root, a.id)
-        if a.json:
-            return _emit({"id": a.id, "null_approved": stamp})
-        print(f"✓ {a.id} null approved at {stamp}\n  checks may now be written against it")
     elif c == "migrate":
         res = E.cmd_migrate(_vault(), apply=a.apply)
         if a.json:
@@ -886,7 +951,7 @@ def dispatch(a):
             tag = " [control]" if x["kind"] == NEUTRAL_KIND_LABEL else ""
             print(f"    - {x['text']}{tag}")
         for pf in b["prior_findings"]:
-            print(f"  prior:    {pf['id']} ({pf['verdict']}) {pf['findings'][:70]}")
+            print(f"  prior:    {pf['id']} ({pf['state']} · {pf['confidence']}) {next((f['why'] or '' for f in pf['findings'] if f['id'] == pf['finding']), '')[:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
         propose = list(a.propose)
@@ -1098,6 +1163,8 @@ def dispatch(a):
         bad = [ck["level"] for ck in r["checks"] if ck["level"] != "ok"]
         print("\n" + (f"{bad.count('fail')} fail · {bad.count('warn')} warn" if bad else "all clear"))
         return 0 if r["ok"] else 1
+    elif c in ("hook", "sweep", "pending", "wrap"):
+        return _dispatch_capture(a)
     elif c == "selftest":
         import subprocess
         st = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selftest.py")

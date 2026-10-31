@@ -42,7 +42,7 @@ literature (raw/) → wiki/ → informs  ask · hypothesize · interpreting find
 ```
 
 **Never the reverse.** The wiki is a literature source-of-truth. A crux project's own
-results — verdicts, findings, closed hypotheses — **never** flow into the wiki. Wiki pages
+results — findings, their evidence and their confidence — **never** flow into the wiki. Wiki pages
 may link *out* to nothing but other wiki pages and their `raw/` sources; they must never
 cite a `q*`/`h*` tree node. This keeps provenance clean (every wiki claim traces to a
 curated source, never to your own unpublished result) and structurally prevents the
@@ -69,6 +69,8 @@ registry with compiled status. **Never hand-edit `WIKI.md`** — it regenerates 
 command. It is your entry point for a query.
 
 ## The three operations
+
+In the headings below, ○ is the engine's deterministic bookkeeping and ◆ is your judgment.
 
 ### Ingest — `crux ingest raw/<file> --title "<title>"`  ○→◆
 
@@ -103,8 +105,8 @@ Then **you** (◆) do the reading and synthesis the engine can't:
    page (see the semantic-lint checklist), don't silently overwrite.
 4. Run `crux validate` and fix any structural finding it reports.
 
-Because the PI already curated what entered `raw/`, compilation is **act-and-report**: do
-it, then summarize what you filed. You do not need per-page approval.
+Because the PI already curated what entered `raw/`, compilation needs no per-page approval:
+do it, then tell the PI in plain words what the source added to what we know.
 
 ### Query — read `WIKI.md` → drill in → answer with citations  ◆
 

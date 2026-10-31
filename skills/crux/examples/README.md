@@ -5,6 +5,12 @@ Four committed reference vaults. All open directly in the cockpit — run `crux 
 experience: the question/hypothesis **Tree** and, where a wiki exists, the living
 **Wiki** graph + reader.
 
+All four are stamped engine **4.0** (crux 1.0.0). Each was written under an older engine
+and converted by the engine's own migration, never by hand: every recorded verdict became a
+**finding** with a direction and a confidence, every approved synthesis became a strong
+finding on its question, and each node's state (open · leaning · settled · parked) is now
+derived from its findings. The tables below give the result.
+
 Start with `scaling_vault/` if you want to see what crux is for; `sortlab_vault/` if you
 want a whole finished project you can read without knowing any field; `segssl_vault/` if
 you want to see how large one gets.
@@ -28,11 +34,11 @@ smoke-test target and as the smallest complete example of every crux concept.
 jargon-free, so the shape of a crux vault is legible before you know anything about
 the field it sits in.
 
-- **Tree:** 3 questions, 7 hypotheses. `q1` carries the point: a hypothesis is
-  *supported*, and the answer still contradicts it — because the winning arm had
-  twice the compute, and the two hypotheses that test for exactly that come back
-  *partial* and *refuted*. All three verdicts derived from pre-registered verifiables.
-  `q3` stays open, with one experiment running and one idea untested.
+- **Tree:** 3 questions, 7 hypotheses, 7 findings. `q1` carries the point: one
+  hypothesis is *supported* with strong confidence, and the answer still contradicts it —
+  because the winning arm had twice the compute, and the two hypotheses that test for
+  exactly that come back *mixed* (weak) and *against* (strong). Two questions are settled
+  by a strong answer. `q3` stays open, with one experiment running and one idea untested.
 - **Wiki:** 24 pages across 6 categories (scaling laws, compute-optimal training, data
   quality and pruning, the two model families under comparison, the corpora the prior
   results were measured on), interlinked by 72 wikilinks, with 18 citations from tree
@@ -52,10 +58,11 @@ This is the vault the README's animation is showing.
 A full-scale example of what a lived-in crux vault looks like: **SegSSL —
 label-efficient semantic segmentation via self-supervised pretraining**.
 
-- **Tree:** 5 research questions × 3 hypotheses each — 4 questions resolved with PI
-  answers, 1 still open (one experiment running, one idea untested). Verdicts span
-  supported / partial / refuted, all mechanically derived from pre-registered
-  verifiables; the evidence ledgers, `META.md`, and `EXPERIMENTS.md` roll up from them.
+- **Tree:** 5 research questions and 16 hypotheses, 18 findings — 4 questions settled by
+  a strong answer, 1 still open (one experiment running, one idea untested). Hypothesis
+  findings span supports (4, strong), against (5, strong) and mixed (5, weak), converted
+  from verdicts that pre-registered verifiables derived; `META.md` and `EXPERIMENTS.md`
+  show each node's state and confidence.
 - **Wiki:** 17 agent-compiled literature pages across 6 categories (methods like MAE /
   DINO / iBOT, concepts like masked-image-modeling / label-efficiency, a decoder
   comparison, the Cityscapes dataset page, and an overview hub), interlinked by 83
@@ -94,12 +101,14 @@ the one already built into the language, and learns that measuring is harder tha
 The largest example here, and the only one a reader with no field at all can follow end to
 end: every sentence is about a laptop, a stopwatch and a list of numbers.
 
-- **Tree:** 150 nodes — 35 questions (19 open, 6 awaiting a decision, 10 resolved through 6
-  approved syntheses) and 108 hypotheses (87 closed, 8 running, 6 staged, 7 still ideas).
-  Verdicts span supported / refuted / inconclusive / **invalid-run**; the four invalid runs
-  are all control failures, which is the distinction the verdict machinery exists to make.
+- **Tree:** 35 questions and 108 hypotheses, with 154 findings: 57 nodes settled, 59
+  leaning and 27 open. 87 findings came from the closed hypotheses' verdicts (supports 40,
+  against 24, mixed 19, and 4 **no answer yet** from the four invalid runs, all control
+  failures), 57 from accepted experiment conclusions (moderate, linked to the task output),
+  and 10 from approved syntheses. The migration listed 2 experiments whose own conclusion
+  disagrees with their hypothesis's verdict (`h97`, `h104`).
 - **Taskhub:** 200 tasks — 156 done, 21 on the frontier, 13 computed `blocked`, 10 dropped;
-  45 of them experiments, 4 of which sit in `crux task review` awaiting the PI.
+  45 of them experiments, whose outputs are evidence on findings.
 - **Wiki:** 60 background pages compiled from 15 invented sources (class handouts, a computer
   club talk, a school magazine column). Neutral, encyclopedic, and — by the flow rule — they
   never mention this project or a single one of its results.
@@ -119,8 +128,10 @@ The `selftest` pins all of this (counts, the two named DRIFT ids, zero warnings,
 
 ### Provenance
 
-Generated as a *fixture* by a multi-agent build driving the real CLI for every verb it has —
-`init`, `ask`, `hypothesize`, `approve-null`, `test`, `close`, `synthesize`, `approve`,
-`answer`, `rd`, `ingest`, the task verbs and `glossary`. Every status and every verdict is
-the engine's own derivation from ticked verifiables; none was written by hand. The project
-is fictional and the timings are invented, but nothing about the bookkeeping is painted on.
+Generated as a *fixture* by a multi-agent build driving the real CLI of engine 3.5 for every
+verb it had — `init`, `ask`, `hypothesize`, `approve-null`, `test`, `close`, `synthesize`,
+`approve`, `answer`, `rd`, `ingest`, the task verbs and `glossary` — and then converted to
+4.0 by the engine's migration. Every verdict was the engine's own derivation from ticked
+verifiables, and every finding is the migration's mapping of one; none was written by hand.
+The project is fictional and the timings are invented, but nothing about the bookkeeping is
+painted on.

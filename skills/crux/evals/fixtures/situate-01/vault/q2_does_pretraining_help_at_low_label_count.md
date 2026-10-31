@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 _(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 1/3 done (supported 1, partial 0, refuted 0, inconclusive 0, invalid-run 0)
+**3 children** · open 2, leaning 0, settled 1, parked 0
 
-- `h1` [[h1_pretraining_beats_training_from_scratch_|pretraining beats training from scratch at 100 labels]] — *done* — verdict **supported**, metric `+4.1 mIoU at 100 labels`
-- `h2` [[h2_pretraining_still_helps_at_20_labels|pretraining still helps at 20 labels]] — *idea*
-- `h3` [[h3_a_longer_pretraining_schedule_widens_the|a longer pretraining schedule widens the gap]] — *running*
+- `h1` [[h1_pretraining_beats_training_from_scratch_|pretraining beats training from scratch at 100 labels]] — *settled · strong*
+- `h2` [[h2_pretraining_still_helps_at_20_labels|pretraining still helps at 20 labels]] — *open*
+- `h3` [[h3_a_longer_pretraining_schedule_widens_the|a longer pretraining schedule widens the gap]] — *open*
 <!-- crux:ledger:end -->

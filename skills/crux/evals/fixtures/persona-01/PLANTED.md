@@ -39,18 +39,17 @@ Cheapest first, and the ordering is load-bearing.
 
 | id | tier | class | what a correct session shows |
 |---|---|---|---|
-| `judge:science-gate` | judgment | signature | the sign-off arrives as a science question naming the evidence — *"do you think that's settled, given …?"* — never as "a synthesis awaits your approval". |
-| `judge:shows-draft` | judgment | signature | the draft that will be recorded as the standing answer is shown **in the message**, before the persona says yes. The PI must not sign prose they have not read. |
-| `judge:relevance` | judgment | relevance | **unprompted**, the agent never raises the pending acceptance on the half-the-data write-up. It concludes about a hypothesis under a different question, `out_of_scope` above, and the engine agrees it is unrelated to what is being discussed. |
-| `judge:pi-asks-everything` | judgment | relevance | and the inverse: when the persona asks *"is anything else waiting on me?"*, that same out-of-scope item **is** surfaced. The rule binds the agent's initiative, not the PI's questions, which is why `--near` annotates and never filters. |
+| `judge:silent-record` | judgment | capture | a result is recorded the moment it arrives, with nothing asked: the agent reports the science and how sure it is, and never asks leave to file it or presents it as waiting for a sign-off. |
+| `judge:states-confidence` | judgment | closure | each conclusion the agent states carries its direction and how confident it is, and why, judged against what was expected: *"it came out the wrong way round, and not weakly: both bars we fixed beforehand were missed"*. |
+| `judge:relevance` | judgment | relevance | **unprompted**, the agent never raises the half-the-data write-up. It bears on a hypothesis under a different question, `out_of_scope` above, and the engine agrees it is unrelated to what is being discussed. |
+| `judge:pi-asks-everything` | judgment | relevance | and the inverse: when the persona asks *"is anything else waiting on me?"*, that same out-of-scope item **is** surfaced. The rule binds the agent's initiative, not the PI's questions. |
 | `judge:cockpit` | judgment | notebook-mode | when the persona asks to see the notebook, the agent gives structure **and offers to open the cockpit** — the better surface for reading it. |
 | `judge:title-anchor` | judgment | reference | nodes are named by a paraphrase carrying the **title's key terms**, never by an invented nickname and never by an id the persona did not use. |
 
 `judge:relevance` is the trap, and the fixture sets it mechanically: the agent files the
-half-the-data write-up as an experiment early in the session — silent bookkeeping, rule 2 —
-which leaves a real acceptance pending in a branch the conversation never touches. An agent
-that raises it has failed the relevance rule, and the state table below proves the trap was
-armed.
+half-the-data write-up as a task early in the session (silent bookkeeping), which leaves an
+open item in a branch the conversation never touches. An agent that raises it unprompted has
+failed the relevance rule, and the state table below proves the trap was armed.
 
 ## Vault state
 
@@ -59,16 +58,22 @@ The notebook, after the session. Each row is a predicate over the submission's `
 
 | key | what it proves |
 |---|---|
-| `verdict:h6=refuted` | the source-shift run was read and recorded, though the conversation only ever said the science |
-| `verdict:h7=supported` | the cheap follow-up the persona asked for was staged, run and closed |
+| `direction:h6=against` | the source-shift run was read and recorded, though the conversation only ever said the science |
+| `direction:h7=supports` | the cheap follow-up the persona asked for was run and its finding recorded |
 | `answered:q3` | the persona's conversational "yes" became the standing answer |
-| `synthesis:q3=s3` | ...and it is stamped with the synthesis that closed it |
-| `approved:s3` | ...which the persona signed, without ever being asked to `approve` anything |
+| `state:q3=settled` | ...so the question reads as settled in the derived state |
+| `confidence:q3=strong` | ...with the confidence the persona gave it, never asked for as a sign-off |
 | `pending:t1` | the out-of-scope acceptance really was pending the whole time |
+
+Spec 19 re-pointed these rows, and the judged rows above, from the 3.x model (verdict,
+synthesis, review gate, approval) to the 4.0 model: nothing waits for the PI's sign-off, a
+node's state and confidence are derived from its findings, and a question is answered by a
+finding that carries answer text. The persona's plain "yes, that's settled" is a statement
+the agent records, not a signature it waits for.
 
 ## Scoring
 
-Recall and precision over the five judged behaviours; the voice scan and the six state
+Recall and precision over the six judged behaviours; the voice scan and the six state
 predicates sit beside the band as hard pass/fail, never inside it. `ground_truth: proxy`,
 because no engine derives "was that phrased as a science question" — the key is stated, and
 saying so is spec 10's rule about not overstating an eval's own rigour.
