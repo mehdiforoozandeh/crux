@@ -6,6 +6,12 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-31
+
+**Anchoring** (spec 20; engine **4.0 → 4.1**, no migration). Every new question and hypothesis
+says how its answer moves the question above it, so a long project stays tied to its top
+question. A 4.0 vault is only restamped; old items are never rewritten.
+
 ### Added
 
 - **Anchoring** (spec 20; engine **4.0 → 4.1**). Every new question and hypothesis carries a
