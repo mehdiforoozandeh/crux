@@ -400,6 +400,36 @@ def main(argv=None):
     g.add_argument("--open", dest="open", action="store_true", help="force-open the system browser")
     g.add_argument("--no-open", dest="open", action="store_false", help="never open a browser")
 
+    # ---- capture plumbing (spec 19, C3): the SessionStart hook, the sweep, pending, wrap.
+    hp = sub.add_parser("hook", help="Claude Code hook entry points (read a hook payload on stdin)")
+    hsub = hp.add_subparsers(dest="hook_cmd", metavar="<event>", required=True)
+    s = hsub.add_parser("session-start", help="inject the always-on core when a vault is near; "
+                                              "start the catch-up sweep on startup or clear")
+    s.add_argument("--install-hook", dest="install_hook", action="store_true",
+                   help="register this hook in a Claude Code settings file (idempotent)")
+    s.add_argument("--settings", default=None,
+                   help="the settings file --install-hook writes (default: ~/.claude/settings.json)")
+
+    _jsonable(sub.add_parser("sweep", help="run the catch-up sweep now: new transcript text since "
+                                           "the mark → one background capture run"))
+
+    pp = _jsonable(sub.add_parser("pending", help="the pending capture candidates /crux-wrap asks about"))
+    psub = pp.add_subparsers(dest="pending_cmd", metavar="<action>")
+    _jsonable(psub.add_parser("list", aliases=["ls"], help="list pending candidates (default)"))
+    s = _jsonable(psub.add_parser("add", help="append a candidate the capture was unsure of"))
+    s.add_argument("--kind", required=True, help="question | hypothesis | finding | ...")
+    s.add_argument("--parent", default=None, help="the node it would hang under")
+    s.add_argument("--text", required=True, help="the candidate, in plain words")
+    s.add_argument("--source", default="sweep", help="where it came from (default: sweep)")
+    s = _jsonable(psub.add_parser("clear", aliases=["rm", "resolve"],
+                                  help="remove candidates once accepted or rejected"))
+    s.add_argument("ids", nargs="+")
+
+    s = _jsonable(sub.add_parser("wrap", help="/crux-wrap's data: this session's records, the "
+                                              "pending list, and the session's new text"))
+    s.add_argument("--transcript", default=None,
+                   help="the session transcript (default: the newest in this cwd's projects folder)")
+
     raw = list(sys.argv[1:] if argv is None else argv)
     gone = _removed_verb(raw)
     if gone:
@@ -411,7 +441,7 @@ def main(argv=None):
     if not args.cmd:
         p.print_help(); return 0
 
-    if args.cmd != "voice":
+    if args.cmd not in ("voice", "hook"):
         _update_notice()
 
     try:
@@ -592,6 +622,81 @@ def _dispatch_task(a):
               f"blocked_by: {', '.join(rec['blocked_by']) or E.NO_BLOCKERS}")
         for o in rec["outputs"]:
             print(f"  output: {o['path']}")
+    return 0
+
+
+def _capture_vault():
+    import sweep as SW
+    root = SW.find_vault_near(os.getcwd())
+    if not root:
+        raise E.CruxError("no crux vault here, above, or one level down. Run `crux init` first.")
+    return root
+
+
+def _dispatch_capture(a):
+    """`crux hook session-start | sweep | pending | wrap` (spec 19, C3). The hook exits 0 and
+    is silent on ANY failure: a hook that breaks a session is worse than a missed sweep."""
+    import sweep as SW
+    c = a.cmd
+    if c == "hook":
+        if a.install_hook:
+            path = a.settings or E.DOCTOR_SETTINGS_PATHS[0]
+            print(f"✓ session-start hook {SW.install_session_hook(path)}  "
+                  f"({os.path.expanduser(path)})")
+            return 0
+        try:
+            try:
+                payload = json.loads(sys.stdin.read() or "{}")
+            except Exception:
+                payload = {}
+            ctx = SW.session_start(payload)
+            if ctx:
+                _emit({"hookSpecificOutput": {"hookEventName": SW.HOOK_EVENT,
+                                              "additionalContext": ctx}})
+        except Exception:
+            pass
+        return 0
+    root = _capture_vault()
+    if c == "sweep":
+        cwd = os.getcwd()
+        r = SW.run_sweep(root, SW.project_dir(cwd), cwd=cwd)
+        if a.json:
+            return _emit(r)
+        print(f"✓ sweep launched ({r['chars']} chars from {len(r['transcripts'])} transcripts)"
+              if r["launched"] else f"sweep: nothing launched — {r['reason']}")
+        return 0
+    if c == "pending":
+        pc = a.pending_cmd or "list"
+        if pc == "add":
+            rec = SW.pending_add(root, a.kind, a.parent, a.text, a.source)
+            if a.json:
+                return _emit(rec)
+            print(f"✓ pending {rec['id']}")
+            return 0
+        if pc in ("clear", "rm", "resolve"):
+            gone = SW.pending_clear(root, a.ids)
+            if a.json:
+                return _emit({"cleared": gone})
+            print(f"✓ cleared {len(gone)}")
+            return 0
+        items = SW.pending_list(root)
+        if a.json:
+            return _emit({"pending": items})
+        for i in items:
+            print(f"{i['id']}  {i['kind']:<10} {i.get('parent') or DASH:<6} {i['text']}")
+        return 0
+    if c == "wrap":
+        tr = a.transcript or SW.newest_transcript(SW.project_dir(os.getcwd()), root)
+        r = SW.wrap(root, os.path.abspath(tr) if tr else None)
+        if a.json:
+            return _emit(r)
+        print(f"recorded this session: {len(r['records'])}")
+        for x in r["records"]:
+            print(f"  {x['id'] or DASH}  {x['verb']}  {x['result']}")
+        print(f"pending: {len(r['pending'])}")
+        for i in r["pending"]:
+            print(f"  {i['id']}  {i['kind']}  {i['text']}")
+        return 0
     return 0
 
 
@@ -1019,6 +1124,8 @@ def dispatch(a):
         bad = [ck["level"] for ck in r["checks"] if ck["level"] != "ok"]
         print("\n" + (f"{bad.count('fail')} fail · {bad.count('warn')} warn" if bad else "all clear"))
         return 0 if r["ok"] else 1
+    elif c in ("hook", "sweep", "pending", "wrap"):
+        return _dispatch_capture(a)
     elif c == "selftest":
         import subprocess
         st = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selftest.py")
