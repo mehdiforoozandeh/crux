@@ -53,8 +53,9 @@ into it. You turn the talking into records.
      expectation>"`.
    - On a question: `crux finding <qid> -c <confidence> -a "<the answer>" -e <path>`. A
      question finding has answer text and a confidence, and no direction. Add
-     `--exploratory` when the answer came from looking at data with no stated prediction; it
-     counts at most moderate.
+     `--exploratory` when the answer came from browsing data for patterns no question or
+     prediction asked for; it counts at most moderate. A measurement the question asked for is
+     not exploratory.
    - `-e` takes a path under `results/` or `tasks/` that exists; repeat it for each file. When
      the result has no file there, record the finding without `-e` and add a pending item
      asking where the output lives.

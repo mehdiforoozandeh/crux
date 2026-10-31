@@ -53,9 +53,9 @@ answer yet), then the confidence (strong, moderate, weak), with one sentence of 
 - A failed control caps the finding at weak, in every direction.
 - A question finding has no direction: answer text and a confidence (`-a`, `-c`).
 - `no answer yet` is recorded and never sets the state.
-- A finding from looking at data with no stated prediction is exploratory (`--exploratory`):
-  at most moderate; it yields a sharper hypothesis or a ruled-out direction, never the
-  parent's answer.
+- A finding from browsing data for patterns nobody asked about is exploratory
+  (`--exploratory`): at most moderate; it yields a sharper hypothesis or a ruled-out
+  direction, never the parent's answer. An asked-for measurement is not.
 - Never loosen a threshold or the expectation after seeing the result.
 
 State is derived: no finding is open; the strongest finding sets it (weak or moderate is

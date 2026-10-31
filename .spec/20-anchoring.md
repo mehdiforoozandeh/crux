@@ -2,7 +2,7 @@
 
 - **Kind:** feature (capture rules, one node section, one finding flag, one closure cap, one wrap step)
 - **Spec:** extends [19](19-background-memory.md); answers its open question 1 (pruning).
-- **Status:** approved by the PI, 2026-10-31. Decisions (i)–(ix) below are PI rulings.
+- **Status:** approved by the PI and built, 2026-10-31. Decisions (i)–(ix) below are PI rulings.
 - **Research:** [research/research-drift.md](research/research-drift.md).
 - **Release:** `ENGINE_VERSION` 4.0 → 4.1 (decision vi changes the roll-up).
 
