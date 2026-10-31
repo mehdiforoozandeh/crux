@@ -193,3 +193,15 @@ Questions marked **(science)** change what the record says. The PI must answer t
 **ELI5:** This plan splits a big rewrite of the research notebook into nine small jobs, says which files each job may touch, and lists the questions the owner must answer first.
 
 **TL;DR:** The build is nine chunks: the engine model (C1) first, then migration (C2), capture hooks (C3), autopilot (C4), cockpit (C5), payloads (C6), agents (C7), skill text (C8) and release (C9). Baseline is 1,913 green asserts and a 36,401-byte SKILL.md. The spec leaves the roll-up rule, several migration rows, synthesis direction and autopilot noise undefined; Q2–Q6 and Q10 change what the record says, so the PI must answer them before C1 and C2 start.
+
+## PI rulings (2026-10-31)
+
+- **Mechanical questions Q1, Q7–Q9, Q11–Q15:** the planner's recommendations above are accepted as written.
+- **Q3 — which Finding counts:** the strongest Finding sets a node's state and confidence; the newest breaks ties. "No answer yet" Findings are recorded but never set the state.
+- **Q2 — Question roll-up:** the question's own Findings decide (strongest wins). With none, the strongest Finding among its child hypotheses counts, capped at moderate (leaning). Sub-questions do not count.
+- **Question Findings (new):** a Finding on a Question carries the answer text, a confidence and evidence links, and **no direction**. Direction (supports · against · mixed · no answer yet) applies to Hypothesis Findings only.
+- **Q4 — migrated confidence:** agreement count. Supported: all claim checks pass → strong; one missed → moderate; two or more → weak. Refuted mirrors it: all fail → strong against; any pass → moderate. A failed control, or a null not ruled out, caps at weak.
+- **Q5 — missing rows:** `partial` → mixed, weak. A never-closed hypothesis → no Finding, state open. Checks edited after the run started → confidence capped at moderate, the edit named in the reason.
+- **Q6 — syntheses:** an approved synthesis → a strong Question Finding with its text kept; an unapproved one → a pending `/crux-wrap` candidate.
+- **Q6 — experiment tasks:** accepted conclusion → a moderate Finding on its hypothesis, linked to the task output; unaccepted → pending candidate; dropped → nothing. The migration report lists every disagreement with the hypothesis's own verdict.
+- **Q10 — autopilot noise:** `crux auto check` scores the baseline 3 times and records the spread as `noise`. Strong when the gain beats the bar by more than `noise`, else moderate. When the spread is zero (a deterministic scorer), `min_gain` is used instead, and its default for a deterministic scorer is near zero (any marginal gain counts).
