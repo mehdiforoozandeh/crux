@@ -97,6 +97,36 @@ def _marks(vault):
     return json.loads(_read(p)) if os.path.isfile(p) else {}
 
 
+def _tool_list(val):
+    """Split a comma list, keeping commas inside parentheses (a path may hold anything)."""
+    out, depth, cur = [], 0, ""
+    for ch in val:
+        if ch == "," and depth == 0:
+            out.append(cur); cur = ""
+            continue
+        depth += (ch == "(") - (ch == ")")
+        cur += ch
+    return out + [cur]
+
+
+def _restricted(argv):
+    """True when a capture run can use crux and Read and nothing else."""
+    def val(flag):
+        return argv[argv.index(flag) + 1] if flag in argv and argv.index(flag) + 1 < len(argv) else None
+    allowed = val("--allowedTools")
+    ok = {"Bash(crux:*)", "Bash(python3 %s:*)" % S.CRUX_PY, "Read"}
+    return (allowed is not None and all(t in ok for t in _tool_list(allowed))
+            and val("--tools") == "Bash,Read" and val("--permission-mode") == "dontAsk")
+
+
+def _widen(argv):
+    argv = list(argv)
+    if "--allowedTools" in argv:
+        i = argv.index("--allowedTools") + 1
+        argv[i] = argv[i] + ",Edit"
+    return argv
+
+
 # ------------------------------------------------------------------------------- sections
 def _discovery_tests(check, tmp):
     base = os.path.join(tmp, "disc")
@@ -163,7 +193,7 @@ def _sweep_tests(check, tmp):
     proj = os.path.join(home, ".claude", "projects", S.project_slug(repo))
     old = os.path.join(proj, "s-old.jsonl")
     cur = os.path.join(proj, "s-cur.jsonl")
-    _write(old, _turns("Can a smaller batch improve accuracy?", "A smaller batch may help."))
+    _write(old, _turns("OLD-HISTORY-TEXT from before install", "noted"))
     _write(cur, _turns("hello", "CURRENT-SESSION-TEXT", "s-cur"))
 
     def start(source="startup", extra_env=None, transcript=cur):
@@ -172,6 +202,25 @@ def _sweep_tests(check, tmp):
                             "session_id": os.path.basename(transcript)[:-6],
                             "transcript_path": transcript}, e)
 
+    def run_text(run):
+        cands = [w for w in (run or {}).get("argv", []) if w.endswith(".txt") and os.path.isfile(w)]
+        if not cands:
+            cands = [w for w in " ".join((run or {}).get("argv", [])).split()
+                     if w.endswith(".txt") and os.path.isfile(w)]
+        return _read(cands[0]) if cands else ""
+
+    # ---- first sight (cheap first run): history from before install is baselined, not swept.
+    r = start()
+    m = _marks(vault)
+    check("capture: first sight of an old transcript starts no run",
+          r.returncode == 0 and len(_launches(log)) == 0)
+    check("capture: ... and sets its mark to the transcript's current end",
+          m.get("marks", {}).get(old) == os.path.getsize(old))
+    check("capture: the current session is registered from byte 0",
+          m.get("marks", {}).get(cur) == 0)
+
+    _write(old, _turns("Can a smaller batch improve accuracy?", "A smaller batch may help."),
+           mode="a")
     r = start()
     runs = _launches(log, expect=1)
     m = _marks(vault)
@@ -179,23 +228,17 @@ def _sweep_tests(check, tmp):
           r.returncode == 0 and len(runs) == 1)
     check("capture: the sweep mark stores the per-transcript byte offset",
           m.get("marks", {}).get(old) == os.path.getsize(old))
+    text = run_text(runs[0] if runs else None)
+    check("capture: the run's input carries only the new transcript text",
+          "smaller batch" in text and "OLD-HISTORY-TEXT" not in text)
     check("capture: the current session's own transcript is not swept",
-          cur not in m.get("marks", {}))
-    inp = [a for a in (runs[0]["argv"] if runs else []) if S.STATE_DIR in a and "input" in a]
-    text = _read(inp[0]) if inp and os.path.isfile(inp[0]) else ""
-    if not text and runs:
-        joined = " ".join(runs[0]["argv"])
-        cands = [w for w in joined.split() if w.endswith(".txt") and os.path.isfile(w)]
-        text = _read(cands[0]) if cands else ""
-    check("capture: the run's input carries the new transcript text",
-          "smaller batch" in text and "CURRENT-SESSION-TEXT" not in text)
+          "CURRENT-SESSION-TEXT" not in text and m.get("marks", {}).get(cur) == 0)
     argv = runs[0]["argv"] if runs else []
     check("capture: the run is `claude -p` on a small model with a turn cap",
           "-p" in argv and "--model" in argv and "--max-turns" in argv)
-    check("capture: the run is limited to crux commands",
-          "--allowedTools" in argv
-          and all("crux" in t or t == "Read"
-                  for t in argv[argv.index("--allowedTools") + 1].split()))
+    check("capture: the run is limited to crux commands", _restricted(argv))
+    check("capture: ... and the predicate rejects an argv with an extra Edit entry",
+          not _restricted(_widen(argv)))
     check("capture: the run carries CRUX_SWEEP=1", runs and runs[0]["sweep"] == "1")
     check("capture: the run is handed the capture brief",
           any(S.CAPTURE_BRIEF in a for a in argv))
@@ -212,6 +255,11 @@ def _sweep_tests(check, tmp):
     check("capture: resume and compact never sweep", len(_launches(log)) == 1)
     start()
     check("capture: new bytes start exactly one more run", len(_launches(log, expect=2)) == 2)
+    cur2 = os.path.join(proj, "s-cur2.jsonl")
+    start(transcript=cur2)
+    runs = _launches(log, expect=3)
+    check("capture: a session started since install is swept from byte 0 at the next start",
+          len(runs) == 3 and "CURRENT-SESSION-TEXT" in run_text(runs[-1]))
 
     # ---- recursion guard (R3): the capture run's own SessionStart.
     capt = os.path.join(proj, "s-capt.jsonl")
@@ -219,13 +267,13 @@ def _sweep_tests(check, tmp):
     _write(old, _turns("A third question?", "Maybe."), mode="a")
     r = start(extra_env={"CRUX_SWEEP": "1"}, transcript=capt)
     check("capture: with CRUX_SWEEP=1 the hook starts no sweep",
-          r.returncode == 0 and len(_launches(log)) == 2)
+          r.returncode == 0 and len(_launches(log)) == 3)
     check("capture: ... and emits no core into the capture run", r.stdout.strip() == "")
     check("capture: ... and lists that transcript as a capture run",
           capt in _marks(vault).get("capture_runs", []))
     start()
-    runs = _launches(log, expect=3)
-    argv = runs[-1]["argv"] if len(runs) == 3 else []
+    runs = _launches(log, expect=4)
+    argv = runs[-1]["argv"] if len(runs) == 4 else []
     cands = [w for w in " ".join(argv).split() if w.endswith(".txt") and os.path.isfile(w)]
     text = _read(cands[0]) if cands else ""
     check("capture: a capture run's transcript is never swept",
@@ -238,8 +286,8 @@ def _sweep_tests(check, tmp):
     big = "x" * (S.CHAR_CAP * 2)
     _write(old, _turns("OLDEST-MARK " + big, "ok") + _turns("NEWEST-MARK", "ok"), mode="a")
     start()
-    runs = _launches(log, expect=4)
-    argv = runs[-1]["argv"] if len(runs) == 4 else []
+    runs = _launches(log, expect=5)
+    argv = runs[-1]["argv"] if len(runs) == 5 else []
     cands = [w for w in " ".join(argv).split() if w.endswith(".txt") and os.path.isfile(w)]
     text = _read(cands[0]) if cands else ""
     check("capture: the text handed to the capture run is truncated to the hard cap",
@@ -254,14 +302,14 @@ def _sweep_tests(check, tmp):
     r = _cli(repo, ["sweep", "--json"], env)
     out = json.loads(r.stdout or "{}")
     check("capture: `crux sweep --json` launches one run and says so",
-          out.get("launched") is True and len(_launches(log, expect=5)) == 5)
+          out.get("launched") is True and len(_launches(log, expect=6)) == 6)
 
     # ---- no claude binary: silent, nothing launched, marks not advanced.
     _write(old, _turns("A fifth one?", "Yes."), mode="a")
     before = _marks(vault)["marks"][old]
     r = start(extra_env={"PATH": BASE_PATH})
     check("capture: a missing claude binary is silent",
-          r.returncode == 0 and r.stderr.strip() == "" and len(_launches(log)) == 5)
+          r.returncode == 0 and r.stderr.strip() == "" and len(_launches(log)) == 6)
     check("capture: ... and the mark is not advanced", _marks(vault)["marks"][old] == before)
 
     r = _cli(vault, ["validate", "--json"], env)
@@ -295,6 +343,28 @@ def _pending_tests(check, tmp):
     left = json.loads(_cli(vault, ["pending", "--json"], env).stdout)["pending"]
     check("capture: `pending clear <id>` removes exactly that record",
           r.returncode == 0 and [i["id"] for i in left] == [items[0]["id"]])
+
+    # ---- a rewrite racing appends must not drop a line: both hold the same lock.
+    import threading
+    v3 = _vault(tmp, "prace")
+    keep = S.pending_add(v3, "question", None, "kept", "sweep")["id"]
+    added = []
+
+    def adder():
+        for i in range(150):
+            added.append(S.pending_add(v3, "question", None, "race %d" % i, "sweep")["id"])
+
+    def clearer():
+        for _ in range(150):
+            S.pending_clear(v3, ["p-not-there"])
+    ts = [threading.Thread(target=adder), threading.Thread(target=clearer)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    got = {i["id"] for i in S.pending_list(v3)}
+    check("capture: concurrent appends survive a racing pending rewrite",
+          got == set(added) | {keep} and len(added) == 150)
 
 
 def _wrap_tests(check, tmp):

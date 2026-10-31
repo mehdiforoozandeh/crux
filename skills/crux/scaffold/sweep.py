@@ -17,7 +17,9 @@ Machine-local state lives in `<vault>/.crux/`, a folder that ignores itself in g
     .crux/sweep.log      the capture run's own stdout/stderr
 
 Pending record shape — one JSON object per line, UTF-8, appended (never rewritten except by
-`pending_clear`). Required: `kind`, `parent`, `text`, `source`; a line without all four, or
+`pending_clear`). Every append and every rewrite holds the O_EXCL lock `.crux/.crux.lock`
+(engine `id_lock` on the state folder); another writer (C2's migration) must take it too.
+Required: `kind`, `parent`, `text`, `source`; a line without all four, or
 not a JSON object, is skipped on read.
 
     {"id": "p1a2b3c4",            # optional; when absent, a stable id is derived from the line
@@ -64,6 +66,9 @@ SWEEP_MODEL = "haiku"
 SWEEP_MAX_TURNS = 25
 SWEEP_ENV = "CRUX_SWEEP"
 SWEEP_SOURCES = ("startup", "clear")
+SWEEP_TOOLS = "Bash,Read"
+SWEEP_ALLOWED = ("Bash(crux:*)", "Bash(python3 %s:*)" % CRUX_PY, "Read")
+SWEEP_PERMISSION_MODE = "dontAsk"
 
 HOOK_EVENT = "SessionStart"
 CUT_NOTE = "[earlier text was cut to the sweep's token cap]\n"
@@ -251,6 +256,26 @@ def text_since(path, start):
     return "\n".join(lines), start + len(raw)
 
 
+def _complete_end(path):
+    """The byte offset just past the transcript's last complete line."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    return raw.rfind(b"\n") + 1
+
+
+def register_session(vault, transcript, source):
+    """Give the current session's transcript a mark if it has none: 0 for a fresh start or a
+    clear (all of it is new), its current end on a resume or compact of an older session."""
+    if not transcript:
+        return
+    m = load_marks(vault)
+    if transcript in m["marks"] or transcript in m["capture_runs"]:
+        return
+    fresh = source in SWEEP_SOURCES or not os.path.isfile(transcript)
+    m["marks"][transcript] = 0 if fresh else _complete_end(transcript)
+    save_marks(vault, m)
+
+
 def cap_text(text):
     """Cut to CHAR_CAP, keeping the newest text. Returns (text, truncated)."""
     if len(text) <= CHAR_CAP:
@@ -265,9 +290,12 @@ def _launch_cmd(claude, input_path, session_id):
               "Run crux as: python3 %s <verb> ...\n"
               "Record what you are sure of. Append anything uncertain with `pending add`. "
               "Never ask anyone anything.\n" % (CAPTURE_BRIEF, input_path, CRUX_PY))
-    allowed = ",".join(["Bash(crux:*)", "Bash(python3 %s:*)" % CRUX_PY, "Read"])
+    # --tools is what EXISTS (Bash and Read only); --allowedTools pre-approves the crux
+    # patterns; dontAsk denies anything else instead of prompting, so the PI's own
+    # permissions.allow or defaultMode cannot widen a run no one is watching.
     return [claude, "-p", prompt, "--model", SWEEP_MODEL, "--max-turns", str(SWEEP_MAX_TURNS),
-            "--allowedTools", allowed, "--disallowedTools", "AskUserQuestion",
+            "--tools", SWEEP_TOOLS, "--allowedTools", ",".join(SWEEP_ALLOWED),
+            "--permission-mode", SWEEP_PERMISSION_MODE, "--disallowedTools", "AskUserQuestion",
             "--session-id", session_id]
 
 
@@ -298,7 +326,13 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
         paths.sort(key=lambda p: os.path.getmtime(p))
         parts, new_marks = [], {}
         for p in paths:
-            start = m["marks"].get(p, 0)
+            if p not in m["marks"]:
+                # First sight: a session from before background capture. Baseline it at its
+                # end and sweep nothing, so an install never triggers a capped run over old
+                # history. (A session started since has its mark set to 0 by the hook.)
+                new_marks[p] = _complete_end(p)
+                continue
+            start = m["marks"][p]
             if os.path.getsize(p) <= start:
                 continue
             text, end = text_since(p, start)
@@ -307,7 +341,10 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
             if text:
                 parts.append("### session %s\n%s" % (os.path.basename(p)[:-6], text))
                 rep["transcripts"].append(p)
-        if not new_marks:
+        if not parts:
+            if new_marks:
+                m["marks"].update(new_marks)
+                save_marks(vault, m)
             rep["reason"] = "nothing new"
             return rep
         text, rep["truncated"] = cap_text("\n\n".join(parts))
@@ -372,6 +409,7 @@ def session_start(payload):
     except Exception:
         return None
     try:
+        register_session(vault, transcript, payload.get("source"))
         if payload.get("source") in SWEEP_SOURCES:
             proj = os.path.dirname(transcript) if transcript else project_dir(cwd)
             run_sweep(vault, proj, current=transcript, cwd=cwd)
@@ -441,15 +479,19 @@ def pending_list(vault):
 def pending_add(vault, kind, parent, text, source):
     rec = {"id": "p" + uuid.uuid4().hex[:8], "kind": kind, "parent": parent, "text": text,
            "source": source, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    _state(vault)
-    with open(_pending_path(vault), "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    with E.id_lock(_state(vault)):
+        with open(_pending_path(vault), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return rec
 
 
 def pending_clear(vault, ids):
     """Remove the records with these ids (malformed lines are kept as they are)."""
-    ids = set(ids)
+    with E.id_lock(_state(vault)):
+        return _pending_clear(vault, set(ids))
+
+
+def _pending_clear(vault, ids):
     p = _pending_path(vault)
     try:
         with open(p, encoding="utf-8") as f:
