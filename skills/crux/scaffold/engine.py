@@ -4164,6 +4164,16 @@ class id_lock:
                 os.write(fd, stamp)
                 os.close(fd)
                 return self
+            except PermissionError:
+                # Windows: a lock file just removed while another handle (a waiter's read,
+                # a virus scanner) is open on it stays "delete pending", and opening it is
+                # refused with access denied rather than exists. It is a held lock: wait.
+                if os.name != "nt":
+                    raise
+                if time.time() - start > self.timeout:
+                    raise CruxError(f"could not take the vault lock {self.path} within "
+                                    f"{self.timeout:.0f}s (access denied)")
+                time.sleep(0.005)
             except FileExistsError:
                 try:
                     age = time.time() - os.path.getmtime(self.path)
@@ -4182,11 +4192,20 @@ class id_lock:
                 time.sleep(0.005)
 
     def __exit__(self, *exc):
-        try:
-            os.remove(self.path)
-        except OSError:
-            pass
-        return False
+        import time
+        deadline = time.time() + 5.0
+        while True:
+            try:
+                os.remove(self.path)
+            except PermissionError:
+                # Windows refuses to delete a file another process holds open (a waiter
+                # reading the stamp); a lock left behind would wedge every waiter. Retry.
+                if os.name == "nt" and time.time() < deadline:
+                    time.sleep(0.005)
+                    continue
+            except OSError:
+                pass
+            return False
 
 _ID_KINDS = {"question": ("counter_q", "q"), "idea": ("counter_h", "h"),
              "finding": ("counter_f", "f"), "task": ("counter_t", "t")}
