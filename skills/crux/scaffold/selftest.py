@@ -5494,8 +5494,9 @@ def run_taskhub_skill():
     for v in ("review", "accept"):
         rr = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", v],
                             capture_output=True, text=True, encoding="utf-8")
-        check(f"skill: `crux task {v}` prints that it is removed",
-              "removed" in (rr.stdout + rr.stderr))
+        check(f"skill: `crux task {v}` prints a spec-19 pointer, not a traceback",
+              rr.returncode == 0 and f"`task {v}` is removed (spec 19)" in rr.stdout
+              and "Traceback" not in rr.stderr)
 
     # -- the .spec amendments (rulings D6 / D9 / D19) are history and stay as they were
     check("skill: .spec/08's conclusion vocabulary matches VERDICTS",
@@ -7986,25 +7987,6 @@ def run_proxy_register():
           f"later (now {E.ENGINE_VERSION})", at_least_version("3.1"))
 
 
-def _voice_vault():
-    """A tiny tree with two branches, for the relevance gate: q1 -> (q2 -> h1,h2 ; q3 -> h3).
-
-    Two branches is the minimum that can tell `sibling` from `unrelated`, which is the only
-    distinction the gate actually turns on."""
-    root = tempfile.mkdtemp(prefix="crux_voice_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Voice", root)
-    q1, _ = E.cmd_ask(root, "how do we cut the label budget", None)
-    q2, _ = E.cmd_ask(root, "does pretraining help at low label count", q1)
-    q3, _ = E.cmd_ask(root, "which augmentation family matters", q1)
-    hy = lambda t, p: E.cmd_hypothesize(root, t, parent=p, verifiables=["accuracy >= +2.0"],
-                                        neutral=["the baseline reproduces its published number"])[0]
-    h1 = hy("pretraining beats scratch", q2)
-    h2 = hy("pretraining still helps at 20 labels", q2)
-    h3 = hy("colour jitter is the family that matters", q3)
-    return root, {"q1": q1, "q2": q2, "q3": q3, "h1": h1, "h2": h2, "h3": h3}
-
-
 def run_correct_terms():
     """2026-10-29, the PI's ruling: the correct technical term, glossed in at most ten words
     the first time it appears — never a homemade paraphrase in its place. PR #56 wrote the
@@ -8563,12 +8545,27 @@ def run_voice_enforcement():
     #      forbids. The phrase is the defect; its absence is the fix.
     check("voice: SKILL.md no longer tells the agent to report its bookkeeping",
           "act-and-report" not in skill and "act, then report" not in skill)
-    check("voice: ... and the ○ legend denies the second reading it used to invite",
-          re.search(r"`○`\s*=\s*act without asking", skill)
-          and re.search(r"not.{0,40}announc", skill, re.I))
-    # Order is load-bearing: the rule has to be read before the table that contradicted it.
-    check("voice: the Voice section is read before the first ○ in the file",
-          skill.index("## Voice — the invisible notebook") < skill.index("○"))
+    # Spec 19: the ○/◆ verb legend is gone with the review gate, and the contradiction it
+    # caused cannot come back through it. What section A protects is the 4.0 core's voice
+    # rules: silent bookkeeping is stated, nothing tells the agent to announce or ask leave,
+    # and the rule is read before the first verb the agent is taught to run.
+    low = skill.lower()
+    voice = re.search(r"^## Voice — the invisible notebook$(.*?)(?=^## |\Z)", skill, re.M | re.S)
+    vtext = voice.group(1) if voice else ""
+    check("voice: the 4.0 core states silent bookkeeping — record and say nothing, no echo, "
+          "no asking leave",
+          "silent bookkeeping" in vtext.lower() and "say nothing" in vtext
+          and "command echo" in vtext and "asking leave" in vtext)
+    check("voice: ... and no glyph legend or sign-off step survives to invite a second reading",
+          "○" not in skill and "◆" not in skill and "signature" not in low
+          and "approve" not in low)
+    check("voice: CLI output is declared agent-facing, never relayed",
+          "agent-facing" in vtext and "never relay" in vtext)
+    # Order is load-bearing: the rules are read before the router hands work elsewhere, and
+    # the capture rules that write silently point at them by being in the same file.
+    check("voice: the Voice section comes before the router and the guardrails",
+          bool(voice) and skill.index("## Voice — the invisible notebook")
+          < skill.index("## Guardrails") < skill.index("## Router"))
 
     # ---- B · the handle. The agent reaches for `t81` partly because it needs SOME handle
     #      and the id is the nearest one in context. Hand over the substitute at the moment
@@ -8586,19 +8583,21 @@ def run_voice_enforcement():
         minted["ask"] = run(["ask", "does more data beat a better model"], cwd=vault).stdout
         qid = re.search(r"✓ (q\d+)", minted["ask"]).group(1)
         minted["hypothesize"] = run(["hypothesize", "doubling the data wins on held-out",
-                                     "--parent", qid, "-v", "imp-Spearman >= +0.01"],
+                                     "--parent", qid, "-v", "imp-Spearman >= +0.01",
+                                     "--expect", "held-out gain above 0.01"],
                                     cwd=vault).stdout
         hid = re.search(r"✓ (h\d+)", minted["hypothesize"]).group(1)
         minted["task add"] = run(["task", "add", "fetch the antibody lot",
                                   "--category", "data-acquisition", "--blocked-by", "None"],
                                  cwd=vault).stdout
-        minted["synthesize"] = run(["synthesize", "what the data question settled",
-                                    "--for", qid], cwd=vault).stdout
+        # spec 19 removed `synthesize`; a Finding is the id-minting verb that replaced it
+        minted["finding"] = run(["finding", qid, "--answer", "what the data question settled",
+                                 "-c", "moderate"], cwd=vault).stdout
         minted["rd"] = run(["rd", hid, "the sweep design"], cwd=vault).stdout
         titles = {"ask": "does more data beat a better model",
                   "hypothesize": "doubling the data wins on held-out",
                   "task add": "fetch the antibody lot",
-                  "synthesize": "what the data question settled",
+                  "finding": "what the data question settled",
                   "rd": "the sweep design"}
         bad = sorted(v for v, out in minted.items()
                      if "in chat" not in out or titles[v] not in out)

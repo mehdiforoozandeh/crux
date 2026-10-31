@@ -8,7 +8,8 @@
 #
 # Also symlinks every agent definition under ./agents/ (the spec-09 roster:
 # crux-critic, crux-null, crux-verifiables, …) into ~/.claude/agents as
-# <name>.md, the flat layout Claude Code reads subagents from.
+# <name>.md, the flat layout Claude Code reads subagents from, and evolve-crux's own
+# agents under ./skills/evolve-crux/agents/*.md (crux-tests) the same way.
 #
 # Default targets: ~/.claude/skills (Claude Code) and ~/.agents/skills (the shared
 # dir Cursor, Codex, Windsurf, and Copilot CLI read); agents go to ~/.claude/agents.
@@ -63,6 +64,20 @@ if compgen -G "$REPO_DIR/agents/*/AGENT.md" > /dev/null; then
     if [[ ! -f "$src" ]]; then
       echo "  ! skip $name — no AGENT.md" >&2; skipped=$((skipped+1)); continue
     fi
+    if [[ -e "$dest" && ! -L "$dest" ]]; then
+      echo "  ! skip $name — a real file exists at $dest (left untouched)" >&2; skipped=$((skipped+1)); continue
+    fi
+    ln -sfn "$src" "$dest"
+    echo "  ✓ $name → $AGENT_TARGET"; linked=$((linked+1))
+  done
+fi
+
+# evolve-crux's own agents (crux-tests builds crux, not research): flat <name>.md files under
+# skills/evolve-crux/agents/, linked beside the roster. A no-op when the folder is absent.
+if compgen -G "$REPO_DIR/skills/evolve-crux/agents/*.md" > /dev/null; then
+  mkdir -p "$AGENT_TARGET"
+  for src in "$REPO_DIR"/skills/evolve-crux/agents/*.md; do
+    name="$(basename "$src" .md)"; dest="$AGENT_TARGET/$name.md"
     if [[ -e "$dest" && ! -L "$dest" ]]; then
       echo "  ! skip $name — a real file exists at $dest (left untouched)" >&2; skipped=$((skipped+1)); continue
     fi

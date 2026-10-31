@@ -330,6 +330,10 @@ def _null_cap_tests(check, tmp):
         check(f"null cap: a {d} finding with the null not ruled out keeps moderate",
               E.Vault(root).get(fx)["fm"]["confidence"] == "moderate" and nx is None)
     check("null cap: the capped finding validates clean", E.cmd_validate(root) == [])
+    helptext = " ".join(_cli(root, "finding", "--help").stdout.split())
+    check("null cap: the --null help says the cap binds a supports finding only",
+          "caps a supports finding at weak" in helptext
+          and "a null not ruled out caps confidence at weak" not in helptext)
     _edit_fm(root, f1, confidence="strong")
     probs = E.cmd_validate(root)
     check("null cap: validate flags a hand-edited finding that breaks the cap",
@@ -600,6 +604,92 @@ def _lock_tests(check, tmp):
     check("lock: finding ids come from their own counter",
           E._new_id(E.Vault(root), "finding") == "f1")
 
+    # A long holder is not a dead one: the 4.0 migration holds the lock while it copies a
+    # backup (one real vault is 590 MB), and breaking its lock lets a second process roll
+    # back a migration still in progress. Age alone never breaks a lock whose holder lives.
+    import socket
+    lp = os.path.join(root, E.LOCK_FILE)
+    def aged(text, secs=3600):
+        _write(lp, text)
+        t = os.path.getmtime(lp) - secs
+        os.utime(lp, (t, t))
+    def takes(timeout=0.3):
+        try:
+            with E.id_lock(root, timeout=timeout):
+                return True
+        except E.CruxError:
+            return False
+    aged(f"{os.getpid()} {socket.gethostname()}\n", secs=2 * E.LOCK_TIMEOUT)
+    check("lock: a lock held by a live process for longer than 30 s is not broken",
+          not takes() and os.path.exists(lp)
+          and _read(lp).split()[0] == str(os.getpid()))
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    aged(f"{dead.pid} {socket.gethostname()}\n")
+    check("lock: an old lock whose holder on this host is dead is broken", takes())
+    aged(f"{os.getpid()} some-other-host.invalid\n", secs=2 * E.LOCK_TIMEOUT)
+    check("lock: a lock from another host is not broken on the 30 s age alone",
+          not takes() and os.path.exists(lp))
+    check("lock: an oversized pid is an unknown holder, never a crash",
+          E._pid_alive(99999999999) is None)
+    aged(f"99999999999 {socket.gethostname()}\n", secs=2 * E.LOCK_TIMEOUT)
+    check("lock: ... so its lock waits for the foreign bound instead of breaking",
+          not takes() and os.path.exists(lp))
+
+    # The break race: A reads a dead holder, then B breaks that lock and takes a fresh one
+    # before A acts. A must not remove B's live lock.
+    dead2 = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead2.wait()
+    aged(f"{dead2.pid} {socket.gethostname()}\n")
+    b_stamp = f"{os.getpid()} {socket.gethostname()}\n"
+    real = E.id_lock._stale_after
+    fired = []
+    def racing(self):
+        res = real(self)
+        if not fired:
+            fired.append(1)
+            os.remove(lp)               # B breaks the dead lock ...
+            _write(lp, b_stamp)         # ... and takes its own, live and fresh
+        return res
+    E.id_lock._stale_after = racing
+    try:
+        a_took = takes()
+    finally:
+        E.id_lock._stale_after = real
+    check("lock: a waiter that loses the break race never removes the new holder's lock",
+          fired and not a_took and os.path.exists(lp) and _read(lp) == b_stamp
+          and not [f for f in os.listdir(root) if f.endswith(".stale")])
+
+    os.remove(lp)
+    with E.id_lock(root):
+        held = _read(lp).split()
+    check("lock: the lock file names its holder's pid and host",
+          held == [str(os.getpid()), socket.gethostname()])
+
+
+def _auto_status_tests(check, tmp):
+    """The text `crux auto status` carries each attempt's Finding (direction and confidence),
+    which its --json form already did."""
+    root = _vault(tmp, "autostatus")
+    run = os.path.join(root, "auto", "q1")
+    os.makedirs(run)
+    _write(os.path.join(run, "plan.md"), "---\nobjective: m.json:acc max 0.5\n---\n")
+    rows = [{"event": "setup", "baseline": 0.5, "noise": 0.01, "at": "2026-10-31T10:00:00Z"},
+            {"event": "attempt", "n": 1, "id": "h7", "parent": "base", "score": 0.7,
+             "status": "kept", "seconds": 3, "at": "2026-10-31T10:05:00Z", "finding": "f11",
+             "direction": "supports", "confidence": "strong"},
+            {"event": "attempt", "n": 2, "id": "h8", "parent": "h7", "score": 0.3,
+             "status": "rejected", "seconds": 3, "at": "2026-10-31T10:10:00Z",
+             "finding": "f12", "direction": "against", "confidence": "moderate"}]
+    _write(os.path.join(run, "ledger.jsonl"), "".join(json.dumps(r) + "\n" for r in rows))
+    out = _cli(root, "auto", "status", "q1").stdout
+    lines = {l.split()[0]: l for l in out.splitlines() if l.startswith("  ") and l.split()}
+    check("auto status: the text attempt line names its finding, direction and confidence",
+          "f11" in lines.get("1", "") and "supports" in lines.get("1", "")
+          and "strong" in lines.get("1", "")
+          and "f12" in lines.get("2", "") and "against" in lines.get("2", "")
+          and "moderate" in lines.get("2", ""))
+
 
 SEED4 = """\
 - Project: Seeded four — the 4.0 seed shape
@@ -641,7 +731,7 @@ def run_all(check):
         for section in (_model_tests, _hypothesize_tests, _state_tests, _question_tests,
                         _null_cap_tests, _evidence_tests, _validate_tests,
                         _removed_verb_tests, _cli_tests, _derive_only_tests,
-                        _snapshot_tests, _seed_tests, _lock_tests):
+                        _snapshot_tests, _seed_tests, _lock_tests, _auto_status_tests):
             try:
                 if section is _model_tests:
                     section(check)
