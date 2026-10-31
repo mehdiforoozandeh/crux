@@ -8,7 +8,6 @@ status: resolved
 stale: true
 created: "2026-08-16T16:06:20"
 updated: "2026-08-16T16:07:13"
-synthesis: s1
 ---
 
 # q8 — Which of the three slow sorts is least slow?
@@ -38,11 +37,12 @@ Bubble, insertion, and selection all have a bad time complexity. But on a real l
 Insertion took 5.2 milliseconds. Bubble with an early exit took 6.1 milliseconds. Selection took 8.1 milliseconds. Insertion is the clear winner here. But on a nearly sorted list, the gap might close up.
 
 <!-- crux:ledger:start -->
-**5 children** · ideas 5/5 done (supported 1, partial 0, refuted 3, inconclusive 1, invalid-run 0)
+**5 children** · open 0, leaning 3, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h17` [[h17_insertion_sort_is_the_fastest_of_the_thr|Insertion sort is the fastest of the three slow sorts]] — *done* — verdict **supported**, metric `Random: insertion 0.23 s, bubble 1.6 s, selection 0.91 s. Sorted: insertion 0.01 s, bubble 0.12 s.`
-- `h18` [[h18_bubble_sort_is_the_slowest_of_the_three_|Bubble sort is the slowest of the three at every size]] — *done* — verdict **refuted**, metric `Bubble vs insertion: 1.62 s vs 0.34 s at 100k random. Bubble vs selection: 1.62 s vs 0.91 s.`
-- `h19` [[h19_selection_sort_sits_between_the_other_tw|Selection sort sits between the other two on random lists]] — *done* — verdict **refuted**, metric `At 50k: insertion 0.12 s, selection 0.45 s, bubble 0.81 s`
-- `h20` [[h20_bubble_sort_with_an_early_exit_stops_bei|Bubble sort with an early exit stops being the slowest]] — *done* — verdict **inconclusive**, metric `On sorted: regular bubble 0.81 s, early-exit bubble 0.01 s. On random: both take 1.6 s.`
-- `h21` [[h21_the_three_slow_sorts_differ_by_less_than|The three slow sorts differ by less than two times]] — *done* — verdict **refuted**, metric `Random 100k: bubble 1.6 s, insertion 0.34 s, selection 0.91 s. Fastest to slowest: 4.7 times.`
+- `h17` [[h17_insertion_sort_is_the_fastest_of_the_thr|Insertion sort is the fastest of the three slow sorts]] — *leaning · moderate*
+- `h18` [[h18_bubble_sort_is_the_slowest_of_the_three_|Bubble sort is the slowest of the three at every size]] — *settled · strong*
+- `h19` [[h19_selection_sort_sits_between_the_other_tw|Selection sort sits between the other two on random lists]] — *leaning · moderate*
+- `h20` [[h20_bubble_sort_with_an_early_exit_stops_bei|Bubble sort with an early exit stops being the slowest]] — *leaning · moderate*
+- `h21` [[h21_the_three_slow_sorts_differ_by_less_than|The three slow sorts differ by less than two times]] — *settled · strong*
+- `f88` finding (strong) [[f88_what_the_three_slow_sorts_settled|What the three slow sorts settled]]
 <!-- crux:ledger:end -->

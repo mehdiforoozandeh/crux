@@ -8,7 +8,6 @@ status: resolved
 stale: true
 created: "2026-08-16T16:06:20"
 updated: "2026-08-16T16:07:13"
-synthesis: s2
 ---
 
 # q14 — What happens when the list is mostly the same value?
@@ -40,9 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On a list with 90 percent the same value, insertion took 4.8 milliseconds, slower than on random. Bubble took 38 milliseconds, about the same. Merge and quick were about the same speed as on random data. Duplicates do not help much.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 2, partial 0, refuted 1, inconclusive 0, invalid-run 0)
+**3 children** · open 0, leaning 1, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h39` [[h39_my_quick_sort_slows_down_when_most_items|My quick sort slows down when most items are equal]] — *done* — verdict **supported**, metric `Random 0.46 ms, duplicate-heavy 0.71 ms at n=10000`
-- `h40` [[h40_bubble_sort_is_unaffected_by_duplicate_v|Bubble sort is unaffected by duplicate values]] — *done* — verdict **refuted**, metric `Random 1.71 ms, duplicate-heavy 1.68 ms at n=10000`
-- `h41` [[h41_a_three_way_split_fixes_my_quick_sort_on|A three-way split fixes my quick sort on duplicate-heavy lists]] — *done* — verdict **supported**, metric `Three-way quick 0.48 ms vs standard 0.71 ms at n=10000 duplicates`
+- `h39` [[h39_my_quick_sort_slows_down_when_most_items|My quick sort slows down when most items are equal]] — *settled · strong*
+- `h40` [[h40_bubble_sort_is_unaffected_by_duplicate_v|Bubble sort is unaffected by duplicate values]] — *settled · strong*
+- `h41` [[h41_a_three_way_split_fixes_my_quick_sort_on|A three-way split fixes my quick sort on duplicate-heavy lists]] — *leaning · moderate*
+- `f91` finding (strong) [[f91_what_the_shape_of_the_list_settled|What the shape of the list settled]]
 <!-- crux:ledger:end -->

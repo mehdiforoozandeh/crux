@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 I guessed that insertion on 200,000 items would take 20.5 milliseconds. The real time was 21.2 milliseconds. For 500,000, I guessed 128 milliseconds and got 132 milliseconds. Extrapolation works, but only a little bit past my data.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 2/3 done (supported 0, partial 0, refuted 1, inconclusive 1, invalid-run 0)
+**3 children** · open 1, leaning 1, settled 1, parked 0
 
-- `h90` [[h90_my_fitted_curve_predicts_a_new_size_to_w|My fitted curve predicts a new size to within twenty percent]] — *done* — verdict **refuted**, metric `Predicted 3.1 ms for 15k items, actual was 4.8 ms. Error was 55 percent.`
-- `h91` [[h91_predicting_upward_is_worse_than_predicti|Predicting upward is worse than predicting between known sizes]] — *done* — verdict **inconclusive**, metric `Interpolation error at 4k was 7 percent. Extrapolation error at 20k was 48 percent.`
-- `h92` [[h92_a_prediction_from_the_median_is_better_t|A prediction from the median is better than one from the mean]] — *running*
+- `h90` [[h90_my_fitted_curve_predicts_a_new_size_to_w|My fitted curve predicts a new size to within twenty percent]] — *settled · strong*
+- `h91` [[h91_predicting_upward_is_worse_than_predicti|Predicting upward is worse than predicting between known sizes]] — *leaning · weak*
+- `h92` [[h92_a_prediction_from_the_median_is_better_t|A prediction from the median is better than one from the mean]] — *open*
 <!-- crux:ledger:end -->

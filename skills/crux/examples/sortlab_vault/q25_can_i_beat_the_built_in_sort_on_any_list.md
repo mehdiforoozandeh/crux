@@ -37,11 +37,11 @@ Test on a list of integers from 0 to 100 shuffled randomly. Also test on a list 
 I tried merge sort on a list of mostly small integers. Still lost to the built-in sort. I have not yet tried a counting sort or radix sort, which are designed for small integer ranges. Maybe those could win.
 
 <!-- crux:ledger:start -->
-**5 children** · ideas 4/5 done (supported 3, partial 0, refuted 0, inconclusive 1, invalid-run 0)
+**5 children** · open 1, leaning 2, settled 2, parked 0
 
-- `h75` [[h75_counting_sort_beats_the_built_in_sort_on|Counting sort beats the built-in sort on small whole numbers]] — *done* — verdict **supported**, metric `Counting sort: 0.18 s. Built-in: 0.81 s. Ratio: 4.5x.`
-- `h76` [[h76_radix_sort_beats_the_built_in_sort_on_fi|Radix sort beats the built-in sort on fixed-width numbers]] — *done* — verdict **inconclusive**, metric `Radix: 0.34 s. Built-in: 0.82 s. Ratio: 2.4x.`
-- `h77` [[h77_nothing_i_write_beats_the_built_in_sort_|Nothing I write beats the built-in sort on plain random numbers]] — *done* — verdict **supported**, metric `Built-in: 0.42 s. Best hand-written (merge): 3.8 s. Ratio: 9.0x.`
-- `h78` [[h78_counting_sort_loses_once_the_number_rang|Counting sort loses once the number range gets wide]] — *done* — verdict **supported**, metric `Range 0-10000: counting 0.21 s, built-in 0.82 s. Range 0-1M: counting 1.8 s, built-in 0.88 s.`
-- `h79` [[h79_a_bucket_sort_beats_the_built_in_sort_on|A bucket sort beats the built-in sort on evenly spread numbers]] — *running*
+- `h75` [[h75_counting_sort_beats_the_built_in_sort_on|Counting sort beats the built-in sort on small whole numbers]] — *leaning · moderate*
+- `h76` [[h76_radix_sort_beats_the_built_in_sort_on_fi|Radix sort beats the built-in sort on fixed-width numbers]] — *leaning · weak*
+- `h77` [[h77_nothing_i_write_beats_the_built_in_sort_|Nothing I write beats the built-in sort on plain random numbers]] — *settled · strong*
+- `h78` [[h78_counting_sort_loses_once_the_number_rang|Counting sort loses once the number range gets wide]] — *settled · strong*
+- `h79` [[h79_a_bucket_sort_beats_the_built_in_sort_on|A bucket sort beats the built-in sort on evenly spread numbers]] — *open*
 <!-- crux:ledger:end -->

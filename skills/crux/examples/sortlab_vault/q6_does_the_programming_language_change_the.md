@@ -40,10 +40,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 In JavaScript on 10,000 random items, insertion took 2.8 milliseconds versus 5.2 in Python. Bubble took 31 milliseconds in JavaScript versus 40 in Python. The ranking is mostly the same, but one run had the lists get mixed up between sides, so that run does not count.
 
 <!-- crux:ledger:start -->
-**4 children** · ideas 1/2 done (supported 1, partial 0, refuted 0, inconclusive 0, invalid-run 0) · sub-questions 1/2 resolved
+**4 children** · open 1, leaning 1, settled 2, parked 0
 
-- `h13` [[h13_the_same_five_sorts_rank_the_same_way_in|The same five sorts rank the same way in both languages]] — *done* — verdict **supported**, metric `Python rank: merge, insertion, selection, quick, bubble. JavaScript rank: merge, quick, insertion, selection, bubble.`
-- `h14` [[h14_javascript_is_faster_than_python_for_the|JavaScript is faster than Python for the same written sort]] — *idea*
-- `q26` _(Q)_ [[q26_does_the_same_method_rank_the_same_way_i|Does the same method rank the same way in JavaScript?]] — *resolved*
-- `q27` _(Q)_ [[q27_does_the_javascript_engine_speed_up_whil|Does the JavaScript engine speed up while it runs?]] — *open*
+- `h13` [[h13_the_same_five_sorts_rank_the_same_way_in|The same five sorts rank the same way in both languages]] — *settled · strong*
+- `h14` [[h14_javascript_is_faster_than_python_for_the|JavaScript is faster than Python for the same written sort]] — *open*
+- `q26` _(Q)_ [[q26_does_the_same_method_rank_the_same_way_i|Does the same method rank the same way in JavaScript?]] — *settled · strong*
+- `q27` _(Q)_ [[q27_does_the_javascript_engine_speed_up_whil|Does the JavaScript engine speed up while it runs?]] — *leaning · moderate*
 <!-- crux:ledger:end -->

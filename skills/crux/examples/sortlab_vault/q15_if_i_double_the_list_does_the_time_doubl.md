@@ -39,12 +39,12 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 Insertion on 1,000 items takes 0.5 milliseconds, on 2,000 it takes 2.1 milliseconds, on 4,000 it takes 8.8 milliseconds. That is roughly four times each time I double. Insertion quadruples.
 
 <!-- crux:ledger:start -->
-**6 children** · ideas 3/5 done (supported 1, partial 0, refuted 1, inconclusive 1, invalid-run 0) · sub-questions 1/1 resolved
+**6 children** · open 2, leaning 1, settled 3, parked 0
 
-- `h42` [[h42_doubling_the_list_doubles_the_time_for_m|Doubling the list doubles the time for merge sort]] — *done* — verdict **refuted**, metric `At n=100k: 67 ms; at n=200k: 147 ms (ratio 2.19)`
-- `h43` [[h43_doubling_the_list_quadruples_the_time_fo|Doubling the list quadruples the time for insertion sort]] — *done* — verdict **supported**, metric `At n=100k: 8.2 sec; at n=200k: 32.8 sec (ratio 4.0)`
-- `h44` [[h44_the_doubling_ratio_for_bubble_sort_is_cl|The doubling ratio for bubble sort is close to four]] — *done* — verdict **inconclusive**, metric `Ratios: 3.87, 4.12, 3.94, 4.08, 3.82 across five doublings`
-- `h45` [[h45_the_built_in_sort_doubles_a_little_more_|The built-in sort doubles a little more than twice]] — *running*
-- `h46` [[h46_the_doubling_ratio_is_the_same_on_batter|The doubling ratio is the same on battery and plugged in]] — *staged*
-- `q34` _(Q)_ [[q34_does_the_doubling_ratio_settle_down_at_b|Does the doubling ratio settle down at big sizes?]] — *resolved*
+- `h42` [[h42_doubling_the_list_doubles_the_time_for_m|Doubling the list doubles the time for merge sort]] — *settled · strong*
+- `h43` [[h43_doubling_the_list_quadruples_the_time_fo|Doubling the list quadruples the time for insertion sort]] — *settled · strong*
+- `h44` [[h44_the_doubling_ratio_for_bubble_sort_is_cl|The doubling ratio for bubble sort is close to four]] — *leaning · moderate*
+- `h45` [[h45_the_built_in_sort_doubles_a_little_more_|The built-in sort doubles a little more than twice]] — *open*
+- `h46` [[h46_the_doubling_ratio_is_the_same_on_batter|The doubling ratio is the same on battery and plugged in]] — *open*
+- `q34` _(Q)_ [[q34_does_the_doubling_ratio_settle_down_at_b|Does the doubling ratio settle down at big sizes?]] — *settled · strong*
 <!-- crux:ledger:end -->

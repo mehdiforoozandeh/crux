@@ -8,7 +8,6 @@ status: resolved
 stale: false
 created: "2026-08-16T16:06:22"
 updated: "2026-08-16T16:07:13"
-synthesis: s4
 ---
 
 # q33 — Does the built-in sort notice runs that are already in order?
@@ -40,9 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On a random list of 100,000 items, the built-in sort took 12 milliseconds. On the same list after sorting, it took only 0.06 milliseconds. The built-in sort detects sorted runs and is almost instant on them.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 2, partial 0, refuted 0, inconclusive 1, invalid-run 0)
+**3 children** · open 0, leaning 2, settled 1, parked 0 · 1 finding(s) on this question
 
-- `h102` [[h102_the_built_in_sort_is_fastest_when_the_li|The built-in sort is fastest when the list is one long run]] — *done* — verdict **supported**, metric `Sorted list 1k took 0.08 ms, 100k took 0.78 ms. Random took 0.13 ms and 1.09 ms.`
-- `h103` [[h103_the_built_in_sort_speeds_up_on_a_list_ma|The built-in sort speeds up on a list made of a few long runs]] — *done* — verdict **supported**, metric `Three-run: 10k was 0.14 ms, 100k was 0.95 ms. Random same sizes: 0.13, 1.09.`
-- `h104` [[h104_breaking_the_runs_up_removes_the_built_i|Breaking the runs up removes the built-in sort's advantage]] — *done* — verdict **inconclusive**, metric `Three-run: 0.95 ms. Broken: 1.07 ms. Random: 1.09 ms.`
+- `h102` [[h102_the_built_in_sort_is_fastest_when_the_li|The built-in sort is fastest when the list is one long run]] — *settled · strong*
+- `h103` [[h103_the_built_in_sort_speeds_up_on_a_list_ma|The built-in sort speeds up on a list made of a few long runs]] — *leaning · moderate*
+- `h104` [[h104_breaking_the_runs_up_removes_the_built_i|Breaking the runs up removes the built-in sort's advantage]] — *leaning · weak*
+- `f95` finding (strong) [[f95_why_the_built_in_sort_wins|Why the built-in sort wins]]
 <!-- crux:ledger:end -->

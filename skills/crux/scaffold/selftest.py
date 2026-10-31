@@ -1983,7 +1983,8 @@ def run_economy_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Format", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     # strip the 1.3 schema back out and stamp the old engine version
     for nid in (q1, h1):
         p = node_path(root, nid)
@@ -2003,7 +2004,8 @@ def run_economy_migration():
     check("emig: a missing ELI5 reads as empty string", snap["nodes"][q1]["eli5"] == "")
     check("emig: a missing TL;DR reads as empty string", snap["nodes"][h1]["tldr"] == "")
     check("emig: status still renders the tree", "an old question" in E.status_text(root))
-    check("emig: review still runs", isinstance(E.cmd_review(root), list))
+    check("emig: the derived state still reads (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
     warn = E.check_and_stamp_version(root)
     check("emig: a 1.2 vault reports drift", warn is not None and "1.2" in warn)
     check("emig: drift re-stamps to the current ENGINE_VERSION",
@@ -3208,11 +3210,12 @@ def run_rd_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Vault", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"], expect="x holds")
     check("rdmig: a pre-07 vault has no rd/", not os.path.isdir(os.path.join(root, "rd")))
     check("rdmig: a pre-07 vault grows no RD.md", not os.path.exists(os.path.join(root, "RD.md")))
     check("rdmig: status still renders on a pre-07 vault", "an old question" in E.status_text(root))
-    check("rdmig: review still runs on a pre-07 vault", isinstance(E.cmd_review(root), list))
+    check("rdmig: the derived state still reads on a pre-07 vault (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
 
     # an rd/ directory full of pages changes nothing until something looks at it
     before = _dir_bytes(root)
@@ -3771,19 +3774,25 @@ def run_evidence_boundary():
           all("schema" not in n["fm"] for n in after_v.nodes.values() if n.type != "finding"))
     shutil.rmtree(old, ignore_errors=True)
 
-    # -- the captured pre-upgrade fixture: byte-identical after the version bump
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
-    dst = tempfile.mkdtemp(prefix="crux_bdemo_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    # -- the captured pre-upgrade fixture: byte-identical after the version bump. The shipped
+    #    demo_vault is 4.0 now (spec 19 regenerated it); `captured_demo` rebuilds its 1.2 form
+    #    exactly. The upgrade MIGRATES it (new Finding nodes); every node that existed before
+    #    must keep its authored bytes, its verdict and its status.
+    import selftest_migrate as SM
+    dst = SM.captured_demo(tempfile.mkdtemp(prefix="crux_bdemo_"))
     f0, v0, s0 = fingerprint(dst)
     warn = E.check_and_stamp_version(dst)
     E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     f1, v1, s1 = fingerprint(dst)
+    new = E.Vault(dst)
     check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
-          f0 == f1)
+          f0 and {k: f1.get(k) for k in f0} == f0)
+    check("evmig: pre-15 vault — the upgrade only ADDS nodes, and only Findings",
+          all(new.nodes[n].type == "finding" for n in set(v1) - set(v0)) and set(v0) <= set(v1))
     check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
-          v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
-    check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
+          {k: v1[k] for k in v0} == v0 and v0["h1"] == "supported" and v0["h2"] == "partial")
+    check("evmig: pre-15 vault — every status is unchanged after upgrade",
+          {k: s1[k] for k in s0} == s0)
     check("evmig: an older vault reports drift and re-stamps to current",
           warn is not None and "1.2" in warn
           and E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
@@ -5692,7 +5701,8 @@ def run_migrate():
     check("evmig: migrate never stamps a node across the boundary",
           all(E.node_schema(n) == 0 for n in v.nodes.values() if n.type in ("question", "idea")))
     check("evmig: migrate writes no evidence field",
-          all(f not in n["fm"] for n in v.nodes.values() for f in E.MIGRATE_FORBIDDEN))
+          all(f not in n["fm"] for n in v.nodes.values() if n.type in ("question", "idea")
+              for f in E.MIGRATE_FORBIDDEN))
     check("evmig: the Null it adds is EMPTY — naming the null hypothesis is a scientific act",
           E._null_text(v.get("h1")) is None)
     check("evmig: migrate changes no recorded verdict",
@@ -5731,29 +5741,17 @@ def run_migrate():
     check("migrate: ENGINE_VERSION at or past 2.7", at_least_version("2.7"))
     shutil.rmtree(root, ignore_errors=True)
 
-    # ---- the gate backlog, the one audit check spec 09 asked for that did not exist
+    # ---- spec 19 removed the review gate, and with it `--check=gate` and its backlog
+    #      warning. What remains to pin: `crux migrate` never touches a Finding.
     root = tempfile.mkdtemp(prefix="crux_gate_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Gate", root)
-    q1, _ = E.cmd_ask(root, "a question that will sit in review")
-    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, rule="all", null="chance — noise",
-                                 verifiables=["alpha"], neutral=["ctl"],
-                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] ctl", "- [x] [outcome-neutral] ctl")
-    E.cmd_close(root, h1)
-    # node-scoped checks carry the bare node id, matching `economy`/`fanout`
-    gate = E.validation_report(root, ["gate"])["warnings"]
-    check("migrate: a question parked in review with no synthesis is a gate-backlog warning",
-          any(w["id"] == q1 and "no synthesis drafted" in w["message"] for w in gate))
-    check("migrate: --check=gate is opt-in and does not fire on the default lint",
-          not any("no synthesis drafted" in w["message"]
-                  for w in E.validation_report(root)["warnings"]))
-    E.cmd_synthesize(root, "what q1 settled", [q1])
-    check("migrate: drafting the synthesis clears the backlog warning",
-          not E.validation_report(root, ["gate"])["warnings"])
+    shutil.rmtree(root); shutil.copytree(src, root)
+    fnd = {n.id: read(n["path"]) for n in E.Vault(root).nodes.values() if n.type == "finding"}
+    E.cmd_migrate(root, apply=True)
+    check("migrate: the structural migration never touches a Finding",
+          fnd and fnd == {n.id: read(n["path"]) for n in E.Vault(root).nodes.values()
+                          if n.type == "finding"})
+    check("migrate: --check=gate is gone with the review gate",
+          "gate" not in E.CHECKS + E.OPT_CHECKS)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -6302,25 +6300,36 @@ def run_methodology():
 def run_methodology_migration():
     """The pre-13 boundary. Two optional frontmatter keys, absent everywhere in an existing
     vault, and their absence must stay legal forever: nothing retro-writes them, nothing
-    re-verdicts, nothing goes red."""
+    re-verdicts, nothing goes red.
+
+    From 4.0 the first write-capable load MIGRATES a pre-4.0 vault (spec 19): findings are
+    added and syntheses converted, but every hypothesis file — verdict, checks, null — stays
+    byte for byte, so the boundary this function guards still holds where it matters."""
     print("\n# design — the pre-13 boundary (spec 13, PRD 13.2)")
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    import selftest_migrate as SM
     dst = tempfile.mkdtemp(prefix="crux_dmig_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    SM.build_legacy_vault(dst, stamp="3.0")
 
     before, vbefore, sbefore = fingerprint(dst)
+    rep_before = E.validation_report(dst)
     E.check_and_stamp_version(dst)
-    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     after, vafter, safter = fingerprint(dst)
-    check("dmig: a pre-13 vault is byte-identical after the bump", before == after)
-    check("dmig: no recorded verdict moved", vbefore == vafter and sbefore == safter)
+    hyp = lambda fp: {k: h for k, h in fp.items() if re.match(r"h\d+_", k)}
+    check("dmig: a pre-13 vault's hypothesis files are byte-identical after the 4.0 migration",
+          hyp(before) and hyp(before) == hyp(after))
+    ideas = lambda d: {k: x for k, x in d.items() if k.startswith("h")}
+    check("dmig: no recorded verdict or status moved",
+          ideas(vbefore) == ideas(vafter) and ideas(sbefore) == ideas(safter))
     rep = E.validation_report(dst)
     check("dmig: a pre-13 vault reports no new problems and no new warnings",
-          rep["problems"] == [] and rep["warnings"] == [] and rep["ok"] is True)
+          {(p["id"], p["message"]) for p in rep["problems"]}
+          <= {(p["id"], p["message"]) for p in rep_before["problems"]}
+          and rep["warnings"] == [])
     check("dmig: no command retro-writes a methodology slot",
           all(x["fm"].get("measurement") in (None, "") for x in E.Vault(dst).nodes.values()))
     check("dmig: drift re-stamps to the current ENGINE_VERSION",
-          E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
+          str(E.Vault(dst).cfg.get("engine_version")) == E.ENGINE_VERSION)
     shutil.rmtree(dst, ignore_errors=True)
 
 
@@ -6482,7 +6491,8 @@ def run_glossary_migration():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Old Format", root)
     q1, _ = E.cmd_ask(root, "an old question")
-    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "an old idea", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     gp = os.path.join(root, E.GLOSSARY_FILE)
     os.remove(gp)
     edit(os.path.join(root, ".crux.yaml"), f"engine_version: {E.ENGINE_VERSION}",
@@ -6494,7 +6504,8 @@ def run_glossary_migration():
     check("gmig: parse_glossary tolerates the absent file",
           E.load_glossary(root) == {"terms": [], "declined": []})
     check("gmig: status still renders the tree", "an old question" in E.status_text(root))
-    check("gmig: review still runs", isinstance(E.cmd_review(root), list))
+    check("gmig: the derived state still reads (review was removed in 4.0)",
+          E.derive_state(E.Vault(root), q1)["state"] == "open")
     check("gmig: snapshot still serializes", isinstance(E.snapshot(root), dict))
     E.refresh(root)
     check("gmig: no read path creates glossary.md", not os.path.exists(gp))
@@ -6504,19 +6515,27 @@ def run_glossary_migration():
           str(E.Vault(root).cfg.get("engine_version")) == E.ENGINE_VERSION)
     shutil.rmtree(root, ignore_errors=True)
 
-    # -- the shipped fixture, byte-compared. The strongest form of "old vaults still load":
-    #    every read path runs and NOTHING on disk moves except the version stamp.
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
+    # -- a pre-14 3.x vault, byte-compared. The strongest form of "old vaults still load":
+    #    every READ path runs and nothing on disk moves; then the first write-capable load
+    #    migrates it to 4.0 and still creates no glossary.md behind the PI's back.
+    import selftest_migrate as SM
     dst = tempfile.mkdtemp(prefix="crux_gdemo_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    SM.build_legacy_vault(dst, stamp="2.7")
+    os.remove(os.path.join(dst, E.GLOSSARY_FILE))
     before = _tree_hashes(dst)
-    E.cmd_validate(dst); E.status_text(dst); E.cmd_review(dst); E.snapshot(dst)
-    E.refresh(dst); E.check_and_stamp_version(dst)
+    E.cmd_validate(dst); E.status_text(dst); E.snapshot(dst)
+    check("gmig: a 2.7 vault — no read path moves a byte", _tree_hashes(dst) == before)
+    warn = E.check_and_stamp_version(dst)
     after = _tree_hashes(dst)
-    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
-    check(f"gmig: demo_vault byte-compare — only .crux.yaml moves (moved: {moved})",
-          moved in ([], [".crux.yaml"]))
-    check("gmig: demo_vault gained no glossary.md",
+    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)
+                   and not k.startswith(".crux/"))
+    check("gmig: the first write-capable load migrates a 2.7 vault to 4.0",
+          warn is not None and "migrated" in warn and "2.7" in warn)
+    check(f"gmig: the migration moves only findings, syntheses, questions, views and the "
+          f"stamp (moved: {[m for m in moved if not m.startswith(('f', 's', 'q'))]})",
+          all(m.startswith(("f", "s", "q")) or m in E.GENERATED + (E.VAULT_MARKER,)
+              for m in moved))
+    check("gmig: the migrated vault gained no glossary.md",
           not os.path.exists(os.path.join(dst, E.GLOSSARY_FILE)))
     shutil.rmtree(dst, ignore_errors=True)
 
@@ -6668,17 +6687,23 @@ def run_glossary_oracle():
         case+plural guess. They are why the rule is what it is.
     Moved 2026-10-29, the CORPUS and not the rule: segssl_vault now says "pre-registered
     threshold" where it said "pre-registered bar" (the correct-terms rule), and the row
-    follows the words with the same 9/9/0."""
+    follows the words with the same 9/9/0.
+    Moved 2026-10-31, the CORPUS and not the rule: the 4.0 migration (spec 19) regenerated the
+    example vaults. Every closed hypothesis gained a Finding and every synthesis became a
+    Finding on its question, so the corpus grew (demo 8 -> 10, scaling 37 -> 42, segssl
+    43 -> 57). 'data floor' moved 1/2/1 -> 1/3/1: the s2 synthesis' title now also opens
+    the Answer of the Finding that replaced it. The row still separates the document gate
+    from the occurrence gate (1 document, more than 1 occurrence). No other row moved."""
     print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
     ex = os.path.join(HERE, "..", "examples")
     ORACLE = {
         "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
                          ("label efficiency", 17, 26, 0), ("pre-registered threshold", 9, 9, 0),
                          ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
-        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
+        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 3, 1)],
         "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
     }
-    SIZES = {"demo_vault": 8, "scaling_vault": 37, "segssl_vault": 43}
+    SIZES = {"demo_vault": 10, "scaling_vault": 42, "segssl_vault": 57}
     for vd, rows in sorted(ORACLE.items()):
         v = E.Vault(os.path.join(ex, vd))
         size = len(v.nodes) + len(E.scan_wiki_pages(v.root))
@@ -6704,28 +6729,44 @@ def run_sortlab_fixture():
     lesson from spec 08).
 
     SortLab is the worked example a newcomer reads before they touch a vault of their own:
-    150 nodes, 200 tasks, 60 wiki pages, and exactly two drifted locks that are the point
-    rather than a defect. Three things are asserted, and each one is a way the fixture could
-    go quietly wrong:
+    144 tree nodes, 154 findings migrated from engine 3.5 (spec 19), 200 tasks, 60 wiki pages, and
+    exactly two drifted locks that are the point rather than a defect. Everything runs on a
+    TEMP COPY: a suite that rewrites the committed example dirties every contributor's tree.
+    Three things are asserted, and each one is a way the fixture could go quietly wrong:
 
-      - the SHAPE: if a later engine change renumbers, drops or duplicates a node, a task or
-        a wiki page, the counts move and this fails before anyone reads a wrong example.
+      - the SHAPE: if a later engine change renumbers, drops or duplicates a node, a finding,
+        a task or a wiki page, the counts move and this fails before anyone reads a wrong
+        example.
       - the LINT: exactly two problems, both DRIFT, on h9 and h65, and ZERO warnings. Naming
-        the two ids is what makes a third problem visible instantly; a bare "2 problems"
-        would let one drift heal and another appear without a sound.
-      - the IDEMPOTENCE: `refresh()` on the committed bytes must write nothing. A fixture
-        that reformats itself on every command produces a dirty tree for every contributor
-        and trains everyone to ignore the diff."""
+        the two ids is what makes a third problem visible instantly.
+      - the IDEMPOTENCE: `refresh()` and a write-capable load on the committed bytes must
+        write nothing. A fixture that reformats itself on every command produces a dirty
+        tree for every contributor and trains everyone to ignore the diff."""
     print("\n# sortlab_vault — the worked example, pinned")
-    root = os.path.join(HERE, "..", "examples", "sortlab_vault")
-    check("sortlab: the vault is committed", os.path.isfile(os.path.join(root, ".crux.yaml")))
+    src = os.path.join(HERE, "..", "examples", "sortlab_vault")
+    check("sortlab: the vault is committed", os.path.isfile(os.path.join(src, ".crux.yaml")))
+    committed = _tree_bytes(src)
+    root = tempfile.mkdtemp(prefix="crux_sortlab_")
+    shutil.rmtree(root); shutil.copytree(src, root)
     v = E.Vault(root)
+    check("sortlab: the committed vault is stamped with the running engine",
+          str(v.cfg.get("engine_version")) == E.ENGINE_VERSION)
     kinds = collections.Counter(n.type for n in v.nodes.values())
-    check(f"sortlab: 150 nodes (got {len(v.nodes)})", len(v.nodes) == 150)
-    check(f"sortlab: 1 project / 35 questions / 108 hypotheses / 6 syntheses (got "
-          f"{kinds['project']}/{kinds['question']}/{kinds['idea']}/{kinds['synthesis']})",
-          (kinds["project"], kinds["question"], kinds["idea"], kinds["synthesis"])
-          == (1, 35, 108, 6))
+    check(f"sortlab: 298 records (got {len(v.nodes)})", len(v.nodes) == 298)
+    check(f"sortlab: 1 project / 35 questions / 108 hypotheses / 154 findings / 0 syntheses "
+          f"(got {kinds['project']}/{kinds['question']}/{kinds['idea']}/{kinds['finding']}/"
+          f"{kinds['synthesis']})",
+          (kinds["project"], kinds["question"], kinds["idea"], kinds["finding"],
+           kinds["synthesis"]) == (1, 35, 108, 154, 0))
+    grid = collections.Counter((n["fm"].get("direction") or "-", n["fm"].get("confidence"))
+                               for n in v.nodes.values() if n.type == "finding")
+    want = {("supports", "strong"): 32, ("supports", "moderate"): 35,
+            ("against", "strong"): 15, ("against", "moderate"): 24,
+            ("mixed", "moderate"): 12, ("mixed", "weak"): 19,
+            ("no-answer-yet", "moderate"): 3, ("no-answer-yet", "weak"): 4,
+            ("-", "strong"): 10}
+    check(f"sortlab: findings by direction x confidence are pinned (got {dict(grid)})",
+          dict(grid) == want)
     tasks = E.scan_tasks(root)
     check(f"sortlab: 200 tasks (got {len(tasks)})", len(tasks) == 200)
     pages = E.scan_wiki_pages(root)
@@ -6747,6 +6788,10 @@ def run_sortlab_fixture():
     before = _tree_bytes(root)
     E.refresh(root)
     check("sortlab: refresh() is a no-op on the committed bytes", _tree_bytes(root) == before)
+    check("sortlab: a write-capable load finds nothing left to migrate",
+          E.check_and_stamp_version(root) is None and _tree_bytes(root) == before)
+    check("sortlab: the suite never writes the committed example", _tree_bytes(src) == committed)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _tree_bytes(root):
@@ -9316,7 +9361,8 @@ def run_doctor():
 
         # ---------------------------------------------------------------- vault drift + migrate
         drift = os.path.join(tmp, "drifted")
-        shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), drift)
+        import selftest_migrate as SM     # the shipped demo is 4.0; this is its captured 1.2 form
+        SM.captured_demo(drift)
         stamped = E.yaml_load(read(os.path.join(drift, E.VAULT_MARKER)))["engine_version"]
         before = _byte_map(drift)
         dr = E.cmd_doctor(root=drift, skills_dirs=[skills_ok], agents_dir=ag_full)

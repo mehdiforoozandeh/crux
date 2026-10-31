@@ -317,6 +317,18 @@ def _null_cap_tests(check, tmp):
                                  null="ruled-out")
     check("null cap: a null that was ruled out leaves strong alone",
           E.Vault(root).get(f3)["fm"]["confidence"] == "strong" and note3 is None)
+    h3 = _hyp(root, "it hurts", q1)
+    f4, _, note4 = E.cmd_finding(root, h3, "strong", why="clean loss", direction="against",
+                                 null="not-ruled-out")
+    check("null cap: supports only — an against finding with the null not ruled out keeps "
+          "strong", E.Vault(root).get(f4)["fm"]["confidence"] == "strong" and note4 is None
+          and _state(root, h3)["confidence"] == "strong")
+    for d in ("mixed", "no-answer-yet"):
+        h = _hyp(root, f"it is {d}", q1)
+        fx, _, nx = E.cmd_finding(root, h, "moderate", why="x", direction=d,
+                                  null="not-ruled-out")
+        check(f"null cap: a {d} finding with the null not ruled out keeps moderate",
+              E.Vault(root).get(fx)["fm"]["confidence"] == "moderate" and nx is None)
     check("null cap: the capped finding validates clean", E.cmd_validate(root) == [])
     _edit_fm(root, f1, confidence="strong")
     probs = E.cmd_validate(root)

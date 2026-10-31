@@ -37,11 +37,11 @@ Test on 1,000; 2,000; 4,000; 8,000; 16,000; 32,000; 64,000; 128,000; 256,000; 51
 Bubble sort on 10,000 items takes about 23 milliseconds. On 20,000 it takes about 92 milliseconds. That is roughly four times longer. Merge on the same sizes: about 2.1 and 4.6 milliseconds. Merge doubles, bubble quadruples.
 
 <!-- crux:ledger:start -->
-**5 children** · ideas 1/2 done (supported 0, partial 0, refuted 1, inconclusive 0, invalid-run 0) · sub-questions 0/3 resolved
+**5 children** · open 1, leaning 3, settled 1, parked 0
 
-- `h6` [[h6_every_sort_i_wrote_gets_slower_in_the_sa|Every sort I wrote gets slower in the same way]] — *done* — verdict **refuted**, metric `Bubble 1 ms at 1k, 98 ms at 100k; merge 1 ms at 1k, 14 ms at 100k`
-- `h7` [[h7_doubling_the_list_never_more_than_quadru|Doubling the list never more than quadruples the time]] — *idea*
-- `q15` _(Q)_ [[q15_if_i_double_the_list_does_the_time_doubl|If I double the list, does the time double?]] — *open*
-- `q16` _(Q)_ [[q16_where_does_merge_sort_overtake_insertion|Where does merge sort overtake insertion sort?]] — *open*
-- `q17` _(Q)_ [[q17_does_the_laptop_s_memory_show_up_in_the_|Does the laptop's memory show up in the numbers?]] — *open*
+- `h6` [[h6_every_sort_i_wrote_gets_slower_in_the_sa|Every sort I wrote gets slower in the same way]] — *settled · strong*
+- `h7` [[h7_doubling_the_list_never_more_than_quadru|Doubling the list never more than quadruples the time]] — *open*
+- `q15` _(Q)_ [[q15_if_i_double_the_list_does_the_time_doubl|If I double the list, does the time double?]] — *leaning · moderate*
+- `q16` _(Q)_ [[q16_where_does_merge_sort_overtake_insertion|Where does merge sort overtake insertion sort?]] — *leaning · moderate*
+- `q17` _(Q)_ [[q17_does_the_laptop_s_memory_show_up_in_the_|Does the laptop's memory show up in the numbers?]] — *leaning · moderate*
 <!-- crux:ledger:end -->

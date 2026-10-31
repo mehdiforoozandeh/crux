@@ -39,10 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 Insertion on random 10,000 items takes 5.2 milliseconds. On sorted it takes 0.8 milliseconds, about one sixth. On reversed it takes 24 milliseconds, about four times. The shape does not follow a simple pattern. I cannot predict one from the other.
 
 <!-- crux:ledger:start -->
-**4 children** · ideas 0/4 done (supported 0, partial 0, refuted 0, inconclusive 0, invalid-run 0)
+**4 children** · open 4, leaning 0, settled 0, parked 0
 
-- `h93` [[h93_a_curve_fitted_on_random_lists_predicts_|A curve fitted on random lists predicts almost-sorted lists]] — *idea*
-- `h94` [[h94_each_shape_needs_its_own_curve|Each shape needs its own curve]] — *idea*
-- `h95` [[h95_the_shape_changes_the_slope_not_just_the|The shape changes the slope, not just the height]] — *idea*
-- `h96` [[h96_duplicate_heavy_lists_are_the_hardest_sh|Duplicate-heavy lists are the hardest shape to predict]] — *staged*
+- `h93` [[h93_a_curve_fitted_on_random_lists_predicts_|A curve fitted on random lists predicts almost-sorted lists]] — *open*
+- `h94` [[h94_each_shape_needs_its_own_curve|Each shape needs its own curve]] — *open*
+- `h95` [[h95_the_shape_changes_the_slope_not_just_the|The shape changes the slope, not just the height]] — *open*
+- `h96` [[h96_duplicate_heavy_lists_are_the_hardest_sh|Duplicate-heavy lists are the hardest shape to predict]] — *open*
 <!-- crux:ledger:end -->

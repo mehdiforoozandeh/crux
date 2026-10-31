@@ -8,7 +8,6 @@ status: resolved
 stale: false
 created: "2026-08-16T16:06:21"
 updated: "2026-08-16T16:07:13"
-synthesis: s6
 ---
 
 # q26 — Does the same method rank the same way in JavaScript?
@@ -40,9 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 In JavaScript, insertion took 2.8 milliseconds, merge took 2.1 milliseconds, and bubble took 31 milliseconds on 10,000 random items. The ranking is mostly the same as Python. Language does not change which sort is best.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 0, refuted 1, inconclusive 0, invalid-run 1)
+**3 children** · open 1, leaning 0, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h80` [[h80_the_five_sorts_rank_the_same_in_javascri|The five sorts rank the same in JavaScript as in Python]] — *done* — verdict **refuted**, metric `Python ranking: bubble slowest, insertion faster, merge fastest. JavaScript: insertion slower than selection on some sizes.`
-- `h81` [[h81_the_same_sort_is_faster_in_javascript_th|The same sort is faster in JavaScript than in Python]] — *done* — verdict **supported**, metric `Python merge: 3.8 s. JavaScript merge: 0.65 s. Ratio: 5.8x faster in JavaScript.`
-- `h82` [[h82_the_built_in_sort_wins_in_javascript_too|The built-in sort wins in JavaScript too]] — *done* — verdict **invalid-run**, metric `Cannot compute; the two sides sorted different lists`
+- `h80` [[h80_the_five_sorts_rank_the_same_in_javascri|The five sorts rank the same in JavaScript as in Python]] — *settled · strong*
+- `h81` [[h81_the_same_sort_is_faster_in_javascript_th|The same sort is faster in JavaScript than in Python]] — *settled · strong*
+- `h82` [[h82_the_built_in_sort_wins_in_javascript_too|The built-in sort wins in JavaScript too]] — *open*
+- `f97` finding (strong) [[f97_what_the_javascript_detour_settled|What the JavaScript detour settled]]
 <!-- crux:ledger:end -->

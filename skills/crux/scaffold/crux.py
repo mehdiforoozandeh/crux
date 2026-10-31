@@ -48,8 +48,8 @@ NEUTRAL_KIND_LABEL = E.NEUTRAL_KIND
 def _vault():
     root = E.find_vault()
     warn = E.check_and_stamp_version(root)
-    if warn:
-        print(f"crux: ⚠ {warn}", file=sys.stderr)
+    if warn:   # a 4.0 migration is news, not a warning; drift is both
+        print(f"crux: {'' if warn.startswith('migrated') else '⚠ '}{warn}", file=sys.stderr)
     return root
 
 

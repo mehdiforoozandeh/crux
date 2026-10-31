@@ -1,7 +1,8 @@
 title: SegSSL — label-efficient segmentation
 slug: segssl_label_efficient_segmentation
 root_id: root
-engine_version: 3.5
+engine_version: 4.0
 counter_q: 5
 counter_h: 16
 counter_s: 4
+counter_f: 18

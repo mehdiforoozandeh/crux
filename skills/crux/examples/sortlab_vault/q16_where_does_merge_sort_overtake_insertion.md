@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On 1,000 items, insertion is faster. On 10,000 items, merge is faster. The crossover is somewhere in between. I think it is around 4,000 or 5,000 items, but I have not pinned it down exactly yet.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 2/3 done (supported 1, partial 0, refuted 1, inconclusive 0, invalid-run 0)
+**3 children** · open 1, leaning 1, settled 1, parked 0
 
-- `h47` [[h47_merge_sort_overtakes_insertion_sort_belo|Merge sort overtakes insertion sort below one thousand items]] — *done* — verdict **refuted**, metric `At n=500: insertion 0.021 ms, merge 0.022 ms`
-- `h48` [[h48_the_crossover_size_moves_when_the_list_i|The crossover size moves when the list is almost sorted]] — *done* — verdict **supported**, metric `Random crossover n=500; almost-sorted crossover n=3200`
-- `h49` [[h49_a_hybrid_that_switches_at_the_crossover_|A hybrid that switches at the crossover beats both]] — *staged*
+- `h47` [[h47_merge_sort_overtakes_insertion_sort_belo|Merge sort overtakes insertion sort below one thousand items]] — *leaning · moderate*
+- `h48` [[h48_the_crossover_size_moves_when_the_list_i|The crossover size moves when the list is almost sorted]] — *settled · strong*
+- `h49` [[h49_a_hybrid_that_switches_at_the_crossover_|A hybrid that switches at the crossover beats both]] — *open*
 <!-- crux:ledger:end -->

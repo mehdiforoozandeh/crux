@@ -39,10 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 I plotted insertion on a log-log chart from 1,000 to 100,000 items. The points line up very well, almost perfectly linear. The slope is about 2, which matches the theory that insertion is O(n squared).
 
 <!-- crux:ledger:start -->
-**4 children** · ideas 3/4 done (supported 1, partial 0, refuted 1, inconclusive 1, invalid-run 0)
+**4 children** · open 1, leaning 1, settled 2, parked 0
 
-- `h86` [[h86_a_straight_line_fits_my_insertion_sort_t|A straight line fits my insertion sort times on a log-log chart]] — *done* — verdict **supported**, metric `Times were 0.12 ms at 1k, 0.49 at 3k, 1.93 at 10k; log-log line fit with slope 1.98.`
-- `h87` [[h87_the_slope_of_that_line_is_close_to_two|The slope of that line is close to two]] — *done* — verdict **inconclusive**, metric `Fitted slope was 1.98 with 95 percent confidence interval 1.84 to 2.12.`
-- `h88` [[h88_the_slope_for_merge_sort_is_close_to_one|The slope for merge sort is close to one]] — *done* — verdict **refuted**, metric `Merge sort slope was 1.12; times were 0.24 ms at 1k, 2.18 at 10k.`
-- `h89` [[h89_three_sizes_give_the_same_slope_as_six_s|Three sizes give the same slope as six sizes]] — *staged*
+- `h86` [[h86_a_straight_line_fits_my_insertion_sort_t|A straight line fits my insertion sort times on a log-log chart]] — *settled · strong*
+- `h87` [[h87_the_slope_of_that_line_is_close_to_two|The slope of that line is close to two]] — *leaning · weak*
+- `h88` [[h88_the_slope_for_merge_sort_is_close_to_one|The slope for merge sort is close to one]] — *settled · strong*
+- `h89` [[h89_three_sizes_give_the_same_slope_as_six_s|Three sizes give the same slope as six sizes]] — *open*
 <!-- crux:ledger:end -->
