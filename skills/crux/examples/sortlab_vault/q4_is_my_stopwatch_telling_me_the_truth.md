@@ -38,13 +38,13 @@ Use Python's time.perf_counter(). Check if it ever goes backwards. Run an empty 
 The counter clock does not go backwards on my laptop. An empty loop of ten thousand iterations takes about 0.07 milliseconds. So my timer can see times that small. But when I ran the first test, numbers varied wildly, so I started throwing out the first run.
 
 <!-- crux:ledger:start -->
-**7 children** · ideas 2/2 done (supported 1, partial 0, refuted 1, inconclusive 0, invalid-run 0) · sub-questions 1/5 resolved
+**7 children** · open 0, leaning 5, settled 2, parked 0
 
-- `h8` [[h8_my_first_timing_numbers_were_wrong_by_mo|My first timing numbers were wrong by more than ten percent]] — *done* — verdict **supported**, metric `Old timer: 15 ms median. New timer: 8 ms median. Difference: 7 ms (half the time was not measured.)`
-- `h9` [[h9_a_single_run_is_enough_if_the_list_is_bi|A single run is enough if the list is big]] — *done* — verdict **refuted**, metric `Single runs at 100k: 12, 13, 16, 11 ms. Median of 30 runs: 12.8 ms.`
-- `q18` _(Q)_ [[q18_how_small_a_gap_can_my_timer_see|How small a gap can my timer see?]] — *resolved*
-- `q19` _(Q)_ [[q19_does_the_first_run_take_longer_than_the_|Does the first run take longer than the rest?]] — *review*
-- `q20` _(Q)_ [[q20_do_background_apps_change_the_number|Do background apps change the number?]] — *open*
-- `q21` _(Q)_ [[q21_does_running_on_battery_change_the_numbe|Does running on battery change the number?]] — *review*
-- `q22` _(Q)_ [[q22_how_many_repeats_do_i_need_before_the_nu|How many repeats do I need before the number settles?]] — *open*
+- `h8` [[h8_my_first_timing_numbers_were_wrong_by_mo|My first timing numbers were wrong by more than ten percent]] — *settled · strong*
+- `h9` [[h9_a_single_run_is_enough_if_the_list_is_bi|A single run is enough if the list is big]] — *leaning · moderate*
+- `q18` _(Q)_ [[q18_how_small_a_gap_can_my_timer_see|How small a gap can my timer see?]] — *settled · strong*
+- `q19` _(Q)_ [[q19_does_the_first_run_take_longer_than_the_|Does the first run take longer than the rest?]] — *leaning · moderate*
+- `q20` _(Q)_ [[q20_do_background_apps_change_the_number|Do background apps change the number?]] — *leaning · moderate*
+- `q21` _(Q)_ [[q21_does_running_on_battery_change_the_numbe|Does running on battery change the number?]] — *leaning · moderate*
+- `q22` _(Q)_ [[q22_how_many_repeats_do_i_need_before_the_nu|How many repeats do I need before the number settles?]] — *leaning · moderate*
 <!-- crux:ledger:end -->

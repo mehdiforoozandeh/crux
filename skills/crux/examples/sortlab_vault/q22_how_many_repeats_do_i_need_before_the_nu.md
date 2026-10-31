@@ -37,11 +37,11 @@ Run insertion on 10,000 items one, two, five, ten, and thirty times. Compare the
 With one run, the time was 5.4 milliseconds, which could be an outlier. With two runs, the median was 5.2 milliseconds. With ten runs, it was 5.1 milliseconds. With thirty runs, it was still 5.1 milliseconds. Ten looks like enough.
 
 <!-- crux:ledger:start -->
-**5 children** · ideas 4/4 done (supported 0, partial 0, refuted 2, inconclusive 2, invalid-run 0) · sub-questions 0/1 resolved
+**5 children** · open 0, leaning 5, settled 0, parked 0
 
-- `h65` [[h65_ten_repeats_are_enough_for_the_numbers_t|Ten repeats are enough for the numbers to settle]] — *done* — verdict **refuted**, metric `Bubble 10-run median: 5.2 ms. 30-run median: 5.1 ms. Insertion: 3.1 vs 3.0 ms.`
-- `h66` [[h66_thirty_repeats_bring_the_spread_under_fi|Thirty repeats bring the spread under five percent]] — *done* — verdict **inconclusive**, metric `Bubble IQR: 4.7 percent of median. Insertion: 4.2 percent.`
-- `h67` [[h67_the_slowest_run_in_thirty_is_always_an_o|The slowest run in thirty is always an outlier]] — *done* — verdict **refuted**, metric `Max 3.4 ms is 3.75 standard deviations above mean of 3.1 ms.`
-- `h68` [[h68_repeats_help_more_than_making_the_list_b|Repeats help more than making the list bigger]] — *done* — verdict **inconclusive**, metric `1000 items 30x IQR: 5 percent of median. 10000 items 3x IQR: 6 percent of median.`
-- `q35` _(Q)_ [[q35_is_the_median_of_repeats_steadier_than_t|Is the median of repeats steadier than the mean?]] — *review*
+- `h65` [[h65_ten_repeats_are_enough_for_the_numbers_t|Ten repeats are enough for the numbers to settle]] — *leaning · moderate*
+- `h66` [[h66_thirty_repeats_bring_the_spread_under_fi|Thirty repeats bring the spread under five percent]] — *leaning · moderate*
+- `h67` [[h67_the_slowest_run_in_thirty_is_always_an_o|The slowest run in thirty is always an outlier]] — *leaning · moderate*
+- `h68` [[h68_repeats_help_more_than_making_the_list_b|Repeats help more than making the list bigger]] — *leaning · weak*
+- `q35` _(Q)_ [[q35_is_the_median_of_repeats_steadier_than_t|Is the median of repeats steadier than the mean?]] — *leaning · moderate*
 <!-- crux:ledger:end -->

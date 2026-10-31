@@ -39,9 +39,9 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On my laptop, the first run of insertion sort on 10,000 items took 5.8 milliseconds. The second run took 5.2 milliseconds. The difference is real but not huge. I now skip the first run as a warm-up on every test.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 1, partial 0, refuted 0, inconclusive 2, invalid-run 0)
+**3 children** · open 0, leaning 2, settled 1, parked 0
 
-- `h56` [[h56_the_first_run_of_a_sort_is_slower_than_t|The first run of a sort is slower than the next nine]] — *done* — verdict **supported**, metric `Bubble run 1 vs median runs 2-10: 8.3 ms vs 7.9 ms. Insertion 1 vs 2-10: 4.1 ms vs 3.8 ms.`
-- `h57` [[h57_the_warm_up_cost_disappears_after_three_|The warm-up cost disappears after three runs]] — *done* — verdict **inconclusive**, metric `Bubble: run 1 = 8.4 ms, run 3 = 7.8 ms, runs 4-15 mean = 7.7 ms.`
-- `h58` [[h58_warm_up_matters_more_for_small_lists_tha|Warm-up matters more for small lists than for big ones]] — *done* — verdict **inconclusive**, metric `Warm-up at 50 items is 12 percent; at 10000 items is 3 percent.`
+- `h56` [[h56_the_first_run_of_a_sort_is_slower_than_t|The first run of a sort is slower than the next nine]] — *settled · strong*
+- `h57` [[h57_the_warm_up_cost_disappears_after_three_|The warm-up cost disappears after three runs]] — *leaning · moderate*
+- `h58` [[h58_warm_up_matters_more_for_small_lists_tha|Warm-up matters more for small lists than for big ones]] — *leaning · moderate*
 <!-- crux:ledger:end -->

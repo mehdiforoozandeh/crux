@@ -662,8 +662,13 @@ def check_and_stamp_version(root):
     stamped = None if stamped is None else str(stamped)
     if stamped == ENGINE_VERSION:
         return None
+    import migrate4                    # spec 19: a 3.x vault becomes 4.0 here, with a backup
+    migrated = migrate4.migrate_on_load(root, stamped)
+    cfg = yaml_load(read(cfg_path))    # re-read: the migration advanced counter_f
     cfg["engine_version"] = ENGINE_VERSION
     write_if_changed(cfg_path, yaml_dump(cfg) + "\n")
+    if migrated:
+        return migrated
     if stamped is None:
         return None  # pre-versioned vault; silently adopt the stamp
     # Third person, like every other line the CLI prints (spec 16): this is written ABOUT

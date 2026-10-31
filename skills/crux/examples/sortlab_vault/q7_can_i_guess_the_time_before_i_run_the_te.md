@@ -37,11 +37,11 @@ Fit a line to sizes 1,000 to 100,000. Then guess times for 200,000 and 500,000. 
 I fitted a line to the small sizes and guessed 15.3 milliseconds for merge sort on 200,000 items. The real time was 14.8 milliseconds. For 500,000, I guessed 37 milliseconds and got 38.2 milliseconds. Guessing between sizes works pretty well.
 
 <!-- crux:ledger:start -->
-**5 children** · ideas 0/2 done (supported 0, partial 0, refuted 0, inconclusive 0, invalid-run 0) · sub-questions 0/3 resolved
+**5 children** · open 3, leaning 2, settled 0, parked 0
 
-- `h15` [[h15_i_can_guess_a_run_time_to_within_twenty_|I can guess a run time to within twenty percent]] — *idea*
-- `h16` [[h16_a_guess_from_three_sizes_is_as_good_as_a|A guess from three sizes is as good as a guess from six]] — *running*
-- `q28` _(Q)_ [[q28_can_i_fit_a_curve_to_the_small_sizes|Can I fit a curve to the small sizes?]] — *open*
-- `q29` _(Q)_ [[q29_can_i_predict_the_time_for_a_size_i_have|Can I predict the time for a size I have not run?]] — *open*
+- `h15` [[h15_i_can_guess_a_run_time_to_within_twenty_|I can guess a run time to within twenty percent]] — *open*
+- `h16` [[h16_a_guess_from_three_sizes_is_as_good_as_a|A guess from three sizes is as good as a guess from six]] — *open*
+- `q28` _(Q)_ [[q28_can_i_fit_a_curve_to_the_small_sizes|Can I fit a curve to the small sizes?]] — *leaning · moderate*
+- `q29` _(Q)_ [[q29_can_i_predict_the_time_for_a_size_i_have|Can I predict the time for a size I have not run?]] — *leaning · moderate*
 - `q30` _(Q)_ [[q30_can_i_predict_the_time_for_a_shape_i_hav|Can I predict the time for a shape I have not run?]] — *open*
 <!-- crux:ledger:end -->

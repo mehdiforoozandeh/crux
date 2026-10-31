@@ -8,7 +8,6 @@ status: resolved
 stale: true
 created: "2026-08-16T16:06:20"
 updated: "2026-08-16T16:07:13"
-synthesis: s2
 ---
 
 # q12 — What happens on a list that is sorted backwards?
@@ -40,9 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 Bubble took 41 milliseconds on a reversed list. Insertion took 24 milliseconds. Selection took 8.2 milliseconds, almost the same as on random. Merge took 2.2 milliseconds, hardly different. Merge is the most stable sort here.
 
 <!-- crux:ledger:start -->
-**3 children** · ideas 3/3 done (supported 2, partial 0, refuted 0, inconclusive 1, invalid-run 0)
+**3 children** · open 0, leaning 1, settled 2, parked 0 · 1 finding(s) on this question
 
-- `h31` [[h31_a_backwards_list_is_the_worst_case_for_i|A backwards list is the worst case for insertion sort]] — *done* — verdict **supported**, metric `Sorted 0.23 ms, reversed 3.12 ms at n=10000`
-- `h32` [[h32_a_backwards_list_is_the_worst_case_for_b|A backwards list is the worst case for bubble sort too]] — *done* — verdict **inconclusive**, metric `Bubble-with-exit 1.89 ms, without exit 1.94 ms at n=10000`
-- `h33` [[h33_merge_sort_does_not_care_that_the_list_i|Merge sort does not care that the list is backwards]] — *done* — verdict **supported**, metric `Sorted 0.64 ms, reversed 0.63 ms, random 0.67 ms at n=10000`
+- `h31` [[h31_a_backwards_list_is_the_worst_case_for_i|A backwards list is the worst case for insertion sort]] — *settled · strong*
+- `h32` [[h32_a_backwards_list_is_the_worst_case_for_b|A backwards list is the worst case for bubble sort too]] — *leaning · moderate*
+- `h33` [[h33_merge_sort_does_not_care_that_the_list_i|Merge sort does not care that the list is backwards]] — *settled · strong*
+- `f90` finding (strong) [[f90_what_the_shape_of_the_list_settled|What the shape of the list settled]]
 <!-- crux:ledger:end -->

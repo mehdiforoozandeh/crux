@@ -39,12 +39,12 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 The built-in sort beats all five of my sorts at every size I tested, from 1,000 to 1,000,000 items. It even beats them on lists that are already sorted. On a sorted list of 100,000 items, my insertion sort took 1.2 milliseconds but the built-in took 0.06 milliseconds.
 
 <!-- crux:ledger:start -->
-**6 children** · ideas 2/3 done (supported 1, partial 0, refuted 1, inconclusive 0, invalid-run 0) · sub-questions 1/3 resolved
+**6 children** · open 1, leaning 3, settled 2, parked 0
 
-- `h10` [[h10_the_built_in_sort_beats_my_best_sort_at_|The built-in sort beats my best sort at every size]] — *done* — verdict **supported**, metric `Merge sort: 18 ms at 100k. Built-in sort: 2 ms at 100k. Ratio: 9 times faster.`
-- `h11` [[h11_the_gap_to_the_built_in_sort_shrinks_as_|The gap to the built-in sort shrinks as the list grows]] — *done* — verdict **refuted**, metric `At 1k: built-in 0.2 ms, merge 0.8 ms, ratio 4x. At 1m: built-in 2.5 ms, merge 22 ms, ratio 8.8x.`
-- `h12` [[h12_i_can_close_the_gap_by_translating_my_me|I can close the gap by translating my merge sort line by line]] — *running*
-- `q23` _(Q)_ [[q23_is_the_built_in_sort_written_in_a_faster|Is the built-in sort written in a faster language?]] — *resolved*
-- `q24` _(Q)_ [[q24_does_the_built_in_sort_use_a_smarter_met|Does the built-in sort use a smarter method?]] — *review*
-- `q25` _(Q)_ [[q25_can_i_beat_the_built_in_sort_on_any_list|Can I beat the built-in sort on any list at all?]] — *open*
+- `h10` [[h10_the_built_in_sort_beats_my_best_sort_at_|The built-in sort beats my best sort at every size]] — *leaning · moderate*
+- `h11` [[h11_the_gap_to_the_built_in_sort_shrinks_as_|The gap to the built-in sort shrinks as the list grows]] — *settled · strong*
+- `h12` [[h12_i_can_close_the_gap_by_translating_my_me|I can close the gap by translating my merge sort line by line]] — *open*
+- `q23` _(Q)_ [[q23_is_the_built_in_sort_written_in_a_faster|Is the built-in sort written in a faster language?]] — *settled · strong*
+- `q24` _(Q)_ [[q24_does_the_built_in_sort_use_a_smarter_met|Does the built-in sort use a smarter method?]] — *leaning · moderate*
+- `q25` _(Q)_ [[q25_can_i_beat_the_built_in_sort_on_any_list|Can I beat the built-in sort on any list at all?]] — *leaning · moderate*
 <!-- crux:ledger:end -->

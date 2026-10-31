@@ -39,10 +39,10 @@ _(optional: the pre-registered rules — endpoints, thresholds, scope — locked
 On 10,000 random items, insertion took 5.2 milliseconds with nothing else running and 6.8 milliseconds with the browser open on a video call. The call slowed it down, but not by a huge amount. I try to close big apps before testing now.
 
 <!-- crux:ledger:start -->
-**4 children** · ideas 3/3 done (supported 1, partial 0, refuted 1, inconclusive 0, invalid-run 1) · sub-questions 0/1 resolved
+**4 children** · open 1, leaning 2, settled 1, parked 0
 
-- `h59` [[h59_a_music_player_in_the_background_adds_mo|A music player in the background adds more than five percent]] — *done* — verdict **refuted**, metric `No music: 3.2 ms. With music: 3.1 ms. Difference: none.`
-- `h60` [[h60_a_video_call_in_the_background_doubles_m|A video call in the background doubles my slowest runs]] — *done* — verdict **invalid-run**, metric `Cannot compute; one of the four runs was void.`
-- `h61` [[h61_background_load_changes_the_median_less_|Background load changes the median less than the mean]] — *done* — verdict **supported**, metric `Mean without load: 3.1 ms. Mean with load: 3.4 ms. Median: both 3.0 ms.`
-- `q32` _(Q)_ [[q32_does_closing_the_browser_change_the_numb|Does closing the browser change the number?]] — *open*
+- `h59` [[h59_a_music_player_in_the_background_adds_mo|A music player in the background adds more than five percent]] — *leaning · moderate*
+- `h60` [[h60_a_video_call_in_the_background_doubles_m|A video call in the background doubles my slowest runs]] — *open*
+- `h61` [[h61_background_load_changes_the_median_less_|Background load changes the median less than the mean]] — *settled · strong*
+- `q32` _(Q)_ [[q32_does_closing_the_browser_change_the_numb|Does closing the browser change the number?]] — *leaning · moderate*
 <!-- crux:ledger:end -->
