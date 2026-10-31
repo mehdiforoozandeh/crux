@@ -204,6 +204,25 @@ def build_legacy_vault(root, stamp="3.5"):
     return {"q1": q1, "q2": q2}
 
 
+def captured_demo(dst, stamp="1.2"):
+    """The shipped demo_vault as it was before the 4.0 migration (7f7529c), rebuilt from the
+    committed 4.0 copy. Exact for every node file: the migration left demo's hypothesis and
+    question files byte-unchanged (outside the generated ledger) and only ADDED Findings that
+    carry `migrated_from`, so removing those and restoring the stamp gives the 1.2 vault."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
+    for n in list(E.Vault(dst).nodes.values()):
+        if n.type == "finding" and n["fm"].get("migrated_from"):
+            os.remove(n["path"])
+    cfgp = os.path.join(dst, E.VAULT_MARKER)
+    cfg = E.yaml_load(_read(cfgp))
+    cfg.pop("counter_f", None)
+    cfg["engine_version"] = stamp
+    _write(cfgp, E.yaml_dump(cfg) + "\n")
+    return dst
+
+
 def _findings(root):
     v = E.Vault(root)
     return {f.id: f for f in v.nodes.values() if f.type == "finding"}
@@ -401,6 +420,8 @@ def _backup_tests(check, tmp):
         if "first" not in seen:
             bks = M.backups(root)
             seen["first"] = bks and tree_hashes(bks[-1], skip=()) == pre
+        if os.path.abspath(path) == os.path.abspath(os.path.join(root, M.PENDING_FILE)):
+            seen["pending_locked"] = os.path.exists(os.path.join(root, M.CRUX_DIR, E.LOCK_FILE))
         return real(path, text)
     M._write_atomic = spy
     try:
@@ -408,6 +429,10 @@ def _backup_tests(check, tmp):
     finally:
         M._write_atomic = real
     check("mig4: a backup exists, complete, before the first byte changes", seen.get("first") is True)
+    check("mig4: the pending store is C3's file, .crux/pending",
+          M.PENDING_FILE.replace(os.sep, "/") == ".crux/pending")
+    check("mig4: the pending store is written under the .crux/ lock (C3's interface)",
+          seen.get("pending_locked") is True)
     bks = M.backups(root)
     check("mig4: exactly one backup, under .crux/", len(bks) == 1
           and os.path.dirname(bks[0]) == os.path.join(root, M.CRUX_DIR))

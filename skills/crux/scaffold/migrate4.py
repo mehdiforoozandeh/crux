@@ -60,10 +60,11 @@ FILES (all under `<vault>/.crux/`, a folder that git-ignores itself via `.crux/.
   migrate-4.0-journal.json           exists only while a migration runs. If a crash leaves
                                      it behind, the next load rolls the journalled paths back
                                      from the backup and migrates again.
-  pending.jsonl                      THE PENDING STORE (read by /crux-wrap, chunk C3).
+  pending                            THE PENDING STORE (read by /crux-wrap, chunk C3).
 
-PENDING STORE FORMAT — `<vault>/.crux/pending.jsonl`, UTF-8 JSON lines, one candidate per
-line, append-only for writers, unique by `id`:
+PENDING STORE FORMAT — `<vault>/.crux/pending`, UTF-8 JSON lines, one candidate per line,
+append-only for writers, unique by `id`. EVERY writer holds `engine.id_lock(<vault>/.crux)`
+(lock file `.crux/.crux.lock`) for its read-modify-write, per C3's interface:
 
   {"id":       "s2:q2" | "t2:h6"        stable key: <origin>:<parent>; a writer skips an id
                                         already present
@@ -88,7 +89,7 @@ import engine as E
 
 TARGET        = "4.0"
 CRUX_DIR      = ".crux"
-PENDING_FILE  = os.path.join(CRUX_DIR, "pending.jsonl")
+PENDING_FILE  = os.path.join(CRUX_DIR, "pending")
 REPORT_FILE   = os.path.join(CRUX_DIR, "migrate-4.0-report.json")
 JOURNAL_FILE  = os.path.join(CRUX_DIR, "migrate-4.0-journal.json")
 BACKUP_PREFIX = "backup-"
@@ -487,12 +488,14 @@ def apply(root, stamped=None):
             if os.path.exists(os.path.join(root, rel)):
                 os.remove(os.path.join(root, rel))
         if p["pending"]:
-            pp = os.path.join(root, PENDING_FILE)
-            old = E.read(pp) if os.path.exists(pp) else ""
-            if old and not old.endswith("\n"):
-                old += "\n"
-            _write_atomic(pp, old + "".join(json.dumps(x, ensure_ascii=False) + "\n"
-                                            for x in p["pending"]))
+            with E.id_lock(_ensure_crux_dir(root)):      # C3's lock on the pending store
+                pp = os.path.join(root, PENDING_FILE)
+                old = E.read(pp) if os.path.exists(pp) else ""
+                if old and not old.endswith("\n"):
+                    old += "\n"
+                have = {x.get("id") for x in read_pending(root)}
+                _write_atomic(pp, old + "".join(json.dumps(x, ensure_ascii=False) + "\n"
+                                                for x in p["pending"] if x["id"] not in have))
         E.refresh(root)
         cfgp = os.path.join(root, E.VAULT_MARKER)
         cfg = E.yaml_load(E.read(cfgp))

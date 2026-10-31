@@ -992,13 +992,15 @@ def confidence_rank(c):
     return CONFIDENCES.index(c) if c in CONFIDENCES else -1
 
 def effective_confidence(f):
-    """The confidence a finding counts with: the stored one, re-capped at weak when the null
-    was not ruled out. The cap is enforced on write; applying it again here means a hand edit
+    """The confidence a finding counts with: the stored one, re-capped at weak when a SUPPORTS
+    finding's null was not ruled out (PI ruling: the null is the rival explanation of a positive
+    result, so it never caps against, mixed or no-answer-yet). The cap is enforced on write; applying it again here means a hand edit
     past it can be FLAGGED by validate but can never raise a node's confidence."""
     c = f["fm"].get("confidence")
     if c not in CONFIDENCES:
         return None
-    if f["fm"].get("null") == NULL_NOT_RULED_OUT and confidence_rank(c) > confidence_rank(NULL_CAP):
+    if f["fm"].get("null") == NULL_NOT_RULED_OUT and f["fm"].get("direction") == "supports" \
+            and confidence_rank(c) > confidence_rank(NULL_CAP):
         return NULL_CAP
     return c
 
@@ -1717,7 +1719,7 @@ def finding_problems(v, f):
                    f"{', '.join(DIRECTIONS)} (got '{d}')")
     if nul not in (None, "") and nul not in NULL_STATES:
         out.append(f"finding '{f.id}': null '{nul}' is not one of {', '.join(NULL_STATES)}")
-    if nul == NULL_NOT_RULED_OUT and c in CONFIDENCES and \
+    if nul == NULL_NOT_RULED_OUT and d == "supports" and c in CONFIDENCES and \
             confidence_rank(c) > confidence_rank(NULL_CAP):
         out.append(f"finding '{f.id}': the null was not ruled out, so confidence is capped at "
                    f"{NULL_CAP} (stored '{c}') — like a non-significant p-value")
@@ -4356,7 +4358,8 @@ def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=Non
             raise CruxError(prob)
     note = None
     stored = conf
-    if nul == NULL_NOT_RULED_OUT and confidence_rank(conf) > confidence_rank(NULL_CAP):
+    if nul == NULL_NOT_RULED_OUT and d == "supports" and \
+            confidence_rank(conf) > confidence_rank(NULL_CAP):
         stored = NULL_CAP
         note = (f"confidence stored as {NULL_CAP}, not {conf}: the null was not ruled out, "
                 f"which caps confidence at {NULL_CAP}")

@@ -3623,19 +3623,25 @@ def run_evidence_boundary():
           all("schema" not in n["fm"] for n in after_v.nodes.values() if n.type != "finding"))
     shutil.rmtree(old, ignore_errors=True)
 
-    # -- the captured pre-upgrade fixture: byte-identical after the version bump
-    src = os.path.join(HERE, "..", "examples", "demo_vault")
-    dst = tempfile.mkdtemp(prefix="crux_bdemo_")
-    shutil.rmtree(dst); shutil.copytree(src, dst)
+    # -- the captured pre-upgrade fixture: byte-identical after the version bump. The shipped
+    #    demo_vault is 4.0 now (spec 19 regenerated it); `captured_demo` rebuilds its 1.2 form
+    #    exactly. The upgrade MIGRATES it (new Finding nodes); every node that existed before
+    #    must keep its authored bytes, its verdict and its status.
+    import selftest_migrate as SM
+    dst = SM.captured_demo(tempfile.mkdtemp(prefix="crux_bdemo_"))
     f0, v0, s0 = fingerprint(dst)
     warn = E.check_and_stamp_version(dst)
     E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     f1, v1, s1 = fingerprint(dst)
+    new = E.Vault(dst)
     check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
-          f0 == f1)
+          f0 and {k: f1.get(k) for k in f0} == f0)
+    check("evmig: pre-15 vault — the upgrade only ADDS nodes, and only Findings",
+          all(new.nodes[n].type == "finding" for n in set(v1) - set(v0)) and set(v0) <= set(v1))
     check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
-          v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
-    check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
+          {k: v1[k] for k in v0} == v0 and v0["h1"] == "supported" and v0["h2"] == "partial")
+    check("evmig: pre-15 vault — every status is unchanged after upgrade",
+          {k: s1[k] for k in s0} == s0)
     check("evmig: an older vault reports drift and re-stamps to current",
           warn is not None and "1.2" in warn
           and E.Vault(dst).cfg.get("engine_version") == E.ENGINE_VERSION)
@@ -6486,17 +6492,23 @@ def run_glossary_oracle():
         case+plural guess. They are why the rule is what it is.
     Moved 2026-10-29, the CORPUS and not the rule: segssl_vault now says "pre-registered
     threshold" where it said "pre-registered bar" (the correct-terms rule), and the row
-    follows the words with the same 9/9/0."""
+    follows the words with the same 9/9/0.
+    Moved 2026-10-31, the CORPUS and not the rule: the 4.0 migration (spec 19) regenerated the
+    example vaults. Every closed hypothesis gained a Finding and every synthesis became a
+    Finding on its question, so the corpus grew (demo 8 -> 10, scaling 37 -> 42, segssl
+    43 -> 57). 'data floor' moved 1/2/1 -> 1/3/1: the s2 synthesis' title now also opens
+    the Answer of the Finding that replaced it. The row still separates the document gate
+    from the occurrence gate (1 document, more than 1 occurrence). No other row moved."""
     print("\n# glossary — the frozen oracle (spec 14, PRD 14.1)")
     ex = os.path.join(HERE, "..", "examples")
     ORACLE = {
         "segssl_vault": [("mask transformer head", 3, 12, 2), ("dense contrastive pretraining", 6, 12, 2),
                          ("label efficiency", 17, 26, 0), ("pre-registered threshold", 9, 9, 0),
                          ("frozen linear probe", 4, 10, 1), ("label-efficient segmentation", 1, 2, 1)],
-        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 2, 1)],
+        "scaling_vault": [("power law", 6, 16, 0), ("data floor", 1, 3, 1)],
         "demo_vault":    [("masked token", 1, 3, 1), ("jepa encoder", 1, 3, 1)],
     }
-    SIZES = {"demo_vault": 8, "scaling_vault": 37, "segssl_vault": 43}
+    SIZES = {"demo_vault": 10, "scaling_vault": 42, "segssl_vault": 57}
     for vd, rows in sorted(ORACLE.items()):
         v = E.Vault(os.path.join(ex, vd))
         size = len(v.nodes) + len(E.scan_wiki_pages(v.root))
@@ -9154,7 +9166,8 @@ def run_doctor():
 
         # ---------------------------------------------------------------- vault drift + migrate
         drift = os.path.join(tmp, "drifted")
-        shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), drift)
+        import selftest_migrate as SM     # the shipped demo is 4.0; this is its captured 1.2 form
+        SM.captured_demo(drift)
         stamped = E.yaml_load(read(os.path.join(drift, E.VAULT_MARKER)))["engine_version"]
         before = _byte_map(drift)
         dr = E.cmd_doctor(root=drift, skills_dirs=[skills_ok], agents_dir=ag_full)
