@@ -993,17 +993,24 @@ function updateOverviewBtn() {
   $("overview-btn").classList.toggle("active", state.tab === "tree" && state.selected === null);
 }
 
-// Ruling Q9: a vault stamped below 4.0 is shown as it is. The cockpit never writes, so it
-// cannot migrate it; the banner says why the tree reads as open, and what fixes it.
+// Ruling Q9: the cockpit never writes, so it cannot migrate a vault stamped below 4.0. The
+// server previews the migration in memory (migrate4.plan is pure) and serves that tree, with
+// `preview: true`; when the preview fails it serves the vault as saved, `preview: false`.
 function renderMigrateBanner() {
   const m = state.snap.migration || {};
   const b = $("migrate-banner");
   b.hidden = !m.needed;
   if (!m.needed) return;
-  b.textContent = "This notebook is not migrated yet (written by crux engine " +
+  const head = "This notebook is not migrated yet (written by crux engine " +
     (m.stamped ? "v" + m.stamped : "before versions were stamped") +
-    ") — any crux write command migrates it. Until then it is shown as saved: its old " +
-    "verdicts are not findings yet, so its nodes read as open.";
+    ") — any crux write command migrates it. ";
+  b.textContent = head + (m.preview
+    ? "Shown here is what that migration would make of it, computed in memory: " +
+      m.findings + " finding" + (m.findings === 1 ? "" : "s") + " from its old verdicts" +
+      (m.pending ? ", and " + m.pending + " candidate" + (m.pending === 1 ? "" : "s") +
+        " left for review" : "") + ". Nothing has been written."
+    : "Until then it is shown as saved: its old verdicts are not findings yet, so its " +
+      "nodes read as open.");
 }
 
 function badge(text, varName, cls) {
@@ -2813,8 +2820,8 @@ function taskRow(t, depth, ctx) {
   const concl = (t.hypothesis_refs || []).map((h) =>
     `<span class="tk-concl tk-c-${esc(h.conclusion)}">${esc(h.id)} → ${esc(h.conclusion)}` +
     (h.schema === 0 ? ' <span class="tk-state" title="This hypothesis predates evidence ' +
-      'semantics (spec 15). Its verdict is frozen; this conclusion is a record on the task.' +
-      '">pre-15</span>' : "") + `</span>`).join(" · ");
+      'semantics (spec 15). Its state comes from its findings; this conclusion is a record ' +
+      'on the task, not a finding.">pre-15</span>' : "") + `</span>`).join(" · ");
   const prog = taskSubProgress(t);
   const dim = state.search && !matchTask(t) ? " tk-dim" : "";
   const on = state.tasks.selected === t.id ? " on" : "";
@@ -2992,7 +2999,7 @@ function taskDetail(t) {
             `<span class="rid">${esc(h.id)}</span>${esc(n ? n.title : "")}` +
             `<span class="rsum"><span class="tk-concl tk-c-${esc(h.conclusion)}">` +
             `concluded ${esc(h.conclusion)}</span>` +
-            (h.schema === 0 ? " · pre-15 (verdict frozen on the node)" : "") +
+            (h.schema === 0 ? " · pre-15 (its state comes from its findings)" : "") +
             `</span></button>`;
         }).join(""))
     : "";
