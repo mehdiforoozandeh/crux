@@ -2,7 +2,7 @@
 
 - **Kind:** feature (capture rules, one node section, one finding flag, one closure cap, one wrap step)
 - **Spec:** extends [19](19-background-memory.md); answers its open question 1 (pruning).
-- **Status:** draft, 2026-10-31. Decisions (i)–(viii) below are PI rulings.
+- **Status:** approved by the PI, 2026-10-31. Decisions (i)–(ix) below are PI rulings.
 - **Research:** [research/research-drift.md](research/research-drift.md).
 - **Release:** `ENGINE_VERSION` 4.0 → 4.1 (decision vi changes the roll-up).
 
@@ -33,6 +33,7 @@ no new verb, no new agent, no timer.
 | vi | Exploration cap | `crux finding <qid> --exploratory` marks a finding on a question that came from looking at data with no stated prediction. That finding counts at most moderate. A descriptive measurement without the flag can still be strong. |
 | vii | Progress review | At `/crux-wrap` only. No count threshold, no timer. |
 | viii | Leanness | An acceptance criterion, measured in bytes and in schema items (below). |
+| ix | Old vaults | No migration. The rules apply to items written from now on; old items are never rewritten or back-filled. The version bump only restamps. |
 
 ## Design
 
@@ -106,8 +107,8 @@ only about lines it judges stalled. No line judged stalled → no question.
       session and have no strong finding.
    7. `crux status --json` gains no key over 4.0 on the demo vault.
 2. `wc -c skills/crux/SKILL.md` ≤ 8,192, and growth ≤ 600 bytes over `origin/main`.
-3. Migration proof: the four example vaults and a copy of the CANDII vault load at 4.1 with
-   no node's state or confidence moved (no old finding carries `exploratory`).
+3. No migration (decision ix): a copy of each committed example vault loads at 4.1 with no
+   file rewritten beyond the version stamp and no node's state or confidence moved.
 4. Stdlib only. The cockpit stays read-only.
 5. Manual: in a scripted ideation conversation, a new hypothesis carries a `## Bears on` line
    that names the parent's answer; a tangent lands in the pending list, not the tree.
