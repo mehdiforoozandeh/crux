@@ -10,7 +10,7 @@ result back.
 | verb | whose call | note |
 |---|---|---|
 | `status` · `validate` · `brief` | yours | read-only |
-| `ask` · `hypothesize` | yours | opened silently as the conversation produces them; a hypothesis needs `--expect` |
+| `ask` · `hypothesize` | yours | opened silently as the conversation produces them; each needs `--bears` (how its answer moves its parent's answer), a hypothesis also `--expect` |
 | `finding` | yours | the closure judgment in the core; `-a` on a question, `-d` on a hypothesis |
 | `park` | yours | a node the conversation dropped; `--undo` when the PI picks it up again |
 | `test` | yours to record | `--run` records a run link; `--to running` locks the checks. Starting compute the PI did not ask for is theirs |

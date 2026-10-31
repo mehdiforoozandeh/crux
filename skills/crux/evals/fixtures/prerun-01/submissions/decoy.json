@@ -1,7 +1,7 @@
 {
  "fixture": "prerun-01",
  "agent": "crux-prerun",
- "agent_sha": "98bb5a9ef95e9b7e047d287f25161a03e6a9df122fbe42914a406693319ba241",
+ "agent_sha": "8e378e5a92db1ac5ee1f185f7a2fd1b613ffb184006c54a345af306b29e068df",
  "_note": "CANNED — takes the decoy. Input normalisation is named in the vault and is shared across both arms, so it cannot explain a difference between them. Recall 0, which is what should happen.",
  "runs": [
   {

@@ -60,6 +60,9 @@ metadata:
    If some plausible outcome would not change the confidence at all, name it first. That is
    the finding of this review: the run cannot discriminate (under-powered, confounded, the
    wrong instrument, no control). Propose the fix: replicates, a control, a matched arm.
+   Then read `path` in the brief (the questions from the top one down to this claim, each with
+   how its answer moves its parent's) and say which outcome would move the parent question's
+   answer, not only the confidence in the claim.
 7. **Emit the proposal and stop.**
 
 ## Rules

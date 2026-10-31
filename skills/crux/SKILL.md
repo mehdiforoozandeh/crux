@@ -17,18 +17,21 @@ bookkeeping and derives state; you supply the science. `crux <verb> --help` is t
 
 ## Capture
 
-Record silently, as the conversation produces each item. Read `crux status --json` first;
-never open a second node for something the tree holds.
-- **Question**: something we want to know. `crux ask "<question>" -p <parent>`.
+Record silently, as the conversation produces each item. Read `crux status --json` first, and
+before opening an item or proposing a next step its `path` to the top question (`crux brief
+<id> --mode=situate --json`); never open a second node for something the tree holds.
+- **Question**: something we want to know. `crux ask "<question>" -p <parent> --bears "<…>"`.
 - **Hypothesis**: a testable guess at an answer. It states an **expectation** before any
-  evidence: `crux hypothesize "<claim>" -p <qid> --expect "<result, with its size>"`. Add
-  `--null` and `-v` checks only when they can be defined.
+  evidence: `crux hypothesize "<claim>" -p <qid> --expect "<result, with its size>"
+  --bears "<…>"`. Add `--null` and `-v` checks only when they can be defined.
 - **Finding**: what a result showed. **Evidence is always recorded**: a number, a plot, a run
   output becomes `crux finding <id> ... -e <path under results/ or tasks/>`.
 
 Open questions and hypotheses silently while ideas are discussed. Record only what was said; a
-guess you would have to invent is not a hypothesis. Unsure? `crux pending add --kind <kind>
---parent <id> --text "<plain words>"`, and `/crux-wrap` asks the PI later.
+guess you would have to invent is not a hypothesis. Record a question or hypothesis only with
+how its answer moves its parent's answer (`--bears`). Unsure, that cannot be said, or a side
+question (raised by a finding, not bearing on its parent; the text says so)? `crux pending add
+--kind <kind> --parent <id> --text "<plain words>"`, and `/crux-wrap` asks the PI later.
 
 ## The tree and the taskhub
 
@@ -50,6 +53,9 @@ answer yet), then the confidence (strong, moderate, weak), with one sentence of 
 - A failed control caps the finding at weak, in every direction.
 - A question finding has no direction: answer text and a confidence (`-a`, `-c`).
 - `no answer yet` is recorded and never sets the state.
+- A finding from looking at data with no stated prediction is exploratory (`--exploratory`):
+  at most moderate; it yields a sharper hypothesis or a ruled-out direction, never the
+  parent's answer.
 - Never loosen a threshold or the expectation after seeing the result.
 
 State is derived: no finding is open; the strongest finding sets it (weak or moderate is

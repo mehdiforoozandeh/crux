@@ -1,7 +1,7 @@
 {
  "fixture": "capture-01",
  "agent": "crux-capture",
- "agent_sha": "4d7dde3d02767e3d7e2b83e38a68821379c8fbcff33fc35a3bb597e6ae06f535",
+ "agent_sha": "fc8727cb2ef52049277a807dd82b70eb207d0a7c8948354ed53ea8ed9114931f",
  "_note": "CANNED — every planted record, nothing else; asked nothing, wrote science.",
  "asked_pi": [],
  "prose": [
