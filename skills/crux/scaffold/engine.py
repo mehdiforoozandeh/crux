@@ -4067,8 +4067,8 @@ def _pid_alive(pid):
             return False
         except PermissionError:
             return True                 # it exists; it belongs to another user
-        except OSError:
-            return None
+        except (OSError, OverflowError, ValueError):
+            return None                 # incl. a pid too large for the platform
         return True
     try:
         import ctypes
@@ -4093,7 +4093,14 @@ class id_lock:
     4.0 migration holds it while it copies a whole-vault backup, and a second process that
     broke it would roll back a migration still running. A holder that cannot be probed (on
     another host, or liveness unknown) is broken only after LOCK_FOREIGN_STALE; a lock with
-    no readable pid (written by a crashed or older writer) keeps the old LOCK_TIMEOUT rule."""
+    no readable pid (written by a crashed or older writer) keeps the old LOCK_TIMEOUT rule.
+
+    Breaking is an atomic rename to a per-waiter tombstone, so of two waiters only one wins.
+    The winner re-reads the tombstone: if it is not the stamp it judged dead, another process
+    had already broken and re-taken the lock, so the winner links it back and retries. A
+    residual window stays: between that rename and the link back, a third process can take
+    the free path, and then two processes believe they hold the lock. It needs three
+    contenders racing a dead holder's lock within microseconds, and is accepted."""
     _host = None
 
     def __init__(self, root, timeout=LOCK_TIMEOUT):
@@ -4108,20 +4115,38 @@ class id_lock:
         return cls._host
 
     def _stale_after(self):
-        """Seconds of age after which the current lock may be broken, or None for never."""
+        """(seconds of age after which the current lock may be broken, or None for never;
+        the stamp text that judgement was made on)."""
         try:
             with open(self.path, encoding="utf-8", errors="replace") as f:
-                parts = f.read().split()
+                text = f.read()
         except OSError:
-            return 0.0                  # gone already
+            return None, None           # gone already: the next O_EXCL attempt takes it
+        parts = text.split()
         if not parts or not parts[0].isdigit():
-            return self.timeout         # no holder recorded: the pre-pid rule
+            return self.timeout, text   # no holder recorded: the pre-pid rule
         if len(parts) > 1 and parts[1] != self.host():
-            return LOCK_FOREIGN_STALE
+            return LOCK_FOREIGN_STALE, text
         alive = _pid_alive(int(parts[0]))
         if alive is None:
-            return LOCK_FOREIGN_STALE
-        return None if alive else self.timeout
+            return LOCK_FOREIGN_STALE, text
+        return (None if alive else self.timeout), text
+
+    def _break(self, judged):
+        """Break the lock whose stamp was `judged` stale. Only one waiter's rename wins; a
+        winner that finds a different stamp in its tombstone put it back."""
+        tomb = f"{self.path}.{os.getpid()}.stale"
+        os.rename(self.path, tomb)      # OSError: another waiter won; the caller retries
+        try:
+            with open(tomb, encoding="utf-8", errors="replace") as f:
+                got = f.read()
+            if got != judged:           # a live holder's fresh lock: restore it
+                try:
+                    os.link(tomb, self.path)
+                except FileExistsError:
+                    pass
+        finally:
+            os.remove(tomb)
 
     def __enter__(self):
         import time
@@ -4136,9 +4161,10 @@ class id_lock:
             except FileExistsError:
                 try:
                     age = time.time() - os.path.getmtime(self.path)
-                    after = self._stale_after() if age > self.timeout else None
+                    after, judged = (self._stale_after() if age > self.timeout
+                                     else (None, None))
                     if after is not None and age > after:
-                        os.remove(self.path)
+                        self._break(judged)
                         continue
                 except OSError:
                     continue            # the holder released it between the two calls

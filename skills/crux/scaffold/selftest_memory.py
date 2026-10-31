@@ -630,6 +630,36 @@ def _lock_tests(check, tmp):
     aged(f"{os.getpid()} some-other-host.invalid\n", secs=2 * E.LOCK_TIMEOUT)
     check("lock: a lock from another host is not broken on the 30 s age alone",
           not takes() and os.path.exists(lp))
+    check("lock: an oversized pid is an unknown holder, never a crash",
+          E._pid_alive(99999999999) is None)
+    aged(f"99999999999 {socket.gethostname()}\n", secs=2 * E.LOCK_TIMEOUT)
+    check("lock: ... so its lock waits for the foreign bound instead of breaking",
+          not takes() and os.path.exists(lp))
+
+    # The break race: A reads a dead holder, then B breaks that lock and takes a fresh one
+    # before A acts. A must not remove B's live lock.
+    dead2 = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead2.wait()
+    aged(f"{dead2.pid} {socket.gethostname()}\n")
+    b_stamp = f"{os.getpid()} {socket.gethostname()}\n"
+    real = E.id_lock._stale_after
+    fired = []
+    def racing(self):
+        res = real(self)
+        if not fired:
+            fired.append(1)
+            os.remove(lp)               # B breaks the dead lock ...
+            _write(lp, b_stamp)         # ... and takes its own, live and fresh
+        return res
+    E.id_lock._stale_after = racing
+    try:
+        a_took = takes()
+    finally:
+        E.id_lock._stale_after = real
+    check("lock: a waiter that loses the break race never removes the new holder's lock",
+          fired and not a_took and os.path.exists(lp) and _read(lp) == b_stamp
+          and not [f for f in os.listdir(root) if f.endswith(".stale")])
+
     os.remove(lp)
     with E.id_lock(root):
         held = _read(lp).split()
