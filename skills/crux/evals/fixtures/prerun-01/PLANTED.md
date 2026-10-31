@@ -25,6 +25,12 @@ The fixture states the answer as a **fact in the shared record**, never as a con
 arms are 84M and 121M parameters. Nobody calls that a confound anywhere in the vault. An agent
 reading the brief has everything it needs and no prompt telling it what to conclude.
 
+**Where the facts live.** The experimental setup (what is measured, the data, the run
+conditions, the arm sizes) sits in the question's own text, which the isolated brief carries.
+The hypothesis' `## Problem Statement` holds only the argument for the claim, which the brief
+excludes. The pre-run agent is isolated from why anyone believes the claim, never from what
+the experiment is.
+
 The node's own `## Null` is **empty** — the fixture must not contain the answer it is grading.
 
 ## Planted

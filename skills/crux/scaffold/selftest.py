@@ -6507,6 +6507,10 @@ def run_design_agent():
           all(f in body for f in E.CONFOUND_FAMILIES))
     check("prerun: the null cap is stated as the engine applies it — supports only",
           "not ruled out" in low and "weak" in low and "supports" in low)
+    check("prerun: it is isolated from why anyone believes the claim, not from what the "
+          "experiment is",
+          "never from what the experiment is" in low
+          and "run conditions" in str(fm.get("excludes") or ""))
     check("prerun: it emits the crux hypothesize line that registers the draft, and runs nothing",
           "crux hypothesize" in body and "--expect" in body and "--null" in body
           and not any(w in str(fm.get("toolbelt") or "") for w in V.WRITE_VERBS))
@@ -7743,6 +7747,12 @@ def run_ground_truth_fixtures():
           E.null_problem(str(m["fm"]["reference_null"]), E.node_schema(n)) is None
           and not (E._null_text(n) or "").strip())
 
+    brief = json.dumps(E.brief(V.vault_of(m), str(m["fm"]["node"])))
+    check("evals: prerun-01's setup reaches the agent through the brief, and the argument "
+          "for the claim does not",
+          all(x in brief for x in ("84M", "121M", "10 seeds", "normalisation"))
+          and "ARGUMENT-FOR-THE-CLAIM" not in brief
+          and "ARGUMENT-FOR-THE-CLAIM" in read(n["path"]))
     s = sc("prerun-01", "decoy.json")
     check(f"evals: prerun-01's decoy family scores zero recall (r={s['recall']['min']})",
           str(m["fm"]["decoy"]) in E.CONFOUND_FAMILIES and s["recall"]["min"] == 0.0)

@@ -35,7 +35,7 @@ _(one line: the cheapest way this result could be trivially true — name a fami
 
 ## Problem Statement
 
-The adapter was added to the encoder and both arms were then trained under the same recipe, on the same corpus, for the same number of steps. Reported sizes: base arm 84M parameters, adapter arm 121M parameters. Both arms use the same input normalisation (per-channel z-scoring fitted on the training split), the same evaluator and the same fixed split, which was drawn before either arm was trained. Accuracy is averaged over 10 seeds; the 95% interval is +/- 0.2 points.
+The adapter lets the encoder read context beyond its window, and long-range context is what downstream errors most often miss, so the adapter should lift accuracy. ARGUMENT-FOR-THE-CLAIM.
 
 ## Idea / Hypothesis
 

@@ -26,6 +26,8 @@ _(one paragraph: what this asks, and what would settle it)_
 
 Does the context adapter improve downstream accuracy?
 
+The adapter was added to the encoder and both arms were then trained under the same recipe, on the same corpus, for the same number of steps. Reported sizes: base arm 84M parameters, adapter arm 121M parameters. Both arms use the same input normalisation (per-channel z-scoring fitted on the training split), the same evaluator and the same fixed split, which was drawn before either arm was trained. Accuracy is averaged over 10 seeds; the 95% interval is +/- 0.2 points.
+
 ## Protocol
 
 <!-- optional (engine 1.4 / spec 11): the rules locked BEFORE any run — endpoints, arms,

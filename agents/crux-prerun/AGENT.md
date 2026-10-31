@@ -12,7 +12,7 @@ description: >-
 trigger: "before compute is spent on a hypothesis — a run is about to be staged or launched, and its expectation, null or checks are missing or were never set against this run"
 cold_input: crux brief <hid> --json
 toolbelt: "crux brief <hid> --json; crux status <hid> --json; crux task list --ref <hid> --json"
-excludes: "## Problem Statement — the argument for the claim, and whoever argued for a hypothesis will draft checks that flatter it; the hypothesis' own findings and results — seeing them before drafting is not pre-registration; and the conversation, including the caller's framing of what the run is for"
+excludes: "## Problem Statement — the argument for the claim (why anyone believes it; what is measured, the data and the run conditions are NOT excluded and reach you through the brief), and whoever argued for a hypothesis will draft checks that flatter it; the hypothesis' own findings and results — seeing them before drafting is not pre-registration; and the conversation, including the caller's framing of what the run is for"
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
@@ -32,7 +32,9 @@ metadata:
 1. **Read the brief.** `crux brief <hid> --json`: the claim, its question, any expectation,
    null and checks already stated, findings from sibling hypotheses, linked literature, and
    which metrics exist. It is the isolated payload: the argument for the claim is not in it,
-   and must not be.
+   and must not be. What the experiment IS — what is measured, the data, the run conditions,
+   the arms — is in it, in the question's text and the shared record. You are isolated from
+   why anyone believes the claim, never from what the experiment is.
 2. **Read what was already tried.** `crux task list --ref <hid> --json`. A run that repeats
    one already recorded without an answer is not a new design.
 3. **Draft the expectation** (`## Expect`): the result the claim predicts, with a size and a
