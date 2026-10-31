@@ -57,7 +57,7 @@
         one), at most one heavy unit — chart or table — per column, and vertical
         fit verified at 16:9 afterwards.
     D4  Register by role: serif prose leads on narrative slides (title,
-        question, verdict); sans boxes and tables on structural slides (lineage,
+        question, answer); sans boxes and tables on structural slides (lineage,
         method); figure-first with sans bullets on results.
     D5  Numbers by role: motivation slides carry NONE — a number before the
         method is stated is unearned. Method slides carry definitional constants
@@ -402,9 +402,9 @@
 
   <!-- ==================================================================
        4b · METHOD — DESIGN & SCORING          [structural · 4 units · fixed]
-       job      how the claim was made falsifiable, and how a verdict is reached
+       job      how the claim was made falsifiable, and how a result is judged
        source   children[].verifiables + anchor.protocol
-       numbers  none — verdicts are results and belong on 5+ (D5). The table
+       numbers  none — findings are results and belong on 5+ (D5). The table
                 states what each hypothesis REMOVES, never what it found.
        cut      the pipeline's step 3, then the scoring callout's second half
        =================================================================== -->
@@ -424,12 +424,12 @@
         </tbody>
       </table>
       <div class="target" style="margin-top:26px">
-        <div class="tlab">How a verdict is reached</div>
-        <div class="ttxt">Each hypothesis carries <b>pre-registered thresholds</b>, written
-        before any run. On close, each threshold is ticked met / unmet / could-not-evaluate and the
-        verdict is <b>derived mechanically</b> from the ticks — all met is <i>supported</i>, any
-        unmet is <i>partial</i> or <i>refuted</i>. Nobody chooses the verdict after seeing the
-        number.</div>
+        <div class="tlab">How a result is judged</div>
+        <div class="ttxt">Each hypothesis carries its <b>expected result</b> and
+        <b>pre-registered thresholds</b>, written before any run. The result is judged against
+        them and recorded as a finding with a direction — <i>supports</i>, <i>against</i> or
+        <i>mixed</i> — and a <b>confidence</b>: every threshold met is strong, a miss lowers it.
+        Nobody moves a threshold after seeing the number.</div>
       </div>
       <div class="pipe">
         <!-- step ordinals are chrome, not vault values: data-src="literal" keeps
@@ -440,7 +440,7 @@
         <div class="psep">&rarr;</div>
         <div class="step"><div class="n" data-src="literal">3</div><div class="t">Every delta paired within seed, so arms share their noise</div></div>
         <div class="psep">&rarr;</div>
-        <div class="step"><div class="n" data-src="literal">4</div><div class="t">Ticks recorded, verdict derived, result rolled up to q1</div></div>
+        <div class="step"><div class="n" data-src="literal">4</div><div class="t">Result judged, finding recorded, rolled up to q1</div></div>
       </div>
     </div>
   </section>
@@ -527,19 +527,19 @@
   </section>
 
   <!-- ==================================================================
-       7 · VERDICT                        [narrative · 4 units · fixed, DROPPABLE]
+       7 · ANSWER                         [narrative · 4 units · fixed, DROPPABLE]
        job      what this closes, what it opens, and what we would have missed
-       source   synthesis.text (only when approved) + anchor.answer_so_far
+       source   anchor.findings[] (its answer + confidence) + anchor.answer_so_far
        numbers  may restate numbers already addressed on a result slide;
                 introduces none of its own (D5)
-       shape    always one slide. Drop it entirely when the anchor is still
-                open with no approved synthesis — an unsigned verdict slide is
-                the deck asserting something the vault has not.
+       shape    always one slide. Drop it entirely when the anchor has no
+                finding of its own — an answer slide without one is the deck
+                asserting something the vault has not.
        cut      the whole slide; nothing else depends on it
        =================================================================== -->
   <section class="slide">
     <div class="wrap">
-      <div class="kicker">Verdict · s1, approved</div>
+      <div class="kicker">Answer · strong confidence</div>
       <h2>More data wins on paper and loses on a level budget</h2>
       <p class="lead">Not on a level budget. Doubling the data beats the better model when each
       arm runs at its own cost — and that is the comparison the literature usually reports.</p>

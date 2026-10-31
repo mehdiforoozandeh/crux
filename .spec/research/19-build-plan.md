@@ -205,3 +205,24 @@ Questions marked **(science)** change what the record says. The PI must answer t
 - **Q6 — syntheses:** an approved synthesis → a strong Question Finding with its text kept; an unapproved one → a pending `/crux-wrap` candidate.
 - **Q6 — experiment tasks:** accepted conclusion → a moderate Finding on its hypothesis, linked to the task output; unaccepted → pending candidate; dropped → nothing. The migration report lists every disagreement with the hypothesis's own verdict.
 - **Q10 — autopilot noise:** `crux auto check` scores the baseline 3 times and records the spread as `noise`. Strong when the gain beats the bar by more than `noise`, else moderate. When the spread is zero (a deterministic scorer), `min_gain` is used instead, and its default for a deterministic scorer is near zero (any marginal gain counts).
+
+## Log
+
+- 2026-10-31 W1: C1 spawned [opus] in /Users/mforooz/.orchestrate-wt/crux/C1 (chunk/C1 from build/19@647ae37). Brief applies PI rulings over plan text (strongest-wins, question Findings without direction).
+- C1 slip 1: partial, 03e8d0d, selftest 1350/1397, memory 157/157. Unowned red fns (run_seed, run_wiki, run_artifacts, run_economy, run_rd, run_rd_lint, run_glossary_*; helpers _task_vault, pre15_vault, declare_null) assigned to C1. Retry 1 (resumed same agent). Diff 3.2k lines -> reviewer needed before merge.
+- C1 slip 2: done, 8d74786, selftest 1570/1604 (all red owned by C2-C8). Reviewer [opus]: send back, deleted kept asserts (null/scenarios reach brief+deck, evmig pre-15, nested-experiment info). Retry 2 + remove dead null_gap. Diffs read via reviewer: 3.2k lines.
+- C1 slip 3: done, 7f7529c, selftest 1578/1611 (red = C2-C8 owned). Retry diff 52 lines, read in full. ACCEPT, merged into build/19 (fast-forward). C1 retries: 2.
+- W2: C2, C3, C4, C5 spawned [opus], worktrees from build/19@7f7529c. C3 merges after C2 (crux.py order).
+- C3 slip: done, bd31c88, capture 55/55, selftest 1633/1666 (same 33 red). Pending format: JSONL <vault>/.crux/pending {kind,parent,text,source}; hook = crux.py hook session-start; capture brief agents/crux-capture/AGENT.md (C7). Waits for C2 merge.
+- C3 review [opus]: send back. (1) claude -p only --allowedTools, not --tools: PI allow-rules leak into sweep. (2) vacuous allowlist assert. Added: first-sight mark = EOF (no history sweep), pending lock. Retry 1.
+- C4 slip: done, 6069373, auto 87/87, selftest 1638/1670 no new red. Open (science, to PI): clearly-worse attempt -> strong against? Built moderate. Mechanical: text `auto status` should print finding/confidence (crux.py) -> assign after C3 merges.
+- PI ruling: autopilot confidence symmetric (worse beyond noise = strong against). C4 review [opus]: send back, float tie at margin==noise. C4 retry 1 sent (+ symmetric, + pre-C4 ledger = unknown noise -> cap moderate).
+- C3 retry slip: done f8b39e8, capture 61/61. Accept pending small-diff read; merge after C2.
+- C5 slip: done 5ea96c9, selftest 1697/1726, owned green. Reviewer [opus] spawned.
+- C2 slip: done 67f115a, migrate 104/104, 5-vault proof ok. PI ruling: null cap applies to supports only (engine changed to match, assigned to C2). C2 retry 1 sent (+ re-point run_evidence_boundary/run_doctor/run_glossary_oracle, pending file name + lock per C3).
+- C5 review [opus]: ACCEPT. Merged into build/19. Follow-ups: C5b after C2 merge = serve renders migrate4.plan() in memory under banner (Q9); stale "pre-15" chip text app.js:2815,2995 -> fold into C5b.
+- C2 retry slip: done dfa71ed, migrate 106/106, selftest 1736/1762 no new red, proof unchanged. Reviewer [opus] spawned (rules spot-check on sortlab).
+- C4 retry slip: done c650c2e, auto 92/92 (4640 decimal ties, 0 wrong), no new red. ACCEPT, merged. C4 retries: 1.
+- C2 review [opus]: ACCEPT (rules spot-checked h2/h10/h9). Merged C2 then C3 (no conflicts). build/19 selftest 1979/2002; red: C6 (deck*, brief, situate*), C7 (agent_*, ground_truth, proxy_register), C8 (science_voice, correct_terms), run_voice_enforcement (C3-owned, still red -> C2b).
+- Follow-ups: C5b (serve in-memory migrate plan Q9 + stale pre-15 chip text) wave 3; C2b wave 4 (crux.py --null help supports-only, text auto status finding/confidence, id_lock stale-break vs long migration, run_voice_enforcement). Failed-control cap stays all-direction (literal ruling; only null cap narrowed).
+- W3: C6, C7 (no engine.py edits; report doctor-roster lines on slip), C5b.

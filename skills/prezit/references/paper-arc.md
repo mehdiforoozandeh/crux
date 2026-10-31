@@ -77,8 +77,8 @@ PI chooses.
   (for example CRPS split into its oracle-scaled part and its scale-error part), every
   value of that metric appears with its split. Before drafting, read the project's
   instructions (`CLAUDE.md`, `AGENTS.md`, its quoting rules) for such rules.
-- **Readings, not verdicts**, while the study is exploratory. A verdict slide needs an
-  approved synthesis, as in the tree arc.
+- **Readings, not verdicts**, while the study is exploratory. An answer slide needs the
+  anchor to be settled (a strong Finding on it); drop the slide otherwise.
 
 ## Numbers come from the build, and verify checks the build
 
