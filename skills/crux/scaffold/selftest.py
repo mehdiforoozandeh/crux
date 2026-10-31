@@ -1053,7 +1053,7 @@ def run_serve():
     stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
         "os", "sys", "json", "socket", "http", "socketserver", "webbrowser",
         "functools", "threading", "urllib", "io", "re", "datetime", "argparse"}
-    bad = mods - stdlib - {"engine", "render", "auto"}
+    bad = mods - stdlib - {"engine", "render", "auto", "migrate4"}
     check("serve: stdlib-only imports", not bad)
 
     # -- context detection returns the right mode for faked env combos, no browser spawned
@@ -1338,11 +1338,58 @@ def run_serve():
     cfg_before = read(cfg)
     s3 = click_through(fs, "pre-4.0 vault")
     check("serve: a pre-4.0 vault is reported as awaiting migration (Q9)",
-          s3.get("migration") == {"stamped": "3.5", "needed": True})
+          {k: (s3.get("migration") or {}).get(k) for k in ("stamped", "needed")}
+          == {"stamped": "3.5", "needed": True})
     check("serve: the pre-4.0 vault is shown as-is (its tree still renders)",
           hs in (s3.get("nodes") or {}))
     check("serve: serving a pre-4.0 vault never re-stamps it", read(cfg) == cfg_before)
     shutil.rmtree(fs, ignore_errors=True)
+
+    # Q9 in full: on a REAL pre-4.0 example (demo_vault as it was before the migration,
+    # re-stamped 3.5) the cockpit renders the migration's result in memory — migrate4.plan()
+    # is pure — so the tree shows the states, confidence and Findings the migration would
+    # write, under the "not migrated yet" banner, and not one byte moves.
+    import selftest_migrate as SM
+    import migrate4 as M4
+    pre = SM.captured_demo(os.path.join(tempfile.mkdtemp(prefix="crux_srvpre_"), "v"), "3.5")
+    pcfg = os.path.join(pre, ".crux.yaml")
+    pcfg_before = read(pcfg)
+    want = E.snapshot(os.path.join(HERE, "..", "examples", "demo_vault"))   # the migrated truth
+    sp = click_through(pre, "pre-4.0 example")
+    mig = sp.get("migration") or {}
+    check("serve: a pre-4.0 example is flagged and previewed (needed, preview, stamp 3.5)",
+          mig.get("needed") is True and mig.get("preview") is True and mig.get("stamped") == "3.5")
+    pn, wn = sp.get("nodes") or {}, want["nodes"]
+    shown = {nid: (pn.get(nid, {}).get("state"), pn.get(nid, {}).get("confidence"),
+                   len(pn.get(nid, {}).get("findings") or [])) for nid in wn}
+    truth = {nid: (n.get("state"), n.get("confidence"), len(n.get("findings") or []))
+             for nid, n in wn.items()}
+    check("serve: the preview shows the migrated states, confidence and Findings "
+          "(== the committed 4.0 demo_vault)",
+          shown == truth and any(c for _, _, c in truth.values()))
+    check("serve: the preview counts the Findings the migration would write",
+          mig.get("findings") == len(M4.plan(pre)["findings"]) > 0)
+    check("serve: previewing never writes — the stamp is unchanged", read(pcfg) == pcfg_before)
+    check("serve: previewing never writes — no backup, no .crux/ store",
+          not os.path.exists(os.path.join(pre, ".crux")))
+
+    # a plan() that raises: the cockpit falls back to the as-is view, banner still up
+    asis = E.snapshot(pre)
+    real_plan = M4.plan
+    def boom(root):
+        raise RuntimeError("plan blew up")
+    M4.plan = boom
+    try:
+        sf = click_through(pre, "pre-4.0 example, plan raises")
+    finally:
+        M4.plan = real_plan
+    check("serve: a plan() that raises falls back to the as-is view",
+          {k: x for k, x in sf.items() if k != "migration"} == asis)
+    check("serve: the fallback keeps the banner and says it is not a preview",
+          (sf.get("migration") or {}).get("needed") is True
+          and (sf.get("migration") or {}).get("preview") is False)
+    check("serve: the fallback never writes either", read(pcfg) == pcfg_before)
+    shutil.rmtree(os.path.dirname(pre), ignore_errors=True)
 
 
 def run_file_route():
