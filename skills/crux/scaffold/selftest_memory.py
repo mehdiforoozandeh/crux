@@ -81,7 +81,7 @@ def _raises(fn):
 
 # ------------------------------------------------------------------------------- sections
 def _model_tests(check):
-    check("model: ENGINE_VERSION is 4.0", E.ENGINE_VERSION == "4.0")
+    check("model: ENGINE_VERSION is 4.1", E.ENGINE_VERSION == "4.1")
     check("model: SCHEMA_GENERATION is 3", E.SCHEMA_GENERATION == 3)
     check("model: node types are project / question / idea / finding (synthesis removed)",
           set(E.TYPES) == {"project", "question", "idea", "finding"})
