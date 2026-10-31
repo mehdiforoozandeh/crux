@@ -36,6 +36,10 @@ if mode == "up":
     setv(repr(float(cur) + 1)); commit("raise the number by one")
 elif mode == "tiny":
     setv(repr(float(cur) + 0.25)); commit("nudge the number by 0.25")
+elif mode == "cent":
+    setv(repr(round(float(cur) + 0.01, 10))); commit("raise the number by 0.01")
+elif mode == "dcent":
+    setv(repr(round(float(cur) - 0.01, 10))); commit("lower the number by 0.01")
 elif mode == "down":
     setv(repr(float(cur) - 1)); commit("lower the number by one")
 elif mode == "same":
@@ -310,9 +314,9 @@ def _finding_tests(check, A):
     check("Q10: a deterministic scorer's min_gain defaults to a tiny epsilon (0 < eps <= 1e-6)",
           isinstance(eps, float) and 0 < eps <= 1e-6)
     emg = getattr(A, "effective_min_gain", None)
-    check("Q10: spread 0 and no min_gain -> the epsilon; a noisy scorer keeps the plan's 0; "
-          "a plan min_gain always wins",
-          emg is not None and emg(0, 0.0) == eps and emg(0, None) == eps
+    check("Q10: spread 0 and no min_gain -> the epsilon; a noisy scorer and unknown noise "
+          "keep the plan's 0; a plan min_gain always wins",
+          emg is not None and emg(0, 0.0) == eps and emg(0, None) == 0.0
           and emg(0, 0.5) == 0.0 and emg(1.5, 0.0) == 1.5 and emg(1.5, 0.5) == 1.5)
     af = getattr(A, "attempt_finding", None)
     if af is None:
@@ -324,12 +328,19 @@ def _finding_tests(check, A):
         (("kept", 1.5, 1.0, "max", 0.0, 0.5), ("supports", "moderate")),   # margin = noise
         (("kept", 1.3, 1.0, "max", 0.0, 0.5), ("supports", "moderate")),   # margin < noise
         (("kept", 1.0, 1.0, "max", 0.0, 0.5), ("against", "moderate")),    # not better
-        (("kept", 0.0, 1.0, "max", 0.0, 0.5), ("against", "moderate")),
+        (("kept", 0.0, 1.0, "max", 0.0, 0.5), ("against", "strong")),      # worse by 1 > 0.5
+        (("kept", 0.5, 1.0, "max", 0.0, 0.5), ("against", "moderate")),    # worse by = noise
+        (("kept", 2.0, 1.0, "min", 0.0, 0.5), ("against", "strong")),      # min: worse by 1
+        (("kept", 1.5, 1.0, "min", 0.0, 0.5), ("against", "moderate")),
         (("kept", 0.0, 1.0, "min", 0.0, 0.5), ("supports", "strong")),     # min direction
         (("kept", 0.5, 1.0, "min", 0.0, 0.5), ("supports", "moderate")),
         (("kept", 2.0, 1.0, "max", 0.25, 0.0), ("supports", "strong")),    # spread 0: min_gain
         (("kept", 1.5, 1.0, "max", 0.25, 0.0), ("supports", "moderate")),  # margin 0.25 = mg
         (("kept", 1.25, 1.0, "max", 0.25, 0.0), ("against", "moderate")),  # gain = mg: not better
+        (("kept", 0.5, 1.0, "max", 0.25, 0.0), ("against", "strong")),     # 0.75 short of the bar
+        (("kept", 2.0, 1.0, "max", 0.0, None), ("supports", "moderate")),  # noise unknown: cap
+        (("kept", 0.0, 1.0, "max", 0.0, None), ("against", "moderate")),
+        (("kept", 2.0, 1.0, "min", 0.0, None), ("against", "moderate")),
         (("kept", 1.0 + 1e-6, 1.0, "max", eps or 0.0, 0.0), ("supports", "strong")),  # marginal
         (("rejected", None, 1.0, "max", 0.0, 0.5), (E.NO_ANSWER, "weak")),
         (("failed", None, 1.0, "max", 0.0, 0.5), (E.NO_ANSWER, "weak")),
@@ -354,13 +365,76 @@ def _finding_tests(check, A):
                     if mg == 0 and nz == 0:
                         continue                              # the epsilon case: own assert
                     beyond = gain - g                          # how far past the bar
-                    want = ("against", "moderate") if beyond <= 0 else \
-                        ("supports", "strong" if beyond > (nz if nz else mg) else "moderate")
+                    lim = nz if nz else mg                     # ruling: symmetric
+                    want = ("supports" if beyond > 0 else "against",
+                            "strong" if abs(beyond) > lim else "moderate")
                     got = tuple(af("kept", float(val), float(p), d, float(mg), float(nz))[:2])
                     if got != want:
                         miss.append((d, str(mg), str(nz), str(val), got, want))
     check(f"findings: the strong/moderate boundary agrees with exact arithmetic "
           f"({len(miss)} disagree{': ' + str(miss[:3]) if miss else ''})", not miss)
+
+    # float ties: decimal scores where the margin equals the limit in decimal arithmetic
+    # must read moderate (never strong) in both directions, whatever the binary rounding
+    from decimal import Decimal as D
+    ties, wrong = 0, []
+    for pc in range(0, 400, 7):
+        for nc in range(1, 60, 3):
+            for d in ("max", "min"):
+                p, nz = D(pc) / 100 + D("0.37"), D(nc) / 1000
+                noise = float(p + nz) - float(p)              # a spread as the scorer makes it
+                if abs(D(noise) - nz) > D("1e-9"):
+                    continue
+                noise = float(nz)
+                for sign in (1, -1):                          # better and worse by exactly nz
+                    val = p + sign * nz * (1 if d == "max" else -1)
+                    got = af("kept", float(val), float(p), d, 0.0, noise)[:2]
+                    ties += 1
+                    want = ("supports" if sign > 0 else "against", "moderate")
+                    if tuple(got) != want:
+                        wrong.append((d, str(p), str(nz), str(val), got))
+    check(f"findings: a decimal margin equal to the noise is moderate, both directions "
+          f"({ties} ties, {len(wrong)} wrong{': ' + str(wrong[:3]) if wrong else ''})",
+          ties > 1000 and not wrong)
+    check("findings: noise 0.010 and a gain of exactly 0.010 is moderate (max and min)",
+          af("kept", 2.38, 2.37, "max", 0.0, 1.01 - 1.0)[:2] == ("supports", "moderate")
+          and af("kept", 2.36, 2.37, "min", 0.0, 1.01 - 1.0)[:2] == ("supports", "moderate")
+          and af("kept", 2.36, 2.37, "max", 0.0, 1.01 - 1.0)[:2] == ("against", "moderate")
+          and af("kept", 2.38, 2.37, "min", 0.0, 1.01 - 1.0)[:2] == ("against", "moderate"))
+
+    # integration with decimal jitter: baseline 1.0, 1.01, 1.0 -> noise 0.010; a gain of
+    # exactly 0.01 is moderate, a loss of 1 is strong against, in both objective directions
+    for obj, modes, want in (
+            ("x max 100", "up,cent,down", [("supports", "moderate"), ("against", "strong")]),
+            ("x min -100", "up,dcent,up", [("supports", "moderate"), ("against", "strong")])):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, path, qid, repo = fixture(tmp, modes=modes, jitter="0,0.01", objective=obj)
+            A.run(root, path, max_attempts=2)
+            setup = next((l for l in ledger(root, qid) if l["event"] == "setup"), {})
+            at = attempts(root, qid)
+            fs = [(finding(root, a["id"]).get("direction"),
+                   finding(root, a["id"]).get("confidence")) for a in at]
+            check(f"Q10 ({obj}): noise 0.01 from jitter; a 0.01 gain is moderate, a loss of 1 "
+                  f"is strong against ({fs}, noise {setup.get('noise')})",
+                  abs((setup.get("noise") or 0) - 0.01) < 1e-12 and fs == want)
+
+    # a resumed ledger whose setup line predates C4 has no noise: unknown, cap at moderate
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,up,up")
+        A.run(root, path, max_attempts=1)
+        lp = os.path.join(root, "auto", qid, "ledger.jsonl")
+        led = ledger(root, qid)
+        for l in led:
+            l.pop("noise", None)
+        with open(lp, "w") as f:
+            f.write("".join(json.dumps(l) + "\n" for l in led))
+        A.run(root, path, max_attempts=1)
+        at = attempts(root, qid)
+        f2 = finding(root, at[-1]["id"])
+        check("Q10: a setup line with no noise (pre-C4 ledger) caps the Finding at moderate",
+              len(at) == 2 and at[-1]["score"] == 3.0
+              and (f2.get("direction"), f2.get("confidence")) == ("supports", "moderate")
+              and A.status(root, qid).get("noise") is None)
 
     # integration: a noisy scorer (baseline 1.0, 1.5, 1.0 -> spread 0.5)
     with tempfile.TemporaryDirectory() as tmp:
@@ -372,11 +446,11 @@ def _finding_tests(check, A):
         at = attempts(root, qid)
         fs = [(finding(root, a["id"]).get("direction"), finding(root, a["id"]).get("confidence"))
               for a in at]
-        check(f"Q10: noisy run: margin 1 > 0.5 strong, 0.25 <= 0.5 moderate, tie and loss "
-              f"against ({fs})",
+        check(f"Q10: noisy run: margin 1 > 0.5 strong, 0.25 <= 0.5 moderate, a tie against "
+              f"moderate, a loss of 1 against strong ({fs})",
               [a.get("score") for a in at] == [2.0, 2.25, 2.25, 1.25]
               and fs == [("supports", "strong"), ("supports", "moderate"),
-                         ("against", "moderate"), ("against", "moderate")])
+                         ("against", "moderate"), ("against", "strong")])
 
 
 # --------------------------------------------------------------------------------- the loop

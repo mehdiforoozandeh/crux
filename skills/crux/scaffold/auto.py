@@ -9,10 +9,12 @@ whole run state: a second `run` continues from it.
 
 Spec 19, ruling Q10: the Finding is the one confidence the engine computes rather than judges
 (a model call per attempt would undo spec 18's speed). `check` scores the base 3 times and
-records the spread as `noise`. Kept and better -> supports: strong when the score beats the bar
-by more than `noise` (by more than `min_gain` when the spread is 0), else moderate. Kept and not
-better -> against, moderate. Rejected, failed or discarded -> no-answer-yet, weak, with the
-worker log as evidence.
+records the spread as `noise`. The limit is `noise`, or `min_gain` when the spread is 0. The
+rule is symmetric: kept and better -> supports, kept and not better -> against; strong when the
+score lands past the bar by more than the limit, else moderate. A ledger whose setup line has
+no `noise` (written before spec 19) has unknown noise: every Finding is capped at moderate.
+Rejected, failed or discarded -> no-answer-yet, weak, with the worker log as evidence.
+Comparisons carry a float tolerance (_tol), so a decimal tie never reads as a win.
 
   1 allowlist     only `editable` paths may change, else the attempt is discarded
   2 fail          a crash, timeout or missing number is one failed attempt; the run goes on
@@ -411,9 +413,20 @@ def puct_select(attempts, c_puct, direction="max"):
     return puct_rank(attempts, c_puct, direction)[0]["id"]
 
 
+def _tol(ref):
+    """Float tolerance for a comparison near `ref`: a decimal tie (2.38 - 2.37 vs 0.01)
+    differs in binary by far less than this, a real difference by far more."""
+    return 1e-9 * max(1.0, abs(float(ref)))
+
+
+def _past(value, ref, direction, min_gain=0.0):
+    """How far `value` lands past the bar (`ref` moved by min_gain), positive when better."""
+    return (ref - min_gain - value) if direction == "min" else (value - ref - min_gain)
+
+
 def _beats(value, ref, direction, min_gain=0.0):
-    """Better than `ref` by MORE than min_gain, in the objective's direction."""
-    return value < ref - min_gain if direction == "min" else value > ref + min_gain
+    """Better than `ref` by MORE than min_gain, in the objective's direction (float-safe)."""
+    return _past(value, ref, direction, min_gain) > _tol(ref)
 
 
 def _best(kept, direction, min_gain=0.0, baseline=None):
@@ -427,25 +440,28 @@ def _best(kept, direction, min_gain=0.0, baseline=None):
 
 
 def effective_min_gain(min_gain, noise):
-    """The plan's min_gain when it sets one; else, for a deterministic scorer (spread 0 or
-    unknown), DETERMINISTIC_MIN_GAIN; else 0 (a noisy scorer's noise does the work)."""
+    """The plan's min_gain when it sets one; else, for a deterministic scorer (spread 0),
+    DETERMINISTIC_MIN_GAIN; else 0 (a noisy scorer's noise does the work, and unknown noise,
+    None, is not taken for deterministic)."""
     g = float(min_gain or 0)
     if g > 0:
         return g
-    return DETERMINISTIC_MIN_GAIN if not noise else 0.0
+    return DETERMINISTIC_MIN_GAIN if noise == 0 else 0.0
 
 
 def attempt_finding(status, value, pscore, direction, min_gain, noise):
-    """(direction, confidence, margin) of one attempt's Finding (ruling Q10). `min_gain` is
-    the effective one. The bar is the parent's score moved by min_gain; the margin is how far
-    the score lands past it, in the objective's direction. No model call."""
+    """(direction, confidence, margin) of one attempt's Finding (ruling Q10, symmetric).
+    `min_gain` is the effective one; `noise` None means unknown. The bar is the parent's score
+    moved by min_gain; the margin is how far the score lands past it, positive when better.
+    Strong when |margin| exceeds the limit (noise, or min_gain when the spread is 0) by more
+    than the float tolerance; unknown noise caps at moderate. No model call."""
     if status != "kept" or value is None:
         return E.NO_ANSWER, "weak", None
-    bar = pscore - min_gain if direction == "min" else pscore + min_gain
-    margin = bar - value if direction == "min" else value - bar
-    if margin <= 0:                                    # not better: _beats is margin > 0
-        return "against", "moderate", margin
-    return "supports", ("strong" if margin > (noise or min_gain) else "moderate"), margin
+    margin = _past(value, pscore, direction, min_gain)
+    d = "supports" if _beats(value, pscore, direction, min_gain) else "against"
+    limit = noise or min_gain
+    strong = noise is not None and abs(margin) - limit > _tol(pscore)
+    return d, ("strong" if strong else "moderate"), margin
 
 
 # ------------------------------------------------------------------------------ the vault
@@ -466,7 +482,8 @@ def file_node(root, plan, n, parent, pscore, status, value, reason, claim, noise
     why = (f"Autopilot attempt {n} {status}: {plan['address']} = "
            f"{'n/a' if value is None else repr(value)} against parent {parent} at {pscore!r}"
            + ("" if margin is None else f", {margin:+.6g} past the bar {op} {shown!r} "
-              f"(noise {noise or 0:g}, min_gain {g:g})")
+              f"(noise {'unknown' if noise is None else format(noise, 'g')}, "
+              f"min_gain {g:g})")
            + (f". Reason: {reason}" if reason else "") + ".")
     # the evidence: a markdown report (validate wants a report for files under results/<id>/)
     # carrying the Finding's numbers and the worker log verbatim
@@ -597,7 +614,7 @@ def check(root, plan_path, static=False):
 def _attempt(root, plan, setup, rows, n, lp):
     anchor, repo, d = plan["anchor"], _repo(root, plan), run_dir(root, plan["anchor"])
     kept = [r for r in rows if r["status"] == "kept"]
-    noise = setup.get("noise") or 0.0
+    noise = setup.get("noise")                         # None: a pre-spec-19 setup line
     best = _best(kept, plan["direction"], effective_min_gain(plan["min_gain"], noise),
                  setup["baseline"])
     pid = best["id"]                                   # climb: the best, possibly the base
