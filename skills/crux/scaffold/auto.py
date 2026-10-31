@@ -3,9 +3,16 @@
 
 One loop, seven rules. Each attempt: pick a parent (PUCT: c_puct 0 = climb, 1.0 = explore),
 cut a detached worktree from its commit, run the worker (no web tools, brief on stdin), check
-the allowlist, run the frozen scorer, file one hypothesis node under the anchor and close it on
-its derived verdict, append one ledger line. The ledger `auto/<anchor>/ledger.jsonl` is the
+the allowlist, run the frozen scorer, file one hypothesis node under the anchor with one Finding
+computed from the score, append one ledger line. The ledger `auto/<anchor>/ledger.jsonl` is the
 whole run state: a second `run` continues from it.
+
+Spec 19, ruling Q10: the Finding is the one confidence the engine computes rather than judges
+(a model call per attempt would undo spec 18's speed). `check` scores the base 3 times and
+records the spread as `noise`. Kept and better -> supports: strong when the score beats the bar
+by more than `noise` (by more than `min_gain` when the spread is 0), else moderate. Kept and not
+better -> against, moderate. Rejected, failed or discarded -> no-answer-yet, weak, with the
+worker log as evidence.
 
   1 allowlist     only `editable` paths may change, else the attempt is discarded
   2 fail          a crash, timeout or missing number is one failed attempt; the run goes on
@@ -15,7 +22,7 @@ whole run state: a second `run` continues from it.
   6 setup         the base must score, the score must respond, the worker must commit
   7 budget        `budget_hours` is read between attempts; a rate limit waits, never fails
 
-Stdlib only, and only the core of `engine` (nodes, verdicts): nothing from the old autopilot."""
+Stdlib only, and only the core of `engine` (nodes, findings): nothing from the old autopilot."""
 import os, sys, re, json, math, time, shlex, shutil, signal, subprocess, datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -28,8 +35,11 @@ MODES = {"climb": 0.0, "explore": 1.0}                  # mode -> c_puct
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 STATUSES = ("kept", "rejected", "failed", "discarded")
 GIT = ["git", "-c", "user.name=crux-auto", "-c", "user.email=auto@crux.invalid"]
-NULL = "chance: the score moved by scorer noise, not by the change"
-CONTROL = "the scorer accepted the candidate and printed the objective"
+BASELINE_SCORINGS = 3                                  # ruling Q10: the spread is the noise
+# Ruling Q10: with a deterministic scorer (spread 0) and no plan min_gain, any marginal gain
+# counts. Not exactly 0, so a float rounding difference in the last bit is not a "gain";
+# 1e-9 is far below any objective a scorer prints and far above double rounding near 1.
+DETERMINISTIC_MIN_GAIN = 1e-9
 
 # Provider limits, read case-insensitively off a FAILED worker's output only. Copied from the
 # spec-05 driver: the bare word "limit" is never enough, a program may print it about itself.
@@ -416,48 +426,65 @@ def _best(kept, direction, min_gain=0.0, baseline=None):
     return best
 
 
+def effective_min_gain(min_gain, noise):
+    """The plan's min_gain when it sets one; else, for a deterministic scorer (spread 0 or
+    unknown), DETERMINISTIC_MIN_GAIN; else 0 (a noisy scorer's noise does the work)."""
+    g = float(min_gain or 0)
+    if g > 0:
+        return g
+    return DETERMINISTIC_MIN_GAIN if not noise else 0.0
+
+
+def attempt_finding(status, value, pscore, direction, min_gain, noise):
+    """(direction, confidence, margin) of one attempt's Finding (ruling Q10). `min_gain` is
+    the effective one. The bar is the parent's score moved by min_gain; the margin is how far
+    the score lands past it, in the objective's direction. No model call."""
+    if status != "kept" or value is None:
+        return E.NO_ANSWER, "weak", None
+    bar = pscore - min_gain if direction == "min" else pscore + min_gain
+    margin = bar - value if direction == "min" else value - bar
+    if margin <= 0:                                    # not better: _beats is margin > 0
+        return "against", "moderate", margin
+    return "supports", ("strong" if margin > (noise or min_gain) else "moderate"), margin
+
+
 # ------------------------------------------------------------------------------ the vault
-def _tick(root, nid, ticks):
-    """Tick the node's checks in order, each noted `(found: …)`."""
-    n = E.Vault(root).get(nid)
-    lines, k, sec = n["body"].split("\n"), 0, False
-    for i, line in enumerate(lines):
-        if line.startswith("## "):
-            sec = line[3:].strip().lower() == "verifiables"
-            continue
-        m = re.match(r"^(\s*- \[).(\]\s*)(.*)$", line)
-        if sec and m and k < len(ticks):
-            lines[i] = f"{m.group(1)}{ticks[k][0]}{m.group(2)}{m.group(3)} (found: {ticks[k][1]})"
-            k += 1
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], "\n".join(lines)))
-
-
-def file_node(root, plan, n, parent, pscore, status, value, reason, claim):
-    """One attempt as one hypothesis under the anchor, filed and closed: hypothesize,
-    approve the null, running, tick, close. The verdict is the engine's. Returns the id."""
-    op, g = ("<" if plan["direction"] == "min" else ">"), plan.get("min_gain") or 0
-    bar = pscore if not g else (pscore - g if op == "<" else pscore + g)
+def file_node(root, plan, n, parent, pscore, status, value, reason, claim, noise=0.0,
+              log=None):
+    """One attempt as one hypothesis under the anchor, with its expectation, and one Finding
+    computed by attempt_finding. A report with the worker log is written to results/<id>/
+    and linked as evidence. Returns (hypothesis id, finding id, direction, confidence)."""
+    op = "<" if plan["direction"] == "min" else ">"
+    g = effective_min_gain(plan.get("min_gain"), noise)
+    shown = pscore if not plan.get("min_gain") else (pscore - g if op == "<" else pscore + g)
     claim = " ".join((claim or "").split()) or f"Autopilot attempt {n} (no claim)"
     nid, _fn, _w = E.cmd_hypothesize(
         root, " ".join(claim.split()[:12]), parent=plan["anchor"],
-        verifiables=[f"{plan['address']} {op} {bar!r}"], neutral=[CONTROL], null=NULL,
-        fails_if=["the candidate does not beat its parent's score",
-                  "the scorer rejected the candidate, failed, or never ran"],
-        discriminates=[True, False], builds_on=None if parent == "base" else parent,
-        claim=claim)
-    E.cmd_approve_null(root, nid)
-    E.cmd_test(root, nid, to="running")
-    if status == "kept":
-        better = _beats(value, pscore, plan["direction"], g)
-        _tick(root, nid, [("x" if better else " ", repr(value)), ("x", "passed")])
-    else:
-        _tick(root, nid, [("-", "n/a"), (" ", status)])
-    findings = (f"Autopilot attempt {n}: {status}. {plan['address']} = "
-                f"{'n/a' if value is None else repr(value)}, parent {parent} at {pscore!r}."
-                + (f" Reason: {reason}." if reason else ""))
-    E.cmd_close(root, nid, metric=None if value is None else repr(value),
-                findings=findings.replace("\\", "/"))
-    return nid
+        expect=f"{plan['address']} {op} {shown!r}: the change beats its parent's score",
+        builds_on=None if parent == "base" else parent, claim=claim)
+    d, conf, margin = attempt_finding(status, value, pscore, plan["direction"], g, noise)
+    why = (f"Autopilot attempt {n} {status}: {plan['address']} = "
+           f"{'n/a' if value is None else repr(value)} against parent {parent} at {pscore!r}"
+           + ("" if margin is None else f", {margin:+.6g} past the bar {op} {shown!r} "
+              f"(noise {noise or 0:g}, min_gain {g:g})")
+           + (f". Reason: {reason}" if reason else "") + ".")
+    # the evidence: a markdown report (validate wants a report for files under results/<id>/)
+    # carrying the Finding's numbers and the worker log verbatim
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except (OSError, TypeError):
+        text = "(no worker log)"
+    fence = "`" * max(3, 1 + max([len(m) for m in re.findall(r"`+", text)] or [0]))
+    rel = f"{E.RESULTS_DIR}/{nid}/attempt-{n}.md"
+    os.makedirs(os.path.join(root, E.RESULTS_DIR, nid), exist_ok=True)
+    with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+        f.write(f"# Autopilot attempt {n}\n\n{why}\n\nFinding: {d}, {conf}.\n\n"
+                f"## Worker log\n\n{fence}\n{text.rstrip()}\n{fence}\n")
+    evidence = [rel]
+    fid, _ffn, _note = E.cmd_finding(root, nid, conf, why=why.replace("\\", "/"),
+                                     direction=d, evidence=evidence)
+    return nid, fid, d, conf
 
 
 # ----------------------------------------------------------------------------- the ledger
@@ -495,7 +522,7 @@ def _attempt_rows(lines):
 
 # --------------------------------------------------------------------------- setup (rule 6)
 def setup_check(root, plan, worker=True):
-    problems, baseline, secs = [], None, 0.0
+    problems, baseline, secs, noise = [], None, 0.0, None
     if not web_denied(worker_argv(plan)):
         problems.append("the worker command does not deny the web tools WebFetch and WebSearch")
     a = E.Vault(root).nodes.get(plan["anchor"])
@@ -505,14 +532,23 @@ def setup_check(root, plan, worker=True):
     base = _rev(repo, plan["base"])
     if base is None:
         problems.append(f"base '{plan['base']}' is not a commit in {repo}")
-        return {"ok": False, "problems": problems, "baseline": None, "scorer_seconds": None}
+        return {"ok": False, "problems": problems, "baseline": None, "scorer_seconds": None,
+                "noise": None}
     wt, ws = os.path.join(d, "work", "setup"), os.path.join(d, "scratch", "setup")
     os.makedirs(os.path.join(d, "logs"), exist_ok=True)
     try:
         _add_worktree(repo, wt, base)
-        t0 = time.monotonic()
-        st, baseline, why = score(plan, wt, 0, ws, t0 + plan["attempt_minutes"] * 60)
-        secs = time.monotonic() - t0
+        scores, st, why = [], "kept", ""
+        for _ in range(BASELINE_SCORINGS):             # ruling Q10: the spread is the noise
+            t0 = time.monotonic()
+            st, s, why = score(plan, wt, 0, ws, t0 + plan["attempt_minutes"] * 60)
+            secs = max(secs, time.monotonic() - t0)
+            if st != "kept":
+                break
+            scores.append(s)
+        if st == "kept":
+            baseline = sorted(scores)[len(scores) // 2]     # the median of the three
+            noise = max(scores) - min(scores)
         target = next((f for e in plan["editable"] for f in
                        _git(wt, "ls-files", "--", e).splitlines()), None)
         if st != "kept":
@@ -542,16 +578,18 @@ def setup_check(root, plan, worker=True):
         _drop_worktree(repo, wt)
         shutil.rmtree(ws, ignore_errors=True)
     return {"ok": not problems, "problems": problems, "baseline": baseline,
-            "scorer_seconds": secs}
+            "scorer_seconds": secs, "noise": noise}
 
 
 def check(root, plan_path, static=False):
     try:
         plan = load_plan(plan_path)
     except E.CruxError as e:
-        return {"ok": False, "problems": [str(e)], "baseline": None, "scorer_seconds": None}
+        return {"ok": False, "problems": [str(e)], "baseline": None, "scorer_seconds": None,
+                "noise": None}
     if static:
-        return {"ok": True, "problems": [], "baseline": None, "scorer_seconds": None}
+        return {"ok": True, "problems": [], "baseline": None, "scorer_seconds": None,
+                "noise": None}
     return setup_check(root, plan, worker=True)
 
 
@@ -559,7 +597,9 @@ def check(root, plan_path, static=False):
 def _attempt(root, plan, setup, rows, n, lp):
     anchor, repo, d = plan["anchor"], _repo(root, plan), run_dir(root, plan["anchor"])
     kept = [r for r in rows if r["status"] == "kept"]
-    best = _best(kept, plan["direction"], plan["min_gain"], setup["baseline"])
+    noise = setup.get("noise") or 0.0
+    best = _best(kept, plan["direction"], effective_min_gain(plan["min_gain"], noise),
+                 setup["baseline"])
     pid = best["id"]                                   # climb: the best, possibly the base
     if kept and plan["mode"] != "climb":
         pop = [{"id": r["id"], "score": r["score"],
@@ -609,9 +649,11 @@ def _attempt(root, plan, setup, rows, n, lp):
     finally:
         _drop_worktree(repo, wt)
         shutil.rmtree(ws, ignore_errors=True)
-    nid = file_node(root, plan, n, pid, pscore, status, value, reason, claim)
+    nid, fid, fdir, fconf = file_node(root, plan, n, pid, pscore, status, value, reason, claim,
+                                      noise, os.path.join(d, "logs", f"{n}.log"))
     return _append(lp, "attempt", n=n, id=nid, parent=pid, commit=commit, score=value,
-                   status=status, reason=reason, seconds=round(time.monotonic() - start, 3))
+                   status=status, reason=reason, seconds=round(time.monotonic() - start, 3),
+                   finding=fid, direction=fdir, confidence=fconf)
 
 
 def run(root, plan_path, max_attempts=None):
@@ -680,11 +722,14 @@ def status(root, qid=None):
             return float(raw.get(k) or default)
         except ValueError:
             return float(default)
-    keys = ("n", "id", "parent", "score", "status", "seconds", "at")
+    keys = ("n", "id", "parent", "score", "status", "seconds", "at", "finding", "direction",
+            "confidence")
     atts = [{k: r.get(k) for k in keys} for r in _attempt_rows(lines)]
     kept = [a for a in atts if a["status"] == "kept" and isinstance(a["score"], (int, float))]
     setup = next((l for l in reversed(lines) if l.get("event") == "setup"), {})
-    best = _best(kept, direction, num("min_gain", 0), setup.get("baseline"))
+    noise = setup.get("noise")
+    best = _best(kept, direction, effective_min_gain(num("min_gain", 0), noise),
+                 setup.get("baseline"))
     times = [t for t in (_ts(l.get("at")) for l in lines) if t]
     elapsed = (times[-1] - times[0]).total_seconds() / 3600 if len(times) > 1 else 0.0
     stop = lines[-1] if lines and lines[-1].get("event") == "stop" else None
@@ -693,7 +738,7 @@ def status(root, qid=None):
             .total_seconds() < 2 * num("attempt_minutes", 20) * 60)
     return {"anchor": qid, "mode": raw.get("mode") or "climb",
             "address": obj[0] if obj else None, "direction": direction, "bar": bar,
-            "baseline": setup.get("baseline"),
+            "baseline": setup.get("baseline"), "noise": noise,
             "best": ({"id": best["id"], "score": best["score"]}
                      if best and best["id"] != "base" else None),
             "attempts": atts,

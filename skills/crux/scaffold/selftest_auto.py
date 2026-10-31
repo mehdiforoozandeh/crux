@@ -34,6 +34,8 @@ def setv(x):
 cur = open("prog.txt").read().split("\n")[0]
 if mode == "up":
     setv(repr(float(cur) + 1)); commit("raise the number by one")
+elif mode == "tiny":
+    setv(repr(float(cur) + 0.25)); commit("nudge the number by 0.25")
 elif mode == "down":
     setv(repr(float(cur) - 1)); commit("lower the number by one")
 elif mode == "same":
@@ -71,6 +73,8 @@ elif mode == "nap":
 SCORER = r'''import os, sys, json
 tmp = os.environ["CRUX_STUB_DIR"]
 cf = os.path.join(tmp, "score_count")
+k = len(open(cf).read().splitlines()) if os.path.exists(cf) else 0
+jit = [float(j) for j in os.environ.get("CRUX_STUB_JITTER", "").split(",") if j]
 open(cf, "a").write(os.environ.get("CRUX_ATTEMPT", "") + "|" + os.environ.get("CRUX_WORKSPACE", "") + "\n")
 import time
 first = (open("prog.txt").read().split("\n") or [""])[0].strip()
@@ -88,7 +92,7 @@ try:
     v = float(first)
 except ValueError:
     print(json.dumps({"passed": False, "reason": "not a number"})); sys.exit(1)
-print(json.dumps({"x": {"value": v}, "passed": True}))
+print(json.dumps({"x": {"value": v + (jit[k] if k < len(jit) else 0.0)}, "passed": True}))
 '''
 HANG = 'import time\ntime.sleep(30)\n'
 CONST = 'import json\nprint(json.dumps({"x": {"value": 5.0}, "passed": True}))\n'
@@ -105,7 +109,7 @@ def _write(path, text):
         f.write(text)
 
 
-def fixture(tmp, scorer="score.py", modes="up", **fields):
+def fixture(tmp, scorer="score.py", modes="up", jitter="", **fields):
     """A vault with one question, a program repo, a plan at auto/<qid>/plan.md. Returns
     (root, plan_path, qid, repo)."""
     repo = os.path.join(tmp, "repo")
@@ -136,9 +140,17 @@ def fixture(tmp, scorer="score.py", modes="up", **fields):
     # run through sys.executable, never as a #! script: Windows cannot execute one
     stub = f"{shlex.quote(sys.executable)} {shlex.quote(os.path.join(tmp, 'stub.py'))}"
     os.environ.update({"CRUX_AUTO_CLAUDE": stub, "CRUX_STUB_DIR": tmp,
-                       "CRUX_STUB_MODES": modes, "CRUX_AUTO_RATE_WAIT": "0"})
+                       "CRUX_STUB_MODES": modes, "CRUX_AUTO_RATE_WAIT": "0",
+                       "CRUX_STUB_JITTER": jitter})
     os.environ.update(GIT_ENV)
     return root, path, qid, repo
+
+
+def finding(root, hid):
+    """The one Finding filed on attempt node `hid`, as finding_json, or {}."""
+    v = E.Vault(root)
+    fs = E.node_findings(v, hid)
+    return E.finding_json(fs[0]) if len(fs) == 1 else {}
 
 
 def ledger(root, qid):
@@ -172,7 +184,8 @@ def run_all(check):
         return
     keep_env = dict(os.environ)
     try:
-        for section in (_plan_tests, _unit_tests, _run_tests, _bench_plan_tests):
+        for section in (_plan_tests, _unit_tests, _finding_tests, _run_tests,
+                        _bench_plan_tests):
             try:
                 section(check, A)
             except Exception as e:  # an unexpected result is a FAIL line, never a traceback
@@ -288,6 +301,84 @@ def _bad(A, tree, addr):
     return False
 
 
+# ------------------------------------------------------------------------- Findings (spec 19)
+def _finding_tests(check, A):
+    src = open(os.path.join(HERE, "auto.py"), encoding="utf-8").read()
+    check("findings: auto.py calls no approve_null, cmd_close or cmd_test (grep)",
+          "approve_null" not in src and "cmd_close" not in src and "cmd_test" not in src)
+    eps = getattr(A, "DETERMINISTIC_MIN_GAIN", None)
+    check("Q10: a deterministic scorer's min_gain defaults to a tiny epsilon (0 < eps <= 1e-6)",
+          isinstance(eps, float) and 0 < eps <= 1e-6)
+    emg = getattr(A, "effective_min_gain", None)
+    check("Q10: spread 0 and no min_gain -> the epsilon; a noisy scorer keeps the plan's 0; "
+          "a plan min_gain always wins",
+          emg is not None and emg(0, 0.0) == eps and emg(0, None) == eps
+          and emg(0, 0.5) == 0.0 and emg(1.5, 0.0) == 1.5 and emg(1.5, 0.5) == 1.5)
+    af = getattr(A, "attempt_finding", None)
+    if af is None:
+        check("findings: attempt_finding exists", False)
+        return
+    # (status, value, parent, direction, min_gain, noise) -> (direction, confidence)
+    cases = [
+        (("kept", 2.0, 1.0, "max", 0.0, 0.5), ("supports", "strong")),     # margin 1 > 0.5
+        (("kept", 1.5, 1.0, "max", 0.0, 0.5), ("supports", "moderate")),   # margin = noise
+        (("kept", 1.3, 1.0, "max", 0.0, 0.5), ("supports", "moderate")),   # margin < noise
+        (("kept", 1.0, 1.0, "max", 0.0, 0.5), ("against", "moderate")),    # not better
+        (("kept", 0.0, 1.0, "max", 0.0, 0.5), ("against", "moderate")),
+        (("kept", 0.0, 1.0, "min", 0.0, 0.5), ("supports", "strong")),     # min direction
+        (("kept", 0.5, 1.0, "min", 0.0, 0.5), ("supports", "moderate")),
+        (("kept", 2.0, 1.0, "max", 0.25, 0.0), ("supports", "strong")),    # spread 0: min_gain
+        (("kept", 1.5, 1.0, "max", 0.25, 0.0), ("supports", "moderate")),  # margin 0.25 = mg
+        (("kept", 1.25, 1.0, "max", 0.25, 0.0), ("against", "moderate")),  # gain = mg: not better
+        (("kept", 1.0 + 1e-6, 1.0, "max", eps or 0.0, 0.0), ("supports", "strong")),  # marginal
+        (("rejected", None, 1.0, "max", 0.0, 0.5), (E.NO_ANSWER, "weak")),
+        (("failed", None, 1.0, "max", 0.0, 0.5), (E.NO_ANSWER, "weak")),
+        (("discarded", None, 1.0, "max", 0.0, 0.5), (E.NO_ANSWER, "weak")),
+    ]
+    bad = [(c, af(*c)[:2], want) for c, want in cases if tuple(af(*c)[:2]) != want]
+    check(f"findings: the mapping table (kept/better, noise, min_gain, rejected/failed){bad or ''}",
+          not bad)
+
+    # the strong/moderate boundary by a second method: exact rational arithmetic on a grid,
+    # written from the ruling ("strong when the gain beats the bar by more than noise; spread
+    # 0 -> min_gain"), never from auto.py's formula
+    from fractions import Fraction as Fr
+    miss = []
+    for d in ("max", "min"):
+        for mg in (Fr(0), Fr(1, 4), Fr(1, 2)):
+            for nz in (Fr(0), Fr(1, 4), Fr(3, 4)):
+                for k in range(-12, 13):
+                    p, val = Fr(1), Fr(1) + Fr(k, 8) * (1 if d == "max" else -1)
+                    gain = (val - p) if d == "max" else (p - val)
+                    g = mg if (mg > 0 or nz > 0) else Fr(0)   # epsilon handled below
+                    if mg == 0 and nz == 0:
+                        continue                              # the epsilon case: own assert
+                    beyond = gain - g                          # how far past the bar
+                    want = ("against", "moderate") if beyond <= 0 else \
+                        ("supports", "strong" if beyond > (nz if nz else mg) else "moderate")
+                    got = tuple(af("kept", float(val), float(p), d, float(mg), float(nz))[:2])
+                    if got != want:
+                        miss.append((d, str(mg), str(nz), str(val), got, want))
+    check(f"findings: the strong/moderate boundary agrees with exact arithmetic "
+          f"({len(miss)} disagree{': ' + str(miss[:3]) if miss else ''})", not miss)
+
+    # integration: a noisy scorer (baseline 1.0, 1.5, 1.0 -> spread 0.5)
+    with tempfile.TemporaryDirectory() as tmp:
+        root, path, qid, repo = fixture(tmp, modes="up,up,tiny,same,down", jitter="0,0.5")
+        A.run(root, path, max_attempts=4)             # setup scores calls 0-3, worker mode 0
+        r = next((l for l in ledger(root, qid) if l["event"] == "setup"), {})
+        check("Q10: a noisy scorer: setup records the spread of 3 baseline scores as noise",
+              r.get("ok") and abs((r.get("noise") or 0) - 0.5) < 1e-12 and r["baseline"] == 1.0)
+        at = attempts(root, qid)
+        fs = [(finding(root, a["id"]).get("direction"), finding(root, a["id"]).get("confidence"))
+              for a in at]
+        check(f"Q10: noisy run: margin 1 > 0.5 strong, 0.25 <= 0.5 moderate, tie and loss "
+              f"against ({fs})",
+              [a.get("score") for a in at] == [2.0, 2.25, 2.25, 1.25]
+              and fs == [("supports", "strong"), ("supports", "moderate"),
+                         ("against", "moderate"), ("against", "moderate")])
+
+
 # --------------------------------------------------------------------------------- the loop
 def _run_tests(check, A):
     # rule 6: the setup check scores the base, checks that the score responds, runs the worker
@@ -303,6 +394,11 @@ def _run_tests(check, A):
               and A.web_denied(["x"] + log[0]["argv"]))
         check("check --static reads the plan only", A.check(root, path, static=True)["ok"]
               and len(lines(os.path.join(tmp, "stub_log"))) == 1)
+        sc0 = [l for l in lines(os.path.join(tmp, "score_count")) if l.split("|")[0] == "0"]
+        check("rule 6 (Q10): check scores the baseline 3 times (plus one response check)",
+              len(sc0) == 4)
+        check("rule 6 (Q10): a deterministic scorer records noise 0 in the check result",
+              r.get("noise") == 0.0)
         check("setup leaves no worktree behind", not os.path.exists(
             os.path.join(root, "auto", qid, "work", "setup")))
 
@@ -346,7 +442,11 @@ def _run_tests(check, A):
         check("ledger: every line has event and at; attempt lines carry the pinned keys",
               all("event" in l and "at" in l for l in ledger(root, qid))
               and all(set(("n", "id", "parent", "commit", "score", "status", "reason",
-                           "seconds")) <= set(a) for a in at))
+                           "seconds", "finding", "direction", "confidence")) <= set(a)
+                      for a in at))
+        setup_line = next(l for l in ledger(root, qid) if l["event"] == "setup")
+        check("ledger (Q10): the setup line records the baseline spread as noise",
+              setup_line.get("noise") == 0.0)
         check("rule 5: climb builds attempt 1 on base, then always on the best",
               len(at) == 3 and at[0]["parent"] == "base" and at[1]["parent"] == at[0]["id"]
               and at[2]["parent"] == at[1]["id"])
@@ -357,13 +457,22 @@ def _run_tests(check, A):
             check("run: the attempt checks need three attempts (got %d)" % len(at), False)
             return
         h1, h2, h3 = (v.get(a["id"]) for a in at)
-        check("nodes: each attempt is a hypothesis under the anchor, closed",
-              all(h.type == "idea" and h.parent == qid and h.status == "done"
-                  for h in (h1, h2, h3)))
-        check("nodes: a better kept attempt is supported",
-              h1["fm"].get("verdict") == "supported" and h2["fm"].get("verdict") == "supported")
-        check("nodes: a not-better kept attempt is filed refuted (Decision 4)",
-              h3["fm"].get("verdict") == "refuted")
+        f1, f2, f3 = (finding(root, h.id) for h in (h1, h2, h3))
+        check("nodes: each attempt is a hypothesis under the anchor with exactly one Finding",
+              all(h.type == "idea" and h.parent == qid for h in (h1, h2, h3))
+              and all(f.get("parent") == h.id for f, h in ((f1, h1), (f2, h2), (f3, h3))))
+        check("findings: kept and better -> supports",
+              f1.get("direction") == "supports" and f2.get("direction") == "supports")
+        check("findings: deterministic scorer, a gain of 1 beats the near-zero min_gain -> strong",
+              f1.get("confidence") == "strong" and f2.get("confidence") == "strong"
+              and E.derive_state(v, h1.id)["state"] == "settled")
+        check("findings: kept and not better -> against, moderate",
+              f3.get("direction") == "against" and f3.get("confidence") == "moderate")
+        check("findings: the ledger line names the attempt's Finding",
+              [a["finding"] for a in at] == [f1.get("id"), f2.get("id"), f3.get("id")]
+              and [a["direction"] for a in at] == ["supports", "supports", "against"])
+        check("nodes: a hypothesis states its expectation before the Finding (no verdict field)",
+              all(not h["fm"].get("verdict") for h in (h1, h2, h3)))
         check("nodes: builds_on is the parent node, none for base",
               not h1["fm"].get(E.BUILDS_ON_FIELD) and h2["fm"].get(E.BUILDS_ON_FIELD) == h1.id)
         check("nodes: the check is the objective against the parent's score (strict >)",
@@ -400,6 +509,23 @@ def _run_tests(check, A):
               and st["best"] == {"id": at[3]["id"], "score": 4.0} and st["baseline"] == 1.0
               and len(st["attempts"]) == 4 and st["stop"]["reason"] == "max_attempts"
               and st["live"] is False and st["mode"] == "climb")
+        check("status: every attempt shows its Finding (id, direction, confidence)",
+              all(a.get("finding") and a.get("direction") in E.DIRECTIONS
+                  and a.get("confidence") in E.CONFIDENCES for a in st["attempts"])
+              and st.get("noise") == 0.0)
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "auto", "status",
+                            qid, "--json"], cwd=root, capture_output=True, text=True)
+        try:
+            cj = json.loads(r.stdout)
+        except ValueError:
+            cj = {}
+        r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "validate"],
+                            cwd=root, capture_output=True, text=True)
+        check("findings: the run's vault validates (each attempt report is linked evidence)",
+              r2.returncode == 0)
+        check("status: `crux auto status --json` on the stub run shows the Findings",
+              r.returncode == 0 and [a.get("finding") for a in cj.get("attempts", [])]
+              == [a["finding"] for a in at])
         cp = A.cockpit(root)
         check("cockpit: one run per ledger, read only",
               cp["active"] is False and len(cp["runs"]) == 1 and cp["runs"][0]["anchor"] == qid)
@@ -426,9 +552,9 @@ def _run_tests(check, A):
         check("rule 1: a frozen-path change is discarded and the run continues",
               at[0]["status"] == "discarded" and "frozen.txt" in at[0]["reason"]
               and at[1]["status"] == "kept")
-        check("rule 1: a discarded attempt is never scored and closes invalid-run",
-              at[0]["score"] is None
-              and E.Vault(root).get(at[0]["id"])["fm"].get("verdict") == "invalid-run")
+        f0 = finding(root, at[0]["id"])
+        check("rule 1: a discarded attempt is never scored; its Finding is no-answer-yet",
+              at[0]["score"] is None and f0.get("direction") == E.NO_ANSWER)
 
     with tempfile.TemporaryDirectory() as tmp:
         root, path, qid, repo = fixture(tmp, modes="up,empty,up")
@@ -460,9 +586,9 @@ def _run_tests(check, A):
         A.run(root, path, max_attempts=3)
         at = attempts(root, qid)
         v = E.Vault(root)
-        check("min_gain: a gain not above min_gain is kept but filed refuted",
+        check("min_gain: a gain not above min_gain is kept but its Finding is against",
               [a["status"] for a in at] == ["kept"] * 3
-              and v.get(at[1]["id"])["fm"].get("verdict") == "refuted"
+              and finding(root, at[1]["id"]).get("direction") == "against"
               and "x > 2.5" in v.get(at[1]["id"])["body"])
         check("min_gain: best and climb's parent move only on a gain above min_gain",
               at[1]["parent"] == "base" and at[2]["parent"] == "base"
@@ -491,9 +617,18 @@ def _run_tests(check, A):
         check("rule 2: a worker crash, a scorer with no JSON and a missing leaf are failed",
               [a["status"] for a in at] == ["failed", "failed", "failed", "kept"]
               and stop["reason"] == "max_attempts")
-        check("rule 2: a failed attempt closes invalid-run",
-              all(E.Vault(root).get(a["id"])["fm"].get("verdict") == "invalid-run"
-                  for a in at[:3]))
+        fs = [finding(root, a["id"]) for a in at[:3]]
+        check("rule 2: a failed attempt's Finding is no-answer-yet, weak",
+              all(f.get("direction") == E.NO_ANSWER and f.get("confidence") == "weak"
+                  for f in fs))
+        ev = [f.get("evidence") or [] for f in fs]
+        check("rule 2: a failed attempt's Finding links its worker log as evidence",
+              all(len(e) == 1 and e[0].startswith(E.RESULTS_DIR + "/")
+                  and os.path.isfile(os.path.join(root, e[0]))
+                  and "[crux auto] worker exit" in open(os.path.join(root, e[0])).read()
+                  for e in ev))
+        check("rule 2: no-answer-yet Findings leave the hypothesis open",
+              all(E.derive_state(E.Vault(root), a["id"])["state"] == "open" for a in at[:3]))
         check("rule 2: a failed attempt is never a parent", at[3]["parent"] == "base")
 
     # rule 3: rejected once, no retry; a scorer that cannot start gets one retry
@@ -507,6 +642,10 @@ def _run_tests(check, A):
               and "not a number" in at[0]["reason"])
         check("rule 3: a scorer that cannot run is a machine fault: one retry, then failed",
               at[1]["status"] == "failed" and calls.count("2") == 2)
+        f0 = finding(root, at[0]["id"])
+        check("rule 3: a rejected attempt's Finding is no-answer-yet with the log as evidence",
+              f0.get("direction") == E.NO_ANSWER and len(f0.get("evidence") or []) == 1
+              and "not a number" in (f0.get("why") or ""))
 
     # rule 4: one time limit per attempt
     with tempfile.TemporaryDirectory() as tmp:
@@ -565,9 +704,11 @@ def _run_tests(check, A):
         E.cmd_init("Old Auto", root)
         qid, _ = E.cmd_ask(root, "anchor")
         h1, _, _ = E.cmd_hypothesize(root, "Autopilot attempt h1 left no usable claim (worker).",
-                                     parent=qid, verifiables=["eval.loss < 0.85"])
+                                     parent=qid, verifiables=["eval.loss < 0.85"],
+                                     require_expect=False)
         h2, _, _ = E.cmd_hypothesize(root, "an attempt", parent=qid,
-                                     verifiables=["eval.loss < 0.85"], builds_on=h1)
+                                     verifiables=["eval.loss < 0.85"], builds_on=h1,
+                                     require_expect=False)
         _write(os.path.join(root, "auto", qid, "plan.md"),
                "---\ntype: flight-plan\nanchor: " + qid + "\nisland_cap: 3\nbaseline: h1\n---\n")
         _write(os.path.join(root, "auto", qid, "state.json"), "{}")
