@@ -2085,7 +2085,7 @@ def run_agent_cli():
         except Exception:
             return None
 
-    r = cli("ask", "Is the JSON parseable?", "--json")
+    r = cli("ask", "Is the JSON parseable?", "--bears", "a yes lets the tests read stdout", "--json")
     q1 = as_json(r)
     check("json: ask emits parseable JSON", isinstance(q1, dict) and "id" in q1 and "file" in q1)
     check("json: ask exits 0", r.returncode == 0)
@@ -2095,7 +2095,7 @@ def run_agent_cli():
             "--fails-if", "the parser accepts anything", "--discriminates",
             "--fails-if", "the known-good payload was itself broken",
             "--null", "chance — the payload happened to parse",
-            "--expect", "stdout parses as JSON", "--json")
+            "--expect", "stdout parses as JSON", "--bears", "a yes answers the question", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
     check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
@@ -3983,7 +3983,8 @@ def run_verifiable_kind():
     q1, _ = E.cmd_ask(root, "a question")
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "with a control", "--parent", q1, "-v", "the claim check",
-                        "-n", "the positive control", "--expect", "the claim holds"],
+                        "-n", "the positive control", "--expect", "the claim holds",
+                        "--bears", "a yes answers the question"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = E.Vault(root).get("h1")
     check("kind: the CLI -n flag writes an outcome-neutral verifiable",
@@ -5815,7 +5816,8 @@ def run_failure_scenarios():
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "cli built",
                         "-p", q1, "-v", "alpha", "--fails-if", "world a", "--discriminates",
                         "-n", "ctl", "--fails-if", "ctl broke",
-                        "--null", "chance — noise", "--rule", "all", "--expect", "alpha holds"],
+                        "--null", "chance — noise", "--rule", "all", "--expect", "alpha holds",
+                        "--bears", "a yes answers the question"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = [x for x in E.Vault(root).nodes if x.startswith("h")][-1]
     body = E.Vault(root).get(hc)["body"]
@@ -5823,7 +5825,8 @@ def run_failure_scenarios():
           r.returncode == 0 and "fails-if:: world a" in body
           and "discriminates:: true" in body and "fails-if:: ctl broke" in body)
     r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "bare v",
-                         "-p", q1, "-v", "alpha", "-n", "ctl", "--expect", "alpha holds"],
+                         "-p", q1, "-v", "alpha", "-n", "ctl", "--expect", "alpha holds",
+                         "--bears", "a yes answers the question"],
                         capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("fails: a bare -v is still accepted (no second positional argument)",
           r2.returncode == 0)
@@ -6535,7 +6538,8 @@ def run_methodology():
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "from the CLI", "-p", q1, "-v", "delta", "-n", "the control",
                         "--rule", "all", "--measurement", "a named instrument",
-                        "--replicates", "3 seeds", "--expect", "delta holds", "--json"],
+                        "--replicates", "3 seeds", "--expect", "delta holds",
+                        "--bears", "a yes answers the question", "--json"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("design: the CLI writes both slots",
           r.returncode == 0
@@ -8581,11 +8585,13 @@ def run_voice_enforcement():
         run(["init", "Voice Project"], cwd=root)
         vault = os.path.join(root, "cruxvault")
         minted = {}
-        minted["ask"] = run(["ask", "does more data beat a better model"], cwd=vault).stdout
+        minted["ask"] = run(["ask", "does more data beat a better model",
+                              "--bears", "a yes sets the next spend"], cwd=vault).stdout
         qid = re.search(r"✓ (q\d+)", minted["ask"]).group(1)
         minted["hypothesize"] = run(["hypothesize", "doubling the data wins on held-out",
                                      "--parent", qid, "-v", "imp-Spearman >= +0.01",
-                                     "--expect", "held-out gain above 0.01"],
+                                     "--expect", "held-out gain above 0.01",
+                                     "--bears", "a yes answers the question"],
                                     cwd=vault).stdout
         hid = re.search(r"✓ (h\d+)", minted["hypothesize"]).group(1)
         minted["task add"] = run(["task", "add", "fetch the antibody lot",

@@ -145,10 +145,11 @@ def _hypothesize_tests(check, tmp):
     check("test: --to running still takes the lock on a hypothesis with checks",
           bool(E.Vault(root).get(h2)["fm"].get(E.LOCK_FIELD)))
 
-    r = _cli(root, "hypothesize", "cli without expectation", "-p", q1)
+    r = _cli(root, "hypothesize", "cli without expectation", "-p", q1, "--bears", "a yes answers it")
     check("cli: `crux hypothesize` without --expect exits 1 and names --expect",
           r.returncode == 1 and "--expect" in r.stderr)
-    r = _cli(root, "hypothesize", "cli with expectation", "-p", q1, "--expect",
+    r = _cli(root, "hypothesize", "cli with expectation", "-p", q1, "--bears", "a yes answers it",
+             "--expect",
              "the loss falls below 0.3", "--json")
     ok = r.returncode == 0
     hid = json.loads(r.stdout)["id"] if ok else None
