@@ -5114,12 +5114,13 @@ def _payload_findings(v, nid):
     return out
 
 def _payload_state(v, n):
-    """{state, confidence, findings} for a question or hypothesis — derived, never stored,
-    the same rule the cockpit reads (`derive_state`). Anything else (the project) has none."""
+    """{state, confidence, finding, findings} for a question or hypothesis — derived, never
+    stored, the same rule the cockpit reads (`derive_state`). `finding` is the id of the
+    Finding that set the state (the strongest, not the newest). The project has none."""
     if n.type not in ("question", "idea"):
-        return {"state": None, "confidence": None, "findings": []}
+        return {"state": None, "confidence": None, "finding": None, "findings": []}
     st = derive_state(v, n.id)
-    return {"state": st["state"], "confidence": st["confidence"],
+    return {"state": st["state"], "confidence": st["confidence"], "finding": st["finding"],
             "findings": _payload_findings(v, n.id)}
 
 def _answer_so_far(v, n):

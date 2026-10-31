@@ -912,7 +912,7 @@ def dispatch(a):
             tag = " [control]" if x["kind"] == NEUTRAL_KIND_LABEL else ""
             print(f"    - {x['text']}{tag}")
         for pf in b["prior_findings"]:
-            print(f"  prior:    {pf['id']} ({pf['state']} · {pf['confidence']}) {((pf['findings'][-1]['why'] or '') if pf['findings'] else '')[:70]}")
+            print(f"  prior:    {pf['id']} ({pf['state']} · {pf['confidence']}) {next((f['why'] or '' for f in pf['findings'] if f['id'] == pf['finding']), '')[:70]}")
     elif c in ("validate", "lint", "check"):
         checks = [x.strip() for x in a.check.split(",") if x.strip()] if a.check else None
         propose = list(a.propose)

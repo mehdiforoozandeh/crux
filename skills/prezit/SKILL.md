@@ -61,7 +61,7 @@ both arcs.
 | RD pages (once the RD layer exists; `rd` is empty until then) | methods |
 | findings (direction, confidence, why, evidence) + verifiables | the results claims, and the honest negatives |
 | `results/<hid>/` artifacts | the figures |
-| the anchor's own finding (its answer and confidence) | the answer / next-steps slide — dropped when the anchor has none |
+| the anchor's own finding (its answer and confidence) | the answer / next-steps slide — dropped unless the anchor is settled (a strong Finding on it) |
 | child states (open · leaning · settled · parked) | scope — executed vs open vs parked |
 
 Shorthand: intro = wiki, methods = design (not implementation legwork), results = tree.

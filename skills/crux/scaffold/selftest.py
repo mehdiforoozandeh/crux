@@ -5478,6 +5478,19 @@ def run_brief():
     expect_error("brief: a question anchor is refused (the brief is per-hypothesis)",
                  lambda: E.brief(root, q1))
 
+    # the human summary names the Finding that SET the sibling's state (the strongest), not
+    # the newest: a later weak no-answer-yet Finding must not displace a strong one's why
+    h3, _, _ = E.cmd_hypothesize(root, "a later sibling", parent=q1, expect="it holds")
+    E.cmd_finding(root, h3, "strong", why="STRONG-WHY the decisive run", direction="supports")
+    E.cmd_finding(root, h3, "weak", why="NEWER-WEAK-WHY an aborted rerun",
+                  direction="no-answer-yet")
+    r3 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "brief", h1],
+                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
+    line = [l for l in r3.stdout.splitlines() if l.strip().startswith("prior:") and h3 in l]
+    check("brief: the summary prints the why of the strongest Finding, not the newest",
+          r3.returncode == 0 and len(line) == 1 and "STRONG-WHY" in line[0]
+          and "NEWER-WEAK-WHY" not in line[0] and "settled · strong" in line[0])
+
     check("brief: ENGINE_VERSION at or past 2.4", at_least_version("2.4"))
     shutil.rmtree(root, ignore_errors=True)
 

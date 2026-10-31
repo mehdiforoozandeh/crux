@@ -465,9 +465,9 @@
        source   anchor.findings[] (its answer + confidence) + anchor.answer_so_far
        numbers  may restate numbers already addressed on a result slide;
                 introduces none of its own (D5)
-       shape    always one slide. DROP IT ENTIRELY when the anchor has no
-                finding of its own (anchor.findings is empty) — an answer slide
-                without one is the deck asserting something the vault has not.
+       shape    always one slide. DROP IT ENTIRELY unless the anchor is
+                settled (a strong Finding on it: anchor.state == "settled") —
+                an answer slide without one asserts what the vault has not.
        cut      the whole slide; nothing else depends on it
        =================================================================== -->
   <section class="slide">
@@ -476,7 +476,7 @@
       <h2>[The answer as a headline]</h2>
       <p class="lead">[The answer, in one serif breath.]</p>
       <ul class="pts lg">
-        <li><b>What closes:</b> [the claim that is settled, and in which direction].</li>
+        <li><b>What closes:</b> [the claim that is settled, and what the answer is].</li>
         <li><b>What opens:</b> [the next honest question].</li>
         <li><b>What we would not have caught:</b> [the control that earned its keep].</li>
       </ul>

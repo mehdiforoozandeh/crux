@@ -88,7 +88,7 @@ The conclusion lists the next-step options. Each option gives its cost and what 
 teach. Give no ranking and no recommendation, because the PI chooses.
 
 **Readings, not verdicts.** State the answer as settled only when the anchor is settled
-(a strong finding on it). Otherwise write what the results suggest, and say what would settle it.
+(a strong Finding on it). Otherwise write what the results suggest, and say what would settle it.
 
 **A hypothesis anchor.** Take the motivation from the parent question's own text, not from
 its current answer: that answer can give away the results of later experiments. When a later
