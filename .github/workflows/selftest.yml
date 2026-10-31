@@ -21,7 +21,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.9', '3.11', '3.13']
+        exclude:
+          # setup-python has no 3.9 build for the Ubuntu image ubuntu-latest now points at
+          - os: ubuntu-latest
+            python: '3.9'
         include:
+          - os: ubuntu-22.04
+            python: '3.9'
           # the floor the README advertises; 3.8 is EOL and unavailable on newer runners
           - os: ubuntu-22.04
             python: '3.8'
