@@ -26,7 +26,7 @@ being built — do not implement)
 | 16 | [Science voice: the invisible notebook](16-science-voice.md) | `voice` | ☑ |
 | 17 | [OpenAlex: literature search into the wiki](17-openalex.md) | `wiki` | ☑ |
 | 18 | [Lean autopilot](18-autopilot-lean.md) | `autopilot` | ☑ |
-| 19 | [Background memory](19-background-memory.md) | `memory` | ☐ |
+| 19 | [Background memory](19-background-memory.md) | `memory` | ☑ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
@@ -57,7 +57,17 @@ is what lets an attempt close unattended against a bar the PI signed in advance.
 `review --near`, third-person CLI text, and `persona-01`, the first eval whose subject is a
 conversation.)
 
-01, 02, 03, 06, 07, 09, 10, 11, 12, 13, 14, 16 and 17 are `☑ done` and are reference material, not work.
+(19 landed 2026-10-31 as engine 4.0, release v1.0.0: the tree fills itself in the background.
+Question / Hypothesis / Finding replace verdicts, the review gate and synthesis; a node's state
+and confidence are derived from its findings; an always-on core of at most 8,192 bytes is
+injected by a `SessionStart` hook; a catch-up sweep and `/crux-wrap` run the new
+`crux-capture` agent; the agent roster is capture, prerun, situate and migrate; and a 3.x
+vault migrates on its first write, with a backup. It replaces 15's closure model and changes
+08, 09, 13, 14 and 18; those specs are history where they disagree with 19. Build record:
+[`research/19-build-plan.md`](research/19-build-plan.md).)
+
+01, 02, 03, 06, 07, 09, 10, 11, 12, 13, 14, 16, 17, 18 and 19 are `☑ done` and are reference
+material, not work.
 
 ## Dependency order
 

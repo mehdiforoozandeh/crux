@@ -6,24 +6,40 @@ uninstalling, and troubleshooting.
 
 ## What gets installed
 
-Four skills under [`skills/`](skills), plus the engine they share:
+The skills under [`skills/`](skills), plus the engine they share:
 
 | Skill | Role |
 |---|---|
-| **`crux`** | the core lab-notebook skill — carries the engine (`scaffold/`: Python CLI, cockpit server, webui, example vaults) |
-| **`crux-wiki`** | the literature wiki (PI-curated sources → agent-compiled knowledge base) |
+| **`crux`** | the always-on core (at most 8,192 bytes) — carries the engine (`scaffold/`: Python CLI, cockpit server, webui, example vaults) and the `references/` behind the core's pointers |
+| **`crux-wrap`** | `/crux-wrap`: shows what this session recorded, then asks accept or reject for each pending candidate |
+| **`crux-wiki`**, **`crux-litsearch`** | the literature wiki, and the citation crawl that finds papers it is missing |
+| **`crux-autopilot`** | sets up an unattended search against a frozen scorer (`crux auto`) |
 | **`crux-cockpit`** | launches and manages the read-only browser GUI (`crux serve`) |
+| **`prezit`**, **`storify`** | slides, or a short private paper, from a question and its subtree |
+| **`crux-rd`** | writes down a design that has settled |
 | **`evolve-crux`** | the contribute-to-crux workflow (ideate → build → validate → ship) |
 
-`crux-wiki` and `crux-cockpit` drive the engine that ships inside the `crux` skill —
+Every other skill drives the engine that ships inside the `crux` skill —
 **don't install them without it**.
 
-Plus the **specialized agent roster** under [`agents/`](agents) — the spec-09 subagents
-(`crux-critic`, `crux-null`, `crux-verifiables`, `crux-close`, `crux-audit`,
-`crux-migrate`, `crux-tests`, `crux-glossary`, `crux-situate`, `crux-design`). The clone
-path installs them as `<name>.md` symlinks in `~/.claude/agents`, the flat layout Claude
-Code reads subagents from. The npx path installs skills only; agents currently ship via
-Path B.
+Plus the **agent roster** under [`agents/`](agents): `crux-capture` (records a transcript
+slice into the tree, never asks), `crux-prerun` (designs a run before compute),
+`crux-situate` (where things stand) and `crux-migrate` (reconstructs an existing repo).
+`crux-tests` ships with evolve-crux under `skills/evolve-crux/agents/`. The clone path
+installs them as `<name>.md` symlinks in `~/.claude/agents`, the flat layout Claude Code
+reads subagents from. The npx path installs skills only; agents currently ship via Path B.
+
+And two **Claude Code hooks** in `~/.claude/settings.json` (clone path only):
+
+- **`SessionStart`** (`crux hook session-start`): in a repo with a vault (at the working
+  directory, above it, or one level down, such as `./cruxvault`), it injects the core as
+  context, so crux is loaded without a trigger word. On a fresh session or a `/clear` it also
+  starts at most one background capture run over transcript text not yet swept, on haiku,
+  with only crux verbs allowed. It is silent and exits 0 on any error, and it does nothing
+  outside a vault.
+- **`PostToolUse`** (`crux voice --hook`): the chat-time voice check.
+
+Both are registered idempotently; every other key in the settings file is kept.
 
 ## Requirements
 
@@ -41,7 +57,7 @@ npx skills add mehdiforoozandeh/crux --all
 Works with Claude Code, Cursor, Codex, Windsurf, Copilot CLI, and the rest of the
 [skills.sh](https://www.skills.sh) ecosystem. Notes:
 
-- **`--all` matters.** It selects all four skills for all detected agents,
+- **`--all` matters.** It selects every crux skill for all detected agents,
   non-interactively. Without it, a plain terminal opens a picker with **zero skills
   pre-selected**; inside an agent session the CLI auto-selects everything.
 - **Scope.** Default is **project** scope — skills land in `./.agents/skills` of the
@@ -76,7 +92,10 @@ Windsurf, and Copilot CLI read). Notes:
   that one dir instead; `AGENTS_DIR=/path/to/dir` does the same for the agent roster
   (default `~/.claude/agents`).
 - **Agents too:** every `agents/<name>/AGENT.md` is symlinked as
-  `~/.claude/agents/<name>.md`, so Claude Code can spawn the crux subagents by name.
+  `~/.claude/agents/<name>.md`, so Claude Code can spawn the crux subagents by name. A
+  `crux-*.md` link whose target is gone (an agent a newer crux removed) is deleted; a real
+  file or a live link is never touched.
+- **Hooks:** it registers the `SessionStart` and `PostToolUse` hooks above.
 - Safe and idempotent: it only creates/refreshes symlinks it manages; a real
   (non-symlink) folder of the same name is left untouched and reported.
 - Requires bash (`./install.sh`, not `sh install.sh` — Debian's `sh` is dash).
@@ -107,10 +126,17 @@ suite runs in seconds — no GPU, no tokens — and ends `ALL GREEN`.
 
 | | Update | Uninstall |
 |---|---|---|
-| **Clone path** | `git pull` in the clone — the symlinks stay live | delete the skill symlinks from the skills dirs and the `crux-*.md` symlinks from `~/.claude/agents` |
+| **Clone path** | `git pull` in the clone, then re-run `./install.sh` — it links new skills and agents, cleans links to removed agents, and repairs the hooks | delete the skill symlinks from the skills dirs, the `crux-*.md` symlinks from `~/.claude/agents`, and the two crux hook entries from `~/.claude/settings.json` |
 | **npx path** | `npx skills update` | `npx skills remove` |
 
 Restart / reload your agent after either.
+
+**Upgrading from crux 0.x (engine 3.x).** crux 1.0.0 replaces verdicts, the review gate and
+synthesis nodes with findings and derived states. Your vault migrates automatically on the
+first crux command that writes, after a full backup to `<vault>/.crux/backup-<old version>-<stamp>`;
+the report is `<vault>/.crux/migrate-4.0-report.json`. The cockpit alone never migrates: it
+shows the migration plan in memory under a banner. Removed verbs (`review`, `approve`,
+`synthesize`, `task accept`, …) print one line that points to the new model.
 
 ## Using the engine without an agent
 
@@ -126,7 +152,7 @@ forwards to `skills/crux/scaffold/crux.py`), and the cockpit over the bundled ex
 **Run `crux doctor` first** — it detects most of the list below and prints the fix.
 
 - **The npx picker shows nothing selected** — that's the default; use `--all` (or
-  space-toggle the four skills).
+  space-toggle every crux skill).
 - **`git: command not found` / a GUI dialog pops on macOS** — the skills CLI clones via
   your system git; install it (`xcode-select --install`) and re-run.
 - **`env: python3: No such file or directory`** — the engine needs Python ≥ 3.8 on PATH.
@@ -140,3 +166,8 @@ forwards to `skills/crux/scaffold/crux.py`), and the cockpit over the bundled ex
 - **`crux serve` port is busy** — pin another: `crux serve --port 8890`.
 - **`crux: not inside a crux vault`** — the engine resolves the vault upward from the
   current directory; `cd` into the vault (e.g. `cruxvault/`) or pass `--dir` to `serve`.
+- **crux is not loaded at session start** — check that `~/.claude/settings.json` has a
+  `SessionStart` entry running `crux.py hook session-start` (re-run `./install.sh`), and that
+  the repo has a vault at the working directory, above it, or one level down.
+- **The background capture never runs** — it needs the `claude` CLI on PATH and logged in;
+  its output goes to `<vault>/.crux/sweep.log`.
