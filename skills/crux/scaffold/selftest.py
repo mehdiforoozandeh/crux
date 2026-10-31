@@ -42,10 +42,10 @@ def node_path(root, nid):
 
 
 def declare_null(root, hid, text="capacity — the extra parameters alone explain the gain"):
-    """Bring a fixture hypothesis up to everything the pre-run gates require, the way the
-    real flow does: a declared and PI-approved null (`crux-null` + `crux approve-null`), and
-    a distinct failure scenario on every check with one marked as discriminating
-    (`crux-verifiables`). Idempotent, so it is safe before every `--to running`.
+    """Give a fixture hypothesis a declared null and a distinct failure scenario on every
+    check, one marked as discriminating — the full design a careful run carries. Spec 19
+    removed the gates and the null approval, so this no longer unblocks anything; it keeps
+    fixtures realistic. Idempotent.
 
     One helper rather than three, because a fixture that satisfies one gate and not the
     others is not a fixture of anything real."""
@@ -65,7 +65,7 @@ def declare_null(root, hid, text="capacity — the extra parameters alone explai
                     out.append("      discriminates:: true")
                     first = False
         E.write_if_changed(n["path"], E.render_doc(n["fm"], "\n".join(out)))
-    E.cmd_approve_null(root, hid)
+    # spec 19: no approval step exists any more; the null is declared and that is all
 
 
 
@@ -183,6 +183,7 @@ SEED = """\
       - finding: A helps in aggregate.
     - Q: Which variant of A is best?
       - H: variant A1 beats baseline
+        - expect: A1 beats the baseline by at least 0.01
         - v: metric >= +0.01 vs baseline
         - v: no regression on control
       - H: [tested] variant A2 already beat baseline
@@ -216,20 +217,20 @@ def run_seed():
     check("seed: h2 under q2", v.get("h2").parent == "q2")
     check("seed: h4 under q3", v.get("h4").parent == "q3")
     # fresh hypothesis stays an open idea with its verifiables registered
-    check("seed: h2 is a fresh idea", v.get("h2").status == "idea")
+    check("seed: h2 is fresh — no finding, derived state open",
+          E.node_findings(v, "h2") == [] and E.derive_state(v, "h2")["state"] == "open")
     check("seed: h2 has 2 verifiables", sum(E.count_verifiables(read(node_path(root, "h2")))) == 2)
     # tested hypotheses are closed with mechanically-derived verdicts
     check("seed: h1 done+supported", v.get("h1").status == "done" and v.get("h1")["fm"]["verdict"] == "supported")
     check("seed: h4 done+partial", v.get("h4").status == "done" and v.get("h4")["fm"]["verdict"] == "partial")
     check("seed: h3 finding kept", "cleared both bars" in read(node_path(root, "h3")))
     check("seed: h3 evidence kept", "+0.03" in read(node_path(root, "h3")))
-    check("seed: q2 ledger shows supported", "supported" in read(node_path(root, "q2")))
-    # gate: q3's only child (h4) is terminal -> review
-    check("seed: q3 tripped to review", v.get("q3").status == "review")
-    # REGRESSION (two-directional gate): q1 momentarily had only a terminal child (h1)
-    # during materialize, but its later subquestion q2 is non-terminal -> q1 must stay open
-    check("seed: q1 not prematurely in review", v.get("q1").status == "open")
-    check("seed: q2 open (fresh child h2 pending)", v.get("q2").status == "open")
+    q2_ledger = read(node_path(root, "q2")).split(E.LEDGER_START)[1]
+    check("seed: q2 ledger lists both children with their derived states",
+          "h2" in q2_ledger and "h3" in q2_ledger and "*open*" in q2_ledger)
+    # spec 19 removed the review gate: materializing a seed never stores a `review` status
+    check("seed: no question is tripped to review (the gate is gone)",
+          all(v.get(q).status != "review" for q in ("q1", "q2", "q3")))
     check("seed: META reflects seed", "Demo Seeded" in read(os.path.join(root, "META.md")))
     check("seed: vault validates clean", E.cmd_validate(root) == [])
 
@@ -366,7 +367,8 @@ def run_wiki():
 
     # broken tree→wiki link (direction 2): explicit wiki/ path form in a node body
     n = E.Vault(root).get(q1)
-    edit(n["path"], "## Answer so far", "## Answer so far\n\nSee [[wiki/nonexistent]].")
+    # (spec 19 dropped `## Answer so far` from the question template; `## Question` is prose too)
+    edit(n["path"], "## Question", "## Question\n\nSee [[wiki/nonexistent]].")
     check("wiki: broken tree→wiki link caught", any("broken" in m and "nonexistent" in m for m in wiki_probs(root)))
     edit(n["path"], "\n\nSee [[wiki/nonexistent]].", "")
 
@@ -592,7 +594,7 @@ def run_artifacts():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Artifacts", root)
     q1, _ = E.cmd_ask(root, "does it work")
-    h1, _, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"])
+    h1, _, _ = E.cmd_hypothesize(root, "it works", parent=q1, verifiables=["metric up"], expect="the claim holds")
 
     # -- parsing is pure: both bullet forms, placeholder ignored, order preserved
     body = ("## Artifacts\n\n"
@@ -653,7 +655,7 @@ def run_artifacts():
         p = node_path(root, nid)
         t = read(p)
         t = t.replace("## Findings", "## Artifacts\n\n" + block + "\n\n## Findings", 1) \
-             if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## )",
+             if "## Artifacts" not in t else re.sub(r"## Artifacts\n\n.*?(?=\n## |\Z)",
                                                     "## Artifacts\n\n" + block + "\n", t, flags=re.S)
         with open(p, "w", encoding="utf-8") as f: f.write(t)
     set_artifacts(h1, "- results/h1/report.md")
@@ -682,16 +684,17 @@ def run_artifacts():
           E.cmd_validate(root) == [])
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
 
-    # -- close still WARNS rather than blocking when the report is missing
-    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"])
+    # -- recording a result still WARNS rather than blocking when the report is missing
+    #    (spec 19: a finding replaces `close`; the warning reader is unchanged)
+    h2, _, _ = E.cmd_hypothesize(root, "second", parent=q1, verifiables=["x"], neutral=["control"], expect="the claim holds")
     write(os.path.join(root, E.RESULTS_DIR, h2, "out.log"), "log\n")
     declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
     edit(node_path(root, h2), "- [ ]", "- [x]")
-    verdict = E.cmd_close(root, h2)
-    check("artifacts: close still closes without a report (warn, not block)",
-          verdict == "supported" and E.Vault(root).get(h2).status == "done")
-    check("artifacts: close surfaces a warning about the unlinked results",
+    E.cmd_finding(root, h2, "moderate", why="x held", direction="supports")
+    check("artifacts: a finding records the result without a report (warn, not block)",
+          E.derive_state(E.Vault(root), h2)["state"] == "leaning")
+    check("artifacts: the unlinked results still surface as a warning",
           any("no report" in w for w in E.artifact_warnings(root, h2)))
     check("artifacts: no warning once a report is linked", E.artifact_warnings(root, h1) == [])
 
@@ -1722,7 +1725,7 @@ def run_economy():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Economy", root)
     q1, _ = E.cmd_ask(root, "Does the cap hold?")
-    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # -- 1. the summary schema ships in both templates
     qtext, htext = read(node_path(root, q1)), read(node_path(root, h1))
@@ -1776,18 +1779,18 @@ def run_economy():
     q2, _ = E.cmd_ask(root, "How many is too many?")
     ids, quiet = [], True
     for i in range(5):
-        hid, _, warn = E.cmd_hypothesize(root, f"idea {i}", parent=q2)
+        hid, _, warn = E.cmd_hypothesize(root, f"idea {i}", parent=q2, expect="the claim holds")
         ids.append(hid); quiet = quiet and warn is None
     check("economy: no back-pressure while under the cap", quiet)
     check("economy: exactly 5 unrun hypotheses is within the cap",
           [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
-    h6, _, warn6 = E.cmd_hypothesize(root, "idea 6", parent=q2)
+    h6, _, warn6 = E.cmd_hypothesize(root, "idea 6", parent=q2, expect="the claim holds")
     check("economy: hypothesize warns when the new node breaches the cap", warn6 is not None)
     check("economy: the back-pressure names the cap", warn6 is not None and "5" in warn6)
     check("economy: 6 unrun hypotheses trips one fan-out warning",
           len([w for w in E.validation_report(root)["warnings"] if w["id"] == q2]) == 1)
-    E.cmd_test(root, ids[0], "staged")
-    E.cmd_test(root, ids[1], "staged")
+    E.cmd_test(root, ids[0], "staged", run="queued job 1")
+    E.cmd_test(root, ids[1], "staged", run="queued job 2")
     check("economy: staged children do not count as unrun",
           [w for w in E.validation_report(root)["warnings"] if w["id"] == q2] == [])
 
@@ -2927,7 +2930,7 @@ def run_rd():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD Demo", root, goal="Exercise the RD layer.")
     q1, _ = E.cmd_ask(root, "Does the RD layer hold?")
-    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "it holds", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # -- 1. creation + the backlink
     slug, fn = E.cmd_rd(root, h1, "Probe ladder and estimand")
@@ -2955,8 +2958,9 @@ def run_rd():
     check("rd: an RD may attach to a hypothesis", E.scan_rd_pages(root)[0]["node"] in (q1, h1))
     expect_error("rd: an RD may not attach to the project root",
                  lambda: E.cmd_rd(root, "root", "nope"))
-    s1, _ = E.cmd_synthesize(root, "a synthesis", [q1])
-    expect_error("rd: an RD may not attach to a synthesis", lambda: E.cmd_rd(root, s1, "nope"))
+    # spec 19 removed synthesis; a finding is the non-tree node type an RD must still refuse
+    s1, _, _ = E.cmd_finding(root, q1, "weak", answer="a provisional answer")
+    expect_error("rd: an RD may not attach to a finding", lambda: E.cmd_rd(root, s1, "nope"))
 
     # -- 3. one ACTIVE RD per node (D11), and the refusal names the remedy (D12)
     try:
@@ -2987,11 +2991,12 @@ def run_rd():
     check("rd: an RD page never becomes a node", set(v.nodes) == {"root", q1, h1, s1})
     check("rd: no node has type rd", not any(n.type == "rd" for n in v.nodes.values()))
     led_before = E.ledger_counts(E.Vault(root), q1)
-    st_before = E.Vault(root).get(q1).status
+    st_before = E.derive_state(E.Vault(root), q1)
     E.cmd_rd(root, h1, "third cut", supersedes=slug2)
     E.refresh(root)
     check("rd: an RD does not move ledger_counts", E.ledger_counts(E.Vault(root), q1) == led_before)
-    check("rd: an RD does not trip the review gate", E.Vault(root).get(q1).status == st_before)
+    check("rd: an RD does not move the question's derived state",
+          E.derive_state(E.Vault(root), q1) == st_before)
 
     # -- 6. the generated index
     idx = os.path.join(root, "RD.md")
@@ -3097,7 +3102,7 @@ def run_rd_lint():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD Lint", root)
     q1, _ = E.cmd_ask(root, "a question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"], expect="the claim holds")
 
     # the check is registered, and it is always-on rather than opt-in: an RD is vault
     # content, not a derived document like a deck
@@ -3456,7 +3461,8 @@ def pre15_vault(prefix, engine_version="1.5"):
     E.cmd_init("Legacy Evidence", root)
     q, _ = E.cmd_ask(root, "a pre-15 question")
     h, _, _ = E.cmd_hypothesize(root, "a pre-15 hypothesis", parent=q,
-                                verifiables=["first check", "second check"])
+                                verifiables=["first check", "second check"],
+                                require_expect=False)
     _strip_schema(root)
     edit(os.path.join(root, E.VAULT_MARKER),
          f"engine_version: {E.ENGINE_VERSION}", f"engine_version: {engine_version}")
@@ -4208,7 +4214,7 @@ def _task_vault(prefix="crux_task_"):
     E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
     q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
     h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
-                                verifiables=["ids never renumber"])
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     return root, q, h
 
 
@@ -6351,8 +6357,8 @@ def run_glossary_counting():
     E.cmd_init("Counting", root)
     q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
     h1, _, _ = E.cmd_hypothesize(root, "the detection floor is reachable", parent=q1,
-                                 problem="the detection floor again", verifiables=["x"])
-    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"])
+                                 problem="the detection floor again", verifiables=["x"], expect="the claim holds")
+    h2, _, _ = E.cmd_hypothesize(root, "unrelated", parent=q1, problem="nothing", verifiables=["y"], expect="the claim holds")
     v = E.Vault(root)
     c = E.count_term(v, "detection floor")
     check("gcount: counts across two nodes", len(c["documents"]) == 2)
@@ -6545,8 +6551,8 @@ def run_glossary_filter():
     E.cmd_init("Filter", root)
     q1, _ = E.cmd_ask(root, "how low can it go?", body_text="we need a detection floor here")
     h1, _, _ = E.cmd_hypothesize(root, "a claim", parent=q1,
-                                 problem="only here: capacity certificate", verifiables=["x"])
-    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"])
+                                 problem="only here: capacity certificate", verifiables=["x"], expect="the claim holds")
+    h2, _, _ = E.cmd_hypothesize(root, "another claim", parent=q1, problem="plain", verifiables=["y"], expect="the claim holds")
 
     def survivors(*terms, **kw):
         rep = E.validation_report(root, ["glossary"], propose=list(terms), **kw)
@@ -6594,7 +6600,7 @@ def run_glossary_filter():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Filter Wiki", root)
     q1, _ = E.cmd_ask(root, "q", body_text="data pruning matters")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="data pruning again", verifiables=["x"], expect="the claim holds")
     E.ensure_wiki(root)
     with open(os.path.join(root, "wiki", "data-pruning.md"), "w", encoding="utf-8") as f:
         f.write("---\ntype: wiki\ntitle: Data pruning\nsummary: s\n---\n\n# Data pruning\n\nbody\n")
@@ -6624,7 +6630,7 @@ def run_glossary_filter():
     check("gfilter: a term in two wiki pages survives", "ridge estimator" in surv2("ridge estimator"))
     with open(os.path.join(root, "wiki", "gap-four.md"), "w", encoding="utf-8") as f:
         f.write("---\ntype: wiki\ntitle: Mixed\nsummary: s\n---\n\n# Mixed\n\nA kernel trick page.\n")
-    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"])
+    E.cmd_hypothesize(root, "h-mixed", parent=q1, problem="a kernel trick node", verifiables=["x"], expect="the claim holds")
     mixed = E.validation_report(root, ["glossary"], propose=["kernel trick"])["candidates"]
     check("gfilter: a term in one node and one wiki page survives (the 'or' is inclusive)",
           len(mixed) == 1 and len(mixed[0]["documents"]) == 2
@@ -6679,7 +6685,7 @@ def run_glossary_filter():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Filter CLI", root)
     q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is used")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"], expect="the claim holds")
     def cli(*args):
         return subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + list(args),
                               capture_output=True, text=True, encoding="utf-8", cwd=root)
@@ -6701,7 +6707,7 @@ def run_glossary_filter():
     # already uses. Two terms in, two candidates out.
     E.cmd_ask(root, "second", body_text="the ridge estimator lives here")
     E.cmd_hypothesize(root, "third", parent=q1, problem="the ridge estimator again",
-                      verifiables=["x"])
+                      verifiables=["x"], expect="the claim holds")
     r = cli("validate", "--check=glossary", "--propose", "kernel trick",
             "--propose", "ridge estimator", "--json")
     got = {c["term"] for c in json.loads(r.stdout)["candidates"]}
@@ -6804,7 +6810,7 @@ def run_glossary_write():
 
     # the round trip: an accepted term stops being a candidate; a declined one stays gone
     q1, _ = E.cmd_ask(root, "q", body_text="the kernel trick is here")
-    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"])
+    E.cmd_hypothesize(root, "h", parent=q1, problem="the kernel trick again", verifiables=["x"], expect="the claim holds")
     def surv(*t):
         return {c["term"] for c in E.validation_report(root, ["glossary"], propose=list(t))["candidates"]}
     check("gwrite: an accepted term is dropped by the filter afterwards", surv("kernel trick") == set())
@@ -6847,14 +6853,16 @@ def run_glossary_write():
     ghash = hashlib.sha256(read(gp).encode()).hexdigest()
     q2, _ = E.cmd_ask(root, "another question")
     h9, _, _ = E.cmd_hypothesize(root, "another idea", parent=q2, verifiables=["z"],
-                                 neutral=["the control reproduces the known value"])
+                                 neutral=["the control reproduces the known value"], expect="the claim holds")
     declare_null(root, h9)
     E.cmd_test(root, h9, to="running")
     edit(node_path(root, h9), "- [ ] z", "- [x] z")
     edit(node_path(root, h9), "- [ ] [outcome-neutral] the control reproduces the known value",
                               "- [x] [outcome-neutral] the control reproduces the known value")
-    E.cmd_close(root, h9)
-    E.cmd_review(root); E.cmd_validate(root); E.snapshot(root); E.refresh(root)
+    E.cmd_finding(root, h9, "strong", why="z held with the control reproduced",
+                  direction="supports")
+    E.cmd_park(root, h9); E.cmd_park(root, h9, undo=True)
+    E.cmd_validate(root); E.snapshot(root); E.refresh(root)
     E.status_text(root)
     check("gwrite: no other verb writes glossary.md",
           hashlib.sha256(read(gp).encode()).hexdigest() == ghash)
