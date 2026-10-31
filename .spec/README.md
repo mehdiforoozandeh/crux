@@ -27,6 +27,7 @@ being built — do not implement)
 | 17 | [OpenAlex: literature search into the wiki](17-openalex.md) | `wiki` | ☑ |
 | 18 | [Lean autopilot](18-autopilot-lean.md) | `autopilot` | ☑ |
 | 19 | [Background memory](19-background-memory.md) | `memory` | ☑ |
+| 20 | [Anchoring: every item serves the question above it](20-anchoring.md) | `memory` | ☐ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
