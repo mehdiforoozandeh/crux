@@ -226,3 +226,16 @@ Questions marked **(science)** change what the record says. The PI must answer t
 - C2 review [opus]: ACCEPT (rules spot-checked h2/h10/h9). Merged C2 then C3 (no conflicts). build/19 selftest 1979/2002; red: C6 (deck*, brief, situate*), C7 (agent_*, ground_truth, proxy_register), C8 (science_voice, correct_terms), run_voice_enforcement (C3-owned, still red -> C2b).
 - Follow-ups: C5b (serve in-memory migrate plan Q9 + stale pre-15 chip text) wave 3; C2b wave 4 (crux.py --null help supports-only, text auto status finding/confidence, id_lock stale-break vs long migration, run_voice_enforcement). Failed-control cap stays all-direction (literal ruling; only null cap narrowed).
 - W3: C6, C7 (no engine.py edits; report doctor-roster lines on slip), C5b.
+- C5b slip: done cfc581d, run_serve green, 1993/2016 no new red. Diff 146 lines read (serve.py preview: pure, thread+5s timeout, no writes). ACCEPT, merged.
+- C6 slip: partial d1f1a18, 2141/2158; one red in run_brief needs crux.py:915 one-line (pf verdict -> state/confidence). Approved, retry 1.
+- C6 retry slip: done 63848af, 2142/2158, owned green. Reviewer [opus] spawned. Note: "evmig" + sortlab red at baseline -> C2b to own.
+- C6 review [opus]: send back (crux.py:915 why from newest not deciding Finding; answer-slide rule inconsistent -> settled; deck.html direction prompt on question answer). Retry 2.
+- C6 retry 2 slip: done 8244b1e, 2143/2159, review defects fixed. ACCEPT, merged. C6 retries: 2.
+- W3b: C2b spawned [opus] from build/19@d9c0ce6 (2157/2173): --null help, text auto status, id_lock live-holder, orphan red asserts (evmig, sortlab x2, voice_enforcement, task-verb help).
+- C7 slip: partial f6b668e (base e63a1e3), certify 5/6 (situate-01: NameError fixed by C6 on build/19). Retry 1: merge build/19, prerun-01 facts -> shared record (isolation is from the argument, not the setup). install.sh evolve-crux agents link -> C2b. persona-01 rows + SKILL.md pin -> C8.
+- C7 retry slip: done 10e300a (merged build/19), certify 6/6, 2213/2220, owned 205/205. Reviewer [opus] spawned, focus crux-capture AGENT.md fidelity.
+- C7 review [opus]: send back (prerun toolbelt leaks status; expect missing from isolated brief -> add to engine.brief, granted to C7; migrate null-cap wording; capture strong with no null; pending --source wrap). Retry 2.
+- C2b slip: done e3b23bd, 2191/2202 stable, no new red; all 5 targets green; example views regenerated via E.refresh; foreign-host lock stale after 3600 s (accepted). Lock code read by foreman; reviewer [opus] spawned (diff 760 lines).
+- C7 retry 2 slip: done 11d678a, certify 6/6, owned 207/207, review defects fixed. ACCEPT, merged. C7 retries: 2. For C8: /crux-wrap must tell capture to pass --source wrap; persona-01 rows + pin.
+- W4: C8 spawned [opus] from build/19@11d678a (core <=8192 B, crux-wrap skill, other skills, AGENTS.md cap, persona-01 re-pin). C2b in review.
+- C2b review [opus]: send back (lock break race A-removes-B, pre-existing; OverflowError in _pid_alive). Retry 1. Note: PI machine ~/.claude/agents has 8 dangling crux-* links -> reinstall cleans (tell PI at release). selftest.py:5400 accept-in-verb-table -> C8.
