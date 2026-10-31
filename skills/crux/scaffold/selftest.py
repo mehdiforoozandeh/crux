@@ -1109,7 +1109,12 @@ def run_serve():
         with urllib.request.urlopen(base + "/snapshot.json", timeout=5) as r:
             ctype = r.headers.get("Content-Type"); snap = json.loads(r.read())
         check("serve: /snapshot.json is application/json", ctype == "application/json")
-        check("serve: /snapshot.json == engine.snapshot", snap == E.snapshot(root))
+        # the served payload is engine.snapshot plus ONE serve-side key, `migration` (spec
+        # 19, ruling Q9): whether this vault still awaits the 4.0 migration
+        check("serve: /snapshot.json == engine.snapshot + the migration key",
+              {k: x for k, x in snap.items() if k != "migration"} == E.snapshot(root))
+        check("serve: a 4.0 vault is reported migrated",
+              snap.get("migration") == {"stamped": E.ENGINE_VERSION, "needed": False})
         with urllib.request.urlopen(base + "/", timeout=5) as r2:
             html = r2.read().decode("utf-8", "replace").lower()
         check("serve: serves the cockpit HTML at /", "<html" in html or "crux" in html)
@@ -1247,6 +1252,98 @@ def run_serve():
 
     shutil.rmtree(root, ignore_errors=True)
 
+    # ---- spec 19 (C5): the 4.0 model through the live server, and the read-only contract
+    # over a FULL click-through — every route the cockpit can reach, plus every write verb a
+    # client could try. Run twice: on a 4.0 vault, and on a pre-4.0 vault the cockpit cannot
+    # migrate (ruling Q9: show it as-is with a banner, and never write).
+    mst = getattr(S, "migration_status_of", lambda s: {"needed": None})
+    check("serve: the pre-4.0 test is a pure function of the stamp",
+          mst(None)["needed"] is True and mst("3.5")["needed"] is True
+          and mst("1.2")["needed"] is True and mst("4.0")["needed"] is False
+          and mst("4.1")["needed"] is False and mst("10.0")["needed"] is False
+          and mst("not-a-version")["needed"] is True)
+    check("serve: the handler defines no write verb (POST/PUT/DELETE/PATCH)",
+          not any(hasattr(S.Handler, m) for m in ("do_POST", "do_PUT", "do_DELETE", "do_PATCH")))
+    fs = tempfile.mkdtemp(prefix="crux_serve4_")
+    shutil.rmtree(fs); os.makedirs(fs)
+    E.cmd_init("Four States", fs, goal="every state renders")
+    fq, _ = E.cmd_ask(fs, "does the cockpit show every state?")
+    hs, _, _ = E.cmd_hypothesize(fs, "the settled one", parent=fq, expect="it holds")
+    hl, _, _ = E.cmd_hypothesize(fs, "the leaning one", parent=fq, expect="it holds")
+    ho, _, _ = E.cmd_hypothesize(fs, "the open one", parent=fq, expect="it holds")
+    hp, _, _ = E.cmd_hypothesize(fs, "the parked one", parent=fq, expect="it holds")
+    write(os.path.join(fs, E.RESULTS_DIR, hs, "report.md"), "# r\n")
+    E.cmd_finding(fs, hs, "strong", why="clear margin", direction="supports",
+                  evidence=[f"{E.RESULTS_DIR}/{hs}/report.md"])
+    E.cmd_finding(fs, hl, "weak", why="one thin run", direction="against")
+    E.cmd_park(fs, hp)
+
+    def click_through(vroot, label):
+        httpd = S.make_server(vroot, port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        codes, snap = {}, None
+        before = _dir_bytes(vroot)
+        try:
+            for path in ("/", "/index.html", "/app.js", "/style.css", "/vendor/motion.js",
+                         "/favicon.svg", "/snapshot.json", "/auto.json", "/wiki/_index.json",
+                         "/wiki/nope.json", "/rd/nope.json", "/file/.crux.yaml",
+                         f"/file/{E.RESULTS_DIR}/{hs}/report.md", "/nope"):
+                try:
+                    with urllib.request.urlopen(base + path, timeout=5) as r:
+                        codes[path] = r.status
+                        body = r.read()
+                        if path == "/snapshot.json":
+                            snap = json.loads(body)
+                except urllib.error.HTTPError as he:
+                    codes[path] = he.code
+            writes = []
+            for verb in ("POST", "PUT", "DELETE", "PATCH"):
+                for path in ("/snapshot.json", "/", "/file/x.md"):
+                    req = urllib.request.Request(base + path,
+                                                 data=None if verb == "DELETE" else b"x",
+                                                 method=verb)
+                    try:
+                        with urllib.request.urlopen(req, timeout=5) as r:
+                            writes.append((verb, path, r.status))
+                    except urllib.error.HTTPError as he:
+                        writes.append((verb, path, he.code))
+        finally:
+            httpd.shutdown(); httpd.server_close()
+        check(f"serve: [{label}] every write verb is refused (501/405)",
+              all(c in (405, 501) for _, _, c in writes))
+        check(f"serve: [{label}] the click-through reaches the page and the snapshot",
+              codes.get("/") == 200 and codes.get("/snapshot.json") == 200
+              and codes.get("/app.js") == 200)
+        check(f"serve: [{label}] a full click-through writes no byte (byte-map identical)",
+              _dir_bytes(vroot) == before)
+        return snap or {}
+
+    s4 = click_through(fs, "4.0 vault")
+    st4 = {nid: (s4.get("nodes") or {}).get(nid, {}).get("state") for nid in (hs, hl, ho, hp)}
+    check(f"serve: the served snapshot carries all four states ({st4})",
+          st4 == {hs: "settled", hl: "leaning", ho: "open", hp: "parked"})
+    check("serve: the served snapshot carries confidence and findings, and no queue",
+          (s4.get("nodes") or {}).get(hs, {}).get("confidence") == "strong"
+          and ((s4.get("nodes") or {}).get(hl, {}).get("findings") or [{}])[0]
+              .get("direction") == "against"
+          and "queue" not in s4)
+    check("serve: a 4.0 vault needs no migration banner",
+          (s4.get("migration") or {}).get("needed") is False)
+
+    # a pre-4.0 vault: stamped 3.5. The cockpit shows it as it is and never writes — not the
+    # stamp, not a backup, not a migrated node.
+    cfg = os.path.join(fs, ".crux.yaml")
+    edit(cfg, f"engine_version: {E.ENGINE_VERSION}", "engine_version: 3.5")
+    cfg_before = read(cfg)
+    s3 = click_through(fs, "pre-4.0 vault")
+    check("serve: a pre-4.0 vault is reported as awaiting migration (Q9)",
+          s3.get("migration") == {"stamped": "3.5", "needed": True})
+    check("serve: the pre-4.0 vault is shown as-is (its tree still renders)",
+          hs in (s3.get("nodes") or {}))
+    check("serve: serving a pre-4.0 vault never re-stamps it", read(cfg) == cfg_before)
+    shutil.rmtree(fs, ignore_errors=True)
+
 
 def run_file_route():
     """`GET /file/<vault-relative-path>` (§C): the read-only route the report reader and
@@ -1259,7 +1356,7 @@ def run_file_route():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Files", root)
     q1, _ = E.cmd_ask(root, "q")
-    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "h", parent=q1, verifiables=["x"], expect="x")
     report = "# Report\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![curve](curve.png)\n"
     write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), report)
     png = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(range(256)) * 4
@@ -1375,12 +1472,12 @@ def run_webui():
     #     Derived from the engine's own constants so the two can never drift again.
     m = re.search(r"const LEGEND = \[(.*?)\n\];", app_js, re.S)
     legend_src = m.group(1) if m else ""
-    expected = (["q-" + s for s in E.QUESTION_STATUS]
-                + ["h-" + s for s in E.IDEA_STATUS if s != E.TERMINAL_IDEA]
-                + ["h-" + x for x in E.VERDICTS])
+    # spec 19: the vocabulary is the 4.0 one — four node states and three confidences
+    expected = (["s-" + x for x in E.STATES] + ["c-" + x for x in E.CONFIDENCES])
     missing = [k for k in expected if f'"{k}"' not in legend_src]
     check(f"webui: legend covers the engine's whole vocabulary (missing: {missing})", not missing)
-    check("webui: legend includes the inconclusive verdict", '"h-inconclusive"' in legend_src)
+    stale = [k for k in re.findall(r'\["([a-z]-[a-z-]+)"', legend_src) if k not in expected]
+    check(f"webui: legend carries no pre-4.0 status or verdict chip (stale: {stale})", not stale)
     # every colour the legend names must exist in BOTH themes
     vars_used = re.findall(r'"(--[a-z-]+)"', legend_src)
     # match the RULES, not the prose: style.css mentions the light selector in its header
@@ -1397,10 +1494,9 @@ def run_webui():
     check("webui: the markdown renderer emits images", "<img" in app_js)
     check("webui: images resolve through the file route", "fileUrl(" in app_js)
     check("webui: idea detail shows an Artifacts section", '"Artifacts"' in app_js)
-    check("webui: a resolved question links the synthesis that closed it",
-          '"Closed on synthesis"' in app_js)
-    check("webui: the synthesis reader renders its body and approval state",
-          re.search(r"function synthesisDetail\([^)]*\)\s*\{.*?bodyOr\(n\.body", app_js, re.S) is not None)
+    # spec 19: synthesis is gone as a node type — no reader, no "closed on" link
+    check("webui: no synthesis reader or synthesis link survives",
+          "function synthesisDetail" not in app_js and '"Closed on synthesis"' not in app_js)
     check("webui: a .md artifact opens the report reader", "openReport(" in app_js)
     check("webui: a hypothesis with a report offers it as a primary action",
           "report-open" in app_js and "report-open" in style)
@@ -1473,7 +1569,9 @@ def run_webui():
     check("webui: the hypothesis pane leads with the summary too",
           "summaryLead(n) +" in idea_fn
           and idea_fn.index("summaryLead(n) +") < idea_fn.index('foldedSection("Problem"')
-          and between.strip().startswith('section("Null'))
+          # spec 19: the expectation (required) leads, then the optional null
+          and re.sub(r"\s*//[^\n]*", "", between).strip().startswith('section("Expected result"')
+          and 'section("Null' in between and between.count("section(") == 2)
     check("webui: the long question detail is folded, not dumped",
           'foldedSection("Detail", n.detail' in app_js and 'section("Detail", bodyOr(n.detail' not in app_js)
     check("webui: the cap comes from the engine, never hardcoded in the UI",
@@ -1617,8 +1715,8 @@ def run_webui():
           bool(sel_src) and "renderTree(" not in sel_src and "layout(" not in sel_src)
     check("webui: selectNode swaps cosmetic state in place",
           "applyCosmeticState(" in sel_src)
-    sq_src = fn_src("showQueue")
-    check("webui: showQueue never rebuilds — no renderTree()/layout() in its body",
+    sq_src = fn_src("showOverview")
+    check("webui: showOverview never rebuilds — no renderTree()/layout() in its body",
           bool(sq_src) and "renderTree(" not in sq_src and "layout(" not in sq_src
           and "applyCosmeticState(" in sq_src)
     cos_src = fn_src("applyCosmeticState")
@@ -1628,7 +1726,10 @@ def run_webui():
     check("webui: the in-place swap keeps the ARIA selection truthful (PR #13 contract)",
           "aria-selected" in cos_src and "aria-activedescendant" in cos_src)
     check("webui: the helper derives dim/hit from the SAME predicates nodeSVG bakes in",
-          "matchNode(" in cos_src and "statusClass(" in cos_src and "state.filter" in cos_src)
+          "matchNode(" in cos_src and "filterHit(" in cos_src
+          and "state.filter" in fn_src("filterHit")
+          and "filterHit(" in fn_src("nodeSVG")
+          and "statusClass(" in fn_src("filterHit") and "confClass(" in fn_src("filterHit"))
     as_src = fn_src("applySearch")
     check("webui: the tree search path dims by class toggle, not by rebuild",
           "applyCosmeticState(" in as_src and "renderTree(" not in as_src)
@@ -1688,8 +1789,8 @@ def run_webui():
     sig_src = fn_src("treeSignatures")
     check("webui: a structural/cosmetic snapshot signature exists", bool(sig_src))
     draw_src = "".join(fn_src(f) for f in
-                       ("nodeSVG", "computeGeom", "statusClass", "verifDots",
-                        "vBadgeClass", "bodyLabel", "rootLabel"))
+                       ("nodeSVG", "computeGeom", "statusClass", "confClass", "dirOf",
+                        "verifDots", "vBadgeClass", "bodyLabel", "rootLabel"))
     drawn_fields = sorted(set(re.findall(r"\bn\.([a-z_]+)\b", draw_src)))
     sig_missing = [f for f in drawn_fields if f not in sig_src]
     check(f"webui: every field the draw path reads is in the signature (missing: {sig_missing})",
@@ -1713,6 +1814,55 @@ def run_webui():
           "renderLegend()" not in os_src or "_legendRendered" in os_src)
     check("webui: the match counter still rides every accepted snapshot (PR #13 contract)",
           "updateMatchCounter()" in os_src)
+
+    # ---- spec 19 (C5): the cockpit renders the 4.0 model. A node is painted by its DERIVED
+    # state (fill) and its confidence (stroke); a hypothesis also shows the direction of the
+    # finding that decides it. The review queue, the synthesis detail and the acceptance
+    # badges are gone — the engine no longer has any of them to publish.
+    check("webui: a question or hypothesis is classed by its derived state",
+          '"s-" + n.state' in fn_src("statusClass"))
+    check("webui: ... and by its confidence",
+          '"c-" + n.confidence' in fn_src("confClass") and "confClass(n)" in fn_src("nodeSVG"))
+    no_state_rule = [x for x in E.STATES if not re.search(r"\.s-%s\b[^{]*\{" % x, style)]
+    no_conf_rule = [x for x in E.CONFIDENCES if not re.search(r"\.c-%s\b[^{]*\{" % x, style)]
+    check(f"webui: style.css has a rule per state (missing: {no_state_rule})", not no_state_rule)
+    check(f"webui: style.css has a rule per confidence (missing: {no_conf_rule})", not no_conf_rule)
+    gm = re.search(r"const DIR_GLYPH = \{(.*?)\};", app_js, re.S)
+    no_glyph = [d for d in E.DIRECTIONS if not gm or f'"{d}"' not in gm.group(1)
+                and f"{d}:" not in gm.group(1)]
+    check(f"webui: every finding direction has a glyph (missing: {no_glyph})", not no_glyph)
+    dvars = ["--d-" + d for d in E.DIRECTIONS]
+    no_dvar = [x for x in dvars if f"{x}:" not in dark or f"{x}:" not in light]
+    check(f"webui: every direction colour is defined in both themes (missing: {no_dvar})",
+          not no_dvar)
+    gone = [w for w in ("review-btn", "showQueue", "updateReviewBtn", "queueDetail",
+                        "snap.queue", "tb.queue", "taskGateDetail") if w in app_js + index + style]
+    check(f"webui: the review queue is gone from the cockpit ({gone})", not gone)
+    gone = [w for w in ("awaiting your acceptance", "task accept", "pending_gate", "t.accepted",
+                        "awaiting the PI", "null_approved", "VERDICTS", "n.verdict")
+            if w in app_js]
+    check(f"webui: no acceptance badge or verdict reading survives ({gone})", not gone)
+    check("webui: the overview replaces the queue as the empty-selection pane",
+          "function overviewDetail" in app_js and 'id="overview-btn"' in index
+          and "overviewDetail()" in fn_src("renderDetail"))
+    fsec = fn_src("findingsSection")
+    check("webui: findings are listed in the node pane, not drawn as tree nodes",
+          bool(fsec) and "findingsSection(n)" in fn_src("questionDetail")
+          and "findingsSection(n)" in fn_src("ideaDetail")
+          and "finding" not in fn_src("layout"))
+    check("webui: a question finding shows its answer and no direction; a hypothesis "
+          "finding shows its direction",
+          "f.answer" in fsec and "f.direction" in fsec and 'n.type === "idea"' in fsec)
+    check("webui: the finding that decides the state is marked",
+          "state_finding" in fsec)
+    check("webui: a finding's evidence links open through the read-only file route",
+          "f.evidence" in fsec and "fileUrl(" in app_js.split("function evidenceLink")[1][:900]
+          if "function evidenceLink" in app_js else False)
+    check("webui: a parked node says so in the pane", "parked" in fn_src("stateBadges"))
+    # ruling Q9: a pre-4.0 vault is shown as-is, under a banner, and never migrated here
+    check("webui: the not-migrated banner exists and reads the serve-side flag",
+          'id="migrate-banner"' in index and "snap.migration" in app_js
+          and "not migrated yet" in app_js and "any crux write command migrates it" in app_js)
 
 
 def run_economy():
@@ -3339,7 +3489,8 @@ def run_rd_gui():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("RD GUI", root)
     q1, _ = E.cmd_ask(root, "a question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hypothesis", parent=q1, verifiables=["x"],
+                                 expect="x")
 
     snap = E.snapshot(root)
     check("rdgui: snapshot reports an inactive RD layer",
@@ -4580,9 +4731,11 @@ def run_cockpit_evidence():
     E.cmd_init("Cockpit Evidence", root)
     q1, _ = E.cmd_ask(root, "does the cockpit narrate it?")
     h1, _, _ = E.cmd_hypothesize(root, "drifted", parent=q1, rule="m-of-n", rule_m=2,
-                                 verifiables=["alpha", "beta"], neutral=["the control"])
+                                 verifiables=["alpha", "beta"], neutral=["the control"],
+                                 expect="alpha and beta both hold")
     h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1, rule="all",
-                                 verifiables=["alpha"], neutral=["the control"])
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 expect="alpha holds")
     declare_null(root, h2)
     declare_null(root, h1)
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
@@ -4590,9 +4743,13 @@ def run_cockpit_evidence():
     edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
                               "- [x] [outcome-neutral] the control")
     edit(node_path(root, h1), "- [ ] beta", "- [x] a check nobody registered")   # -> DRIFT
-    edit(node_path(root, h2), "- [x] alpha", "- [x] alpha")
     edit(node_path(root, h2), "- [ ] alpha", "- [x] alpha")
-    E.cmd_close(root, h1); E.cmd_close(root, h2)
+    write(os.path.join(root, E.RESULTS_DIR, h1, "report.md"), "# run\n")
+    E.cmd_finding(root, h1, "strong", why="alpha cleared the bar", direction="supports",
+                  evidence=[f"{E.RESULTS_DIR}/{h1}/report.md"], null="ruled-out",
+                  vs_expect="as expected", verifiables="2 of 2")
+    E.cmd_finding(root, h2, "weak", why="the control failed", direction="no-answer-yet")
+    E.cmd_finding(root, q1, "moderate", answer="Mostly yes.")
     snap = E.snapshot(root)
     idea = snap["nodes"][h1]
 
@@ -4603,41 +4760,50 @@ def run_cockpit_evidence():
         "tally",                       # redundant: `verifiables` carries kind+state per item
         "schema",                      # the boundary is narrated by its ABSENCE of rule/kind
         "words",                       # already surfaced by economyBadge()
+        "status",                      # spec 19 (Q14): no longer read; the state replaces it
     }
     def referenced(key):
         return any(p in app_js for p in (f'"{key}"', f".{key}", f"['{key}']"))
     unrendered = sorted(k for k in idea if k not in NOT_RENDERED and not referenced(k))
     check(f"webui: every published idea field is consumed by the cockpit (missing: {unrendered})",
           not unrendered)
+    qn = snap["nodes"][q1]
+    unrendered = sorted(k for k in qn if k not in NOT_RENDERED and not referenced(k))
+    check(f"webui: every published question field is consumed by the cockpit "
+          f"(missing: {unrendered})", not unrendered)
     vitem = idea["verifiables"][0]
     vmissing = sorted(k for k in vitem if f'v.{k}' not in app_js and f'"{k}"' not in app_js)
     check(f"webui: every published verifiable field is consumed (missing: {vmissing})",
           not vmissing)
+    # spec 19: the same parity guard, one level down — every field a finding publishes
+    fitem = idea["findings"][0]
+    fmissing = sorted(k for k in fitem if k not in ("id", "parent")
+                      and f"f.{k}" not in app_js)
+    check(f"webui: every published finding field is consumed (missing: {fmissing})",
+          not fmissing)
 
-    # ---- the three findings, each asserted directly
+    # ---- the three spec-15 narrations, each asserted directly — they survive 4.0, because
+    # the null, the rule and the checks survive as optional sections
     check("webui: the drift flag is rendered",
           "drift" in app_js and "n.drift" in app_js)
     check("webui: drift is called drift in the UI, not something softer",
-          "drift" in re.sub(r"//.*", "", app_js).lower().split("badges +=")[-1][:0] + "drift"
-          and 'class="badge drift"' in app_js)
-    check("webui: the combination rule is rendered beside the verdict",
+          'class="badge drift"' in app_js)
+    check("webui: the combination rule is rendered",
           "n.rule" in app_js and "rule_m" in app_js)
     check("webui: whether the commitment was pre-registered is rendered",
           "lock_at" in app_js and "n.locked" in app_js)
     check("webui: an outcome-neutral verifiable is marked in the pane",
           "v.kind" in app_js and "outcome-neutral" in app_js)
+    check("webui: the expectation is rendered in the hypothesis pane",
+          "n.expect" in app_js.split("function ideaDetail")[1].split("\nfunction ")[0])
 
-    # ---- a drifted node must be distinguishable in the TREE, not only in the pane. The
-    # PLATO failure is a reader skimming past a node and never opening it, so a flag that
-    # only exists in the detail pane is a flag that did nothing.
+    # ---- a drifted node must be distinguishable in the TREE, not only in the pane
     svg = app_js.split("function nodeSVG")[-1][:4000]
     check("webui: the tree renderer emits a drift mark on the node",
           "n.drift" in svg and "drift-mark" in svg and "drifted" in svg)
     check("webui: the drift mark is styled in the stylesheet",
           ".box.drifted" in style and ".drift-mark" in style)
-    check("webui: drift is drawn WITHOUT overriding the verdict fill",
-          # the two facts are orthogonal — "what was concluded" and "was the commitment
-          # edited" must stay separately readable, so drift takes the stroke, not the fill
+    check("webui: drift is drawn WITHOUT overriding the state fill",
           "fill" not in style.split(".box.drifted")[1].split("}")[0])
     check("webui: a drift flip repaints the node in the in-place recolor path",
           'n.drift ? "D"' in app_js)
@@ -4645,23 +4811,48 @@ def run_cockpit_evidence():
     # ---- any new colour must exist in BOTH themes (the rule the legend guard already applies)
     _blk = lambda sel: (re.search(sel + r"\s*\{(.*?)\n\}", style, re.S | re.M) or [None, ""])[1]
     dark, light = _blk(r"^:root"), _blk(r'^:root\[data-theme="light"\]')
-    newvars = sorted(set(re.findall(r"var\((--drift[a-z-]*)\)", app_js + style)))
+    newvars = sorted(set(re.findall(r"var\((--(?:drift|s|c|d)-[a-z-]*)\)", app_js + style)))
     unstyled = [v for v in newvars if f"{v}:" not in dark or f"{v}:" not in light]
-    check(f"webui: every new drift colour is defined in both themes (missing: {unstyled})",
-          not unstyled)
+    check(f"webui: every state/confidence/direction/drift colour is defined in both themes "
+          f"(missing: {unstyled})", bool(newvars) and not unstyled)
 
     # ---- and the engine still publishes what the cockpit now claims to read
-    check("webui: the fixture really carries drift, a rule, and an outcome-neutral check",
+    check("webui: the fixture carries drift, a rule, a control, and the 4.0 fields",
           idea["drift"] is True and idea["rule"] == "m-of-n" and idea["rule_m"] == 2
           and any(v["kind"] == "outcome-neutral" for v in idea["verifiables"])
-          and snap["nodes"][h2]["verdict"] == "invalid-run")
-    # 15.6 itself bumped nothing: it was webui-only, and at its own tip this read
-    # `== "1.9"`. That is the literal-equality form this file documents as expiring on the
-    # next PRD — spec 08 stacks on top and takes the engine to 2.x, so the claim is kept as
-    # the floor it was always making. What 15.6 guarantees is that the cockpit needs no
-    # engine support beyond 1.9, which the field checks above prove directly.
-    check("webui: the cockpit narration needs no engine support past 1.9",
-          at_least_version("1.9"))
+          and idea["state"] == "settled" and idea["confidence"] == "strong"
+          and snap["nodes"][h2]["state"] == "open" and qn["state"] == "leaning")
+
+    # ---- spec 19 (C5): the generated views carry the state and the confidence, and no
+    # review section — the gate they reported no longer exists
+    import render as R
+    E.cmd_park(root, h2)
+    v = E.Vault(root)
+    meta, exps = R.render_meta(v), R.render_experiments(v)
+    check("views: META.md names every node's state",
+          all(f"`{nid}`" in meta for nid in (q1, h1, h2))
+          and "*settled*" in meta and "*leaning*" in meta and "*parked*" in meta)
+    check("views: META.md names the confidence beside the state",
+          "strong" in meta and "moderate" in meta)
+    check("views: META.md has no review section",
+          "review" not in meta.lower() and "Awaiting your decision" not in meta)
+    check("views: META.md's dashboard counts by state and confidence, not by verdict",
+          "**Questions**" in meta and "settled" in meta.split("## Dashboard")[1]
+          and "**Confidence**" in meta and "Verdicts" not in meta)
+    hdr = next((l for l in exps.splitlines() if l.startswith("| id ")), "")
+    cols = [c.strip() for c in hdr.strip("|").split("|")]
+    check(f"views: EXPERIMENTS.md has state and confidence columns ({cols})",
+          cols[3:6] == ["state", "confidence", "direction"] and "status" not in cols
+          # the one verdict column left is history, named as such (run_combination_rule
+          # reads a recorded pre-15 partial from it)
+          and [c for c in cols if "verdict" in c] == ["pre-4.0 verdict"])
+    row = next((l for l in exps.splitlines() if l.startswith(f"| `{h1}`")), "")
+    check("views: a hypothesis row carries its state, confidence and direction",
+          "| settled |" in row and "| strong |" in row and "| supports |" in row)
+    row2 = next((l for l in exps.splitlines() if l.startswith(f"| `{h2}`")), "")
+    check("views: a parked hypothesis says parked", "| parked |" in row2)
+    check("views: both views stay byte-stable",
+          R.render_meta(E.Vault(root)) == meta and R.render_experiments(E.Vault(root)) == exps)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -4851,7 +5042,7 @@ def run_task_gui():
     tb = snap["tasks"]
     check("ui: snapshot exposes the tasks block",
           set(tb) == {"active", "categories", "reserved_category", "conclusions",
-                      "items", "frontier", "queue"} and tb["active"] is True)
+                      "items", "frontier"} and tb["active"] is True)
     by = E.task_by_id(root)
     check("ui: snapshot's frontier and state match the engine",
           tb["frontier"] == [t["id"] for t in E.task_frontier(root)]
@@ -4885,9 +5076,9 @@ def run_task_gui():
     E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
     E.cmd_task_done(root, t2, outputs=[f"[[{q}]]"])
     tb = E.snapshot(root)["tasks"]
-    check("ui: the acceptance queue reaches the snapshot",
-          [x["id"] for x in tb["queue"]] == [t2]
-          and tb["queue"][0]["hypothesis_refs"][0]["conclusion"] == "supported")
+    # spec 19: no task waits for the PI any more — there is no queue to publish
+    check("ui: no acceptance queue reaches the snapshot",
+          "queue" not in tb and not any(i.get("pending_gate") for i in tb["items"]))
 
     # -- the webui must know every tab, category colour and conclusion the engine can emit.
     #    Derived from the constants rather than hand-listed, which is the one thing that made
@@ -5010,7 +5201,13 @@ def run_task_gui():
           and "experiments" not in re.search(r"NOT_RENDERED = \{(.*?)\}",
                                              read(os.path.join(HERE, "selftest.py")), re.S).group(1))
     check("ui: a conclusion is narrated as concluded, never as a verdict",
-          "concluded" in ui and "derived by the engine from the ticks" in ui)
+          "concluded" in ui and "comes from its findings" in ui and "verdict" not in
+          ui.split("function experimentsSection")[1].split("\nfunction ")[0])
+    check("ui: no acceptance badge in the task row, the task pane or the experiments list",
+          not any(w in ui.split("function taskRow")[1].split("\nfunction ")[0]
+                  + ui.split("function taskDetail")[1].split("\nfunction ")[0]
+                  + ui.split("function experimentsSection")[1].split("\nfunction ")[0]
+                  for w in ("accept", "pending", "awaiting")))
 
     # ---- INTERSECTION: 15.6 narrates drift/rule/kind on the node; 08.4 adds backlinks to
     # the same pane. ONE node carrying both is the exact overlap, so it gets its own fixture.
@@ -5018,7 +5215,8 @@ def run_task_gui():
     E.cmd_init("Both", both, goal="g")
     bq, _ = E.cmd_ask(both, "does narration coexist with backlinks?")
     bh, _, _ = E.cmd_hypothesize(both, "it does", parent=bq, rule="all",
-                                 verifiables=["alpha"], neutral=["the control"])
+                                 verifiables=["alpha"], neutral=["the control"],
+                                 expect="alpha holds")
     declare_null(both, bh)
     E.cmd_test(both, bh, to="running")
     edit(node_path(both, bh), "- [ ] alpha", "- [x] a check nobody registered")   # -> DRIFT
@@ -5030,13 +5228,10 @@ def run_task_gui():
           bn["drift"] is True and bn["rule"] == "all"
           and [x["task"] for x in bn["experiments"]] == [be]
           and any(v["kind"] == "outcome-neutral" for v in bn["verifiables"]))
-    # ---- INTERSECTION: drift is now narrated in TWO places, answering two questions —
-    # "this claim's commitment moved" (15.6, the node) and "do you accept this run" (08.3,
-    # the queue). Both must survive; neither replaces the other.
-    tq = E.snapshot(both)["tasks"]["queue"]
-    check("ui: queue drift survives 15.6's node-pane narration",
-          [x["id"] for x in tq] == [be] and tq[0]["drifted"] == [bh]
-          and E.lock_drift(E.Vault(both).get(bh)))
+    # ---- spec 19: the queue that once narrated drift a second time is gone; drift is
+    # narrated once, on the node, and the task block carries no queue to hold it
+    check("ui: drift lives on the node now that the acceptance queue is gone",
+          "queue" not in E.snapshot(both)["tasks"] and E.lock_drift(E.Vault(both).get(bh)))
     shutil.rmtree(both, ignore_errors=True)
 
     # -- a vault with no tasks/ : present, inert, and the tab hides itself
@@ -5045,7 +5240,7 @@ def run_task_gui():
     ptb = E.snapshot(plain)["tasks"]
     check("taskmig: snapshot on a pre-08 vault has an inactive tasks block",
           ptb["active"] is False and ptb["items"] == [] and ptb["frontier"] == []
-          and ptb["queue"] == [] and set(ptb) == set(tb))
+          and set(ptb) == set(tb))
     shutil.rmtree(plain, ignore_errors=True)
 
     fx = tempfile.mkdtemp(prefix="crux_taskui_fx_")
