@@ -7,16 +7,13 @@ Root: [[demo_candi]]
 ## Question tree
 
 - ○ `q1` [Q] [[q1_can_jepa_pretraining_improve_candi|**Can JEPA pretraining improve CANDI?**]] — *open*
-  - ◐ `q2` [Q] [[q2_how_to_design_the_jepa_encoder|**How to design the JEPA encoder?**]] — *review*
-    - ✓ `h1` [H] [[h1_masked_token_beats_masked_stem|masked-token beats masked-stem]] — *done* — _supported_ (`imp +0.012`)
-    - ✓ `h2` [H] [[h2_post_conv_film_beats_per_conv|post_conv FiLM beats per_conv]] — *done* — _partial_ (`imp +0.003`)
+  - ◐ `q2` [Q] [[q2_how_to_design_the_jepa_encoder|**How to design the JEPA encoder?**]] — *leaning* · moderate
+    - ● `h1` [H] [[h1_masked_token_beats_masked_stem|masked-token beats masked-stem]] — *settled* · strong · supports (`imp +0.012`)
+    - ◐ `h2` [H] [[h2_post_conv_film_beats_per_conv|post_conv FiLM beats per_conv]] — *leaning* · weak · mixed (`imp +0.003`)
 
 ## Dashboard
 
-- **Questions** (2): open 1 · review 1 · resolved 0
-- **Hypotheses** (2): idea 0 · staged 0 · running 0 · done 2
-- **Verdicts**: supported 1 · partial 1 · refuted 0 · inconclusive 0 · invalid-run 0
-
-## ⚠ Awaiting your decision (`review`)
-
-- `q2` [[q2_how_to_design_the_jepa_encoder|How to design the JEPA encoder?]]
+- **Questions** (2): open 1 · leaning 1 · settled 0 · parked 0
+- **Hypotheses** (2): open 0 · leaning 1 · settled 1 · parked 0
+- **Confidence**: weak 1 · moderate 1 · strong 1
+- **Findings**: 2

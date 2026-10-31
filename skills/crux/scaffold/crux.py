@@ -191,7 +191,7 @@ def main(argv=None):
                    help="a link under results/ or tasks/ (repeatable)")
     s.add_argument("--null", default=None,
                    help="was the null ruled out? ruled-out | not-ruled-out | none — a null not "
-                        "ruled out caps confidence at weak")
+                        "ruled out caps a supports finding at weak")
     s.add_argument("--vs-expect", dest="vs_expect", default=None,
                    help="how the result compared with the expectation")
     s.add_argument("--verifiables", default=None,
@@ -522,7 +522,9 @@ def _dispatch_auto(a):
         print(f"hours: {res['elapsed_hours']:.3f} elapsed of {res['budget_hours']:g} "
               f"\u00b7 {res['attempts_per_hour']} attempts/hour")
         for r in res["attempts"][-5:]:
-            print(f"  {r['n']}  {r['id'] or DASH}  {r['status']}  {r['score']}")
+            fnd = (f"{r['finding']} {r['direction'] or DASH} · {r['confidence'] or DASH}"
+                   if r.get("finding") else DASH)
+            print(f"  {r['n']}  {r['id'] or DASH}  {r['status']}  {r['score']}  → {fnd}")
         stop = res.get("stop")
         print(f"stop: {stop.get('reason')} \u2014 {stop.get('detail') or ''}" if stop
               else ("live" if res["live"] else "stop: none, and no line for a while"))
@@ -752,6 +754,7 @@ def dispatch(a):
                           "state": st["state"], "confidence": st["confidence"]})
         print(f"✓ {fid} on {a.parent}  ({fn}) → {a.parent} {st['state']}"
               + (f" · {st['confidence']}" if st["confidence"] else ""))
+        print(E.chat_handle(fid, v.get(fid).title))
         if note:
             print(f"  ⚠ {note}", file=sys.stderr)
     elif c in ("park", "shelve"):

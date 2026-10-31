@@ -461,6 +461,36 @@ def _install_tests(check, tmp):
           os.path.lexists(os.path.join(ag, "other-agent.md"))
           and os.path.isfile(os.path.join(ag, "crux-mine.md")))
 
+    # ---- evolve-crux's own agents (crux-tests builds crux, not research: spec 19 decision 9)
+    #      are linked flat beside the roster. A scratch copy of the repo carries a stub, so
+    #      the assert holds whether or not this checkout ships the file yet.
+    def scratch_repo(name, with_agents):
+        r = os.path.join(tmp, name)
+        os.makedirs(os.path.join(r, "skills", "evolve-crux"))
+        shutil.copy(os.path.join(REPO, "install.sh"), r)
+        os.symlink(os.path.join(REPO, "skills", "crux"), os.path.join(r, "skills", "crux"))
+        _write(os.path.join(r, "skills", "evolve-crux", "SKILL.md"), "stub\n")
+        if with_agents:
+            _write(os.path.join(r, "skills", "evolve-crux", "agents", "crux-tests.md"), "stub\n")
+        return r
+    for name, with_agents in (("irepo", True), ("irepo_bare", False)):
+        r = scratch_repo(name, with_agents)
+        sk2, ag2, home2 = (os.path.join(tmp, name + x) for x in ("_sk", "_ag", "_home"))
+        env2 = dict(env, SKILLS_DIR=sk2, AGENTS_DIR=ag2, HOME=home2)
+        rs2 = [subprocess.run(["bash", os.path.join(r, "install.sh")], env=env2,
+                              capture_output=True, text=True) for _ in range(2)]
+        link = os.path.join(ag2, "crux-tests.md")
+        if with_agents:
+            check("capture: install.sh links evolve-crux's crux-tests.md, idempotently on a "
+                  "second run",
+                  all(x.returncode == 0 for x in rs2) and os.path.islink(link)
+                  and os.path.realpath(link) == os.path.realpath(
+                      os.path.join(r, "skills", "evolve-crux", "agents", "crux-tests.md"))
+                  and "crux-tests" not in rs2[1].stderr)
+        else:
+            check("capture: ... and is a no-op when evolve-crux ships no agents folder",
+                  all(x.returncode == 0 for x in rs2) and not os.path.lexists(link))
+
 
 def run_all(check):
     tmp = os.path.realpath(tempfile.mkdtemp(prefix="crux_capture_"))

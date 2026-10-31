@@ -106,7 +106,7 @@ Everything this project has to **do**. A task is an action; a claim about the wo
 
 ## Experiment timeline
 
-_Tasks whose output is evidence. The conclusion is what the run showed and was accepted; a hypothesis's own verdict is derived by the engine from its ticks and lives on the node._
+_Tasks whose output is evidence. The conclusion is what the run showed; a hypothesis's own state comes from its findings and lives on the node._
 
 - `t161` Break the runs up and time the built-in sort again — *blocked* — [[h104_breaking_the_runs_up_removes_the_built_i\|h104]] → **supported**
 - `t162` Run counting sort and radix sort against the built-in sort — *blocked* — [[h75_counting_sort_beats_the_built_in_sort_on\|h75]] → **supported**, [[h76_radix_sort_beats_the_built_in_sort_on_fi\|h76]] → **inconclusive**
