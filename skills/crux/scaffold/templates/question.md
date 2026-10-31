@@ -4,8 +4,6 @@ type: question
 schema: <<schema>>
 title: <<title>>
 parent: <<parent_id>>
-status: open
-stale: false
 created: <<now>>
 updated: <<now>>
 ---
@@ -31,10 +29,6 @@ _(one paragraph: what this asks, and what would settle it)_
 <!-- optional (engine 1.4 / spec 11): the pre-registered rules — endpoints, arms, thresholds,
      scope — fixed BEFORE any run. `crux deck` surfaces this as the pre-registration note. -->
 _(optional: the pre-registered rules — endpoints, thresholds, scope — locked before any run)_
-
-## Answer so far
-
-_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_
 
 <<ledger_start>>
 _(no children yet)_

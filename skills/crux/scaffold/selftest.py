@@ -10,7 +10,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
 import render as R
-import selftest_auto
 
 # the suite prints → ⚠ ✓ and vault text; a cp1252 console would raise on the first one
 if hasattr(sys.stdout, "reconfigure"):
@@ -104,98 +103,69 @@ def run_demo(keep_dir=None):
     check("ask: Parent:: wikilink", f"Parent:: [[{v.get(q1).basename}]]" in read(v.get(q11)["path"]))
     check("ask: META lists q1", q1 in read(os.path.join(root, "META.md")))
 
-    # 3. hypothesize two leaves with 2 verifiables each
+    # 3. hypothesize two leaves; each states its expectation first (spec 19)
     h1, _, _ = E.cmd_hypothesize(root, "masked-token beats masked-stem", parent=q11, rule="all",
                                  neutral=["the published stem baseline reproduces to ±0.005"],
-                              verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"])
-    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11, rule="all",
-                                 neutral=["the shared preprocessing pass reproduces the reference checksum"],
-                              verifiables=["imp-Spearman ≥ +0.005 vs per_conv", "calibration not worse"])
+                                 verifiables=["imp-Spearman ≥ +0.01 vs stem", "no NaN over 5 eval epochs"],
+                                 expect="masked-token gains at least +0.01 Spearman over masked-stem")
+    h2, _, _ = E.cmd_hypothesize(root, "post_conv FiLM beats per_conv", parent=q11,
+                                 expect="post_conv FiLM gains at least +0.005 over per_conv")
     check("hypothesize: h1 under q1.1", E.Vault(root).get(h1).parent == q11)
     check("hypothesize: 2 claim-directed verifiables + 1 control",
           E.count_verifiables_by_kind(read(node_path(root, h1)))
           == {"hypothesis": (0, 2, 0), "outcome-neutral": (0, 1, 0)})
+    check("hypothesize: h2 has no verifiables, and that is allowed",
+          sum(E.count_verifiables(read(node_path(root, h2)))) == 0)
+    expect_error("hypothesize: no expectation is refused",
+                 lambda: E.cmd_hypothesize(root, "temp bad idea", parent=q11))
 
-    # 4. NEGATIVE: running without verifiables is rejected (on a stripped idea)
-    h_bad, _, _ = E.cmd_hypothesize(root, "temp bad idea", parent=q11)
-    bp = node_path(root, h_bad)
-    edit(bp, "- [ ] _(state a falsifiable, pre-registered check)_", "(verifiables removed)")
-    expect_error("validator: no running without verifiables", lambda: E.cmd_test(root, h_bad, to="running"))
-    os.remove(bp); E.refresh(root)  # discard the throwaway idea
-
-    # 5. test transitions
-    E.cmd_test(root, h1, to="staged")
-    check("test: h1 staged", E.Vault(root).get(h1).status == "staged")
-    declare_null(root, h1)
+    # 4. test records run links and never refuses
     E.cmd_test(root, h1, to="running", run="job 40012")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
-    check("test: h1 running", E.Vault(root).get(h1).status == "running")
     check("test: run link recorded", "job 40012" in read(node_path(root, h1)))
     # REGRESSION: a second --run must APPEND, not vanish. The insert used to be decided by a
     # whole-body `_(none yet)_` probe, so the moment a second section shipped with a
     # placeholder of its own (## Artifacts), every run link after the first was silently
     # dropped — no error, and the CLI still printed success.
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running", run="job 40013")
     links = E._run_links(read(node_path(root, h1)).split("---", 2)[-1])
     check("test: a second --run appends rather than dropping the link",
           links == ["job 40012", "job 40013"])
     check("test: the Artifacts placeholder is untouched by a run link",
           "## Artifacts" in read(node_path(root, h1)))
-    declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
+    check("test: a hypothesis with no checks runs without refusal",
+          E.derive_state(E.Vault(root), h2)["state"] == "open")
 
-    # 6. close: h1 all-met -> supported ; h2 one-unmet -> refuted.
-    #    Under evidence semantics (1.8) a declared `all` makes one unmet a veto, so this is
-    #    `refuted` where the pre-15 engine returned `partial`. A pre-15 node still gets
-    #    `partial` — asserted in run_combination_rule against the captured truth table.
-    edit(node_path(root, h1), "- [ ]", "- [x]")               # all met
-    v1 = E.cmd_close(root, h1, metric="imp +0.012")
-    check("close: h1 supported", v1 == "supported")
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)       # exactly one met
-    v2 = E.cmd_close(root, h2, metric="imp +0.003")
-    check("close: h2 refuted under a declared `all` rule (pre-15 this was `partial`)",
-          v2 == "refuted")
-    check("close: verdict in frontmatter", E.Vault(root).get(h1)["fm"]["verdict"] == "supported")
+    # 5. findings: h1 strong supports -> settled; h2 moderate against -> leaning
+    E.cmd_finding(root, h1, "strong", why="+0.012 Spearman over 5 seeds, control reproduced",
+                  direction="supports", null="ruled-out")
+    E.cmd_finding(root, h2, "moderate", why="+0.003, under the expected +0.005",
+                  direction="against")
+    v = E.Vault(root)
+    check("finding: h1 settled · strong",
+          (E.derive_state(v, h1)["state"], E.derive_state(v, h1)["confidence"]) == ("settled", "strong"))
+    check("finding: h2 leaning · moderate",
+          (E.derive_state(v, h2)["state"], E.derive_state(v, h2)["confidence"]) == ("leaning", "moderate"))
 
-    # 7. ledger roll-up walks up to the question + META
+    # 6. ledger roll-up walks up to the question + META
     q11_text = read(node_path(root, q11))
-    check("ledger: q1.1 shows supported", "supported" in q11_text and h1 in q11_text)
-    check("ledger: q1.1 shows metric", "imp +0.012" in q11_text)
-    check("ledger: META reflects verdicts", "supported" in read(os.path.join(root, "META.md")))
+    check("ledger: q1.1 shows h1 settled", "settled" in q11_text and h1 in q11_text)
+    check("ledger: META lists the hypotheses", h1 in read(os.path.join(root, "META.md")))
+    check("roll-up: q1.1 reads its children's strongest finding, capped at moderate",
+          E.derive_state(v, q11)["confidence"] == "moderate")
+    check("roll-up: q1 does not count its sub-question", E.derive_state(v, q1)["state"] == "open")
 
-    # 8. gate trips review when all children terminal; interpretation flagged stale
-    check("gate: q1.1 -> review", E.Vault(root).get(q11).status == "review")
-    check("gate: q1.1 stale flagged", E.Vault(root).get(q11)["fm"]["stale"] is True)
-    check("review: queue lists q1.1", q11 in [x[0] for x in E.cmd_review(root)])
+    # 7. a question is answered by a finding on it; a dropped one is parked
+    E.cmd_finding(root, q11, "strong", answer="mask_token is the load-bearing knob; FiLM placement is noise.")
+    check("answer: q1.1 settled by its own finding", E.derive_state(E.Vault(root), q11)["state"] == "settled")
+    E.cmd_park(root, h2)
+    check("park: h2 parked", E.derive_state(E.Vault(root), h2)["state"] == "parked")
 
-    # 9a. answer (resolve) is GATED on an approved synthesis (ENGINE 1.2), then propagates:
-    #     q1.1 resolved -> q1 trips review
-    expect_error("gate: answer refused without a synthesis",
-                 lambda: E.cmd_answer(root, q11, text="premature"))
-    syn, _ = E.cmd_synthesize(root, "what q1.1 settled", [q11])
-    expect_error("gate: answer refused while the synthesis is unapproved",
-                 lambda: E.cmd_answer(root, q11, text="still premature"))
-    E.cmd_approve(root, syn)
-    check("gate: approve stamps a timestamp", bool(E.Vault(root).get(syn)["fm"].get("approved")))
-    E.cmd_answer(root, q11, text="mask_token is the load-bearing knob; FiLM placement is noise.")
-    check("gate: resolved question records its synthesis",
-          E.Vault(root).get(q11)["fm"].get("synthesis") == syn)
-    check("answer: q1.1 resolved", E.Vault(root).get(q11).status == "resolved")
-    check("answer: stale cleared", E.Vault(root).get(q11)["fm"]["stale"] is False)
-    check("answer: propagates -> q1 review", E.Vault(root).get(q1).status == "review")
-
-    # 9b. pursue (reopen) + spawn a fresh child
-    new = E.cmd_pursue(root, q11, idea_title="try mask_token + larger encoder")
-    check("pursue: q1.1 reopened", E.Vault(root).get(q11).status == "open")
-    check("pursue: spawned a child", new is not None and E.Vault(root).get(new[0]).parent == q11)
-
-    # 10. idempotency: re-running refresh changes nothing
+    # 8. idempotency: re-running refresh changes nothing
     check("idempotent: refresh #1 no-op", E.refresh(root) is False)
     check("idempotent: refresh #2 no-op", E.refresh(root) is False)
 
-    # 12. EXPERIMENTS.md has a row per hypothesis
+    # 9. EXPERIMENTS.md has a row per hypothesis
     exp = read(os.path.join(root, "EXPERIMENTS.md"))
     check("experiments: h1 row", h1 in exp)
     check("experiments: h2 row", h2 in exp)
@@ -481,7 +451,8 @@ def run_integrity():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Integrity", root)
     q1, _ = E.cmd_ask(root, "root q")
-    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"],
+                                 expect="x holds")
     check("integrity: clean baseline", E.cmd_validate(root) == [])
     # bad parent
     edit(node_path(root, h1), f"parent: {q1}", "parent: q999")
@@ -517,32 +488,26 @@ def run_snapshot():
         shutil.rmtree(root, ignore_errors=True)
         return
 
-    # a vault with a nested question, two closed hypotheses, and a synthesis
+    # a vault with a nested question, two hypotheses carrying findings, and a question finding
     E.cmd_init("Snap", root, goal="Test the snapshot contract.")
     q1, _ = E.cmd_ask(root, "Q one")
     q2, _ = E.cmd_ask(root, "Q two", parent=q1)
     h1, _, _ = E.cmd_hypothesize(root, "h one", parent=q2, verifiables=["a", "b"],
-                                 neutral=["control"], rule="all")
+                                 neutral=["control"], rule="all", expect="a and b both hold")
     h2, _, _ = E.cmd_hypothesize(root, "h two", parent=q2, verifiables=["a", "b"],
-                                 neutral=["control"], rule="all")
-    declare_null(root, h2)
-    declare_null(root, h1)
+                                 neutral=["control"], rule="all", expect="a and b both hold")
     E.cmd_test(root, h1, to="running"); E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h1), "- [ ]", "- [x]")             # both met -> supported
-    E.cmd_close(root, h1, metric="imp +0.012")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] control",
-                              "- [x] [outcome-neutral] control")   # the run was valid...
-    edit(node_path(root, h2), "- [ ]", "- [x]", count=1)     # ...one claim met -> refuted
-    E.cmd_close(root, h2, metric="imp +0.003")
-    syn, _ = E.cmd_synthesize(root, "weave one two", [q1, q2])
+    f1, _, _ = E.cmd_finding(root, h1, "strong", why="both held", direction="supports")
+    f2, _, _ = E.cmd_finding(root, h2, "moderate", why="one missed", direction="against")
+    fq, _, _ = E.cmd_finding(root, q1, "weak", answer="Leaning yes.")
 
     v = E.Vault(root)
     snap = E.snapshot(v)
 
     # -- top-level shape / serializability
-    check("snapshot: top-level keys exact",
+    check("snapshot: top-level keys exact (no `queue`; `vocab` published)",
           set(snap.keys()) == {"engine_version", "crux_version", "update", "limits",
-                               "project", "nodes", "tree", "queue", "wiki", "rd", "tasks"})
+                               "project", "nodes", "tree", "vocab", "wiki", "rd", "tasks"})
     check("snapshot: crux_version carried", snap["crux_version"] == E.CRUX_VERSION)
     check("snapshot: update block is cache-shaped (never a live fetch)",
           isinstance(snap["update"], dict) and set(snap["update"]) == {"latest", "available"}
@@ -557,52 +522,53 @@ def run_snapshot():
     check("snapshot: project id/title", snap["project"]["id"] == "root" and snap["project"]["title"] == "Snap")
     check("snapshot: accepts a root path too", E.snapshot(root)["project"]["id"] == "root")
 
-    # -- tree nesting exactly matches parent links
+    # -- tree nesting exactly matches parent links; findings ride on their parent
     def tree_ids(t):
         yield t["id"]
         for c in t["children"]:
             yield from tree_ids(c)
     ids = list(tree_ids(snap["tree"]))
-    nonsyn = {nid for nid, n in v.nodes.items() if n.type != "synthesis"}
+    tree_nodes = {nid for nid, n in v.nodes.items() if n.type != "finding"}
     check("snapshot: tree root is the project root", snap["tree"]["id"] == v.cfg["root_id"])
     check("snapshot: tree has no duplicate nodes", len(ids) == len(set(ids)))
-    check("snapshot: tree covers each parent-linked node once", set(ids) == nonsyn)
+    check("snapshot: tree covers each non-finding node once", set(ids) == tree_nodes)
     def children_match(t):
         return ([c["id"] for c in t["children"]] == v.children[t["id"]]
                 and all(children_match(c) for c in t["children"]))
     check("snapshot: tree children match v.children in order", children_match(snap["tree"]))
-    check("snapshot: synthesis in nodes but not in the tree",
-          syn in snap["nodes"] and syn not in ids)
-    check("snapshot: synthesis relates to q1,q2 in order", snap["nodes"][syn]["related"] == [q1, q2])
-
-    # -- queue == cmd_review
-    check("snapshot: queue ids == cmd_review output",
-          [r["id"] for r in snap["queue"]] == [x[0] for x in E.cmd_review(root)])
-    check("snapshot: queue is exactly [q2]", [r["id"] for r in snap["queue"]] == [q2])
-    check("snapshot: queue rows carry title + summary",
-          bool(snap["queue"][0]["title"]) and bool(snap["queue"][0]["summary"]))
+    check("snapshot: findings are neither tree nodes nor `nodes` entries",
+          not {f1, f2, fq} & set(ids) and not {f1, f2, fq} & set(snap["nodes"]))
     check("snapshot: question node surfaces its own statement ('detail')", "detail" in snap["nodes"][q2])
 
-    # -- idea nodes carry status; done ideas carry a consistent verdict + metric
-    h1n = snap["nodes"][h1]
-    met, unmet, na = E.count_verifiables(read(node_path(root, h1)))
-    check("snapshot: h1 status is done", h1n["status"] == "done")
-    check("snapshot: h1 verdict consistent with derive_verdict",
-          h1n["verdict"] == E.derive_verdict(met, unmet, na) and h1n["verdict"] in E.VERDICTS)
-    check("snapshot: h1 metric carried", h1n["metric"] == "imp +0.012")
-    check("snapshot: h2 verdict refuted", snap["nodes"][h2]["verdict"] == "refuted")
+    # -- derived state and confidence on every question and hypothesis
+    h1n, h2n = snap["nodes"][h1], snap["nodes"][h2]
+    check("snapshot: h1 settled · strong, carrying its one finding",
+          (h1n["state"], h1n["confidence"]) == ("settled", "strong")
+          and [x["id"] for x in h1n["findings"]] == [f1])
+    check("snapshot: h2 leaning · moderate, direction carried",
+          (h2n["state"], h2n["confidence"]) == ("leaning", "moderate")
+          and h2n["findings"][0]["direction"] == "against")
+    check("snapshot: q2 (no own finding) reads its children, capped at moderate",
+          (snap["nodes"][q2]["state"], snap["nodes"][q2]["confidence"]) == ("leaning", "moderate"))
+    check("snapshot: q1 is decided by its own finding",
+          (snap["nodes"][q1]["state"], snap["nodes"][q1]["confidence"]) == ("leaning", "weak")
+          and snap["nodes"][q1]["findings"][0]["answer"] == "Leaning yes.")
+    check("snapshot: every state is in the published vocabulary",
+          all(n["state"] in snap["vocab"]["states"] for n in snap["nodes"].values()
+              if n["type"] in ("question", "idea")))
+    check("snapshot: no node carries a stored verdict", not any("verdict" in n
+                                                                 for n in snap["nodes"].values()))
 
     # -- question nodes carry a ledger whose counts match ledger_block / ledger_counts
     q2n = snap["nodes"][q2]
     lc = E.ledger_counts(v, q2)
     lb = E.ledger_block(v, q2)
     check("snapshot: q2 ledger == ledger_counts", q2n["ledger"] == lc)
-    check("snapshot: q2 counts (2 children, 2 done, 1 supported, 1 refuted)",
-          lc["children"] == 2 and lc["ideas_done"] == 2 and lc["supported"] == 1
-          and lc["refuted"] == 1)
+    check("snapshot: q2 counts (2 children: 1 settled, 1 leaning)",
+          lc["children"] == 2 and lc["settled"] == 1 and lc["leaning"] == 1 and lc["open"] == 0)
     check("snapshot: ledger_counts consistent with ledger_block text",
           f"**{lc['children']} children**" in lb
-          and f"supported {lc['supported']}" in lb and f"refuted {lc['refuted']}" in lb)
+          and f"settled {lc['settled']}" in lb and f"leaning {lc['leaning']}" in lb)
 
     # -- pure read: constructing a snapshot mutates nothing on disk
     before = _dir_bytes(root)
@@ -610,11 +576,10 @@ def run_snapshot():
     check("snapshot: pure read (byte-for-byte identical vault)", _dir_bytes(root) == before)
 
     check("snapshot: source vault validates clean", E.cmd_validate(root) == [])
-    # a non-VERDICT verdict string in frontmatter must never reach the snapshot verbatim
-    # (clean data contract + defense-in-depth against attribute injection in the GUI)
-    edit(node_path(root, h1), "verdict: supported", "verdict: bogus")
-    check("snapshot: non-VERDICT verdict is clamped to None",
-          E.snapshot(E.Vault(root))["nodes"][h1]["verdict"] is None)
+    # a confidence outside the vocabulary must never decide a state (clean data contract)
+    edit(node_path(root, f1), "confidence: strong", "confidence: bogus")
+    check("snapshot: a non-vocabulary confidence never counts",
+          E.snapshot(E.Vault(root))["nodes"][h1]["state"] == "open")
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -748,77 +713,6 @@ def run_artifacts():
     check("artifacts: the servable set is the file route's allowlist, exactly",
           set(__import__("serve").FILE_TYPES) == set(E.SERVABLE_EXT))
     set_artifacts(h1, "- [Report](results/h1/report.md)\n- results/h1/curve.png")
-    shutil.rmtree(root, ignore_errors=True)
-
-
-def run_close_gate():
-    """The question close-gate (§I): a question resolves only through an APPROVED
-    synthesis, and pre-1.2 vaults that resolved questions the old way still validate."""
-    print("\n# close-gate (synthesize -> approve -> answer)")
-    root = tempfile.mkdtemp(prefix="crux_gate_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Gated", root)
-    q1, _ = E.cmd_ask(root, "the question")
-    q2, _ = E.cmd_ask(root, "another question")
-    h1, _, _ = E.cmd_hypothesize(root, "a hyp", parent=q1, verifiables=["x"], neutral=["control"])
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    edit(node_path(root, h1), "- [ ]", "- [x]")
-    E.cmd_close(root, h1)
-
-    expect_error("gate: no synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
-    s1, _ = E.cmd_synthesize(root, "s for q1", [q1])
-    expect_error("gate: unapproved synthesis -> answer refused", lambda: E.cmd_answer(root, q1))
-    # the error must be actionable: it names the approve verb
-    try:
-        E.cmd_answer(root, q1)
-        msg = ""
-    except E.CruxError as e:
-        msg = str(e)
-    check("gate: refusal names `crux approve`", "approve" in msg)
-
-    ts = E.cmd_approve(root, s1)
-    check("gate: approve returns/stamps an ISO timestamp",
-          bool(ts) and E.Vault(root).get(s1)["fm"]["approved"] == ts)
-    again = E.cmd_approve(root, s1)
-    check("gate: approve is idempotent (first timestamp stands)", again == ts)
-    expect_error("gate: approve rejects a non-synthesis id", lambda: E.cmd_approve(root, q1))
-    expect_error("gate: approve rejects an unknown id", lambda: E.cmd_approve(root, "s404"))
-
-    E.cmd_answer(root, q1, text="settled")
-    v = E.Vault(root)
-    check("gate: question resolved", v.get(q1).status == "resolved")
-    check("gate: question stamped with its synthesis", v.get(q1)["fm"]["synthesis"] == s1)
-    # the cockpit has to be able to SHOW what closed a question, so the snapshot carries the
-    # link from the question and the synthesis' own text + approval stamp
-    snap = E.snapshot(root)
-    check("gate: snapshot links the question to its synthesis",
-          snap["nodes"][q1]["synthesis"] == s1)
-    check("gate: snapshot carries the synthesis' approval stamp",
-          snap["nodes"][s1]["approved"] == ts)
-    check("gate: snapshot carries the synthesis body without the Related:: line",
-          "Headline conclusions" in snap["nodes"][s1]["body"]
-          and "Related::" not in snap["nodes"][s1]["body"])
-    check("gate: an unresolved question has no synthesis link",
-          snap["nodes"][q2]["synthesis"] is None)
-    check("gate: an approved synthesis for q1 does not unlock q2",
-          _refused(lambda: E.cmd_answer(root, q2)))
-    check("gate: gated vault validates clean", E.cmd_validate(root) == [])
-
-    # -- grandfathering: a question resolved by a pre-1.2 engine has no `synthesis:` field
-    #    and no synthesis node. It must keep its status and never be flagged.
-    old = tempfile.mkdtemp(prefix="crux_gate_old_")
-    shutil.rmtree(old); os.makedirs(old)
-    E.cmd_init("Legacy", old)
-    oq, _ = E.cmd_ask(old, "legacy question")
-    edit(node_path(old, oq), "status: open", "status: resolved")
-    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}", "engine_version: 1.1")
-    E.refresh(old)
-    check("gate: pre-1.2 resolved question keeps its status",
-          E.Vault(old).get(oq).status == "resolved")
-    check("gate: pre-1.2 resolved question is not flagged (grandfathered)",
-          E.cmd_validate(old) == [])
-    shutil.rmtree(old, ignore_errors=True)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1998,43 +1892,31 @@ def run_agent_cli():
             "-n", "the parser round-trips a known-good payload",
             "--fails-if", "the parser accepts anything", "--discriminates",
             "--fails-if", "the known-good payload was itself broken",
-            "--null", "chance — the payload happened to parse", "--json")
+            "--null", "chance — the payload happened to parse",
+            "--expect", "stdout parses as JSON", "--json")
     h1 = as_json(r)
     check("json: hypothesize emits parseable JSON", isinstance(h1, dict) and "id" in h1)
     check("json: hypothesize reports its fan-out headroom", isinstance(h1, dict) and "warning" in h1)
 
-    rn = cli("approve-null", h1["id"], "--json")
-    check("json: approve-null emits parseable JSON",
-          isinstance(as_json(rn), dict) and as_json(rn).get("null_approved"))
     r = cli("test", h1["id"], "--to", "running", "--json")
     t = as_json(r)
     check("json: test emits parseable JSON", isinstance(t, dict) and t.get("status") == "running")
 
-    edit(node_path(root, h1["id"]), "- [ ] stdout parses", "- [x] stdout parses")
-    edit(node_path(root, h1["id"]), "- [ ] [outcome-neutral]", "- [x] [outcome-neutral]")
-    r = cli("close", h1["id"], "--json")
-    cl = as_json(r)
-    check("json: close emits parseable JSON", isinstance(cl, dict) and cl.get("verdict") == "supported")
+    r = cli("finding", h1["id"], "-d", "supports", "-c", "strong", "-w", "it parsed",
+            "--null", "ruled-out", "--json")
+    fi = as_json(r)
+    check("json: finding emits parseable JSON with the derived state",
+          isinstance(fi, dict) and fi.get("state") == "settled" and fi.get("id"))
 
-    r = cli("review", "--json")
-    rv = as_json(r)
-    check("json: review emits a JSON list", isinstance(rv, list))
+    r = cli("finding", q1["id"], "-c", "moderate", "-a", "Yes, it parses.", "--json")
+    fq = as_json(r)
+    check("json: a question finding emits parseable JSON",
+          isinstance(fq, dict) and fq.get("state") == "leaning")
 
-    r = cli("synthesize", "what it settled", "--for", q1["id"], "--json")
-    sy = as_json(r)
-    check("json: synthesize emits parseable JSON", isinstance(sy, dict) and "id" in sy)
-
-    r = cli("approve", sy["id"], "--json")
-    ap = as_json(r)
-    check("json: approve emits parseable JSON", isinstance(ap, dict) and "approved" in ap)
-
-    r = cli("answer", q1["id"], "--json")
-    an = as_json(r)
-    check("json: answer emits parseable JSON", isinstance(an, dict) and an.get("status") == "resolved")
-
-    r = cli("pursue", q1["id"], "--json")
-    pu = as_json(r)
-    check("json: pursue emits parseable JSON", isinstance(pu, dict) and pu.get("status") == "open")
+    r = cli("park", h1["id"], "--json")
+    pk = as_json(r)
+    check("json: park emits parseable JSON", isinstance(pk, dict) and pk.get("state") == "parked")
+    cli("park", h1["id"], "--undo")
 
     r = cli("status", "--json")
     st = as_json(r)
@@ -3641,7 +3523,8 @@ def run_evidence_boundary():
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Boundary", root)
     q1, _ = E.cmd_ask(root, "a stamped question")
-    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"])
+    h1, _, _ = E.cmd_hypothesize(root, "a stamped hypothesis", parent=q1, verifiables=["a"],
+                                 expect="a holds")
 
     v = E.Vault(root)
     check("boundary: a new hypothesis is stamped with the current schema generation",
@@ -3665,7 +3548,8 @@ def run_evidence_boundary():
     seed = os.path.join(sd, "seed.md")
     with open(seed, "w", encoding="utf-8") as f:
         f.write("- Project: Seeded — a goal\n  - Q: a seeded question\n"
-                "    - H: a seeded hypothesis\n      - v: a check\n")
+                "    - H: a seeded hypothesis\n      - expect: the check holds\n"
+                "      - v: a check\n")
     sroot = os.path.join(sd, "vault")
     E.cmd_init_from(seed, sroot)
     sv = E.Vault(sroot)
@@ -3689,7 +3573,15 @@ def run_evidence_boundary():
     shutil.rmtree(root, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary itself
-    old, oq, oh = pre15_vault("crux_bmig_")
+    old = tempfile.mkdtemp(prefix="crux_bmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                verifiables=["first check", "second check"],
+                                expect="both checks hold")
+    _strip_schema(old)
+    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 1.5")
     check("evmig: the fixture really is unstamped",
           "schema:" not in read(node_path(old, oh)))
 
@@ -3714,11 +3606,12 @@ def run_evidence_boundary():
     # -- nothing retro-stamps. Run every read/write path there is, then re-check.
     before = fingerprint(old)
     E.refresh(old); E.cmd_validate(old); E.validation_report(old)
-    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old); E.cmd_review(old)
-    E.cmd_close(old, oh)
+    E.check_and_stamp_version(old); E.snapshot(old); E.status_text(old)
+    E.cmd_test(old, oh, to="running")
+    E.cmd_finding(old, oh, "moderate", why="both held", direction="supports")
     after_v = E.Vault(old)
-    check("evmig: no command retro-stamps an existing node",
-          all("schema" not in n["fm"] for n in after_v.nodes.values()))
+    check("evmig: no command retro-stamps an existing node (a new finding is a new node)",
+          all("schema" not in n["fm"] for n in after_v.nodes.values() if n.type != "finding"))
     shutil.rmtree(old, ignore_errors=True)
 
     # -- the captured pre-upgrade fixture: byte-identical after the version bump
@@ -3726,14 +3619,11 @@ def run_evidence_boundary():
     dst = tempfile.mkdtemp(prefix="crux_bdemo_")
     shutil.rmtree(dst); shutil.copytree(src, dst)
     f0, v0, s0 = fingerprint(dst)
-    g0 = generated_verdicts(dst)
     warn = E.check_and_stamp_version(dst)
     E.refresh(dst); E.snapshot(dst); E.cmd_validate(dst); E.status_text(dst)
     f1, v1, s1 = fingerprint(dst)
     check("evmig: pre-15 vault — every node's authored content is byte-identical after upgrade",
           f0 == f1)
-    check("evmig: pre-15 vault — no verdict is re-labelled or lost in anything generated",
-          generated_verdicts(dst) == g0)
     check("evmig: pre-15 vault — every recorded verdict is unchanged after upgrade",
           v0 == v1 and v0["h1"] == "supported" and v0["h2"] == "partial")
     check("evmig: pre-15 vault — every status is unchanged after upgrade", s0 == s1)
@@ -3828,40 +3718,26 @@ def run_verifiable_kind():
     q1, _ = E.cmd_ask(root, "a question")
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "with a control", "--parent", q1, "-v", "the claim check",
-                        "-n", "the positive control"],
+                        "-n", "the positive control", "--expect", "the claim holds"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = E.Vault(root).get("h1")
     check("kind: the CLI -n flag writes an outcome-neutral verifiable",
           r.returncode == 0 and "- [ ] [outcome-neutral] the positive control" in hc["body"]
           and "- [ ] the claim check" in hc["body"])
 
-    # -- the gate: a stamped hypothesis needs a control, or a written opt-out
-    h2, _, _ = E.cmd_hypothesize(root, "no control at all", parent=q1, verifiables=["only a claim check"])
-    expect_error("kind: running is refused with no outcome-neutral check",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    check("kind: the refusal names the opt-out route",
-          "opt-out" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
-    check("kind: validate flags a stamped node with no control and no opt-out",
-          any("outcome-neutral" in m for _, m in E.cmd_validate(root)) is False)  # not yet running
-
-    n2 = E.Vault(root).get(h2)
-    n2["fm"]["neutral_optout"] = ""
-    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
-    expect_error("kind: an empty opt-out does not unblock running",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    n2 = E.Vault(root).get(h2)
-    n2["fm"]["neutral_optout"] = "the assay IS the claim; a positive control would beg the question"
-    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"]))
-    declare_null(root, h2)
-    check("kind: a written opt-out unblocks running",
+    # -- spec 19: no gate. A control, a rule and a null are optional; running never refuses
+    h2, _, _ = E.cmd_hypothesize(root, "no control at all", parent=q1,
+                                 verifiables=["only a claim check"], expect="the claim holds")
+    check("kind: running is NOT refused with no outcome-neutral check (spec 19)",
           E.cmd_test(root, h2, to="running") == "running")
-
-    declare_null(root, "h1")
-    check("kind: a hypothesis WITH a control runs with no opt-out",
+    check("kind: validate does not flag a running node with no control and no opt-out",
+          not any("outcome-neutral" in m for _, m in E.cmd_validate(root)))
+    check("kind: a hypothesis WITH a control runs too",
           E.cmd_test(root, "h1", to="running") == "running")
 
     # -- an unknown tag is a validate problem on a stamped node
-    hb, _, _ = E.cmd_hypothesize(root, "bad tag", parent=q1, verifiables=["[banana] a check"])
+    hb, _, _ = E.cmd_hypothesize(root, "bad tag", parent=q1, verifiables=["[banana] a check"],
+                                 expect="the check holds")
     check("kind: an unknown kind tag is a validate problem",
           any(i == hb and "banana" in m for i, m in E.cmd_validate(root)))
 
@@ -3876,7 +3752,8 @@ def run_verifiable_kind():
                 "    - H: [tested] work done before crux was watching\n"
                 "      - v: [x] the check that was met\n"
                 "      - finding: it held\n"
-                "    - H: genuinely new work\n      - v: a check\n")
+                "    - H: genuinely new work\n      - expect: the check holds\n"
+                "      - v: a check\n")
     sroot2 = os.path.join(sd2, "vault")
     E.cmd_init_from(seed2, sroot2)
     sv2 = E.Vault(sroot2)
@@ -3891,7 +3768,15 @@ def run_verifiable_kind():
     shutil.rmtree(sd2, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_kmig_")
+    old = tempfile.mkdtemp(prefix="crux_kmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                verifiables=["first check", "second check"],
+                                expect="both checks hold")
+    _strip_schema(old)
+    edit(os.path.join(old, E.VAULT_MARKER), f"engine_version: {E.ENGINE_VERSION}",
+         "engine_version: 1.5")
     check("evmig: an unstamped hypothesis runs with no outcome-neutral check",
           E.cmd_test(old, oh, to="running") == "running")
     check("evmig: a pre-15 vault raises no kind problem",
@@ -4031,95 +3916,45 @@ def run_combination_rule():
     check(f"rule: partial is unreachable under evidence semantics "
           f"(reachable: {bad_partial[:2]})", not bad_partial)
 
-    # -- the roll-up and the views survive a new verdict
+    # -- spec 19: the rule is recorded and published, but it gates nothing and closes nothing
     root = tempfile.mkdtemp(prefix="crux_rule_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Rules", root)
     q1, _ = E.cmd_ask(root, "does the rule bind?")
-    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1,
-                                 verifiables=["c one", "c two"], neutral=["control"])
-    n = E.Vault(root).get(h1); n["fm"]["rule"] = "all"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
+    h1, _, _ = E.cmd_hypothesize(root, "all rule", parent=q1, rule="all",
+                                 verifiables=["c one", "c two"], neutral=["control"],
+                                 expect="both checks hold")
     edit(node_path(root, h1), "- [ ] c one", "- [x] c one")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
-    declare_null(root, h1)
-    E.cmd_test(root, h1, to="running")
-    check("rule: all with one unmet closes refuted (was partial before 1.8)",
-          E.cmd_close(root, h1) == "refuted")
-
-    h2, _, _ = E.cmd_hypothesize(root, "broken apparatus", parent=q1,
-                                 verifiables=["c one"], neutral=["control"])
-    n = E.Vault(root).get(h2); n["fm"]["rule"] = "all"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
-    edit(node_path(root, h2), "- [ ] c one", "- [x] c one")
-    declare_null(root, h2)
-    E.cmd_test(root, h2, to="running")
-    check("rule: a failed control closes invalid-run end to end",
-          E.cmd_close(root, h2) == "invalid-run")
-
-    lc = E.ledger_counts(E.Vault(root), q1)
-    check("rule: ledger_counts is generated from VERDICTS",
-          all(x in lc for x in E.VERDICTS) and lc["invalid-run"] == 1 and lc["refuted"] == 1)
-    check("rule: _ledger_summary survives a new verdict",
-          "1 invalid-run" in E._ledger_summary(lc))
-    meta = R.render_meta(E.Vault(root))
-    check("rule: the META dashboard covers the whole verdict vocabulary",
-          all(f"{x} " in meta.split("**Verdicts**")[1].split("\n")[0] for x in E.VERDICTS))
     exp = R.render_experiments(E.Vault(root))
     check("rule: EXPERIMENTS carries a rule column",
           "| rule |" in exp and "| all |" in exp)
-
     snap = E.snapshot(root)
     check("rule: snapshot exposes the combination rule",
-          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None
-          and snap["nodes"][h1]["verdict"] == "refuted")
+          snap["nodes"][h1]["rule"] == "all" and snap["nodes"][h1]["rule_m"] is None)
     check("rule: snapshot exposes the per-kind tallies",
-          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [1, 0, 0]})
-    dp = E.deck_payload(root, q1)
-    check("rule: the deck payload carries the combination rule",
-          [c["rule"] for c in dp["children"]] == ["all", "all"])
-
-    # -- the gate: a stamped multi-check hypothesis must declare how they add up
-    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1,
+          snap["nodes"][h1]["tally"] == {"hypothesis": [1, 1, 0], "outcome-neutral": [0, 1, 0]})
+    check("rule: ticks alone never move the state — only a finding does (spec 19)",
+          snap["nodes"][h1]["state"] == "open")
+    expect_error("rule: a reserved rule is still refused at creation",
+                 lambda: E.cmd_hypothesize(root, "ordered", parent=q1, rule="ordered",
+                                           verifiables=["a", "b"], expect="a then b"))
+    h3, _, _ = E.cmd_hypothesize(root, "no rule", parent=q1, expect="both hold",
                                  verifiables=["c one", "c two"], neutral=["control"])
-    expect_error("rule: running is refused with no combination rule",
-                 lambda: E.cmd_test(root, h3, to="running"))
-    h4, _, _ = E.cmd_hypothesize(root, "single check", parent=q1,
-                                 verifiables=["only one"], neutral=["control"])
-    declare_null(root, h4)
-    check("rule: a single claim-directed check needs no declaration",
-          E.cmd_test(root, h4, to="running") == "running")
-    n = E.Vault(root).get(h3); n["fm"]["rule"] = "ordered"
-    E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"]))
-    check("rule: validate refuses a reserved rule on a stamped node",
-          any("ordered" in m for _, m in E.cmd_validate(root)))
-
+    check("rule: running is NOT refused with no combination rule (spec 19)",
+          E.cmd_test(root, h3, to="running") == "running")
+    check("rule: validate raises no rule problem on a running multi-check node",
+          not any(i == h3 for i, _ in E.cmd_validate(root)))
     check("rule: ENGINE_VERSION at or past 1.8", at_least_version("1.8"))
     shutil.rmtree(root, ignore_errors=True)
 
-    # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_rmig_")
-    edit(node_path(old, oh), "- [ ] first check", "- [x] first check")
-    check("evmig: a pre-15 node closes through the LEGACY function",
-          E.cmd_close(old, oh) == "partial")
-    check("evmig: re-closing a pre-15 node still yields its legacy verdict",
-          E.cmd_close(old, oh) == "partial")
-    check("evmig: a pre-15 node needs no rule to run",
-          E.cmd_test(old, oh, to="running") == "running")
-    check("evmig: a pre-15 vault raises no rule problem", E.cmd_validate(old) == [])
-    shutil.rmtree(old, ignore_errors=True)
-
-    # the committed pre-15 fixture keeps its recorded partial through every view
+    # the committed pre-15 fixture keeps its recorded partial (history the 4.0 migration reads)
     src = os.path.join(HERE, "..", "examples", "demo_vault")
     dst = tempfile.mkdtemp(prefix="crux_rdemo_")
     shutil.rmtree(dst); shutil.copytree(src, dst)
     E.check_and_stamp_version(dst); E.refresh(dst)
     dv = E.Vault(dst)
-    check("evmig: partial survives in the vocabulary and every view",
+    check("evmig: a recorded partial survives on disk and in the experiments registry",
           dv.get("h2")["fm"]["verdict"] == "partial"
-          and E.snapshot(dst)["nodes"]["h2"]["verdict"] == "partial"
-          and "partial 1" in R.render_meta(dv)
-          and E.ledger_counts(dv, "q2")["partial"] == 1
           and "| partial |" in R.render_experiments(dv))
     shutil.rmtree(dst, ignore_errors=True)
 
@@ -4143,19 +3978,18 @@ def run_hash_lock():
         kw.setdefault("verifiables", ["alpha check", "beta check"])
         kw.setdefault("neutral", ["the control"])
         kw.setdefault("rule", "all")
+        kw.setdefault("expect", "both checks hold")
         hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
         return hid
 
     h1 = mk("locked at running")
     check("lock: an unrun hypothesis carries no lock",
           E.Vault(root).get(h1)["fm"].get("lock") is None)
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     first_lock, first_at = n["fm"].get("lock"), n["fm"].get("locked")
     check("lock: running takes the lock",
           bool(first_lock) and bool(first_at) and n["fm"].get("lock_at") == "running")
-    declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
     n = E.Vault(root).get(h1)
     check("lock: re-running never re-locks",
@@ -4211,45 +4045,31 @@ def run_hash_lock():
     check("lock: reverting the edit clears drift",
           not E.lock_drift(E.Vault(root).get(h1)) and E.cmd_validate(root) == [])
 
-    # -- the hole `running` alone leaves: cmd_close has no status precondition
-    h2 = mk("closed straight from idea")
-    declare_null(root, h2)
-    edit(node_path(root, h2), "- [ ] alpha check", "- [x] alpha check")
-    edit(node_path(root, h2), "- [ ] beta check", "- [x] beta check")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control", "- [x] [outcome-neutral] the control")
-    check("lock: closing straight from idea still yields a verdict",
-          E.cmd_close(root, h2) == "supported")
+    # -- spec 19: a hypothesis with no checks is never locked, so it stays free to gain them
+    h2 = mk("checks added later", verifiables=[], neutral=[], rule=None)
+    E.cmd_test(root, h2, to="running")
+    check("lock: running a hypothesis with no checks takes no lock",
+          E.Vault(root).get(h2)["fm"].get("lock") is None)
     n2 = E.Vault(root).get(h2)
-    check("lock: closing without running locks and marks lock_at",
-          bool(n2["fm"].get("lock")) and n2["fm"].get("lock_at") == "close")
-    check("lock: a close-time lock is a warning, not a problem",
-          any("never pre-registered" in w["message"]
-              for w in E.validation_report(root)["warnings"])
-          and E.cmd_validate(root) == [])
+    E.write_if_changed(n2["path"], E.render_doc(n2["fm"], n2["body"].replace(
+        E._VERIFIABLES_PLACEHOLDER, "- [ ] a check defined after the run started")))
+    check("lock: adding the first checks later is not drift",
+          not E.lock_drift(E.Vault(root).get(h2)) and E.cmd_validate(root) == [])
 
     # -- surfaces
     snap = E.snapshot(root)
     check("lock: snapshot exposes lock state and drift",
           snap["nodes"][h1]["locked"] is True and snap["nodes"][h1]["drift"] is False)
     edit(node_path(root, h1), "an entirely", "an entirely")  # no-op, keep the file settled
-    dp = E.deck_payload(root, q1)
-    check("lock: the deck payload exposes drift on every child",
-          all("drift" in c for c in dp["children"]))
-
     # -- D7: drift warns loudly and blocks NOTHING
     edit(node_path(root, h1), "beta   check", "a rewritten check")
     check("lock: drift is a validate problem",
           any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
-    E.cmd_close(root, h1)
-    check("lock: drift does not block close", E.Vault(root).get(h1).status == "done")
-    check("lock: review flags the question holding a drifted child",
-          any(qid == q1 and drift for qid, _, drift in E.cmd_review(root)))
-    s, _ = E.cmd_synthesize(root, "what q1 settled", [q1])
-    E.cmd_approve(root, s)
-    check("lock: drift does not block answer (the engine flags; the PI decides)",
-          E.cmd_answer(root, q1) == q1
-          and E.Vault(root).get(q1).status == "resolved")
-    check("lock: and the flag survives the answer — it is permanent",
+    E.cmd_finding(root, h1, "moderate", why="held, though a check was rewritten after the run",
+                  direction="supports")
+    check("lock: drift does not block a finding (the engine flags; the judgment reads it)",
+          E.derive_state(E.Vault(root), h1)["state"] == "leaning")
+    check("lock: and the flag survives the finding — it is permanent",
           any(i == h1 and "DRIFT" in m for i, m in E.cmd_validate(root)))
     check("lock: no verb clears a drift flag",
           not any(hasattr(E, x) for x in ("cmd_unflag", "cmd_relock", "cmd_acknowledge")))
@@ -4259,7 +4079,7 @@ def run_hash_lock():
     #    must never inherit that class of bug: it hashes lock_material(), a string built from
     #    a body that `read()` already normalized in text mode. Pinned here so a future change
     #    to byte-hashing fails loudly instead of on someone else's runner.
-    lf = E.Vault(root).get(h2)
+    lf = E.Vault(root).get(h1)
     mat_lf = E.lock_material(lf)
     crlf = dict(lf); crlf["body"] = lf["body"].replace("\n", "\r\n")
     check("lock: lock_material is newline-invariant (CRLF == LF)",
@@ -4279,8 +4099,13 @@ def run_hash_lock():
     shutil.rmtree(root, ignore_errors=True)
 
     # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_lmig_")
-    declare_null(old, oh)
+    old = tempfile.mkdtemp(prefix="crux_lmig_")
+    E.cmd_init("Legacy Evidence", old)
+    oq, _ = E.cmd_ask(old, "a pre-15 question")
+    oh, _, _ = E.cmd_hypothesize(old, "a pre-15 hypothesis", parent=oq,
+                                 verifiables=["first check", "second check"],
+                                 expect="both checks hold")
+    _strip_schema(old)
     E.cmd_test(old, oh, to="running")
     check("evmig: a pre-15 node never locks",
           E.Vault(old).get(oh)["fm"].get("lock") is None)
@@ -4389,7 +4214,11 @@ def _task_vault(prefix="crux_task_"):
 
 def run_taskhub():
     print("\n# taskhub — the task store (spec 08, PRD 08.0)")
-    root, q, h = _task_vault()
+    root = tempfile.mkdtemp(prefix="crux_task_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
 
     # -- 1. the record lands under tasks/ with an engine-allocated id
     t1, fn1 = E.cmd_task_add(root, "Dedupe the reused accessions", category="data-acquisition",
@@ -4416,7 +4245,7 @@ def run_taskhub():
     #       refresh's write set, which is the one thing spec-kit got wrong.
     before = _dir_bytes(os.path.join(root, E.TASK_DIR))
     E.refresh(root); E.cmd_validate(root); E.validation_report(root)
-    E.snapshot(root); E.status_text(root); E.cmd_review(root)
+    E.snapshot(root); E.status_text(root)
     check("task: a task file is byte-identical after every read path",
           _dir_bytes(os.path.join(root, E.TASK_DIR)) == before)
 
@@ -4520,7 +4349,11 @@ def run_taskhub():
     # -- 3. M3: every vault that exists today has no `counter_t`. The naive
     #       `v.cfg[key] += 1` raises KeyError on the FIRST task ever added after an upgrade,
     #       which is the most likely first action a user takes.
-    old, _, _ = _task_vault("crux_task_pre08_")
+    old = tempfile.mkdtemp(prefix="crux_task_pre08_")
+    E.cmd_init("Task Demo", old, goal="Ship the taskhub.")
+    _oq, _ = E.cmd_ask(old, "Can the taskhub hold months of work?")
+    _oh, _, _ = E.cmd_hypothesize(old, "one file per task survives churn", parent=_oq,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     cfg = os.path.join(old, ".crux.yaml")
     write(cfg, "\n".join(l for l in read(cfg).splitlines()
                          if not l.startswith(("counter_t", "task_categories"))) + "\n")
@@ -4549,7 +4382,7 @@ def run_taskhub():
     verdicts0 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
     E.check_and_stamp_version(dst); E.refresh(dst)          # settle spec 15's view drift
     b0 = _dir_bytes(dst)
-    E.refresh(dst); E.snapshot(dst); E.status_text(dst); E.cmd_review(dst)
+    E.refresh(dst); E.snapshot(dst); E.status_text(dst)
     rep0 = E.validation_report(dst)
     verdicts1 = {k: n["fm"].get("verdict") for k, n in E.Vault(dst).nodes.items()}
     b1 = _dir_bytes(dst)
@@ -4573,7 +4406,11 @@ def run_taskhub():
 def run_task_graph():
     import json
     print("\n# taskhub — the dependency graph and the frontier (spec 08, PRD 08.1)")
-    root, q, h = _task_vault("crux_taskdep_")
+    root = tempfile.mkdtemp(prefix="crux_taskdep_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
 
     #   t1 ─┬─> t2 ─> t3        t4 (free)      t5 blocked by a task that gets DROPPED
     #       └─> t6
@@ -4824,9 +4661,13 @@ def run_cockpit_evidence():
 
 def run_experiments():
     print("\n# taskhub — experiments are tasks (spec 08, PRD 08.2)")
-    root, q, h1 = _task_vault("crux_exp_")
+    root = tempfile.mkdtemp(prefix="crux_exp_")
+    E.cmd_init("Task Demo", root, goal="Ship the taskhub.")
+    q, _ = E.cmd_ask(root, "Can the taskhub hold months of work?")
+    h1, _, _ = E.cmd_hypothesize(root, "one file per task survives churn", parent=q,
+                                verifiables=["ids never renumber"], expect="ids never renumber")
     h2, _, _ = E.cmd_hypothesize(root, "the pilot separates the arms", parent=q,
-                                 verifiables=["separation at n=3"])
+                                 verifiables=["separation at n=3"], expect="the arms separate")
 
     # -- the whole difference between a task and an experiment is ONE field: what the output
     #    is. A task that says what it concluded about a hypothesis IS an experiment, and
@@ -4980,173 +4821,6 @@ def run_experiments():
     shutil.rmtree(fx, ignore_errors=True)
 
     check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
-    shutil.rmtree(root, ignore_errors=True)
-
-
-def run_experiment_gate():
-    print("\n# taskhub — the gating split: work never creates direction (spec 08, PRD 08.3)")
-    root, q, h1 = _task_vault("crux_gate_")
-    # h2/h3 are moved to `running` below, so they carry the outcome-neutral control spec 15
-    # requires of a stamped hypothesis — the taskhub consumes that gate, it does not bypass it
-    h2, _, _ = E.cmd_hypothesize(root, "the arm separates", parent=q, verifiables=["sep at n=3"],
-                                 neutral=["the known-good encoder reproduces 0.46"])
-    q2, _ = E.cmd_ask(root, "Does the loader matter?")
-    h3, _, _ = E.cmd_hypothesize(root, "the loader is the bottleneck", parent=q2,
-                                 verifiables=["throughput +20%"],
-                                 neutral=["the profiler reports a known baseline"])
-
-    # -- 1. an ordinary task is ACT-AND-REPORT. Ticking "fetched the antibody lot" sets no
-    #       direction, spends no compute and records no scientific result, so the PI needn't
-    #       be concerned with it — which is legal rather than a leash violation.
-    t1, _ = E.cmd_task_add(root, "Fetch the antibody lot", category="data-acquisition",
-                           blocked_by=None)
-    E.cmd_task_done(root, t1, outputs=[f"[[{q}]]"])
-    check("gate: completing a chore is not PI-gated",
-          E.cmd_task_review(root) == [] and E.task_by_id(root)[t1]["status"] == "done")
-
-    # -- 2/3. an experiment decomposes through the EXISTING parent link, and the gate fires
-    #         ONCE, on the parent — not once per sub-task. That is what keeps the layer's
-    #         founding promise (view it, never manage it) intact after the merge.
-    e1, _ = E.cmd_task_add(root, "Run the pilot", category="implementation", blocked_by=None,
-                           hypothesis_refs=[(h1, "supported"), (h3, "refuted")])
-    for i, sub in enumerate(("Acquire the data", "Implement the arm", "Make the figures")):
-        s, _ = E.cmd_task_add(root, sub, category="implementation", blocked_by=None, parent=e1)
-        E.cmd_task_done(root, s, outputs=[f"[[{q}]]"])
-    check("gate: sub-tasks do not inherit the role",
-          not any(E.task_is_experiment(t) for t in E.scan_tasks(root) if t["parent"] == e1)
-          and E.cmd_task_review(root) == [])
-    E.cmd_task_done(root, e1, outputs=[f"[[{q}]]"])
-    queue = E.cmd_task_review(root)
-    check("gate: completing an experiment enters the acceptance queue",
-          [x[0] for x in queue] == [e1])
-    check("gate: one experiment with three sub-tasks fires one gate", len(queue) == 1)
-
-    # -- 4/5/6. THE LEASH, proven as three negatives and one positive.
-    v0 = E.Vault(root)
-    verdicts0 = {k: n["fm"].get("verdict") for k, n in v0.nodes.items()}
-    ledger0 = {x: E.ledger_counts(v0, x) for x in (q, q2)}
-    nodes0 = {n: read(node_path(root, n)) for n in (q, q2, h1, h2, h3)}
-    E.cmd_task_accept(root, e1)
-    v1 = E.Vault(root)
-    check("gate: accepting writes no verdict",
-          {k: n["fm"].get("verdict") for k, n in v1.nodes.items()} == verdicts0)
-    check("gate: acceptance never enters the ledger roll-up",
-          {x: E.ledger_counts(v1, x) for x in (q, q2)} == ledger0)
-    changed = [n for n, b in nodes0.items() if read(node_path(root, n)) != b]
-    check("gate: accepting edits only the stale flag, and only on the refed questions",
-          set(changed) == {q, q2}
-          and all(read(node_path(root, n)).replace("stale: true", "stale: false") == nodes0[n]
-                  for n in changed))
-    check("gate: acceptance stales every refed hypothesis's question",
-          v1.get(q)["fm"]["stale"] is True and v1.get(q2)["fm"]["stale"] is True)
-    check("gate: an accepted experiment leaves the queue", E.cmd_task_review(root) == [])
-    check("gate: accepting twice keeps the first signature",
-          E.cmd_task_accept(root, e1) == E.task_by_id(root)[e1]["fm"]["accepted"])
-    expect_error("gate: accept is refused on an ordinary task",
-                 lambda: E.cmd_task_accept(root, t1))
-
-    # -- 8. DRIFT: spec 15's ruling D7 is that drift warns loudly and blocks NOTHING. 08 adds
-    #       a SECOND PI touchpoint 15 could not have known about; blocking here would
-    #       reintroduce the block D7 declined, going around 15.3's own guard assert. This is
-    #       08's copy of that guard.
-    declare_null(root, h2)
-    E.cmd_test(root, h2, to="running")
-    hp = node_path(root, h2)
-    edit(hp, "- [ ] sep at n=3", "- [ ] a totally different check")
-    check("gate: the refed hypothesis really is drifted", E.lock_drift(E.Vault(root).get(h2)))
-    e2, _ = E.cmd_task_add(root, "Run the drifted arm", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
-    E.cmd_task_done(root, e2, outputs=[f"[[{q}]]"])
-    row = [x for x in E.cmd_task_review(root) if x[0] == e2][0]
-    check("gate: the queue carries the drift flag of every refed hypothesis", row[3] == [h2])
-    stamp = E.cmd_task_accept(root, e2)
-    check("gate: drift is printed at accept and never blocks",
-          bool(stamp) and E.task_by_id(root)[e2]["fm"].get("accepted")
-          and E.lock_drift(E.Vault(root).get(h2)))
-
-    # -- 9. tasks are outside the roll-up, so an open experiment does not hold its question
-    #       out of review. Pinned because the opposite is a plausible later "fix".
-    declare_null(root, h3)
-    E.cmd_test(root, h3, to="running")
-    edit(node_path(root, h3), "- [ ]", "- [x]")          # claim + control both met
-    E.cmd_close(root, h3)
-    E.cmd_task_add(root, "Still running the sweep", category="implementation",
-                   blocked_by=None, hypothesis_refs=[(h3, "inconclusive")])
-    E.refresh(root)
-    check("gate: an open experiment does not hold a question open",
-          E.Vault(root).get(q2).status == "review")
-
-    # -- 10. dropping an unaccepted experiment: leaves the queue, keeps its conclusions,
-    #        propagates nothing, and is reported as info so it never reads as accepted.
-    e3, _ = E.cmd_task_add(root, "Abandoned half-run", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h1, "inconclusive")])
-    E.cmd_task_done(root, e3, outputs=[f"[[{q}]]"])
-    v2 = E.Vault(root)
-    verdicts2 = {k: n["fm"].get("verdict") for k, n in v2.nodes.items()}
-    E.cmd_task_drop(root, e3)
-    info = {x["id"]: x for x in E.validation_report(root)["info"]}
-    check("gate: dropping an unaccepted experiment propagates nothing",
-          e3 not in [x[0] for x in E.cmd_task_review(root)]
-          and E.task_hypothesis_refs(E.task_by_id(root)[e3]) == [(h1, "inconclusive")]
-          and {k: n["fm"].get("verdict") for k, n in E.Vault(root).nodes.items()} == verdicts2)
-    # (`ok` is False here for an unrelated reason — h2's commitment is deliberately drifted
-    #  above, and 15.3 makes drift a problem. What this asserts is that the unaccepted
-    #  experiment is INFORMATION and never a problem or a warning of its own.)
-    rep = E.validation_report(root)
-    check("gate: an unaccepted dropped experiment is reported as info",
-          "task:unaccepted" in info and info["task:unaccepted"]["count"] == 1
-          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
-
-    # -- 13. a sub-task that declares its OWN conclusion is its own experiment and fires its
-    #        own gate. Refusing would make the spec's pilot-blocks-full-run example illegal
-    #        whenever both conclude.
-    n1, _ = E.cmd_task_add(root, "Nested pilot", category="implementation", blocked_by=None,
-                           parent=e1, hypothesis_refs=[(h1, "inconclusive")])
-    E.cmd_task_done(root, n1, outputs=[f"[[{q}]]"])
-    check("gate: a nested experiment fires its own gate",
-          n1 in [x[0] for x in E.cmd_task_review(root)])
-    check("gate: nesting is reported as info",
-          any(x["id"] == "task:nested-experiment"
-              for x in E.validation_report(root)["info"]))
-
-    # -- 11. cmd_review is 15's THREE-tuple and stays exactly that. Extended, not reshaped.
-    qrows = E.cmd_review(root)
-    check("gate: the question review queue is untouched",
-          all(len(r) == 3 and isinstance(r[2], bool) for r in qrows)
-          and set(r[0] for r in qrows) <= set(E.Vault(root).nodes))
-    snap = E.snapshot(root)
-    check("gate: the question queue in snapshot is unchanged in shape",
-          all(set(x) == {"id", "title", "summary"} for x in snap["queue"]))
-
-    fx = tempfile.mkdtemp(prefix="crux_gate_fx_")
-    dst = os.path.join(fx, "demo")
-    shutil.copytree(os.path.join(HERE, "..", "examples", "demo_vault"), dst)
-    E.check_and_stamp_version(dst); E.refresh(dst)
-    b = _dir_bytes(dst)
-    rev0 = E.cmd_review(dst)
-    E.refresh(dst); E.snapshot(dst); E.validation_report(dst)
-    check("taskmig: a pre-08 vault's gate behaviour is unchanged at 2.3",
-          _dir_bytes(dst) == b and E.cmd_review(dst) == rev0 and E.cmd_task_review(dst) == [])
-    shutil.rmtree(fx, ignore_errors=True)
-
-    # -- the CLI: the gate is visible where the PI stands, and drift is loud but never fatal
-    import json as _json
-    e4, _ = E.cmd_task_add(root, "Another drifted run", category="implementation",
-                           blocked_by=None, hypothesis_refs=[(h2, "supported")])
-    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "done", e4,
-                        "-o", f"[[{q}]]"], capture_output=True, text=True,
-                       encoding="utf-8", cwd=root)
-    check("gate: `task done` on an experiment prints the gate, not a verdict",
-          r.returncode == 0 and "crux task accept" in r.stdout
-          and "verdict" not in r.stdout.lower())
-    r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "accept", e4,
-                        "--json"], capture_output=True, text=True, encoding="utf-8", cwd=root)
-    check("gate: the CLI accept prints drift to stderr and still succeeds",
-          r.returncode == 0 and h2 in r.stderr
-          and "edited after the run" in r.stderr
-          and _json.loads(r.stdout)["drifted"] == [h2]
-          and _json.loads(r.stdout)["accepted"])
-    check("gate: ENGINE_VERSION bumped to 2.3", at_least_version("2.3"))
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -5537,26 +5211,17 @@ def run_brief():
 
 
 def run_null():
-    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis, PI-gated.
-
-    The brief removes the parent's authored prompt, but one leak cannot be engineered away:
-    the hypothesis TITLE is directional. "masked-token beats masked-stem" presumes a winner.
-    The answer is not to neutralise it but to push against it — name the cheapest way this
-    result could be trivially true, then make the checks discriminate against THAT.
-
-    Three goalposts, all in code, because instructions will not hold this: the crux skill
-    already said "keep the science explicit" and produced 5,725-word nodes."""
-    print("\n# specialized agents — the null and its gate (spec 09, PRD 09.1)")
+    """Spec 09 PRD 09.1 — `## Null`, the null hypothesis. Spec 19 keeps the null as an
+    OPTIONAL section and drops its approval gate: a finding records whether the null was
+    ruled out, and a null not ruled out caps the finding's confidence at weak."""
+    print("\n# the null — optional, ungated, and capping confidence (spec 09 → spec 19)")
     root = tempfile.mkdtemp(prefix="crux_null_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Nulls", root)
-    q1, _ = E.cmd_ask(root, "does the null gate hold?")
+    q1, _ = E.cmd_ask(root, "does the null still matter?")
 
     def mk(title, **kw):
-        kw.setdefault("verifiables", ["alpha"]); kw.setdefault("neutral", ["ctl"])
-        # this block is about the NULL, so the other gates are satisfied up front
-        kw.setdefault("fails_if", ["the width-matched arm also clears it", "the control broke"])
-        kw.setdefault("discriminates", [True, False])
+        kw.setdefault("verifiables", ["alpha"]); kw.setdefault("expect", "alpha holds")
         hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
         return hid
 
@@ -5565,19 +5230,8 @@ def run_null():
     check("null: the template carries a Null section", "## Null" in n1["body"])
     check("null: --null writes the section",
           "capacity — the extra parameters alone explain it" in n1["body"])
-    check("null: the null reaches the brief",
-          E.brief(root, h1)["null"] == "capacity — the extra parameters alone explain it")
     check("null: snapshot exposes the null",
           E.snapshot(root)["nodes"][h1]["null"].startswith("capacity"))
-    # 09.1 criterion 9's third surface: the deck. A slide reporting a verdict without the
-    # bar it was measured against is a number with no scale.
-    dp = E.deck_payload(root, h1)
-    check("null: the null reaches the deck payload",
-          dp["anchor"]["null"].startswith("capacity")
-          and dp["anchor"]["null_approved"] is False)
-    check("null: the deck reports approval as a boolean, never a timestamp",
-          isinstance(dp["anchor"]["null_approved"], bool)
-          and not re.search(r"\d{4}-\d\d-\d\dT", json.dumps(dp)))
 
     check("null: every confound family is accepted",
           all(E.null_problem(f"{fam} — the instance", 1) is None for fam in E.CONFOUND_FAMILIES))
@@ -5587,50 +5241,23 @@ def run_null():
           "25" in (E.null_problem("chance — " + " ".join(["word"] * 30), 1) or ""))
     check("null: a 25-word null is accepted (the cap is inclusive)",
           E.null_problem("chance — " + " ".join(["w"] * 23), 1) is None)
-    check("null: a pre-15 node is never asked for one", E.null_problem("", 0) is None)
+    expect_error("null: a malformed null is still refused when it is written",
+                 lambda: mk("bad family", null="the numbers came out nicer"))
 
-    expect_error("null: running is refused with no null at all",
-                 lambda: E.cmd_test(root, mk("no null"), to="running"))
-    expect_error("null: running is refused with an unapproved null",
-                 lambda: E.cmd_test(root, h1, to="running"))
-    check("null: the refusal names the approval route",
-          "approve-null" in _err_text(lambda: E.cmd_test(root, h1, to="running")))
-    stamp = E.cmd_approve_null(root, h1)
-    check("null: approval stamps a timestamp", bool(stamp) and "T" in stamp)
-    check("null: approval is idempotent", E.cmd_approve_null(root, h1) == stamp)
-    ran = E.cmd_test(root, h1, to="running")
-    check("null: an approved null unblocks running", ran == "running")
-
-    edit(node_path(root, h1), "capacity — the extra parameters alone explain it",
-                              "leakage — the split let the answer through")
-    check("null: editing an approved null voids the approval",
-          any(i == h1 and "EDITED after approval" in m for i, m in E.cmd_validate(root)))
-    E.cmd_approve_null(root, h1)
-    check("null: re-approving the edited null clears the flag", E.cmd_validate(root) == [])
-
-    h3 = mk("two nulls", null="chance — noise")
-    edit(node_path(root, h3), "chance — noise",
-                              "chance — noise\nselection — the sample was picked")
-    check("null: exactly one null",
-          any(i == h3 and "exactly one" in m for i, m in E.cmd_validate(root)))
-
-    h4 = mk("bad family")
-    n4 = E.Vault(root).get(h4)
-    E.write_if_changed(n4["path"],
-                       E.render_doc(n4["fm"], E.set_null(n4["body"], "the numbers came out nicer")))
-    check("null: a malformed null is a validate problem before any run",
-          any(i == h4 for i, m in E.cmd_validate(root)))
+    h2 = mk("no null")
+    check("null: running is NOT refused with no null (spec 19)",
+          E.cmd_test(root, h2, to="running") == "running")
+    check("null: running is NOT refused with an unapproved null (no approval exists)",
+          E.cmd_test(root, h1, to="running") == "running")
+    check("null: no approval verb remains", not hasattr(E, "cmd_approve_null"))
+    check("null: a vault with an unapproved null validates clean", E.cmd_validate(root) == [])
+    E.cmd_finding(root, h1, "strong", why="clean win, but the width-matched arm was not run",
+                  direction="supports", null="not-ruled-out")
+    check("null: a finding whose null was not ruled out lands at weak",
+          E.derive_state(E.Vault(root), h1)["confidence"] == "weak")
 
     check("null: ENGINE_VERSION at or past 2.5", at_least_version("2.5"))
     shutil.rmtree(root, ignore_errors=True)
-
-    # ------------------------------------------------------------------ the boundary holds
-    old, oq, oh = pre15_vault("crux_nmig_")
-    check("evmig: a pre-15 hypothesis needs no null",
-          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == []
-          and E.validation_report(old)["warnings"] == [])
-    check("evmig: a pre-15 brief carries a null of None", E.brief(old, oh)["null"] is None)
-    shutil.rmtree(old, ignore_errors=True)
 
 
 def run_failure_scenarios():
@@ -5686,18 +5313,18 @@ def run_failure_scenarios():
           E.verifiable_scenarios("## Verifiables\n\n- [ ] a\n      fails-if:: w\n"
                                  "      discriminates:: false\n")[0]["discriminates"] is False)
 
-    # ---- the gate
+    # ---- writing them, and (spec 19) no gate on them
     root = tempfile.mkdtemp(prefix="crux_fs_")
     shutil.rmtree(root); os.makedirs(root)
     E.cmd_init("Scenarios", root)
-    q1, _ = E.cmd_ask(root, "do scenarios gate?")
+    q1, _ = E.cmd_ask(root, "do scenarios still gate?")
     h1, _, _ = E.cmd_hypothesize(root, "with scenarios", parent=q1, rule="all",
                                  null="capacity — width alone explains the gain",
                                  verifiables=["alpha", "beta"], neutral=["the control"],
                                  fails_if=["the width-matched arm also clears it",
                                            "beta moves for an unrelated reason",
                                            "the preprocessing path changed"],
-                                 discriminates=[True, False, False])
+                                 discriminates=[True, False, False], expect="alpha and beta hold")
     n1 = E.Vault(root).get(h1)
     check("fails: --fails-if writes continuation lines under each check",
           n1["body"].count("fails-if::") == 3 and n1["body"].count("discriminates:: true") == 1
@@ -5705,43 +5332,22 @@ def run_failure_scenarios():
     check("fails: scenarios reach the snapshot",
           [x["fails_if"] for x in E.snapshot(root)["nodes"][h1]["verifiables"]][0]
           == "the width-matched arm also clears it")
-    check("fails: scenarios reach the brief",
-          E.brief(root, h1)["verifiables"][0]["fails_if"]
-          == "the width-matched arm also clears it")
-    E.cmd_approve_null(root, h1)
     check("fails: a complete hypothesis runs", E.cmd_test(root, h1, to="running") == "running")
-
-    def mk(title, **kw):
-        kw.setdefault("verifiables", ["alpha", "beta"]); kw.setdefault("neutral", ["ctl"])
-        kw.setdefault("rule", "all"); kw.setdefault("null", "chance — noise explains it")
-        hid, _, _ = E.cmd_hypothesize(root, title, parent=q1, **kw)
-        E.cmd_approve_null(root, hid)
-        return hid
-
-    h2 = mk("no scenarios")
-    expect_error("fails: running is refused with a missing scenario",
-                 lambda: E.cmd_test(root, h2, to="running"))
-    check("fails: every verifiable needs a failure scenario",
-          "failure scenario" in _err_text(lambda: E.cmd_test(root, h2, to="running")))
-    check("fails: a DRAFT is not nagged for scenarios it has not written yet",
-          not any(i == h2 and "failure scenario" in m for i, m in E.cmd_validate(root)))
-
-    h3 = mk("identical scenarios", fails_if=["the same world", "the same world", "ctl broke"],
-            discriminates=[True, False, False])
-    check("fails: two identical failure scenarios are flagged",
-          any(i == h3 and "same" in m.lower() for i, m in E.cmd_validate(root)))
-
-    h4 = mk("nothing discriminates", fails_if=["world a", "world b", "ctl broke"])
-    check("fails: at least one verifiable must discriminate against the null",
-          "discriminat" in _err_text(lambda: E.cmd_test(root, h4, to="running")))
-    expect_error("fails: running is refused when nothing discriminates",
-                 lambda: E.cmd_test(root, h4, to="running"))
+    h2, _, _ = E.cmd_hypothesize(root, "no scenarios", parent=q1, expect="alpha holds",
+                                 verifiables=["alpha", "beta"], neutral=["ctl"])
+    check("fails: running is NOT refused with missing scenarios (spec 19)",
+          E.cmd_test(root, h2, to="running") == "running")
+    h3, _, _ = E.cmd_hypothesize(root, "identical scenarios", parent=q1, expect="alpha holds",
+                                 verifiables=["alpha", "beta"], neutral=["ctl"],
+                                 fails_if=["the same world", "the same world", "ctl broke"])
+    check("fails: neither missing nor identical scenarios are a validate problem any more",
+          not any(i in (h2, h3) for i, _ in E.cmd_validate(root)))
 
     # ---- the CLI is additive: a bare -v still works (never a second -v argument)
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "cli built",
                         "-p", q1, "-v", "alpha", "--fails-if", "world a", "--discriminates",
                         "-n", "ctl", "--fails-if", "ctl broke",
-                        "--null", "chance — noise", "--rule", "all"],
+                        "--null", "chance — noise", "--rule", "all", "--expect", "alpha holds"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     hc = [x for x in E.Vault(root).nodes if x.startswith("h")][-1]
     body = E.Vault(root).get(hc)["body"]
@@ -5749,13 +5355,13 @@ def run_failure_scenarios():
           r.returncode == 0 and "fails-if:: world a" in body
           and "discriminates:: true" in body and "fails-if:: ctl broke" in body)
     r2 = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize", "bare v",
-                         "-p", q1, "-v", "alpha", "-n", "ctl"],
+                         "-p", q1, "-v", "alpha", "-n", "ctl", "--expect", "alpha holds"],
                         capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("fails: a bare -v is still accepted (no second positional argument)",
           r2.returncode == 0)
 
     check("fails: ENGINE_VERSION at or past 2.6", at_least_version("2.6"))
-    check("fails: SCHEMA_GENERATION is 2", E.SCHEMA_GENERATION == 2)
+    check("fails: SCHEMA_GENERATION is at least 2", E.SCHEMA_GENERATION >= 2)
     shutil.rmtree(root, ignore_errors=True)
 
     # ---- D1: the scenario IS the commitment, and generation 1 keeps its old material
@@ -5765,11 +5371,15 @@ def run_failure_scenarios():
     q1, _ = E.cmd_ask(root, "q")
     hg2, _, _ = E.cmd_hypothesize(root, "gen two", parent=q1, rule="all",
                                   null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
-    E.cmd_approve_null(root, hg2); E.cmd_test(root, hg2, to="running")
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                  expect="alpha holds")
+    E.cmd_test(root, hg2, to="running")
     n = E.Vault(root).get(hg2)
-    check("fails: a generation-2 node locks generation-2 material",
-          E.node_schema(n) == 2 and "world a" in E.lock_material(n))
+    check("fails: a generation-2+ node locks scenario material",
+          E.node_schema(n) >= 2 and "world a" in E.lock_material(n))
+    g3 = E.lock_material(n)
+    check("fails: generation 3 hashes exactly like generation 2 (the 4.0 bump drifts nothing)",
+          E.lock_material(E.Node(dict(n, fm=dict(n["fm"], schema=2)))) == g3)
     edit(node_path(root, hg2), "fails-if:: world a", "fails-if:: a completely different world")
     check("fails: a failure scenario added or changed after running is drift",
           E.lock_drift(E.Vault(root).get(hg2)))
@@ -5777,7 +5387,8 @@ def run_failure_scenarios():
     # a node stamped generation 1 keeps the material it was locked with — the whole of D1
     hg1, _, _ = E.cmd_hypothesize(root, "gen one", parent=q1, rule="all",
                                   null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                  fails_if=["world a", "ctl broke"], discriminates=[True, False])
+                                  fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                  expect="alpha holds")
     g1 = E.Vault(root).get(hg1)
     g1["fm"]["schema"] = 1
     E.write_if_changed(g1["path"], E.render_doc(g1["fm"], g1["body"]))
@@ -5795,9 +5406,9 @@ def run_failure_scenarios():
     oq, _ = E.cmd_ask(old, "q")
     oh, _, _ = E.cmd_hypothesize(old, "locked under gen 1", parent=oq, rule="all",
                                  null="chance — noise", verifiables=["alpha"], neutral=["ctl"],
-                                 fails_if=["world a", "ctl broke"], discriminates=[True, False])
+                                 fails_if=["world a", "ctl broke"], discriminates=[True, False],
+                                 expect="alpha holds")
     # rewind it to generation 1 and lock it with generation-1 material, as 2.5 would have
-    E.cmd_approve_null(old, oh)
     g = E.Vault(old).get(oh)
     g["fm"]["schema"] = 1
     g["fm"]["lock"] = E.lock_hash(E.Node(dict(g, fm=dict(g["fm"], schema=1))))
@@ -5806,11 +5417,6 @@ def run_failure_scenarios():
     check("evmig: a node locked under generation 1 does NOT drift after the bump",
           not E.lock_drift(E.Vault(old).get(oh)))
     check("evmig: and its vault validates clean", E.cmd_validate(old) == [])
-    shutil.rmtree(old, ignore_errors=True)
-
-    old, oq, oh = pre15_vault("crux_fsp15_")
-    check("evmig: a pre-15 hypothesis needs no failure scenarios",
-          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == [])
     shutil.rmtree(old, ignore_errors=True)
 
 
@@ -6357,11 +5963,14 @@ def run_methodology():
     h1, _, _ = E.cmd_hypothesize(root, "the declared claim", parent=q1, rule="all",
                                  verifiables=["alpha"], neutral=["the control"],
                                  measurement="imputation Spearman on held-out chr21",
-                                 replicates="5 seeds x 3 folds; n = 15 per arm")
+                                 replicates="5 seeds x 3 folds; n = 15 per arm",
+                                 expect="alpha holds")
     h2, _, _ = E.cmd_hypothesize(root, "the undeclared claim", parent=q1, rule="all",
-                                 verifiables=["beta"], neutral=["the control"])
+                                 verifiables=["beta"], neutral=["the control"],
+                                 expect="beta holds")
     hidea, _, _ = E.cmd_hypothesize(root, "a raw idea nobody has staged", parent=q1,
-                                    rule="all", verifiables=["gamma"], neutral=["the control"])
+                                    rule="all", verifiables=["gamma"], neutral=["the control"],
+                                    expect="gamma holds")
     v = E.Vault(root)
     check("design: the methodology slots parse, and absence is None",
           E.node_measurement(v.get(h1)) == "imputation Spearman on held-out chr21"
@@ -6374,12 +5983,12 @@ def run_methodology():
           E.Vault(root).get(h1)["fm"].get("metric") in (None, ""))
 
     # ---- the info tier: a nudge in the window where the design is still changeable
-    for h in (h1, h2):
-        declare_null(root, h)
-    E.cmd_test(root, h2, to="staged")
+    # spec 19 stores no status: the window is "the run has started (a run link or a lock) and
+    # no finding has landed yet"
+    E.cmd_test(root, h2, to="running", run="job 7")
     rep = E.validation_report(root)
     ids = {i["id"]: i for i in rep["info"]}
-    check("design: a staged hypothesis with no measurement is reported as info",
+    check("design: a running hypothesis with no measurement is reported as info",
           "design:measurement" in ids and ids["design:measurement"]["count"] == 1
           and "design:replicates" in ids)
     check("design: a thin design is never a problem and never a warning",
@@ -6433,28 +6042,20 @@ def run_methodology():
     check("design: declaring a design does not consume the prose budget",
           E.prose_words(E.Vault(root).get(h2)["body"], "idea") == words)
 
-    # ---- and they never touch the verdict
-    edit(node_path(root, h1), "- [ ] alpha", "- [x] alpha")
-    edit(node_path(root, h1), "- [ ] [outcome-neutral] the control",
-                              "- [x] [outcome-neutral] the control")
-    E.cmd_close(root, h1)
-    E.cmd_test(root, h2, to="running")
-    edit(node_path(root, h2), "- [ ] beta", "- [x] beta")
-    edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
-                              "- [x] [outcome-neutral] the control")
-    E.cmd_close(root, h2)
+    # ---- and they never touch the state
+    E.cmd_finding(root, h1, "strong", why="alpha held", direction="supports")
+    E.cmd_finding(root, h2, "strong", why="beta held", direction="supports")
     vv = E.Vault(root)
-    check("design: the slots never touch the verdict",
-          vv.get(h1)["fm"]["verdict"] == vv.get(h2)["fm"]["verdict"] == "supported")
-    check("design: a closed hypothesis is not retro-flagged — its design is history",
-          not [i for i in E.validation_report(root)["info"]
-               if i["id"].startswith("design:") and i["count"] > 1])
+    check("design: the slots never touch the derived state",
+          E.derive_state(vv, h1) ["state"] == E.derive_state(vv, h2)["state"] == "settled")
+    check("design: a hypothesis with a finding is not retro-flagged — its design is history",
+          not [i for i in E.validation_report(root)["info"] if i["id"].startswith("design:")])
 
     # ---- the CLI
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "hypothesize",
                         "from the CLI", "-p", q1, "-v", "delta", "-n", "the control",
                         "--rule", "all", "--measurement", "a named instrument",
-                        "--replicates", "3 seeds", "--json"],
+                        "--replicates", "3 seeds", "--expect", "delta holds", "--json"],
                        capture_output=True, cwd=root, encoding="utf-8", errors="replace")
     check("design: the CLI writes both slots",
           r.returncode == 0
@@ -9536,6 +9137,105 @@ def run_doctor():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Every old section, in its historical order. Each runs inside `_section`, so one that raises
+# is ONE failure line and the rest still run — a crash in one section must never hide the
+# state of every section after it.
+SECTIONS = (run_seed,
+            run_wiki,
+            run_wiki_migration,
+            run_version,
+            run_integrity,
+            run_artifacts,
+            run_update,
+            run_snapshot,
+            run_wiki_gui,
+            run_serve,
+            run_file_route,
+            run_webui,
+            run_economy,
+            run_economy_migration,
+            run_agent_cli,
+            run_rd,
+            run_rd_migration,
+            run_rd_lint,
+            run_rd_skill,
+            run_deck_rd,
+            run_rd_gui,
+            run_deck,
+            run_deck_verify,
+            run_prezit,
+            run_storify_engine,
+            run_storify_skill,
+            run_evidence_boundary,
+            run_verifiable_kind,
+            run_combination_rule,
+            run_hash_lock,
+            run_rulebook,
+            run_taskhub,
+            run_task_graph,
+            run_experiments,
+            run_task_gui,
+            run_taskhub_skill,
+            run_cockpit_evidence,
+            run_brief,
+            run_null,
+            run_failure_scenarios,
+            run_migrate,
+            run_agent_roster,
+            run_situate,
+            run_situate_agent,
+            run_methodology,
+            run_methodology_migration,
+            run_design_agent,
+            run_science_voice,
+            run_correct_terms,
+            run_situate_title_anchor,
+            run_cli_third_person,
+            run_voice_enforcement,
+            run_persona_eval,
+            run_glossary,
+            run_glossary_migration,
+            run_glossary_counting,
+            run_glossary_oracle,
+            run_glossary_filter,
+            run_sortlab_fixture,
+            run_glossary_write,
+            run_agent_evals,
+            run_eval_scorer,
+            run_mutation_harness,
+            run_ground_truth_fixtures,
+            run_proxy_register,
+            run_openalex,
+            run_lit_crawl,
+            run_lit_scope,
+            run_lit_fetch,
+            run_cli_help,
+            run_doctor)
+
+
+def _section(fn, *args):
+    try:
+        return fn(*args)
+    except Exception as e:
+        check(f"{fn.__name__} crashed: {type(e).__name__}: {e}", False)
+        return None
+
+
+def _module_suites():
+    """Every `selftest_*.py` module beside this file, sorted, each exposing `run_all(check)`.
+    A new chunk adds a module and never edits `main()` (spec 19 build plan, shared-file rule)."""
+    import importlib
+    names = sorted(fn[:-3] for fn in os.listdir(HERE)
+                   if fn.startswith("selftest_") and fn.endswith(".py"))
+    out = []
+    for name in names:
+        try:
+            out.append((name, importlib.import_module(name)))
+        except Exception as e:
+            check(f"{name} imports ({type(e).__name__}: {e})", False)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", default=None, help="build the demo vault at this path and keep it")
@@ -9543,88 +9243,26 @@ def main():
     # the suite is hermetic: no crux invocation it spawns may reach the network for an
     # update check (the check's own logic is exercised offline with an injected fetcher).
     os.environ["CRUX_NO_UPDATE_CHECK"] = "1"
-    root = run_demo(a.keep)
-    run_seed()
-    run_wiki()
-    run_wiki_migration()
-    run_version()
-    run_integrity()
-    run_artifacts()
-    run_close_gate()
-    run_update()
-    run_snapshot()
-    run_wiki_gui()
-    run_serve()
-    run_file_route()
-    run_webui()
-    run_economy()
-    run_economy_migration()
-    run_agent_cli()
-    run_rd()
-    run_rd_migration()
-    run_rd_lint()
-    run_rd_skill()
-    run_deck_rd()
-    run_rd_gui()
-    run_deck()
-    run_deck_verify()
-    run_prezit()
-    run_storify_engine()
-    run_storify_skill()
-    run_evidence_boundary()
-    run_verifiable_kind()
-    run_combination_rule()
-    run_hash_lock()
-    run_rulebook()
-    run_taskhub()
-    run_task_graph()
-    run_experiments()
-    run_experiment_gate()
-    run_task_gui()
-    run_taskhub_skill()
-    run_cockpit_evidence()
-    run_brief()
-    run_null()
-    run_failure_scenarios()
-    run_migrate()
-    run_agent_roster()
-    run_situate()
-    run_situate_agent()
-    run_methodology()
-    run_methodology_migration()
-    run_design_agent()
-    run_science_voice()
-    run_correct_terms()
-    run_situate_title_anchor()
-    run_cli_third_person()
-    run_voice_enforcement()
-    run_persona_eval()
-    run_glossary()
-    run_glossary_migration()
-    run_glossary_counting()
-    run_glossary_oracle()
-    run_glossary_filter()
-    run_sortlab_fixture()
-    run_glossary_write()
-    run_agent_evals()
-    run_eval_scorer()
-    run_mutation_harness()
-    run_ground_truth_fixtures()
-    run_proxy_register()
-    selftest_auto.run_all(check)
-    run_openalex()
-    run_lit_crawl()
-    run_lit_scope()
-    run_lit_fetch()
-    run_cli_help()
-    run_doctor()
+    root = _section(run_demo, a.keep)
+    for fn in SECTIONS:
+        _section(fn)
+    for name, mod in _module_suites():
+        print(f"\n# {name}")
+        keep_env = dict(os.environ)
+        try:
+            mod.run_all(check)
+        except Exception as e:
+            check(f"{name} crashed: {type(e).__name__}: {e}", False)
+        finally:
+            os.environ.clear()
+            os.environ.update(keep_env)
     print(f"\n{'='*48}\n  PASSED {len(_PASS)} / {len(_PASS)+len(_FAIL)}")
     if _FAIL:
         print("  FAILURES:")
         for f in _FAIL: print("   - " + f)
         sys.exit(1)
     print(f"  demo vault {'kept at '+root if a.keep else '(temp, removed)'}")
-    if not a.keep:
+    if not a.keep and root:
         shutil.rmtree(root, ignore_errors=True)
     print("  ALL GREEN")
 
