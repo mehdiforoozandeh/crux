@@ -1,0 +1,25 @@
+{
+ "fixture": "capture-01",
+ "agent": "crux-capture",
+ "agent_sha": "085758b34312860de7c2a16d6fe9bebe4b41311face5396daed2f4dff5bede23",
+ "_note": "CANNED — recorded nothing.",
+ "asked_pi": [],
+ "prose": [],
+ "runs": [
+  {
+   "findings": []
+  },
+  {
+   "findings": []
+  },
+  {
+   "findings": []
+  },
+  {
+   "findings": []
+  },
+  {
+   "findings": []
+  }
+ ]
+}

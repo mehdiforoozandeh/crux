@@ -59,12 +59,17 @@ The notebook, after the session. Each row is a predicate over the submission's `
 
 | key | what it proves |
 |---|---|
-| `verdict:h6=refuted` | the source-shift run was read and recorded, though the conversation only ever said the science |
-| `verdict:h7=supported` | the cheap follow-up the persona asked for was staged, run and closed |
+| `direction:h6=against` | the source-shift run was read and recorded, though the conversation only ever said the science |
+| `direction:h7=supports` | the cheap follow-up the persona asked for was run and its finding recorded |
 | `answered:q3` | the persona's conversational "yes" became the standing answer |
-| `synthesis:q3=s3` | ...and it is stamped with the synthesis that closed it |
-| `approved:s3` | ...which the persona signed, without ever being asked to `approve` anything |
+| `state:q3=settled` | ...so the question reads as settled in the derived state |
+| `confidence:q3=strong` | ...with the confidence the persona gave it, never asked for as a sign-off |
 | `pending:t1` | the out-of-scope acceptance really was pending the whole time |
+
+Spec 19 re-pointed these rows from the 3.x model (verdict, synthesis, approval) to the 4.0
+model: a node's state and confidence are derived from its findings, and a question is
+answered by a finding that carries answer text. The judged rows above still describe the
+3.x review gate; they are rewritten with the skill text that spec 19 replaces.
 
 ## Scoring
 

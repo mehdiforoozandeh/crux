@@ -2,7 +2,7 @@
  "fixture": "persona-01",
  "agent": "crux",
  "agent_sha": "b2a64317a7086faadd3155d47fa5880cfc01aa1c9b5d3aa356f2d70661b22065",
- "_note": "CANNED — the inverse failure. Flawless science voice, and nothing was written down: silence is only a virtue when the notebook is being kept behind it. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider. RE-PINNED 2026-09-16 for PRD 05.0: SKILL.md gained two verb-table rows (auto check/brief, auto guide) and one note on hypothesize --builds-on; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-16 for PRD 05.1: SKILL.md gained or rewrote verb-table rows (auto check --static, auto refs, auto promote); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.2: SKILL.md gained the autopilot leash paragraph (spec 05 §12) at the end of 'Three roles — and the leash' and three verb-table rows (auto approve, auto run, auto status); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.3: SKILL.md gained the fifth-act sentence in the autopilot leash paragraph (spec 05 D14, ruled in by the PI) and a clause on the agent probe in the `auto check` verb row; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-19 for PRD 05.5: SKILL.md gained one cross-reference line in the verb table — the `auto check` \u00b7 `auto brief` and `auto approve` rows now point at the **crux-autopilot** skill, which produces the plan `auto check` validates and stops short of `auto approve` because that signature is the PI's; the `## Voice` section this fixture measures is BYTE-IDENTICAL to the sha it was pinned to, and the pin asserts that and nothing wider.",
+ "_note": "CANNED — the inverse failure. Flawless science voice, and nothing was written down: silence is only a virtue when the notebook is being kept behind it. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider. RE-PINNED 2026-09-16 for PRD 05.0: SKILL.md gained two verb-table rows (auto check/brief, auto guide) and one note on hypothesize --builds-on; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-16 for PRD 05.1: SKILL.md gained or rewrote verb-table rows (auto check --static, auto refs, auto promote); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.2: SKILL.md gained the autopilot leash paragraph (spec 05 §12) at the end of 'Three roles — and the leash' and three verb-table rows (auto approve, auto run, auto status); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.3: SKILL.md gained the fifth-act sentence in the autopilot leash paragraph (spec 05 D14, ruled in by the PI) and a clause on the agent probe in the `auto check` verb row; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-19 for PRD 05.5: SKILL.md gained one cross-reference line in the verb table — the `auto check` · `auto brief` and `auto approve` rows now point at the **crux-autopilot** skill, which produces the plan `auto check` validates and stops short of `auto approve` because that signature is the PI's; the `## Voice` section this fixture measures is BYTE-IDENTICAL to the sha it was pinned to, and the pin asserts that and nothing wider.",
  "transcript": [
   {
    "speaker": "pi",
@@ -61,106 +61,90 @@
   "nodes": {
    "h1": {
     "type": "idea",
-    "status": "done",
-    "verdict": "supported",
-    "synthesis": null,
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": "supports",
+    "parked": false,
     "answered": false
    },
    "h2": {
     "type": "idea",
-    "status": "done",
-    "verdict": "partial",
-    "synthesis": null,
-    "approved": false,
+    "state": "leaning",
+    "confidence": "weak",
+    "direction": "mixed",
+    "parked": false,
     "answered": false
    },
    "h3": {
     "type": "idea",
-    "status": "done",
-    "verdict": "refuted",
-    "synthesis": null,
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": "against",
+    "parked": false,
     "answered": false
    },
    "h4": {
     "type": "idea",
-    "status": "done",
-    "verdict": "supported",
-    "synthesis": null,
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": "supports",
+    "parked": false,
     "answered": false
    },
    "h5": {
     "type": "idea",
-    "status": "done",
-    "verdict": "refuted",
-    "synthesis": null,
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": "against",
+    "parked": false,
     "answered": false
    },
    "h6": {
     "type": "idea",
-    "status": "running",
-    "verdict": null,
-    "synthesis": null,
-    "approved": false,
+    "state": "open",
+    "confidence": null,
+    "direction": null,
+    "parked": false,
     "answered": false
    },
    "h7": {
     "type": "idea",
-    "status": "idea",
-    "verdict": null,
-    "synthesis": null,
-    "approved": false,
+    "state": "open",
+    "confidence": null,
+    "direction": null,
+    "parked": false,
     "answered": false
    },
    "root": {
     "type": "project",
-    "status": "active",
-    "verdict": null,
-    "synthesis": null,
-    "approved": false,
+    "state": null,
+    "confidence": null,
+    "direction": null,
+    "parked": false,
     "answered": false
    },
    "q1": {
     "type": "question",
-    "status": "resolved",
-    "verdict": null,
-    "synthesis": "s1",
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": null,
+    "parked": false,
     "answered": true
    },
    "q2": {
     "type": "question",
-    "status": "resolved",
-    "verdict": null,
-    "synthesis": "s2",
-    "approved": false,
+    "state": "settled",
+    "confidence": "strong",
+    "direction": null,
+    "parked": false,
     "answered": true
    },
    "q3": {
     "type": "question",
-    "status": "open",
-    "verdict": null,
-    "synthesis": null,
-    "approved": false,
-    "answered": false
-   },
-   "s1": {
-    "type": "synthesis",
-    "status": null,
-    "verdict": null,
-    "synthesis": null,
-    "approved": true,
-    "answered": false
-   },
-   "s2": {
-    "type": "synthesis",
-    "status": null,
-    "verdict": null,
-    "synthesis": null,
-    "approved": true,
+    "state": "open",
+    "confidence": null,
+    "direction": null,
+    "parked": false,
     "answered": false
    }
   },

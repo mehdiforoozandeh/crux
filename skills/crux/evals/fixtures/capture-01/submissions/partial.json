@@ -1,0 +1,58 @@
+{
+ "fixture": "capture-01",
+ "agent": "crux-capture",
+ "agent_sha": "085758b34312860de7c2a16d6fe9bebe4b41311face5396daed2f4dff5bede23",
+ "_note": "CANNED — opened and recorded the result, but missed the open null and the dropped watering idea.",
+ "asked_pi": [],
+ "prose": [
+  "The 16-hour trays grew about 15% taller, in the expected direction but short…",
+  "The 16-hour trays grew about 15% taller, in the expected direction but short of the expected 20%, and the warmer shelf could explain the gain on its own.",
+  "15% taller against an expected 20%: same direction, a near miss on size",
+  "Sixteen hours of light beats twelve",
+  "Seedlings under 16 hours of light a day are about 20% taller after two weeks than seedlings under 12 hours",
+  "selection — the 16-hour trays sat on the warmer top shelf, so warmth alone could make them taller",
+  "Does the number of light hours per day change how fast the seedlings grow?"
+ ],
+ "runs": [
+  {
+   "findings": [
+    "finding:evidence",
+    "finding:weak",
+    "open:hypothesis+expect",
+    "open:question"
+   ]
+  },
+  {
+   "findings": [
+    "finding:evidence",
+    "finding:weak",
+    "open:hypothesis+expect",
+    "open:question"
+   ]
+  },
+  {
+   "findings": [
+    "finding:evidence",
+    "finding:weak",
+    "open:hypothesis+expect",
+    "open:question"
+   ]
+  },
+  {
+   "findings": [
+    "finding:evidence",
+    "finding:weak",
+    "open:hypothesis+expect",
+    "open:question"
+   ]
+  },
+  {
+   "findings": [
+    "finding:evidence",
+    "finding:weak",
+    "open:hypothesis+expect",
+    "open:question"
+   ]
+  }
+ ]
+}
