@@ -5,7 +5,8 @@ Four committed reference vaults. All open directly in the cockpit — run `crux 
 experience: the question/hypothesis **Tree** and, where a wiki exists, the living
 **Wiki** graph + reader.
 
-All four are stamped engine **4.0** (crux 1.0.0). Each was written under an older engine
+All four were converted to engine **4.0** (crux 1.0.0) and load unchanged under engine 4.1
+(crux 1.1.0). Each was written under an older engine
 and converted by the engine's own migration, never by hand: every recorded verdict became a
 **finding** with a direction and a confidence, every approved synthesis became a strong
 finding on its question, and each node's state (open · leaning · settled · parked) is now

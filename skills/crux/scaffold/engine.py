@@ -95,7 +95,7 @@ ENGINE_VERSION = "4.1"          # bumped when verdict/roll-up/view logic or vaul
                                 # Synthesis, the review gate, close/answer/approve and the
                                 # experiment accept gate are removed. Verdict/roll-up/view
                                 # logic and the vault format both change: a compatibility era.
-CRUX_VERSION = "1.0.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
+CRUX_VERSION = "1.1.0"          # the RELEASE version (what ships / what the update check compares); independent of the vault format
 VAULT_MARKER = ".crux.yaml"
 LEDGER_START = "<!-- crux:ledger:start -->"
 LEDGER_END   = "<!-- crux:ledger:end -->"
