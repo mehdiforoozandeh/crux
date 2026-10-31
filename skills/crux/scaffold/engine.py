@@ -14,7 +14,7 @@ Stdlib only. The CLI (crux.py) and selftest.py call the cmd_* functions here.
 import os, re, sys, json, html, datetime, tempfile, shutil, hashlib, shlex, math
 
 # ----------------------------------------------------------------------------- constants
-ENGINE_VERSION = "4.0"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
+ENGINE_VERSION = "4.1"          # bumped when verdict/roll-up/view logic or vault format changes; stamped into every vault
                                 # 1.4: prezit (spec 11) — the engine now reads two new optional
                                 # vault conventions: results/<hid>/metrics.json (addressable
                                 # numbers) and an optional `## Protocol` section on questions.
@@ -1009,6 +1009,9 @@ def effective_confidence(f):
     if f["fm"].get("null") == NULL_NOT_RULED_OUT and f["fm"].get("direction") == "supports" \
             and confidence_rank(c) > confidence_rank(NULL_CAP):
         return NULL_CAP
+    # spec 20: an exploratory finding (no stated prediction) counts at most moderate
+    if f["fm"].get("exploratory") is True and confidence_rank(c) > confidence_rank("moderate"):
+        return "moderate"
     return c
 
 def _counts(f, on_question):
@@ -4225,7 +4228,7 @@ def _new_id(v, kind):
     v.cfg = cfg
     return f"{prefix}{cfg[key]}"
 
-def cmd_ask(root, title, parent=None, body_text=""):
+def cmd_ask(root, title, parent=None, body_text="", bears=None):
     v = Vault(root)
     parent = parent or v.cfg["root_id"]
     p = v.get(parent)
@@ -4237,6 +4240,9 @@ def cmd_ask(root, title, parent=None, body_text=""):
                 parent_id=parent, parent_basename=p.basename)
     if body_text:
         text = text.replace(f"## Question\n\n{title}", f"## Question\n\n{body_text}")
+    bears = (bears or "").strip()
+    if bears:
+        text = text.replace("## Protocol", f"## Bears on\n\n{bears}\n\n## Protocol", 1)
     write_if_changed(os.path.join(root, fn), text)
     refresh(root)
     return nid, fn
@@ -4248,7 +4254,7 @@ _VERIFIABLES_PLACEHOLDER = ("_(optional: falsifiable checks, added when they can
 def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=None,
                     rule=None, rule_m=None, null=None, fails_if=None, discriminates=None,
                     measurement=None, replicates=None, builds_on=None, nid=None, claim=None,
-                    expect=None, require_expect=True):
+                    expect=None, require_expect=True, bears=None):
     """Returns (id, filename, warning). The third element is fan-out back-pressure — None
     when the parent question has room, a message when this hypothesis puts it over
     FANOUT_MAX. Never a refusal: proposing is cheap and sometimes right, so crux says the
@@ -4331,6 +4337,10 @@ def cmd_hypothesize(root, title, parent, problem="", verifiables=None, neutral=N
     if claim is not None:
         text = text.replace(f"## Idea / Hypothesis\n\n{title}\n",
                             f"## Idea / Hypothesis\n\n{claim.strip()}\n", 1)
+    bears = (bears or "").strip()
+    if bears:
+        text = text.replace("## Idea / Hypothesis",
+                            f"## Bears on\n\n{bears}\n\n## Idea / Hypothesis", 1)
     fm, body = parse_doc(text)
     if null is not None:
         body = set_null(body, null)
@@ -4423,7 +4433,7 @@ def _one_line(x):
     return " ".join(str(x or "").split())
 
 def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=None, null=None,
-                vs_expect=None, verifiables=None, answer=None):
+                vs_expect=None, verifiables=None, answer=None, exploratory=False):
     """Record one Finding under a question or a hypothesis. Returns (id, filename, note);
     `note` is the null-cap message when the stored confidence was lowered, else None.
 
@@ -4455,6 +4465,10 @@ def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=Non
             raise CruxError("--null, --vs-expect and --verifiables describe a hypothesis' "
                             "test; a finding on a question carries none of them")
     else:
+        if exploratory:
+            raise CruxError("--exploratory marks a finding on a question (drawn from looking "
+                            "at data with no stated prediction); a hypothesis finding tests "
+                            "a stated expectation")
         if d is None:
             raise CruxError(f"a finding on a hypothesis needs a direction: one of "
                             f"{', '.join(DIRECTIONS)}")
@@ -4479,6 +4493,10 @@ def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=Non
         stored = NULL_CAP
         note = (f"confidence stored as {NULL_CAP}, not {conf}: the null was not ruled out, "
                 f"which caps confidence at {NULL_CAP}")
+    if exploratory and confidence_rank(conf) > confidence_rank("moderate"):
+        stored = "moderate"
+        note = (f"confidence stored as moderate, not {conf}: an exploratory finding (no stated "
+                f"prediction) counts at most moderate")
     head = why or answer.splitlines()[0]
     title = head if len(head) <= 80 else head[:77].rsplit(" ", 1)[0] + "…"
     fid = _new_id(v, "finding")
@@ -4492,6 +4510,8 @@ def cmd_finding(root, parent, confidence, why=None, direction=None, evidence=Non
     for k, val in fm.items():
         if k == "created":
             out.update({f: vals[f] for f in FINDING_FIELDS if vals[f] is not None})
+            if exploratory:
+                out["exploratory"] = True
         out[k] = val
     if answer:
         body = body.rstrip() + f"\n\n## Answer\n\n{answer}\n"
@@ -4604,6 +4624,14 @@ def boundary_info(v):
                     f"{len(legacy)} node(s) of a type engine 4.0 no longer writes "
                     f"({', '.join(sorted({x.type for x in legacy}))}); the 4.0 migration "
                     f"converts them.", len(legacy)))
+    # spec 20: information, never red — an item written before 4.1 or by the Python API
+    nob = sum(1 for x in v.nodes.values()
+              if x.type in ("question", "idea") and not _section(x["body"], "Bears on"))
+    if nob:
+        out.append(("boundary:bears-on",
+                    f"{nob} questions or hypotheses state no `## Bears on` (how the answer "
+                    f"moves the parent's answer); written before engine 4.1 or by the Python "
+                    f"API.", nob))
     return out
 
 def _section_placeholder(name):
@@ -5420,6 +5448,17 @@ def ancestor_chain(v, n):
     out.reverse()
     return out
 
+def bears_path(v, nid):
+    """Spec 20: [{id, title, bears_on}] from the topmost question down to `nid` inclusive
+    (project excluded; a finding resolves to its parent's path; unknown id or project -> [])."""
+    n = v.nodes.get(nid)
+    if n is not None and n.type == "finding":
+        n = v.nodes.get(n.parent)
+    if n is None or n.type not in ("question", "idea"):
+        return []
+    return [{"id": m.id, "title": m.title, "bears_on": _section(m["body"], "Bears on") or None}
+            for m in ancestor_chain(v, n) + [n] if m.type in ("question", "idea")]
+
 def wiki_refs(root, bodies):
     """[{slug, title, path}] for every wiki page linked from `bodies`, first-mention order,
     de-duplicated. Shared by `deck_payload` and `brief` (D3).
@@ -5497,6 +5536,7 @@ def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
         "expect": expect_text(n) or None,
         "question": _section(parent["body"].split(LEDGER_START)[0], "Question") if parent else None,
         "ancestry": anc,
+        "path": bears_path(v, hid),
         "null": _null_text(n),
         "verifiables": vfs,
         "rule": rule, "rule_m": m,
@@ -5766,6 +5806,7 @@ def situate_brief(root, anchor=None):
         "mode": "situate",
         "anchor": anchor_d,
         "ancestry": lineage,
+        "path": bears_path(v, n.id),
         "subtree": [_situate_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
         "untested": _situate_untested(v, ids),

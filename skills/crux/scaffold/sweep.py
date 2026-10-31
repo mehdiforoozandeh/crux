@@ -629,11 +629,28 @@ def wrap(vault, transcript):
     since its mark (capped). Advances this session's mark, so the next session start does not
     sweep what the wrap already covered."""
     out = {"vault": vault, "transcript": transcript, "records": [], "text": "",
-           "truncated": False, "pending": pending_list(vault)}
+           "truncated": False, "pending": pending_list(vault), "review": []}
     if not transcript or not os.path.isfile(transcript):
         return out
     transcript = _key(transcript)
     out["records"] = session_records(transcript)
+    # spec 20: each record's path to the top question, and the questions this session moved
+    # that no strong finding settles yet — the candidates for the stalled-line check
+    v = E.Vault(vault)
+    seen = set()
+    for rec in out["records"]:
+        rec["path"] = E.bears_path(v, rec["id"]) if rec["id"] in v.nodes else []
+        if rec["verb"] not in ("ask", "hypothesize", "finding") or rec["id"] not in v.nodes:
+            continue
+        q = next((a for a in E._ancestors(v, rec["id"]) if v.nodes[a].type == "question"), None)
+        if q is None or q in seen:
+            continue
+        seen.add(q)
+        under = [q] + [c for c in v.children.get(q, ()) if v.nodes[c].type == "idea"]
+        if v.nodes[q]["fm"].get(E.PARKED_FIELD) is True or any(
+                E.effective_confidence(f) == "strong" for x in under for f in E.node_findings(v, x)):
+            continue
+        out["review"].append({"id": q, "title": v.nodes[q].title, "path": E.bears_path(v, q)})
     start = load_marks(vault)["marks"].get(transcript, 0)
     text, end = text_since(transcript, start)
     out["text"], out["truncated"] = cap_text(text)

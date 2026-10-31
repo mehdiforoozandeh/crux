@@ -3825,7 +3825,8 @@ def run_evidence_boundary():
     # -- the info tier, on a vault with nothing to report
     rep = E.validation_report(root)
     check("boundary: a fully-stamped vault reports no boundary info",
-          rep["info"] == [] and rep["ok"] is True)
+          [i for i in rep["info"] if i.get("id") != "boundary:bears-on"] == []
+          and rep["ok"] is True)
 
     check("boundary: ENGINE_VERSION at or past 1.6", at_least_version("1.6"))
     shutil.rmtree(root, ignore_errors=True)
