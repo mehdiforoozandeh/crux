@@ -1641,25 +1641,6 @@ def scenario_gap(n):
                 f"one, which is the whole failure the null exists to catch.")
     return None
 
-def null_gap(n):
-    """The `validate`/gate message for a hypothesis' null, or None. Gated on the stamp, so a
-    pre-15 hypothesis is never asked for one."""
-    if n.type != "idea" or not binds_evidence_semantics(n):
-        return None
-    p = null_problem(_null_text(n) or "", node_schema(n))
-    if p:
-        return f"hypothesis '{n.id}': {p}"
-    if n["fm"].get(NULL_APPROVED) and n["fm"].get("null_hash") != _null_hash(n):
-        return (f"hypothesis '{n.id}': the null was EDITED after approval, so the approval no "
-                f"longer stands. A different null is a different alternative "
-                f"explanation, and checks written against the old one discriminate against "
-                f"nothing. Re-approve with `crux approve-null {n.id}`.")
-    if not str(n["fm"].get(NULL_APPROVED) or "").strip():
-        return (f"hypothesis '{n.id}': the null is declared but not approved. The null IS the "
-                f"threshold restated, and the threshold is the PI's call — `crux approve-null {n.id}` "
-                f"once they have read it. Checks are written against an APPROVED null.")
-    return None
-
 def _fm_text(n, field):
     txt = str(n["fm"].get(field) or "").strip()
     return txt or None

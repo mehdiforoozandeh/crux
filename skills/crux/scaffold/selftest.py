@@ -4826,6 +4826,16 @@ def run_experiments():
     check("taskmig: a pre-08 vault is unchanged at 2.2", _dir_bytes(dst) == b)
     shutil.rmtree(fx, ignore_errors=True)
 
+    # a sub-task that declares its OWN conclusion is its own experiment, and nesting is
+    # still reported as information (task_gate_info), never as a problem
+    e0, _ = E.cmd_task_add(root, "Full run", category="implementation", blocked_by=None,
+                           hypothesis_refs=[(h1, "supported")])
+    n1, _ = E.cmd_task_add(root, "Nested pilot", category="implementation", blocked_by=None,
+                           parent=e0, hypothesis_refs=[(h1, "inconclusive")])
+    rep = E.validation_report(root)
+    check("exp: nesting is reported as info",
+          any(x["id"] == "task:nested-experiment" and n1 in x["message"] for x in rep["info"])
+          and not any(x["id"].startswith("task:") for x in rep["problems"] + rep["warnings"]))
     check("exp: ENGINE_VERSION bumped to 2.2", at_least_version("2.2"))
     shutil.rmtree(root, ignore_errors=True)
 
@@ -5236,8 +5246,15 @@ def run_null():
     check("null: the template carries a Null section", "## Null" in n1["body"])
     check("null: --null writes the section",
           "capacity — the extra parameters alone explain it" in n1["body"])
+    check("null: the null reaches the brief",
+          E.brief(root, h1)["null"] == "capacity — the extra parameters alone explain it")
     check("null: snapshot exposes the null",
           E.snapshot(root)["nodes"][h1]["null"].startswith("capacity"))
+    # 09.1 criterion 9's third surface: the deck. A slide reporting a verdict without the
+    # bar it was measured against is a number with no scale.
+    dp = E.deck_payload(root, h1)
+    check("null: the null reaches the deck payload",
+          dp["anchor"]["null"].startswith("capacity"))
 
     check("null: every confound family is accepted",
           all(E.null_problem(f"{fam} — the instance", 1) is None for fam in E.CONFOUND_FAMILIES))
@@ -5264,6 +5281,14 @@ def run_null():
 
     check("null: ENGINE_VERSION at or past 2.5", at_least_version("2.5"))
     shutil.rmtree(root, ignore_errors=True)
+
+    # ------------------------------------------------------------------ the boundary holds
+    old, oq, oh = pre15_vault("crux_nmig_")
+    check("evmig: a pre-15 hypothesis needs no null",
+          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == []
+          and E.validation_report(old)["warnings"] == [])
+    check("evmig: a pre-15 brief carries a null of None", E.brief(old, oh)["null"] is None)
+    shutil.rmtree(old, ignore_errors=True)
 
 
 def run_failure_scenarios():
@@ -5337,6 +5362,9 @@ def run_failure_scenarios():
           and "fails-if!::" not in n1["body"])
     check("fails: scenarios reach the snapshot",
           [x["fails_if"] for x in E.snapshot(root)["nodes"][h1]["verifiables"]][0]
+          == "the width-matched arm also clears it")
+    check("fails: scenarios reach the brief",
+          E.brief(root, h1)["verifiables"][0]["fails_if"]
           == "the width-matched arm also clears it")
     check("fails: a complete hypothesis runs", E.cmd_test(root, h1, to="running") == "running")
     h2, _, _ = E.cmd_hypothesize(root, "no scenarios", parent=q1, expect="alpha holds",
@@ -5423,6 +5451,11 @@ def run_failure_scenarios():
     check("evmig: a node locked under generation 1 does NOT drift after the bump",
           not E.lock_drift(E.Vault(old).get(oh)))
     check("evmig: and its vault validates clean", E.cmd_validate(old) == [])
+    shutil.rmtree(old, ignore_errors=True)
+
+    old, oq, oh = pre15_vault("crux_fsp15_")
+    check("evmig: a pre-15 hypothesis needs no failure scenarios",
+          E.cmd_test(old, oh, to="running") == "running" and E.cmd_validate(old) == [])
     shutil.rmtree(old, ignore_errors=True)
 
 
