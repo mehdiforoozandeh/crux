@@ -5098,35 +5098,72 @@ def _deck_text(body, heading):
     comments stripped — template guidance is not vault-authored content."""
     return re.sub(r"<!--.*?-->", "", _summary(body, heading), flags=re.S).strip()
 
-def _deck_question_fields(n):
-    pre = n["body"].split(LEDGER_START)[0]
-    return {"question": _deck_text(pre, "Question"),
-            "protocol": _deck_text(pre, "Protocol"),
-            "answer_so_far": _deck_text(pre, "Answer so far")}
+def _payload_findings(v, nid):
+    """findings[] for a payload (spec 19), oldest first: `finding_json` without its timestamp
+    or parent, because every payload here is byte-stable and carries no dates. A hypothesis'
+    Finding carries its direction; a question's carries its answer text and NO direction
+    (PI ruling) — the key is absent, not null, so no reader can mistake it for one."""
+    on_q = v.nodes[nid].type == "question"
+    out = []
+    for f in node_findings(v, nid):
+        d = finding_json(f)
+        for k in ("created", "parent") + (("direction", "null", "vs_expect", "verifiables")
+                                          if on_q else ("answer",)):
+            d.pop(k, None)
+        out.append(d)
+    return out
 
-def _deck_idea_fields(n):
-    verdict = n["fm"].get("verdict")
+def _payload_state(v, n):
+    """{state, confidence, findings} for a question or hypothesis — derived, never stored,
+    the same rule the cockpit reads (`derive_state`). Anything else (the project) has none."""
+    if n.type not in ("question", "idea"):
+        return {"state": None, "confidence": None, "findings": []}
+    st = derive_state(v, n.id)
+    return {"state": st["state"], "confidence": st["confidence"],
+            "findings": _payload_findings(v, n.id)}
+
+def _answer_so_far(v, n):
+    """What this level currently tells us, as text ("" when nothing). A project's is its
+    goal. A question's is the answer of the Finding that sets its state, when that Finding is
+    the question's own (spec 19: a question is answered by a Finding on it); otherwise the
+    3.x `## Answer so far` section a migrated vault still carries."""
+    pre = n["body"].split(LEDGER_START)[0]
+    if n.type == "project":
+        return _deck_text(pre, "Goal")
+    if n.type == "question":
+        f = v.nodes.get(derive_state(v, n.id)["finding"] or "")
+        if f is not None and f.parent == n.id:
+            ans = _deck_text(f["body"], "Answer")
+            if ans:
+                return ans
+    return _deck_text(pre, "Answer so far")
+
+def _deck_question_fields(v, n):
+    pre = n["body"].split(LEDGER_START)[0]
+    return dict({"question": _deck_text(pre, "Question"),
+                 "protocol": _deck_text(pre, "Protocol"),
+                 "answer_so_far": _answer_so_far(v, n)}, **_payload_state(v, n))
+
+def _deck_idea_fields(v, n):
     rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
-    return {"verdict": verdict if verdict in VERDICTS else None,
-            "rule": rule, "rule_m": m, "drift": lock_drift(n),
-            # the null is the bar restated: what the checks had to rule out. A deck that
-            # reports a verdict without it is reporting a number with no scale.
-            "null": _null_text(n),
-            # a BOOLEAN, not the timestamp. The deck payload is byte-stable by contract and
-            # carries no dates; what a slide needs is "was this bar signed off", not when.
-            "null_approved": bool(n["fm"].get(NULL_APPROVED)),
-            "metric": n["fm"].get("metric") or None,
-            "verifiables": _deck_verifiables(n["body"]),
-            "findings": _deck_text(n["body"], "Findings"),
-            "artifacts": parse_artifacts(n["body"])}
+    return dict({"rule": rule, "rule_m": m, "drift": lock_drift(n),
+                 # the null is the bar restated: what the checks had to rule out. A deck that
+                 # reports a result without it is reporting a number with no scale.
+                 "null": _null_text(n),
+                 "metric": n["fm"].get("metric") or None,
+                 "verifiables": _deck_verifiables(n["body"]),
+                 # the `## Findings` prose a 3.x close wrote: narrative history. The Findings
+                 # themselves ride in `findings[]`.
+                 "narrative": _deck_text(n["body"], "Findings"),
+                 "artifacts": parse_artifacts(n["body"])}, **_payload_state(v, n))
 
 def _deck_child(v, cid):
     n = v.nodes[cid]
     d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status}
     if n.type == "question":
-        d.update(_deck_question_fields(n))
+        d.update(_deck_question_fields(v, n))
     else:
-        d.update(_deck_idea_fields(n))
+        d.update(_deck_idea_fields(v, n))
     d["children"] = [_deck_child(v, c) for c in v.children.get(cid, ())]
     return d
 
@@ -5161,25 +5198,24 @@ def deck_payload(root, anchor):
     lineage = ancestor_chain(v, n)          # root -> parent, cycle-guarded (shared, D3)
 
     def _line(m):
-        pre = m["body"].split(LEDGER_START)[0]
-        txt = _deck_text(pre, "Goal") if m.type == "project" else _deck_text(pre, "Answer so far")
         return {"id": m.id, "type": m.type, "title": m.title, "status": m.status,
-                "answer_so_far": txt}
+                "answer_so_far": _answer_so_far(v, m)}
 
     anchor_d = {"id": n.id, "type": n.type, "title": n.title, "status": n.status,
                 "question": None, "protocol": None, "answer_so_far": None,
-                "verdict": None, "rule": None, "rule_m": None, "drift": False,
-                "null": None, "null_approved": False,
-                "metric": None, "verifiables": [], "findings": None,
-                "artifacts": []}
-    anchor_d.update(_deck_question_fields(n) if n.type == "question" else _deck_idea_fields(n))
+                "rule": None, "rule_m": None, "drift": False, "null": None,
+                "metric": None, "verifiables": [], "narrative": None,
+                "artifacts": [], "state": None, "confidence": None, "findings": []}
+    anchor_d.update(_deck_question_fields(v, n) if n.type == "question"
+                    else _deck_idea_fields(v, n))
 
     siblings = [v.nodes[c] for c in v.children.get(n.parent, ()) if c != n.id] \
                if n.parent in v.nodes else []
 
     hids = _subtree_hids(v, n.id)
-    ideas = [v.nodes[h] for h in hids]
-    by_state = {s: sum(1 for i in ideas if i.status == s) for s in IDEA_STATUS}
+    # scope by DERIVED state (spec 19, ruling Q14: the stored status is history)
+    states = [derive_state(v, h)["state"] for h in hids]
+    by_state = {s: states.count(s) for s in STATES}
 
     # wiki pages linked from the anchor, then its ancestors (root -> parent), first-mention
     # order, de-duplicated; entries point at the page, bodies stay in the vault
@@ -5196,14 +5232,6 @@ def deck_payload(root, anchor):
     rds = [{"slug": r["slug"], "title": r["title"], "path": _rel(root, r["path"])}
            for mid in _subtree_ids(v, n.id)
            for r in sorted(rd_by_node.get(mid, ()), key=lambda x: x["slug"])]
-
-    sid = approved_synthesis(v, n.id) if n.type == "question" else None
-    synthesis = None
-    if sid:
-        s = v.nodes[sid]
-        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
-                     "text": "\n".join(l for l in s["body"].splitlines()
-                                       if not l.strip().startswith("Related::")).strip()}
 
     figures = []
     hids = sorted(hids, key=natkey)     # defined order: hid natkey, then file/key order
@@ -5231,9 +5259,9 @@ def deck_payload(root, anchor):
         "children": [_deck_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
         "rd": rds,  # spec 07: the anchor's subtree's design documents — the methods source
-        "synthesis": synthesis,
-        "scope": {"executed": by_state["running"] + by_state["done"],
-                  "parked": by_state["idea"] + by_state["staged"],
+        # executed = has a Finding that counts (leaning or settled); open = none yet
+        "scope": {"executed": by_state["leaning"] + by_state["settled"],
+                  "open": by_state["open"], "parked": by_state["parked"],
                   "by_state": by_state},
         "figures": figures,
         "metrics": metrics,
@@ -5321,14 +5349,15 @@ def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
     chain = ancestor_chain(v, n)
     anc = [{"id": m.id, "type": m.type, "title": m.title} for m in chain]
 
-    # the shared factual record: what CLOSED siblings under the same question found.
+    # the shared factual record: what siblings under the same question FOUND — every sibling
+    # hypothesis that carries a Finding (spec 19), with its derived state and its Findings.
     prior = []
     for cid in (v.children.get(n.parent, ()) if parent else ()):
         c = v.nodes[cid]
-        if cid == hid or c.type != "idea" or c.status != TERMINAL_IDEA:
+        if cid == hid or c.type != "idea" or not node_findings(v, cid):
             continue
-        prior.append({"id": c.id, "title": c.title, "verdict": c["fm"].get("verdict"),
-                      "findings": _section(c["body"], "Findings")})
+        prior.append(dict({"id": c.id, "title": c.title}, **_payload_state(v, c),
+                          narrative=_section(c["body"], "Findings") or None))
 
     # the pre-registered checks, stripped of their results
     vfs = []
@@ -5472,18 +5501,20 @@ def _situate_child(v, cid):
     orientation that inlines 40,000 words of prose has failed at its only job. Findings ride
     only with a CLOSED hypothesis — an open node's half-written findings are not knowledge."""
     n = v.nodes[cid]
-    verdict = n["fm"].get("verdict")
+    st = _payload_state(v, n)
     return {
         "id": n.id, "type": n.type, "title": n.title, "status": n.status,
         "schema": node_schema(n),
         "eli5": _summary(n["body"], "ELI5") or None,
-        "verdict": (verdict if verdict in VERDICTS else None) if n.type == "idea" else None,
+        "state": st["state"], "confidence": st["confidence"],
         "tally": ({k: list(x) for k, x in count_verifiables_by_kind(n["body"]).items()}
                   if n.type == "idea" else None),
-        "findings": (_deck_text(n["body"], "Findings") or None
-                     if n.type == "idea" and n.status == TERMINAL_IDEA else None),
-        "answer_so_far": (_deck_text(n["body"].split(LEDGER_START)[0], "Answer so far") or None
-                          if n.type == "question" else None),
+        # spec 19: the Findings ARE the knowledge — they ride with every node that has one
+        "findings": st["findings"],
+        # the 3.x `## Findings` prose, as history, only beside a node that has a Finding
+        "narrative": (_deck_text(n["body"], "Findings") or None
+                      if n.type == "idea" and st["findings"] else None),
+        "answer_so_far": (_answer_so_far(v, n) or None if n.type == "question" else None),
         "children": [_situate_child(v, c) for c in v.children.get(cid, ())],
     }
 
@@ -5495,12 +5526,15 @@ def _situate_untested(v, ids):
     for nid in ids:
         n = v.nodes[nid]
         if n.type == "idea":
-            if n.status in ("idea", "staged"):
-                unrun.append({"id": n.id, "title": n.title, "status": n.status})
+            # unrun (spec 19, Q14 — the stored status is history): no Finding, not parked,
+            # and nothing the run path writes — no lock taken, no run link recorded
+            if derive_state(v, nid)["state"] == "open" and not n["fm"].get(LOCK_FIELD) \
+                    and not _run_links(n["body"]):
+                unrun.append({"id": n.id, "title": n.title, "state": "open"})
             for item in _verifiables(n["body"]):
                 if item["state"] == "unmet":
                     checks.append({"hid": n.id, "text": item["text"], "kind": item["kind"]})
-        elif n.type == "question" and n.status != TERMINAL_QUESTION:
+        elif n.type == "question" and derive_state(v, nid)["state"] in ("open", "leaning"):
             openq.append(n.id)
     return {"unrun_ideas": unrun, "open_checks": checks, "open_questions": openq}
 
@@ -5519,9 +5553,11 @@ def _situate_inbound(v, ids):
     names.update({nid: nid for nid in ids})
     out = []
     for nid in sorted(v.nodes, key=natkey):
-        if nid in inside:
-            continue
         n = v.nodes[nid]
+        # a Finding is not a tree node (spec 19): one on a node inside the subtree is part of
+        # that node, and its `Parent::` link is structure, not a citation
+        if nid in inside or (n.type == "finding" and n.parent in inside):
+            continue
         pre = n["body"].split(LEDGER_START)[0]
         if any(t in names for t in link_targets(pre)):
             out.append({"id": n.id, "type": n.type, "title": n.title})
@@ -5573,13 +5609,11 @@ def situate_brief(root, anchor=None):
     chain = ancestor_chain(v, n)
     lineage = []
     for cur in chain:
-        pre = cur["body"].split(LEDGER_START)[0]
         lineage.append({"id": cur.id, "type": cur.type, "title": cur.title,
                         "status": cur.status,
                         # a project's answer-so-far IS its goal; the field is one thing —
                         # "what this level is currently telling us" — not two
-                        "answer_so_far": (_deck_text(pre, "Goal") if cur.type == "project"
-                                          else _deck_text(pre, "Answer so far")) or None})
+                        "answer_so_far": _answer_so_far(v, cur) or None})
 
     pre = n["body"].split(LEDGER_START)[0]
     anchor_d = {
@@ -5592,32 +5626,21 @@ def situate_brief(root, anchor=None):
         # the advocacy lives. The PI wrote the advocacy. Reading it back cannot bias them.
         "problem": _deck_text(n["body"], "Problem Statement") or None,
         "question": _deck_text(pre, "Question") or None,
-        "answer_so_far": (_deck_text(pre, "Goal") if n.type == "project"
-                          else _deck_text(pre, "Answer so far")) or None,
-        "verdict": None, "rule": None, "rule_m": None,
-        "verifiables": [], "findings": None,
+        "answer_so_far": _answer_so_far(v, n) or None,
+        "rule": None, "rule_m": None, "verifiables": [], "narrative": None,
     }
+    anchor_d.update(_payload_state(v, n))
     if n.type == "idea":
-        verdict = n["fm"].get("verdict")
         rule, m = node_rule(n) if binds_evidence_semantics(n) else (None, None)
-        anchor_d.update({"verdict": verdict if verdict in VERDICTS else None,
-                         "rule": rule, "rule_m": m,
+        anchor_d.update({"rule": rule, "rule_m": m,
                          "verifiables": _verifiables(n["body"]),
-                         "findings": _deck_text(n["body"], "Findings") or None})
+                         "narrative": _deck_text(n["body"], "Findings") or None})
 
     ids = _subtree_ids(v, n.id)
     # the shared wiki walk (D3), over the anchor's body then its ancestors' — the same bodies
     # the isolated brief scans, because "what has been read about this" does not change with
     # who is asking
     wiki = wiki_refs(root, [n["body"]] + [m["body"] for m in chain])
-
-    sid = approved_synthesis(v, n.id) if n.type == "question" else None
-    synthesis = None
-    if sid:
-        s = v.nodes[sid]
-        synthesis = {"id": sid, "approved": str(s["fm"].get("approved")),
-                     "text": "\n".join(l for l in s["body"].splitlines()
-                                       if not l.strip().startswith("Related::")).strip()}
 
     return {
         "engine_version": ENGINE_VERSION,
@@ -5626,7 +5649,6 @@ def situate_brief(root, anchor=None):
         "ancestry": lineage,
         "subtree": [_situate_child(v, c) for c in v.children.get(n.id, ())],
         "wiki": wiki,
-        "synthesis": synthesis,
         "untested": _situate_untested(v, ids),
         "inbound": _situate_inbound(v, ids),
         "work": _situate_work(root, v, ids),

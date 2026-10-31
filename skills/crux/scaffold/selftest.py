@@ -2143,8 +2143,9 @@ def run_deck():
                                  fails_if=["the width-matched arm also clears it",
                                            "bar two moves on its own",
                                            "the shared preprocessing path changed"],
-                                 discriminates=[True, False, False])
-    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid)
+                                 discriminates=[True, False, False],
+                                 expect="bar one and bar two both clear")
+    h2, _, _ = E.cmd_hypothesize(root, "second hyp", parent=qmid, expect="it moves")
     # the optional ## Protocol section (new in 1.4) — fill it on the anchor
     edit(node_path(root, qmid), DECK_PROTOCOL_PLACEHOLDER, "Rules locked up front.")
     # close h1 with a (found: …) parenthetical on the first bar
@@ -2153,7 +2154,10 @@ def run_deck():
     edit(node_path(root, h1), "- [ ] [outcome-neutral] control", "- [x] [outcome-neutral] control")
     declare_null(root, h1)
     E.cmd_test(root, h1, to="running")
-    E.cmd_close(root, h1, metric="imp +0.02")
+    # the headline metric: frontmatter the 3.x close step wrote, which a 4.0 vault keeps
+    n1 = E.Vault(root).get(h1)
+    n1["fm"]["metric"] = "imp +0.02"
+    E.write_if_changed(n1["path"], E.render_doc(n1["fm"], n1["body"]))
     # evidence on disk: metrics.json + report + a figure, report linked in ## Artifacts
     rd = os.path.join(root, "results", h1)
     write(os.path.join(rd, "metrics.json"), json.dumps({
@@ -2164,6 +2168,10 @@ def run_deck():
     edit(node_path(root, h1), f"results/{h1}/curve.png -->\n_(none yet)_",
          f"results/{h1}/curve.png -->\n- [Report](results/{h1}/report.md)\n"
          f"- results/{h1}/curve.png the loss curve")
+    # spec 19: no close step — the run's result is a Finding on the hypothesis
+    E.cmd_finding(root, h1, "strong", why="both bars cleared and the control held",
+                  direction="supports", null="ruled-out",
+                  evidence=[f"results/{h1}/report.md"])
     E.refresh(root)
 
     # determinism — in-process and through the CLI
@@ -2179,6 +2187,10 @@ def run_deck():
     check("deck: engine_version stamped in the payload", p1["engine_version"] == E.ENGINE_VERSION)
     check("deck: payload carries no absolute path and no timestamp",
           root not in s1 and E.now()[:10] not in s1)
+    # spec 19: synthesis and verdict are gone; the payload reads Findings and derived state
+    check("deck: no payload key is named verdict or synthesis",
+          '"verdict":' not in s1 and '"synthesis":' not in s1
+          and '"verdict":' not in json.dumps(E.deck_payload(root, h1)))
 
     # lineage / siblings / children
     check("deck: lineage is root -> parent, in order",
@@ -2190,8 +2202,16 @@ def run_deck():
     kids = p1["children"]
     check("deck: children are the anchor's subtree in order", [x["id"] for x in kids] == [h1, h2])
     k1 = kids[0]
-    check("deck: closed child carries verdict + metric",
-          k1["verdict"] == "supported" and k1["metric"] == "imp +0.02")
+    check("deck: a child with a Finding carries its derived state, confidence + metric",
+          k1["state"] == "settled" and k1["confidence"] == "strong"
+          and k1["metric"] == "imp +0.02")
+    check("deck: a hypothesis child carries findings[] with direction, confidence, why, evidence",
+          [(f["direction"], f["confidence"], f["why"], f["evidence"]) for f in k1["findings"]]
+          == [("supports", "strong", "both bars cleared and the control held",
+               [f"results/{h1}/report.md"])])
+    check("deck: a child with no Finding is open and carries an empty findings[]",
+          kids[1]["state"] == "open" and kids[1]["confidence"] is None
+          and kids[1]["findings"] == [])
     check("deck: verifiable `found` parsed from the (found: …) parenthetical",
           k1["verifiables"][0] == {"text": "bar one", "state": "met", "kind": "hypothesis",
                                    "found": "+0.02",
@@ -2221,9 +2241,10 @@ def run_deck():
           p1["anchor"]["question"] == "Mid question"
           and p1["anchor"]["protocol"] == "Rules locked up front.")
     check("deck: placeholder answer-so-far reads as empty", p1["anchor"]["answer_so_far"] == "")
-    check("deck: scope counts executed vs parked",
-          p1["scope"]["executed"] == 1 and p1["scope"]["parked"] == 1
-          and p1["scope"]["by_state"]["done"] == 1 and p1["scope"]["by_state"]["idea"] == 1)
+    check("deck: scope counts hypotheses by derived state",
+          p1["scope"]["executed"] == 1 and p1["scope"]["open"] == 1
+          and p1["scope"]["parked"] == 0
+          and p1["scope"]["by_state"] == {"open": 1, "leaning": 0, "settled": 1, "parked": 0})
 
     # figures + metrics
     figs = p1["figures"]
@@ -2257,14 +2278,20 @@ def run_deck():
     check("deck: unresolvable — not a leaf (no value)", kind_of(f"{h1}#task_a") == "missing-value")
     check("deck: unresolvable — malformed address", kind_of("no-hash-here") == "bad-address")
 
-    # synthesis: only an APPROVED one enters the payload
-    syn, _ = E.cmd_synthesize(root, "what qmid settled", [qmid])
-    check("deck: unapproved synthesis stays out of the payload",
-          E.deck_payload(root, qmid)["synthesis"] is None)
-    E.cmd_approve(root, syn)
-    ps = E.deck_payload(root, qmid)["synthesis"]
-    check("deck: approved synthesis lands with its text",
-          bool(ps) and ps["id"] == syn and bool(ps["approved"]) and "Related::" not in ps["text"])
+    # spec 19: a question is answered by a Finding on it (synthesis is gone). Before one
+    # exists the anchor is open; after, its answer text rides in findings[] with NO direction
+    check("deck: a question anchor with no Finding of its own leans on its child's, capped",
+          p1["anchor"]["findings"] == [] and p1["anchor"]["state"] == "leaning"
+          and p1["anchor"]["confidence"] == "moderate")
+    E.cmd_finding(root, qmid, "strong", answer="what qmid settled",
+                  evidence=[f"results/{h1}/report.md"])
+    pa = E.deck_payload(root, qmid)["anchor"]
+    check("deck: a question Finding lands with its answer text and no direction",
+          [(f["answer"], f["confidence"], f["evidence"]) for f in pa["findings"]]
+          == [("what qmid settled", "strong", [f"results/{h1}/report.md"])]
+          and all("direction" not in f for f in pa["findings"]))
+    check("deck: the question anchor reads its own Finding — settled, strong",
+          pa["state"] == "settled" and pa["confidence"] == "strong")
 
     # wiki pages linked from the anchor
     E.ensure_wiki(root)
@@ -2278,8 +2305,10 @@ def run_deck():
 
     # hypothesis / childless anchors — always emit (PI ruling #1)
     ph = E.deck_payload(root, h1)
-    check("deck: hypothesis anchor — no children, no synthesis",
-          ph["children"] == [] and ph["synthesis"] is None)
+    check("deck: hypothesis anchor — no children, its own findings[] and state",
+          ph["children"] == [] and "synthesis" not in ph
+          and ph["anchor"]["state"] == "settled"
+          and [f["direction"] for f in ph["anchor"]["findings"]] == ["supports"])
     check("deck: hypothesis anchor carries its own evidence fields",
           len(ph["anchor"]["verifiables"]) == 3 and ph["anchor"]["question"] is None)
     check("deck: hypothesis anchor scopes metrics to itself",
@@ -2338,6 +2367,22 @@ def run_deck():
           any(f["path"] == "results/h1/report.md" for f in sp["figures"]))
     check("deck fixture: formatted display value stored as a string",
           E.resolve_address(svc, "h1#design.train_n_baseline")["value"] == "1.20M")
+    # the migrated (4.0) scaling vault: verdicts became Findings, the synthesis a q1 Finding
+    sj = json.dumps(sp)
+    check("deck fixture: the migrated payload carries no verdict or synthesis key",
+          '"verdict":' not in sj and '"synthesis":' not in sj)
+    sk = {c["id"]: c for c in sp["children"]}
+    check("deck fixture: migrated hypotheses carry their Findings with direction + confidence",
+          [(f["direction"], f["confidence"]) for f in sk["h1"]["findings"]]
+          == [("supports", "strong")]
+          and [(f["direction"], f["confidence"]) for f in sk["h2"]["findings"]]
+          == [("mixed", "weak")]
+          and all(f["why"] and isinstance(f["evidence"], list)
+                  for c in sk.values() for f in c["findings"]))
+    check("deck fixture: q1's migrated synthesis is a strong question Finding, no direction",
+          sp["anchor"]["state"] == "settled" and len(sp["anchor"]["findings"]) == 1
+          and "direction" not in sp["anchor"]["findings"][0]
+          and sp["anchor"]["findings"][0]["answer"])
     shutil.rmtree(base, ignore_errors=True)
 
 
@@ -2378,7 +2423,8 @@ def run_deck_verify():
     root = os.path.join(base, "vault")
     E.cmd_init("Verify Demo", root, goal="g")
     qv, _ = E.cmd_ask(root, "Check question")
-    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"])
+    hv, _, _ = E.cmd_hypothesize(root, "checked hyp", parent=qv, verifiables=["bar"],
+                                 expect="the bar clears")
     write(os.path.join(root, "results", hv, "metrics.json"), json.dumps({
         "m": {"delta": {"value": 3.3, "ci": [1.9, 4.7]},
               "share": {"value": 50000},
@@ -3440,7 +3486,8 @@ def run_deck_rd():
     q1, _ = E.cmd_ask(root, "the ancestor")
     q2, _ = E.cmd_ask(root, "the anchor", parent=q1)
     q4, _ = E.cmd_ask(root, "the sibling", parent=q1)
-    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"])
+    h1, _, _ = E.cmd_hypothesize(root, "the descendant", parent=q2, verifiables=["x"],
+                                 expect="x holds")
 
     check("rddeck: rd is present and empty with no RD layer", E.deck_payload(root, q2)["rd"] == [])
 
@@ -5338,21 +5385,27 @@ def run_brief():
     SENTINEL = "ADVOCACY-LIVES-HERE-AND-MUST-NOT-LEAK"
     h1, _, _ = E.cmd_hypothesize(root, "the claim under test", parent=q1, rule="all",
                                  problem=SENTINEL, verifiables=["alpha check", "beta check"],
-                                 neutral=["the control"])
-    # a CLOSED sibling: its findings ARE the shared factual record a skeptical colleague reads
+                                 neutral=["the control"], expect="alpha and beta both clear")
+    # a sibling WITH A FINDING: its findings ARE the shared factual record a skeptical
+    # colleague reads
     h2, _, _ = E.cmd_hypothesize(root, "an earlier sibling", parent=q1, rule="all",
-                                 verifiables=["gamma"], neutral=["the control"])
+                                 verifiables=["gamma"], neutral=["the control"],
+                                 expect="gamma clears")
     edit(node_path(root, h2), "- [ ] gamma", "- [x] gamma   (found: 0.71)")
     edit(node_path(root, h2), "- [ ] [outcome-neutral] the control",
                               "- [x] [outcome-neutral] the control")
     declare_null(root, h2)
     E.cmd_test(root, h2, to="running")
-    E.cmd_close(root, h2, findings="the earlier run settled the preprocessing question")
+    write(os.path.join(root, "results", h2, "report.md"), "# r\n\nsynthetic.\n")
+    E.cmd_finding(root, h2, "strong", why="the earlier run settled the preprocessing question",
+                  direction="supports", evidence=[f"results/{h2}/report.md"])
     # the anchor's OWN results: present in the vault, and they must not reach its own brief
     edit(node_path(root, h1), "- [ ] alpha check", "- [x] alpha check   (found: 0.99-ANCHORS-OWN)")
     os.makedirs(os.path.join(root, "results", h1), exist_ok=True)
     with open(os.path.join(root, "results", h1, "metrics.json"), "w", encoding="utf-8") as f:
         f.write('{"auroc": {"value": 0.815, "ci": [0.79, 0.84]}}')
+    E.cmd_finding(root, h1, "weak", why="ANCHORS-OWN-FINDING leaked into its own brief",
+                  direction="supports")
 
     b = E.brief(root, h1)
     blob = json.dumps(b, sort_keys=True)
@@ -5370,9 +5423,18 @@ def run_brief():
           b["claim"] == "the claim under test" and b["question"] == "the parent question")
     check("brief: ancestry is ids and titles, root -> parent",
           [a["id"] for a in b["ancestry"]] == ["root", q1])
-    check("brief: a closed sibling's findings are the shared record",
-          any(p["id"] == h2 and "preprocessing question" in p["findings"]
-              for p in b["prior_findings"]))
+    check("brief: a sibling's Findings are the shared record, with direction, confidence, "
+          "why and evidence",
+          [(p["id"], p["state"], p["confidence"],
+            [(f["direction"], f["confidence"], f["why"], f["evidence"]) for f in p["findings"]])
+           for p in b["prior_findings"]]
+          == [(h2, "settled", "strong",
+               [("supports", "strong", "the earlier run settled the preprocessing question",
+                 [f"results/{h2}/report.md"])])])
+    check("brief: a hypothesis' own Finding never reaches its brief",
+          "ANCHORS-OWN-FINDING" not in blob)
+    check("brief: the payload carries no verdict or synthesis key",
+          '"verdict":' not in blob and '"synthesis":' not in blob)
     check("brief: the anchor is never its own prior finding",
           all(p["id"] != h1 for p in b["prior_findings"]))
     check("brief: the pre-registered checks are present, with kinds and no results",
@@ -5888,22 +5950,27 @@ def _situate_vault():
     SENTINEL = "ADVOCACY-LIVES-HERE-AND-SITUATE-MAY-SEE-IT"
     hdone, _, _ = E.cmd_hypothesize(root, "the settled claim", parent=qmid, rule="all",
                                     problem=SENTINEL, verifiables=["alpha check"],
-                                    neutral=["the control"])
+                                    neutral=["the control"], expect="alpha clears")
     hidea, _, _ = E.cmd_hypothesize(root, "the untried claim", parent=qmid, rule="all",
-                                    verifiables=["gamma check"], neutral=["the control"])
+                                    verifiables=["gamma check"], neutral=["the control"],
+                                    expect="gamma clears")
     hrun, _, _ = E.cmd_hypothesize(root, "the claim in flight", parent=qmid, rule="all",
-                                   verifiables=["delta check"], neutral=["the control"])
+                                   verifiables=["delta check"], neutral=["the control"],
+                                   expect="delta clears")
     for h in (hdone, hrun):
         declare_null(root, h)
     edit(node_path(root, hdone), "- [ ] alpha check", "- [x] alpha check")
     edit(node_path(root, hdone), "- [ ] [outcome-neutral] the control",
                                  "- [x] [outcome-neutral] the control")
     E.cmd_test(root, hdone, to="running")
-    E.cmd_close(root, hdone, findings="the settled claim held at the declared threshold")
+    fdone, _, _ = E.cmd_finding(root, hdone, "strong",
+                                why="the settled claim held at the declared threshold",
+                                direction="supports", null="ruled-out")
     E.cmd_test(root, hrun, to="running")
-    # the parent's answer-so-far: "where we are" usually needs it
-    edit(node_path(root, qtop), "_(interpretation — written by the PI/agent; auto-flagged stale when new evidence lands)_",
-         "So far the direction looks right, on one settled claim.")
+    # the parent's answer-so-far: "where we are" usually needs it. Spec 19: a question's
+    # answer is a Finding on it
+    E.cmd_finding(root, qtop, "moderate",
+                  answer="So far the direction looks right, on one settled claim.")
     # a wiki page linked from the ANCHOR'S ANCESTOR, so the ancestor walk is what finds it
     E.ensure_wiki(root)
     wiki_page(root, "sit-bg", "Situate background", "why orientation is hard")
@@ -5915,7 +5982,7 @@ def _situate_vault():
          f"an unrelated question, which waits on [[{mid_base}]].\n\n## Protocol")
     E.refresh(root)
     return root, dict(qtop=qtop, qmid=qmid, qout=qout, hdone=hdone, hidea=hidea, hrun=hrun,
-                      sentinel=SENTINEL)
+                      fdone=fdone, sentinel=SENTINEL)
 
 
 def run_situate():
@@ -5975,9 +6042,19 @@ def run_situate():
           and s["wiki"] == E.wiki_refs(root, [vv.get(qmid)["body"]]
                                        + [m["body"] for m in
                                           E.ancestor_chain(vv, vv.get(qmid))]))
-    check("situate: findings travel only with a closed hypothesis",
-          s["subtree"][0]["findings"] and s["subtree"][1]["findings"] is None
-          and s["subtree"][2]["findings"] is None)
+    check("situate: a child's findings[] carry direction, confidence, why and evidence",
+          [(f["direction"], f["confidence"], f["why"], f["evidence"])
+           for f in s["subtree"][0]["findings"]]
+          == [("supports", "strong", "the settled claim held at the declared threshold", [])]
+          and s["subtree"][1]["findings"] == [] and s["subtree"][2]["findings"] == [])
+    check("situate: each child carries its derived state and confidence",
+          [(c["state"], c["confidence"]) for c in s["subtree"]]
+          == [("settled", "strong"), ("open", None), ("open", None)])
+    check("situate: the anchor question reads its children's Finding, capped at moderate",
+          (s["anchor"]["state"], s["anchor"]["confidence"], s["anchor"]["findings"])
+          == ("leaning", "moderate", []))
+    check("situate: the payload carries no verdict or synthesis key",
+          '"verdict":' not in blob and '"synthesis":' not in blob)
 
     # ---- what is yet to be tested is COMPUTED. This is the row the spec marks "engine".
     ut = s["untested"]
@@ -6005,22 +6082,25 @@ def run_situate():
     # ---- anchors: a hypothesis is legal, no argument means the whole programme
     ph = E.brief(root, hdone, mode="situate")
     check("situate: a hypothesis anchor is legal",
-          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and ph["synthesis"] is None
-          and ph["anchor"]["findings"])
+          ph["anchor"]["id"] == hdone and ph["subtree"] == [] and "synthesis" not in ph
+          and [f["direction"] for f in ph["anchor"]["findings"]] == ["supports"]
+          and ph["anchor"]["state"] == "settled")
     whole = E.brief(root, None, mode="situate")
     check("situate: no argument means the whole programme",
           whole["anchor"]["id"] == "root"
           and [c["id"] for c in whole["subtree"]] == [ids["qtop"], ids["qout"]])
-    expect_error("situate: a synthesis anchor is refused",
-                 lambda: E.brief(root, E.cmd_synthesize(root, "x", [qmid])[0], mode="situate"))
+    expect_error("situate: a Finding anchor is refused (a Finding is not a tree node)",
+                 lambda: E.brief(root, ids["fdone"], mode="situate"))
 
-    # ---- only an APPROVED synthesis is an answer
-    syn, _ = E.cmd_synthesize(root, "what the mid question settled", [qmid])
-    check("situate: an unapproved synthesis stays out of the payload",
-          E.brief(root, qmid, mode="situate")["synthesis"] is None)
-    E.cmd_approve(root, syn)
-    check("situate: only an approved synthesis reaches the payload",
-          E.brief(root, qmid, mode="situate")["synthesis"]["id"] == syn)
+    # ---- spec 19: a question is answered by a Finding on it (synthesis is gone)
+    E.cmd_finding(root, qmid, "strong", answer="what the mid question settled")
+    sa = E.brief(root, qmid, mode="situate")["anchor"]
+    check("situate: a question Finding reaches the payload with its answer and no direction",
+          [(f["answer"], f["confidence"]) for f in sa["findings"]]
+          == [("what the mid question settled", "strong")]
+          and all("direction" not in f for f in sa["findings"]))
+    check("situate: the question's own Finding settles it",
+          (sa["state"], sa["confidence"]) == ("settled", "strong"))
 
     # ---- the taskhub: post-08, a queued run is the difference between untried and in flight
     check("situate: the work block is present-and-inert without a taskhub",
@@ -6076,8 +6156,8 @@ def run_situate():
     old, oq, oh = pre15_vault("crux_smig13_")
     os_ = E.brief(old, oq, mode="situate")
     check("smig: situate mode works on a pre-15 node",
-          os_["subtree"][0]["verdict"] is None and os_["subtree"][0]["schema"] == 0
-          and os_["anchor"]["schema"] == 0)
+          os_["subtree"][0]["state"] == "open" and os_["subtree"][0]["findings"] == []
+          and os_["subtree"][0]["schema"] == 0 and os_["anchor"]["schema"] == 0)
     check("smig: situate mode works on a vault with no side layers",
           os_["wiki"] == [] and os_["work"] == {"active": False, "open": [], "experiments": []}
           and os_["inbound"] == [])
@@ -8238,24 +8318,26 @@ def run_situate_title_anchor():
                                        read(cfg)))
 
         def readout(root):
-            """Everything this engine DERIVES from a vault — verdicts, roll-ups, the gate,
-            and the structural checks. If a stamp could change any of it, the stamp would be
+            """Everything this engine DERIVES from a vault — the (inert) verdicts, roll-ups,
+            the derived states (spec 19 replaced the review gate), and the structural checks. If a stamp could change any of it, the stamp would be
             a compatibility era rather than a counter, and this suite would be lying."""
             v = E.Vault(root)
             return {"verdicts": {i: n["fm"].get("verdict") for i, n in sorted(v.nodes.items())},
                     "status": {i: n.status for i, n in sorted(v.nodes.items())},
                     "ledger": {i: E.ledger_counts(v, i) for i, n in sorted(v.nodes.items())
                                if n.type == "question"},
-                    "gate": E.cmd_review(root),
+                    "states": {i: E.derive_state(v, i) for i, n in sorted(v.nodes.items())
+                               if n.type in ("question", "idea")},
                     "checks": E.validation_report(root, checks=("tree", "economy", "fanout",
                                                                 "rd", "tasks"))}
         before = _tree_hashes(was)
         a, b = readout(was), readout(now)
         check("voice: a 3.1-stamped vault reads IDENTICALLY under 3.2 — same verdicts, same "
-              "roll-up, same gate, same structural checks",
+              "roll-up, same derived states, same structural checks",
               json.dumps(a, sort_keys=True, default=str)
               == json.dumps(b, sort_keys=True, default=str)
-              and a["verdicts"]["h2"] == "partial" and a["checks"]["ok"])
+              and a["verdicts"]["h2"] == "partial" and a["checks"]["ok"]
+              and a["states"]["h2"]["state"] == "leaning" and a["states"]["q1"]["state"] == "settled")
         check("voice: and reading it wrote nothing — the drift path is the only writer",
               _tree_hashes(was) == before)
 

@@ -42,7 +42,7 @@ sentence — selection and phrasing are your whole job.
 | arc | shape | numbers proved by | start from |
 |---|---|---|---|
 | **paper arc** (default) | motivation → method → results → discussion | `build_deck.py` embeds result files as DATA and records each file's sha256; `--verify` re-reads them | `examples/paper_deck/` |
-| **tree arc** (the PI picks it) | title → lineage → question → method → results → verdict, built from the tree as mapped below | `metrics.json` addresses, each checked by `--verify` | `assets/deck.html`, `examples/q1_scaling_deck.html` |
+| **tree arc** (the PI picks it) | title → lineage → question → method → results → answer, built from the tree as mapped below | `metrics.json` addresses, each checked by `--verify` | `assets/deck.html`, `examples/q1_scaling_deck.html` |
 
 For the paper arc, read [`references/paper-arc.md`](references/paper-arc.md) before
 drafting: its slide roles, style rules and build replace the tree-arc defaults below (the
@@ -59,10 +59,10 @@ both arcs.
 | **the anchor question** | the question slide; its `## Protocol` → the pre-registration note (rules fixed before any run) |
 | child hypotheses | the bridge from question to method |
 | RD pages (once the RD layer exists; `rd` is empty until then) | methods |
-| verifiables + ticks + findings | the results claims, and the honest negatives |
+| findings (direction, confidence, why, evidence) + verifiables | the results claims, and the honest negatives |
 | `results/<hid>/` artifacts | the figures |
-| approved synthesis | the verdict / next-steps slide — dropped when none is approved |
-| child states (idea/staged vs done) | scope — executed vs parked |
+| the anchor's own finding (its answer and confidence) | the answer / next-steps slide — dropped when the anchor has none |
+| child states (open · leaning · settled · parked) | scope — executed vs open vs parked |
 
 Shorthand: intro = wiki, methods = design (not implementation legwork), results = tree.
 
@@ -72,7 +72,7 @@ Shorthand: intro = wiki, methods = design (not implementation legwork), results 
    delegate the initial sweep to a read-only search subagent — it returns paths and
    structure only.
 2. **Read end to end.** Every linked report under `results/<hid>/`, every finding, the
-   approved synthesis. Inventory the figures and the `metrics.json` addresses.
+   anchor's own findings (its answer). Inventory the figures and the `metrics.json` addresses.
 3. **Agree the arc with the PI before drafting.** Structured questions, each with a
    recommended default: paper arc (default) vs tree arc (offer it for a vault update built
    from a resolved subtree whose numbers carry `metrics.json` addresses); single arc vs
@@ -163,7 +163,7 @@ own. Fallback ladder, in order:
   into parts, every value of that metric on a slide carries its split.
 - **Numbers by role (D5, tree arc):** motivation slides carry none; method slides carry addressed
   definitional constants only; result slides carry at least two addressed numbers; the
-  verdict slide introduces none of its own.
+  answer slide introduces none of its own.
 - **Pre-registration** (rules fixed before any result): surface the anchor's `## Protocol`
   when it has one.
 - Tree arc: no background, related-work, or future-work slide unless asked.

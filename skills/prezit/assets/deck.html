@@ -260,7 +260,7 @@
   <!-- ==================================================================
        1 · TITLE                                [narrative · fixed]
        job      the anchor's question as a headline, plus what was in scope
-       source   anchor.title · scope.executed/parked
+       source   anchor.title · scope.executed/open/parked
        numbers  none (D5)
        cut      the nav hint
        =================================================================== -->
@@ -268,7 +268,7 @@
     <div class="wrap">
       <div class="kicker">[project shorthand · crux anchor id]</div>
       <h1>[The question,<br>as a headline]</h1>
-      <p class="sub">[Scope line: how many hypotheses, their verdicts, the endpoint,
+      <p class="sub">[Scope line: how many hypotheses, what each found, the endpoint,
       what ran twice.]</p>
       <p class="hint">Navigate with <kbd>&rarr;</kbd> <kbd>&larr;</kbd> or <kbd>space</kbd></p>
     </div>
@@ -385,9 +385,9 @@
 
   <!-- ==================================================================
        4b · METHOD — DESIGN & SCORING          [structural · fixed]
-       job      how the claim was made falsifiable, how a verdict is reached
+       job      how the claim was made falsifiable, how a result is judged
        source   children[].verifiables + anchor.protocol
-       numbers  none — verdicts are results and belong on the result slides
+       numbers  none — findings are results and belong on the result slides
                 (D5). The table states what each hypothesis REMOVES, never
                 what it found.
        cut      the pipeline's third step, then the scoring callout's second half
@@ -404,11 +404,11 @@
         </tbody>
       </table>
       <div class="target" style="margin-top:26px">
-        <div class="tlab">How a verdict is reached</div>
-        <div class="ttxt">Each hypothesis carries <b>pre-registered thresholds</b>,
-        written before any run; on close each threshold is ticked and the verdict is
-        <b>derived mechanically</b> from the ticks. Nobody chooses the verdict after
-        seeing a number.</div>
+        <div class="tlab">How a result is judged</div>
+        <div class="ttxt">Each hypothesis states its <b>expected result</b> before any run,
+        with <b>pre-registered thresholds</b> where they can be defined; the result is
+        judged against them and recorded with a direction and a <b>confidence</b>. A rival
+        explanation not ruled out caps the confidence at weak.</div>
       </div>
       <div class="pipe">
         <!-- step ordinals are chrome, not vault values: data-src="literal" keeps
@@ -419,7 +419,7 @@
         <div class="psep">&rarr;</div>
         <div class="step"><div class="n" data-src="literal">3</div><div class="t">[third]</div></div>
         <div class="psep">&rarr;</div>
-        <div class="step"><div class="n" data-src="literal">4</div><div class="t">[ticks recorded, verdict derived, rolled up]</div></div>
+        <div class="step"><div class="n" data-src="literal">4</div><div class="t">[result judged, finding recorded, rolled up]</div></div>
       </div>
     </div>
   </section>
@@ -430,7 +430,7 @@
                 it in one sentence, the slide does not exist]
        job      one claim, one figure that is its evidence, bullets that give
                 the mechanism and the caveat
-       source   metrics addresses + children[].findings
+       source   metrics addresses + children[].findings (direction, confidence, why, evidence)
        numbers  >= 2 addressed, or this is not a result slide (D5)
        shape    THE RESULTS SECTION IS THE ONLY ELASTIC PART OF THE DECK
                 (D1/D2). Per claim — not per hypothesis, not per figure (D2b).
@@ -460,20 +460,20 @@
   </section>
 
   <!-- ==================================================================
-       n+1 · VERDICT                      [narrative · fixed, DROPPABLE]
+       n+1 · ANSWER                       [narrative · fixed, DROPPABLE]
        job      what this closes, what it opens, and what we would have missed
-       source   synthesis.text (only when approved) + anchor.answer_so_far
+       source   anchor.findings[] (its answer + confidence) + anchor.answer_so_far
        numbers  may restate numbers already addressed on a result slide;
                 introduces none of its own (D5)
-       shape    always one slide. DROP IT ENTIRELY when the anchor is still
-                open with no approved synthesis — an unsigned verdict slide is
-                the deck asserting something the vault has not.
+       shape    always one slide. DROP IT ENTIRELY when the anchor has no
+                finding of its own (anchor.findings is empty) — an answer slide
+                without one is the deck asserting something the vault has not.
        cut      the whole slide; nothing else depends on it
        =================================================================== -->
   <section class="slide">
     <div class="wrap">
-      <div class="kicker">Verdict · [synthesis id], approved</div>
-      <h2>[The verdict as a headline]</h2>
+      <div class="kicker">Answer · [confidence]</div>
+      <h2>[The answer as a headline]</h2>
       <p class="lead">[The answer, in one serif breath.]</p>
       <ul class="pts lg">
         <li><b>What closes:</b> [the claim that is settled, and in which direction].</li>

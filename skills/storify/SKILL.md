@@ -42,7 +42,7 @@ Start from `assets/`. The worked example `examples/q1_story/` is built on
 1. **Harvest.** Run `crux story <anchor> --json` from inside the vault. It is the same
    harvest as `crux deck`.
 2. **Read end to end.** Read every report under `results/<hid>/`, every finding, the
-   approved synthesis if one exists, and the wiki pages the anchor and its ancestors link.
+   anchor's own findings (its answer) if it has any, and the wiki pages the anchor and its ancestors link.
    Read the project's own rules (`CLAUDE.md`, `AGENTS.md`) for a mandatory decomposition or
    a significance threshold. Inventory every number you need and the file that holds it.
    Done when each claim you will make has a result file behind it. For a hypothesis
@@ -87,15 +87,15 @@ Four sections, with these exact titles, in this order. The lint fails any other 
 The conclusion lists the next-step options. Each option gives its cost and what it would
 teach. Give no ranking and no recommendation, because the PI chooses.
 
-**Readings, not verdicts.** State the answer as settled only when the anchor has an
-approved synthesis. Otherwise write what the results suggest, and say what would settle it.
+**Readings, not verdicts.** State the answer as settled only when the anchor is settled
+(a strong finding on it). Otherwise write what the results suggest, and say what would settle it.
 
 **A hypothesis anchor.** Take the motivation from the parent question's own text, not from
 its current answer: that answer can give away the results of later experiments. When a later
 experiment under the same parent qualifies this result, name it in the conclusion as a
 limitation, in words, without its numbers. Before you list the next-step options, read the
-parent's other hypotheses and drop every option that was already run. A parent's approved
-synthesis does not make this one result a verdict.
+parent's other hypotheses and drop every option that was already run. A parent's settled
+answer does not make this one result settled.
 
 ## Length
 
