@@ -507,7 +507,8 @@ def _agents_md_tests(check, tmp):
     core in the project's AGENTS.md: create, append, never a duplicate, nowhere else."""
     home = os.path.join(tmp, "ahome")
     os.makedirs(home)
-    env = dict(os.environ, CRUX_NO_UPDATE_CHECK="1", HOME=home)
+    # USERPROFILE: Windows expands `~` from it, never from HOME
+    env = dict(os.environ, CRUX_NO_UPDATE_CHECK="1", HOME=home, USERPROFILE=home)
 
     def init(cwd, *argv):
         os.makedirs(cwd, exist_ok=True)
@@ -569,7 +570,13 @@ def _agents_md_tests(check, tmp):
     # install.sh links skills/crux into ~/.agents/skills for non-Claude agents: when that
     # link resolves to this core, the pointer names it portably, not by this machine's path.
     os.makedirs(os.path.join(home, ".agents", "skills"))
-    os.symlink(os.path.dirname(HERE), os.path.join(home, ".agents", "skills", "crux"))
+    try:
+        os.symlink(os.path.dirname(HERE), os.path.join(home, ".agents", "skills", "crux"),
+                   target_is_directory=True)
+    except (OSError, NotImplementedError):
+        print("  skip   agents.md: ~/.agents/skills/crux pointer (this platform disallows "
+              "symlinks)")
+        return
     proj5 = os.path.join(tmp, "aproj5")
     r = init(proj5, "Installed")
     p5 = ptrs(os.path.join(proj5, "AGENTS.md"))

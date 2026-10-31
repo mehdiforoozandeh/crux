@@ -723,7 +723,7 @@ def _agents_md_pointer(root):
     elif os.path.realpath(os.path.expanduser(shared)) == core:
         ref = "~/.agents/skills/crux/SKILL.md"
     else:
-        ref = core
+        ref = core.replace(os.sep, "/")     # forward slashes: Windows reads them too
     path = os.path.join(proj, "AGENTS.md")
     text = E.read(path) if os.path.isfile(path) else ""
     if AGENTS_POINTER_TAG in text:
