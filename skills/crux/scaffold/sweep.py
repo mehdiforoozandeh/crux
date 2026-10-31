@@ -68,6 +68,7 @@ CHAR_CAP = TOKEN_CAP * CHARS_PER_TOKEN
 SWEEP_MODEL = "haiku"
 SWEEP_MAX_TURNS = 25
 SWEEP_ENV = "CRUX_SWEEP"
+CLAUDE_ENV = "CRUX_SWEEP_CLAUDE"   # a command line run instead of `claude` (a test stub)
 VAULT_ENV = "CRUX_VAULT"     # engine find_vault falls back to it (a vault one level down)
 SWEEP_SOURCES = ("startup", "clear")
 SWEEP_TOOLS = "Bash,Read"
@@ -124,6 +125,23 @@ def project_dir(cwd):
         if os.path.isdir(c):
             return c
     return cands[0]
+
+
+def _key(path):
+    """A transcript path as a marks key: absolute and normalised, so one transcript is one key
+    whether it arrived with `/` or `\\` separators (Windows hands out both)."""
+    return os.path.abspath(path) if path else path
+
+
+def claude_argv():
+    """The capture run's binary as an argv prefix, or None when there is none. CRUX_SWEEP_CLAUDE
+    is a command line, split like auto's CRUX_AUTO_CLAUDE, so a test can run a Python stub
+    through sys.executable: Windows cannot execute a #! script."""
+    cmd = os.environ.get(CLAUDE_ENV)
+    if cmd:
+        return shlex.split(cmd)
+    found = shutil.which("claude")
+    return [found] if found else None
 
 
 # ------------------------------------------------------------------------------- state
@@ -183,11 +201,13 @@ def _lock(vault):
     try:
         os.close(os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
         return p
-    except FileExistsError:
+    except (FileExistsError, PermissionError):     # Windows: a delete-pending lock file
         return None
 
 
 def mark_capture_run(vault, transcript):
+    transcript = _key(transcript)
+
     def change(m):
         if not transcript or transcript in m["capture_runs"]:
             return False
@@ -284,6 +304,7 @@ def register_session(vault, transcript, source):
     clear (all of it is new), its current end on a resume or compact of an older session."""
     if not transcript:
         return
+    transcript = _key(transcript)
 
     def change(m):
         if transcript in m["marks"] or transcript in m["capture_runs"]:
@@ -310,7 +331,7 @@ def _launch_cmd(claude, input_path, session_id):
     # --tools is what EXISTS (Bash and Read only); --allowedTools pre-approves the crux
     # patterns; dontAsk denies anything else instead of prompting, so the PI's own
     # permissions.allow or defaultMode cannot widen a run no one is watching.
-    return [claude, "-p", prompt, "--model", SWEEP_MODEL, "--max-turns", str(SWEEP_MAX_TURNS),
+    return list(claude) + ["-p", prompt, "--model", SWEEP_MODEL, "--max-turns", str(SWEEP_MAX_TURNS),
             "--tools", SWEEP_TOOLS, "--allowedTools", ",".join(SWEEP_ALLOWED),
             "--permission-mode", SWEEP_PERMISSION_MODE, "--disallowedTools", "AskUserQuestion",
             "--session-id", session_id]
@@ -323,7 +344,7 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
     if os.environ.get(SWEEP_ENV) == "1":
         rep["reason"] = "inside a capture run"
         return rep
-    claude = shutil.which("claude")
+    claude = claude_argv()
     if not claude:
         rep["reason"] = "no claude binary"
         return rep
@@ -333,13 +354,14 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
         return rep
     try:
         m = load_marks(vault)
-        skip = set(m["capture_runs"]) | {os.path.abspath(current)} if current else set(m["capture_runs"])
+        proj_dir = _key(proj_dir)
+        skip = {_key(p) for p in m["capture_runs"]} | ({_key(current)} if current else set())
         try:
             names = sorted(fn for fn in os.listdir(proj_dir) if fn.endswith(".jsonl"))
         except OSError:
             names = []
         paths = [os.path.join(proj_dir, fn) for fn in names]
-        paths = [p for p in paths if p not in skip and os.path.abspath(p) not in skip]
+        paths = [p for p in paths if p not in skip]
         paths.sort(key=lambda p: os.path.getmtime(p))
         parts, new_marks = [], {}
         for p in paths:
@@ -592,7 +614,8 @@ def session_records(path):
 
 
 def newest_transcript(proj_dir, vault=None):
-    skip = set(load_marks(vault)["capture_runs"]) if vault else set()
+    skip = {_key(p) for p in load_marks(vault)["capture_runs"]} if vault else set()
+    proj_dir = _key(proj_dir)
     try:
         ps = [os.path.join(proj_dir, fn) for fn in os.listdir(proj_dir) if fn.endswith(".jsonl")]
     except OSError:
@@ -609,6 +632,7 @@ def wrap(vault, transcript):
            "truncated": False, "pending": pending_list(vault)}
     if not transcript or not os.path.isfile(transcript):
         return out
+    transcript = _key(transcript)
     out["records"] = session_records(transcript)
     start = load_marks(vault)["marks"].get(transcript, 0)
     text, end = text_since(transcript, start)

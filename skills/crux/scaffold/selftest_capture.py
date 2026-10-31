@@ -7,7 +7,7 @@ token cap, the recursion guard, the pending list, `crux wrap --json`, and instal
 
 `run_all(check)` takes selftest.py's `check(name, cond)`. Every test runs in a temp dir with
 HOME pointed into it and a STUB `claude` on PATH: no test ever launches a real model run."""
-import os, sys, json, shutil, subprocess, tempfile, time, stat
+import os, sys, json, shlex, shutil, subprocess, tempfile, time, stat
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import engine as E
@@ -44,6 +44,16 @@ def _stub(tmp):
     return d, log
 
 
+def _claude_env(stubdir):
+    """POSIX finds the #! stub on PATH, as it finds the real `claude`. Windows can neither run
+    a #! script nor find a name with no extension, so there the stub runs through
+    sys.executable via CRUX_SWEEP_CLAUDE (the way selftest_auto runs its stub worker)."""
+    if os.name != "nt":
+        return {}
+    return {S.CLAUDE_ENV: "%s %s" % (shlex.quote(sys.executable),
+                                     shlex.quote(os.path.join(stubdir, "claude")))}
+
+
 def _launches(log, expect=None, wait=4.0):
     """The stub's launch records. The run is detached, so poll until `expect` lines exist
     (or, with expect=None, wait a short fixed time so a stray launch would have landed)."""
@@ -59,8 +69,10 @@ def _launches(log, expect=None, wait=4.0):
 
 
 def _env(home, path, **kw):
-    env = dict(os.environ, HOME=home, PATH=path, CRUX_NO_UPDATE_CHECK="1")
+    # USERPROFILE: Windows expands `~` from it, never from HOME
+    env = dict(os.environ, HOME=home, USERPROFILE=home, PATH=path, CRUX_NO_UPDATE_CHECK="1")
     env.pop("CRUX_SWEEP", None)
+    env.pop(S.CLAUDE_ENV, None)
     env.update(kw)
     return env
 
@@ -143,12 +155,23 @@ def _discovery_tests(check, tmp):
     check("capture: no vault anywhere near → None, not an error", S.find_vault_near(bare) is None)
     check("capture: the projects-folder slug matches Claude Code's",
           S.project_slug("/Users/a/x.y@z_w") == "-Users-a-x-y-z-w")
+    check("capture: ... and Claude Code's Windows folder name (drive colon and backslashes)",
+          S.project_slug("C:\\Users\\a\\x.y") == "C--Users-a-x-y")
+    keep = os.environ.get(S.CLAUDE_ENV)
+    try:
+        os.environ[S.CLAUDE_ENV] = "/x/stub --flag"
+        check("capture: CRUX_SWEEP_CLAUDE replaces the claude binary, split as a command line",
+              S.claude_argv() == ["/x/stub", "--flag"])
+    finally:
+        os.environ.pop(S.CLAUDE_ENV, None)
+        if keep is not None:
+            os.environ[S.CLAUDE_ENV] = keep
 
 
 def _hook_core_tests(check, tmp):
     home = os.path.join(tmp, "hhome")
     stubdir, log = _stub(os.path.join(tmp, "hstub"))
-    env = _env(home, stubdir + ":" + BASE_PATH)
+    env = _env(home, stubdir + os.pathsep + BASE_PATH, **_claude_env(stubdir))
     repo = os.path.join(tmp, "hrepo")
     vault = _vault(repo, "cruxvault")
     core = _read(S.CORE_PATH)
@@ -187,7 +210,7 @@ def _hook_core_tests(check, tmp):
 def _sweep_tests(check, tmp):
     home = os.path.join(tmp, "shome")
     stubdir, log = _stub(os.path.join(tmp, "sstub"))
-    env = _env(home, stubdir + ":" + BASE_PATH)
+    env = _env(home, stubdir + os.pathsep + BASE_PATH, **_claude_env(stubdir))
     repo = os.path.join(tmp, "srepo")
     vault = _vault(repo, "cruxvault")
     proj = os.path.join(home, ".claude", "projects", S.project_slug(repo))
@@ -307,7 +330,7 @@ def _sweep_tests(check, tmp):
     # ---- no claude binary: silent, nothing launched, marks not advanced.
     _write(old, _turns("A fifth one?", "Yes."), mode="a")
     before = _marks(vault)["marks"][old]
-    r = start(extra_env={"PATH": BASE_PATH})
+    r = start(extra_env={"PATH": BASE_PATH, S.CLAUDE_ENV: ""})
     check("capture: a missing claude binary is silent",
           r.returncode == 0 and r.stderr.strip() == "" and len(_launches(log)) == 6)
     check("capture: ... and the mark is not advanced", _marks(vault)["marks"][old] == before)
@@ -436,7 +459,7 @@ def _capture_cwd_tests(check, tmp):
               "    f.write(json.dumps({'rc': r.returncode, 'out': r.stdout, 'err': r.stderr,"
               " 'cwd': os.getcwd()}) + '\\n')\n" % (sys.executable, CLI, log))
     os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    env = _env(home, d + ":" + BASE_PATH)
+    env = _env(home, d + os.pathsep + BASE_PATH, **_claude_env(d))
     repo = os.path.join(tmp, "crepo")
     vault = _vault(repo, "cruxvault")
     proj = os.path.join(home, ".claude", "projects", S.project_slug(repo))
@@ -496,6 +519,9 @@ def _install_tests(check, tmp):
           ours and ours[0]["command"] == S.session_hook_command())
 
     # ---- the real install.sh, into scratch dirs, twice.
+    if os.name == "nt":
+        print("  skip   capture: install.sh asserts (a bash script that symlinks; POSIX only)")
+        return
     sk, ag, home = (os.path.join(tmp, x) for x in ("isk", "iag", "ihome"))
     os.makedirs(ag)
     _write(os.path.join(home, ".claude", "settings.json"),
