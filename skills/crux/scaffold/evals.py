@@ -895,9 +895,12 @@ def roster_properties(defs, verbs=""):
     # ---- crux-prerun (spec 19): design, null and verifiables merged, still isolated
     pre, pre_body = fm_of("crux-prerun"), body_of("crux-prerun")
     plow = pre_body.lower()
-    P["prerun-isolated"] = ("agents: crux-prerun reads the ISOLATED brief and excludes the "
-                            "argument for the claim",
+    # `crux status <id>` returns a node's problem statement and its findings: the argument and
+    # the results, both of which the isolated brief exists to keep out
+    P["prerun-isolated"] = ("agents: crux-prerun reads the ISOLATED brief, excludes the "
+                            "argument for the claim, and has no per-node status in its belt",
                             "crux brief" in str(pre.get("cold_input"))
+                            and not any(re.match(r"crux status\s+<?\w", x) for x in _belt(pre))
                             and "--mode=situate" not in str(pre.get("cold_input"))
                             and "Problem Statement" in str(pre.get("excludes")))
     P["prerun-drafts"] = ("agents: crux-prerun drafts the expectation, the null and the checks, "
@@ -958,6 +961,7 @@ MUTATIONS = {
     "capture-starts-run":         ("crux-capture", "leash"),
     "drop-cold-input":            ("crux-capture", "fields:crux-capture"),
     "prerun-reads-situate":       ("crux-prerun", "prerun-isolated"),
+    "prerun-reads-status":        ("crux-prerun", "prerun-isolated"),
     "prerun-drops-outcome":       ("crux-prerun", "prerun-drafts"),
     "prerun-gains-write":         ("crux-prerun", "writers"),
     "drop-trigger":               ("crux-prerun", "trigger:crux-prerun"),
@@ -992,6 +996,7 @@ def mutate(fm, body, mutation):
     elif mutation == "drop-cold-input":     fm.pop("cold_input", None)
     elif mutation == "prerun-reads-situate":
         fm["cold_input"] = str(fm.get("cold_input")) + " --mode=situate"
+    elif mutation == "prerun-reads-status": fm["toolbelt"] = belt + "; crux status <hid> --json"
     elif mutation == "prerun-drops-outcome":
         body = re.sub(r"(?i)change the confidence", "matter", body)
     elif mutation == "prerun-gains-write":  fm["toolbelt"] = belt + "; crux finding <hid>"

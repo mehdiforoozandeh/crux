@@ -1,7 +1,7 @@
 {
  "fixture": "capture-01",
  "agent": "crux-capture",
- "agent_sha": "085758b34312860de7c2a16d6fe9bebe4b41311face5396daed2f4dff5bede23",
+ "agent_sha": "4d7dde3d02767e3d7e2b83e38a68821379c8fbcff33fc35a3bb597e6ae06f535",
  "_note": "CANNED — every planted record, but it stopped to ask the PI whether the warmer shelf mattered.",
  "asked_pi": [
   "Should I treat the warmer shelf as a confound?"

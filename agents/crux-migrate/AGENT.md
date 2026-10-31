@@ -43,8 +43,9 @@ metadata:
    one `finding:` line. Direction is `supports`, `against`, `mixed` or `no answer yet`;
    confidence is `strong`, `moderate` or `weak`.
 4. Judge the confidence from the evidence you found: a clear margin with nothing left to
-   explain it away is strong; a near miss on the stated threshold lowers it one step; an
-   alternative explanation the repo never ruled out, or a failed control, caps it at weak.
+   explain it away is strong; a near miss on the stated threshold lowers it one step; a
+   null never ruled out caps a supports finding at weak; a failed control caps any finding
+   at weak.
 5. Show your evidence for every tick and every finding: the file and the number. A finding
    you cannot point at is a guess.
 6. Hand the seed to the PI. They approve the whole tree as one block before anything is

@@ -11,7 +11,7 @@ description: >-
 trigger: "/crux-wrap (this session's transcript) and the catch-up sweep at session start (transcript text not yet swept). Never periodic, never on a schedule."
 cold_input: "a transcript slice in a text file (lines start `PI:`, `AGENT:` or `AGENT ran:`), plus `crux status --json`"
 tools: Bash, Read
-toolbelt: "crux status --json; crux status <id> --json; crux pending list --json; crux ask <title> -p <parent>; crux hypothesize <title> -p <qid> --expect <expectation>; crux finding <id> -c <confidence> -d <direction> -w <why> -e <path>; crux park <id>; crux pending add --kind <kind> --parent <id> --text <text>; crux validate --check=tree --json"
+toolbelt: "crux status --json; crux status <id> --json; crux pending list --json; crux ask <title> -p <parent>; crux hypothesize <title> -p <qid> --expect <expectation>; crux finding <id> -c <confidence> -d <direction> -w <why> -e <path>; crux park <id>; crux pending add --kind <kind> --parent <id> --text <text> --source <wrap|sweep>; crux validate --check=tree --json"
 excludes: "the PI — you never ask them anything, by any route, because nobody is watching this run; every tool but Bash running crux and Read; every crux verb outside recording the tree (no task, no run, no autopilot); and anything the transcript does not say"
 license: MIT
 metadata:
@@ -56,8 +56,10 @@ into it. You turn the talking into records.
 6. **Park** what the conversation clearly dropped ("let's drop that", "not going anywhere"):
    `crux park <id>`. Never delete. A topic merely not mentioned is not dropped.
 7. **Defer what you are unsure of.** `crux pending add --kind <question|hypothesis|finding|
-   park|task|correction> --parent <id> --text "<the candidate, in plain words>"`. Check the
-   pending list first, so one candidate is not added twice.
+   park|task|correction> --parent <id> --text "<the candidate, in plain words>" --source
+   <wrap|sweep>`. Pass `--source wrap` when /crux-wrap ran you; for the catch-up sweep,
+   `--source sweep` is the default. Check the pending list first, so one candidate is not
+   added twice.
 8. **Check.** `crux validate --check=tree --json`. Then stop.
 
 ## Rules
@@ -72,7 +74,8 @@ into it. You turn the talking into records.
 - **Closure judgment.** Compare the evidence with the expectation, the null and the checks,
   then set the direction and the confidence. The checks inform the judgment; they do not
   compute it.
-  - All of it lines up, by a clear margin, with the null ruled out: strong.
+  - All of it lines up, by a clear margin, with the null ruled out, or no null declared:
+    strong.
   - A near miss on a threshold or on the expected size lowers the confidence one step.
   - A null not ruled out caps a supports finding at weak, like a non-significant p-value.
     Record it with `--null not-ruled-out`; the engine applies the cap too.

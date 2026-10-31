@@ -5377,6 +5377,8 @@ def brief(root, hid, mode=BRIEF_DEFAULT_MODE):
                                 # fields are absent is right until someone adds a field
         "id": n.id,
         "claim": _section(n["body"], "Idea / Hypothesis"),
+        # the expectation is setup, not argument: what the run is expected to show
+        "expect": expect_text(n) or None,
         "question": _section(parent["body"].split(LEDGER_START)[0], "Question") if parent else None,
         "ancestry": anc,
         "null": _null_text(n),

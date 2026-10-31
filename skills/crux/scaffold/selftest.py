@@ -6507,6 +6507,24 @@ def run_design_agent():
           all(f in body for f in E.CONFOUND_FAMILIES))
     check("prerun: the null cap is stated as the engine applies it — supports only",
           "not ruled out" in low and "weak" in low and "supports" in low)
+    root = tempfile.mkdtemp(prefix="crux_prerun_")
+    try:
+        shutil.rmtree(root); os.makedirs(root)
+        E.cmd_init("Prerun", root)
+        q, _ = E.cmd_ask(root, "q")
+        h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY",
+                                    expect="accuracy rises by at least 2 points")
+        h2, _, _ = E.cmd_hypothesize(root, "bare claim", parent=q, problem="ADVOCACY",
+                                     require_expect=False)
+        b, b2 = E.brief(root, h), E.brief(root, h2)
+        check("prerun: the isolated brief carries the stated expectation (setup, not argument), "
+              "None when there is none, and still no argument",
+              b["expect"] == "accuracy rises by at least 2 points" and b2["expect"] is None
+              and "ADVOCACY" not in json.dumps(b) + json.dumps(b2))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    check("prerun: it reads a stated expectation and drafts one only when there is none",
+          "draft one only if there is none" in low)
     check("prerun: it is isolated from why anyone believes the claim, not from what the "
           "experiment is",
           "never from what the experiment is" in low
