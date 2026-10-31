@@ -420,6 +420,64 @@ def _wrap_tests(check, tmp):
           == ["q2", "h1"])
 
 
+def _capture_cwd_tests(check, tmp):
+    """The capture run, launched exactly as the hook launches it, must reach the vault when
+    the vault sits one level down (`./cruxvault`), not only when it is the cwd."""
+    home = os.path.join(tmp, "chome")
+    d = os.path.join(tmp, "cstub", "stubbin")
+    log = os.path.join(tmp, "cstub", "run.log")
+    os.makedirs(d)
+    p = os.path.join(d, "claude")
+    # This stub does what the brief tells the capture agent: run a crux write verb, as given.
+    _write(p, "#!%s\nimport sys, os, json, subprocess\n"
+              "r = subprocess.run([sys.executable, %r, 'ask', 'Does the stub reach the vault?',"
+              " '--json'], capture_output=True, text=True)\n"
+              "with open(%r, 'a') as f:\n"
+              "    f.write(json.dumps({'rc': r.returncode, 'out': r.stdout, 'err': r.stderr,"
+              " 'cwd': os.getcwd()}) + '\\n')\n" % (sys.executable, CLI, log))
+    os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    env = _env(home, d + ":" + BASE_PATH)
+    repo = os.path.join(tmp, "crepo")
+    vault = _vault(repo, "cruxvault")
+    proj = os.path.join(home, ".claude", "projects", S.project_slug(repo))
+    old, cur = os.path.join(proj, "s-old.jsonl"), os.path.join(proj, "s-cur.jsonl")
+    _write(old, _turns("old", "old"))
+    _write(cur, _turns("hi", "hi", "s-cur"))
+    pay = {"hook_event_name": "SessionStart", "source": "startup", "cwd": repo,
+           "session_id": "s-cur", "transcript_path": cur}
+    _hook(repo, pay, env)                        # first sight: baselines s-old
+    _write(old, _turns("Is the gain real?", "Maybe."), mode="a")
+    r = _hook(repo, pay, env)
+    runs = _launches(log, expect=1, wait=10.0)
+    ok = bool(runs) and runs[0]["rc"] == 0
+    check("capture: a capture run launched from the repo root runs a crux verb against "
+          "./cruxvault", r.returncode == 0 and ok)
+    titles = [E.Vault(vault).get(i)["fm"].get("title") or "" for i in ("q1",)
+              if ok and os.path.isfile(os.path.join(vault, E.VAULT_MARKER))]
+    check("capture: ... and the question lands in that vault",
+          ok and any("stub reach" in t for t in titles))
+    rw = _cli(repo, ["wrap", "--json"], _env(home, BASE_PATH))
+    check("capture: `crux wrap --json` from the repo root finds ./cruxvault",
+          rw.returncode == 0 and json.loads(rw.stdout or "{}").get("vault") == vault)
+
+
+def _marks_lock_tests(check, tmp):
+    """register_session's read-modify-write holds the state lock: N concurrent session starts
+    keep all N marks."""
+    vault = _vault(tmp, "mlock")
+    n = 12
+    code = ("import sys; sys.path.insert(0, %r); import sweep as S\n"
+            "for i in range(15):\n"
+            "    S.register_session(%r, %r %% (int(sys.argv[1]), i), 'startup')\n"
+            % (HERE, vault, os.path.join(tmp, "mlock-t%d-%d.jsonl")))
+    ps = [subprocess.Popen([sys.executable, "-c", code, str(k)]) for k in range(n)]
+    rcs = [x.wait() for x in ps]
+    got = set(_marks(vault).get("marks", {}))
+    want = {os.path.join(tmp, "mlock-t%d-%d.jsonl" % (k, i)) for k in range(n) for i in range(15)}
+    check("capture: %d processes registering sessions at once lose no mark" % n,
+          all(c == 0 for c in rcs) and got == want)
+
+
 def _install_tests(check, tmp):
     sp = os.path.join(tmp, "isettings.json")
     _write(sp, json.dumps({"model": "opus", "hooks": {
@@ -496,7 +554,7 @@ def run_all(check):
     tmp = os.path.realpath(tempfile.mkdtemp(prefix="crux_capture_"))
     try:
         for section in (_discovery_tests, _hook_core_tests, _sweep_tests, _pending_tests,
-                        _wrap_tests, _install_tests):
+                        _wrap_tests, _capture_cwd_tests, _marks_lock_tests, _install_tests):
             try:
                 section(check, tmp)
             except Exception as e:      # an unexpected result is a FAIL line, never a traceback

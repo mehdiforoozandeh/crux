@@ -16,6 +16,9 @@ Machine-local state lives in `<vault>/.crux/`, a folder that ignores itself in g
     .crux/sweep-input-<stamp>.txt   the capped text handed to a capture run
     .crux/sweep.log      the capture run's own stdout/stderr
 
+Every read-modify-write of `sweep.json` goes through `update_marks`, which holds the same
+`id_lock` as the pending list, so concurrent session starts never lose a mark.
+
 Pending record shape — one JSON object per line, UTF-8, appended (never rewritten except by
 `pending_clear`). Every append and every rewrite holds the O_EXCL lock `.crux/.crux.lock`
 (engine `id_lock` on the state folder); another writer (C2's migration) must take it too.
@@ -65,6 +68,7 @@ CHAR_CAP = TOKEN_CAP * CHARS_PER_TOKEN
 SWEEP_MODEL = "haiku"
 SWEEP_MAX_TURNS = 25
 SWEEP_ENV = "CRUX_SWEEP"
+VAULT_ENV = "CRUX_VAULT"     # engine find_vault falls back to it (a vault one level down)
 SWEEP_SOURCES = ("startup", "clear")
 SWEEP_TOOLS = "Bash,Read"
 SWEEP_ALLOWED = ("Bash(crux:*)", "Bash(python3 %s:*)" % CRUX_PY, "Read")
@@ -157,6 +161,17 @@ def save_marks(vault, m):
     os.replace(tmp, p)
 
 
+def update_marks(vault, change):
+    """Read-modify-write the marks under the state lock (the pending store's `id_lock`), so
+    concurrent session starts, sweeps and wraps never lose each other's marks. `change(m)`
+    edits `m` in place and returns False to skip the write."""
+    with E.id_lock(_state(vault)):
+        m = load_marks(vault)
+        if change(m) is not False:
+            save_marks(vault, m)
+        return m
+
+
 def _lock(vault):
     """An O_EXCL lock so two sessions starting at once launch one run, not two."""
     p = os.path.join(_state(vault), LOCK_FILE)
@@ -173,10 +188,11 @@ def _lock(vault):
 
 
 def mark_capture_run(vault, transcript):
-    m = load_marks(vault)
-    if transcript and transcript not in m["capture_runs"]:
+    def change(m):
+        if not transcript or transcript in m["capture_runs"]:
+            return False
         m["capture_runs"].append(transcript)
-        save_marks(vault, m)
+    update_marks(vault, change)
 
 
 # ------------------------------------------------------------------------------- transcripts
@@ -268,12 +284,13 @@ def register_session(vault, transcript, source):
     clear (all of it is new), its current end on a resume or compact of an older session."""
     if not transcript:
         return
-    m = load_marks(vault)
-    if transcript in m["marks"] or transcript in m["capture_runs"]:
-        return
-    fresh = source in SWEEP_SOURCES or not os.path.isfile(transcript)
-    m["marks"][transcript] = 0 if fresh else _complete_end(transcript)
-    save_marks(vault, m)
+
+    def change(m):
+        if transcript in m["marks"] or transcript in m["capture_runs"]:
+            return False
+        fresh = source in SWEEP_SOURCES or not os.path.isfile(transcript)
+        m["marks"][transcript] = 0 if fresh else _complete_end(transcript)
+    update_marks(vault, change)
 
 
 def cap_text(text):
@@ -343,8 +360,7 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
                 rep["transcripts"].append(p)
         if not parts:
             if new_marks:
-                m["marks"].update(new_marks)
-                save_marks(vault, m)
+                update_marks(vault, lambda cur: cur["marks"].update(new_marks))
             rep["reason"] = "nothing new"
             return rep
         text, rep["truncated"] = cap_text("\n\n".join(parts))
@@ -357,10 +373,15 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
             with open(inp, "w", encoding="utf-8") as f:
                 f.write(text)
             sid = str(uuid.uuid4())
-            m["capture_runs"].append(os.path.join(proj_dir, sid + ".jsonl"))
-            m["marks"].update(new_marks)
-            save_marks(vault, m)
-            env = dict(os.environ, **{SWEEP_ENV: "1"})
+
+            def change(cur):
+                cur["capture_runs"].append(os.path.join(proj_dir, sid + ".jsonl"))
+                cur["marks"].update(new_marks)
+            update_marks(vault, change)
+            # CRUX_VAULT: the run's cwd is the repo, and the vault may sit one level down
+            # (`./cruxvault`); the engine's find_vault falls back to it, so every crux verb
+            # the capture agent runs resolves this vault.
+            env = dict(os.environ, **{SWEEP_ENV: "1", VAULT_ENV: vault})
             with open(os.path.join(d, "sweep.log"), "ab") as log:
                 subprocess.Popen(_launch_cmd(claude, inp, sid), cwd=cwd or os.path.dirname(vault),
                                  env=env, stdin=subprocess.DEVNULL, stdout=log,
@@ -370,8 +391,7 @@ def run_sweep(vault, proj_dir, current=None, cwd=None):
             for fn in olds[:-KEEP_INPUTS]:
                 os.unlink(os.path.join(d, fn))
         else:
-            m["marks"].update(new_marks)
-            save_marks(vault, m)
+            update_marks(vault, lambda cur: cur["marks"].update(new_marks))
             rep["reason"] = "no conversation text in the new bytes"
         return rep
     finally:
@@ -590,10 +610,13 @@ def wrap(vault, transcript):
     if not transcript or not os.path.isfile(transcript):
         return out
     out["records"] = session_records(transcript)
-    m = load_marks(vault)
-    text, end = text_since(transcript, m["marks"].get(transcript, 0))
+    start = load_marks(vault)["marks"].get(transcript, 0)
+    text, end = text_since(transcript, start)
     out["text"], out["truncated"] = cap_text(text)
-    if end > m["marks"].get(transcript, 0):
+
+    def change(m):
+        if end <= m["marks"].get(transcript, 0):
+            return False
         m["marks"][transcript] = end
-        save_marks(vault, m)
+    update_marks(vault, change)
     return out

@@ -702,16 +702,52 @@ def _dispatch_capture(a):
     return 0
 
 
+AGENTS_POINTER_TAG = "crux always-on core"
+
+
+def _agents_md_pointer(root):
+    """Spec 19 decision 10, for agents other than Claude Code: one line in the project's
+    AGENTS.md telling any agent to read the always-on core. The project is the cwd when the
+    vault IS the cwd, else the vault's parent (where the hook finds `./cruxvault`). Created
+    if absent, appended if present, never duplicated (matched by its tag). The path is
+    repo-relative when the core lives inside the project; else the shared skills dir that
+    install.sh links for non-Claude agents (`~/.agents/skills/crux`), when it resolves to
+    this core; else the core's absolute path, the file the SessionStart hook injects."""
+    import sweep as SW
+    root = os.path.abspath(root)
+    proj = root if root == os.path.abspath(os.getcwd()) else os.path.dirname(root)
+    core, rproj = os.path.realpath(SW.CORE_PATH), os.path.realpath(proj)
+    shared = os.path.join("~", ".agents", "skills", "crux", "SKILL.md")
+    if core.startswith(rproj + os.sep):
+        ref = os.path.relpath(core, rproj).replace(os.sep, "/")
+    elif os.path.realpath(os.path.expanduser(shared)) == core:
+        ref = "~/.agents/skills/crux/SKILL.md"
+    else:
+        ref = core
+    path = os.path.join(proj, "AGENTS.md")
+    text = E.read(path) if os.path.isfile(path) else ""
+    if AGENTS_POINTER_TAG in text:
+        return None
+    if text and not text.endswith("\n"):
+        text += "\n"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text + f"Before working in this project, read `{ref}` (the {AGENTS_POINTER_TAG}: "
+                       f"it keeps this project's research record).\n")
+    return path
+
+
 def dispatch(a):
     c = a.cmd
     if c in ("init", "start", "new"):
         if a.seed:
             root, fn = E.cmd_init_from(a.seed, a.dir)
+            _agents_md_pointer(root)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ materialized vault at {root} from {a.seed}\n  root node: {fn}\n"
                   f"  next: {cd}crux status   — review the tree and its derived states")
         elif a.title:
             root, fn = E.cmd_init(a.title, a.dir, a.goal)
+            _agents_md_pointer(root)
             cd = "" if os.path.relpath(root) == "." else f"cd {os.path.relpath(root)} && "
             print(f"✓ initialized vault at {root}\n  root node: {fn}\n  next: {cd}crux ask \"the first question\"")
         else:

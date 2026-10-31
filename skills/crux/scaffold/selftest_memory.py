@@ -502,6 +502,82 @@ def _cli_tests(check, tmp):
           r.returncode == 0 and "settled" in r.stdout and "leaning" in r.stdout)
 
 
+def _agents_md_tests(check, tmp):
+    """Decision 10 outside Claude Code: `crux init` leaves a one-line pointer to the always-on
+    core in the project's AGENTS.md: create, append, never a duplicate, nowhere else."""
+    home = os.path.join(tmp, "ahome")
+    os.makedirs(home)
+    env = dict(os.environ, CRUX_NO_UPDATE_CHECK="1", HOME=home)
+
+    def init(cwd, *argv):
+        os.makedirs(cwd, exist_ok=True)
+        return subprocess.run([sys.executable, CLI, "init"] + list(argv), cwd=cwd, env=env,
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def ptrs(path):
+        lines = _read(path).splitlines() if os.path.isfile(path) else []
+        return [x for x in lines if "skills/crux/SKILL.md" in x]
+
+    def resolves(line):
+        m = re.search(r"(\S*skills/crux/SKILL\.md)", line)
+        p = m.group(1).strip("`") if m else ""
+        return bool(p) and os.path.isfile(os.path.expanduser(p.replace("~", home, 1))
+                                          if p.startswith("~") else p)
+
+    outer = os.path.join(tmp, "aouter")
+    proj = os.path.join(outer, "proj")
+    r = init(proj, "Pointer project")
+    am = os.path.join(proj, "AGENTS.md")
+    check("agents.md: `crux init` creates AGENTS.md with one pointer to the core",
+          r.returncode == 0 and len(ptrs(am)) == 1 and len(_read(am).splitlines()) == 1)
+    check("agents.md: ... and the pointer names a SKILL.md that exists",
+          bool(ptrs(am)) and resolves(ptrs(am)[0]))
+    check("agents.md: ... and nothing outside the project is touched",
+          not os.path.exists(os.path.join(outer, "AGENTS.md"))
+          and not os.path.exists(os.path.join(proj, "cruxvault", "AGENTS.md")))
+
+    proj2 = os.path.join(tmp, "aproj2")
+    own = "# Project rules\n\nRun the tests before a commit."     # no trailing newline
+    _write(os.path.join(proj2, "AGENTS.md"), own)
+    r = init(proj2, "Second project")
+    am2 = os.path.join(proj2, "AGENTS.md")
+    text = _read(am2)
+    check("agents.md: an existing AGENTS.md keeps its text and gets the pointer appended",
+          r.returncode == 0 and text.startswith(own + "\n") and len(ptrs(am2)) == 1
+          and text.rstrip("\n").splitlines()[-1] == ptrs(am2)[0])
+
+    r2 = init(proj2, "Again", "--dir", "second")
+    r3 = init(proj2, "Again")                                     # refused: vault exists
+    check("agents.md: a repeated init never writes a duplicate pointer",
+          r2.returncode == 0 and r3.returncode != 0 and len(ptrs(am2)) == 1
+          and _read(am2) == text)
+
+    proj3 = os.path.join(tmp, "aproj3")
+    _write(os.path.join(proj3, "AGENTS.md"), "keep me\n")
+    _write(os.path.join(proj3, "cruxvault", E.VAULT_MARKER), "title: x\n")
+    r = init(proj3, "Exists")
+    check("agents.md: a refused init leaves AGENTS.md untouched",
+          r.returncode != 0 and _read(os.path.join(proj3, "AGENTS.md")) == "keep me\n")
+
+    proj4 = os.path.join(tmp, "aproj4")
+    seed = os.path.join(proj4, "seed.md")
+    _write(seed, "- Project: Seeded — a goal\n  - Q: does it work\n")
+    r = init(proj4, "--from", seed)
+    check("agents.md: `crux init --from` adds the pointer too",
+          r.returncode == 0 and len(ptrs(os.path.join(proj4, "AGENTS.md"))) == 1)
+
+    # install.sh links skills/crux into ~/.agents/skills for non-Claude agents: when that
+    # link resolves to this core, the pointer names it portably, not by this machine's path.
+    os.makedirs(os.path.join(home, ".agents", "skills"))
+    os.symlink(os.path.dirname(HERE), os.path.join(home, ".agents", "skills", "crux"))
+    proj5 = os.path.join(tmp, "aproj5")
+    r = init(proj5, "Installed")
+    p5 = ptrs(os.path.join(proj5, "AGENTS.md"))
+    check("agents.md: an installed crux skill is named as ~/.agents/skills/crux/SKILL.md",
+          r.returncode == 0 and len(p5) == 1 and "`~/.agents/skills/crux/SKILL.md`" in p5[0]
+          and resolves(p5[0]))
+
+
 def _derive_only_tests(check, tmp):
     """The engine never writes a direction or a confidence it was not given."""
     root = _vault(tmp, "derive")
@@ -730,7 +806,7 @@ def run_all(check):
     try:
         for section in (_model_tests, _hypothesize_tests, _state_tests, _question_tests,
                         _null_cap_tests, _evidence_tests, _validate_tests,
-                        _removed_verb_tests, _cli_tests, _derive_only_tests,
+                        _removed_verb_tests, _cli_tests, _agents_md_tests, _derive_only_tests,
                         _snapshot_tests, _seed_tests, _lock_tests, _auto_status_tests):
             try:
                 if section is _model_tests:

@@ -33,6 +33,8 @@ grammar (indented bullets, `Project:` / `Q:` / `H:` / `expect:` / `v:` / `findin
 is in `scaffold/README.md` under *Setup*, and the 4.0 shape with a finding's direction and
 confidence is in the crux-migrate agent's definition. The engine validates the whole seed
 before writing anything, so a malformed seed leaves nothing behind.
+Either form of `crux init` also adds one line to the project's `AGENTS.md` (created if absent, never
+duplicated) that points agents other than Claude Code at the always-on core.
 
 **Reconstructing finished work.** A hypothesis that already ran is marked `[tested]`, carries
 its expectation, ticks its checks from the evidence (`[x]` met, `[ ]` unmet, `[-]` n/a, each

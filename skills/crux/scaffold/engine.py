@@ -644,12 +644,18 @@ def natkey(nid):
     return (m.group(1), int(m.group(2)) if m.group(2) else 0)
 
 def find_vault(start=None):
+    """The vault at `start` or an ancestor. Failing that, the vault named by `CRUX_VAULT`
+    (set by the background capture run, whose cwd is the repo while the vault may sit one
+    level down in `./cruxvault`)."""
     d = os.path.abspath(start or os.getcwd())
     while True:
         if os.path.exists(os.path.join(d, VAULT_MARKER)):
             return d
         parent = os.path.dirname(d)
         if parent == d:
+            env = os.environ.get("CRUX_VAULT")
+            if env and os.path.exists(os.path.join(env, VAULT_MARKER)):
+                return os.path.abspath(env)
             raise CruxError("not inside a crux vault (no .crux.yaml found). Run `crux init` first.")
         d = parent
 

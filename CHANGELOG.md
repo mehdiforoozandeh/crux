@@ -6,6 +6,13 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The background capture run now reaches a vault in `./cruxvault` (the engine falls back to
+  `CRUX_VAULT`, which the sweep sets); concurrent session starts no longer lose a sweep mark
+  (marks are written under the state lock); `crux init` adds a one-line pointer to the
+  always-on core in the project's `AGENTS.md` (spec 19 decision 10, for other agents).
+
 ## [1.0.0] - 2026-10-31
 
 **Background memory** (spec 19; engine **3.5 → 4.0**). The tree now fills itself from the
