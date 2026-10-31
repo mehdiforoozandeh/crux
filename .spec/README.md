@@ -25,6 +25,8 @@ being built — do not implement)
 | 15 | [Evidence semantics](15-evidence-semantics.md) | `evidence` | ◐ |
 | 16 | [Science voice: the invisible notebook](16-science-voice.md) | `voice` | ☑ |
 | 17 | [OpenAlex: literature search into the wiki](17-openalex.md) | `wiki` | ☑ |
+| 18 | [Lean autopilot](18-autopilot-lean.md) | `autopilot` | ☑ |
+| 19 | [Background memory](19-background-memory.md) | `memory` | ☐ |
 
 Numbers are permanent identifiers, not positions — a merged or dropped spec leaves its number
 retired rather than renumbering the rest and breaking every cross-reference. **04 (ERA) is
