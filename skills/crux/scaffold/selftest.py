@@ -3499,9 +3499,13 @@ def run_rd_skill():
           "git log -p" in s)
     check("rdskill: the skill declares disable-model-invocation",
           "disable-model-invocation: true" in fm)
+    # spec 19: the verb table moved out of the always-on core; the core routes to crux-rd
     crux_skill = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
-    check("rdskill: the crux verb table lists rd",
-          os.path.isfile(crux_skill) and "| `rd` |" in read(crux_skill))
+    verbs_ref = os.path.abspath(os.path.join(HERE, "..", "references", "verbs.md"))
+    check("rdskill: the crux verb reference lists rd",
+          os.path.isfile(verbs_ref) and "| `rd` |" in read(verbs_ref))
+    check("rdskill: the always-on core routes to crux-rd",
+          os.path.isfile(crux_skill) and "**crux-rd**" in read(crux_skill))
     # every invocation the skill shows must be one the CLI actually accepts
     bad = []
     for m in re.findall(r"crux rd ([^\n`\"']*)", s):
@@ -4400,23 +4404,130 @@ def run_hash_lock():
 
 
 def run_rulebook():
-    """Spec 15 PRD 15.5 — the separability rulebook sentence into the crux skill, and the
-    skill's account of a verdict brought in line with what the engine now does.
+    """Spec 19 — `skills/crux/SKILL.md` is the ALWAYS-ON core (the SessionStart hook injects it
+    on every session in a vault repo), so it is held to a byte cap and a fixed set of parts.
+    Everything else lives behind a pointer; these asserts keep the pointers live, the removed
+    verbs out of every skill, and `/crux-wrap` showing records before it asks anything.
 
-    All greps, in the style the suite already uses for the cockpit legend: the point is that
-    the docs cannot silently drift from the constants."""
-    print("\n# evidence semantics — the rulebook and the skill (spec 15, PRD 15.5)")
-    skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    The separability rulebook (spec 15, PRD 15.5) moved with the pre-run design material to
+    `references/design.md`; it is still compared with the spec word for word."""
+    import glob
+    print("\n# the always-on core and the skill text (spec 19, C8)")
+    sk_dir = os.path.join(HERE, "..")
+    core_path = os.path.join(sk_dir, "SKILL.md")
+    raw = open(core_path, "rb").read()
+    skill = raw.decode("utf-8")
+    check(f"core: SKILL.md is at most 8,192 bytes ({len(raw)})", len(raw) <= 8192)
+
+    def section(text, head):
+        """The body under the first `## ` heading that starts with `head`, up to the next."""
+        m = re.search(r"^## " + re.escape(head) + r".*?$(.*?)(?=^## |\Z)", text, re.M | re.S)
+        return m.group(1) if m else ""
+
+    cap = section(skill, "Capture")
+    check("core: the capture rules name question, hypothesis, finding and evidence",
+          all(w in cap.lower() for w in ("question", "hypothesis", "finding", "evidence")))
+    check("core: capture is silent, evidence is always recorded, an expectation comes first",
+          "silently" in cap and "always recorded" in cap and "expectation" in cap
+          and "before" in cap)
+    bd = section(skill, "The tree and the taskhub")
+    check("core: the tree/taskhub boundary is knowledge vs work, with the evidence route",
+          "knowledge" in bd.lower() and "work" in bd.lower()
+          and "only as evidence on a finding" in bd)
+    check("core: the boundary carries one example of each side",
+          bd.count("e.g.") >= 2 or bd.lower().count("example") >= 2 or bd.count("*\"") >= 2
+          or len(re.findall(r'"[^"]{8,}"', bd)) >= 2)
+    cl = section(skill, "Closure judgment")
+    low = cl.lower()
+    check("core: closure judges the evidence against expectation, null and verifiables",
+          all(w in low for w in ("expectation", "null", "verifiables")))
+    check("core: direction first, then confidence",
+          "direction" in low and "confidence" in low
+          and low.index("direction") < low.index("confidence"))
+    check("core: the null cap binds supports findings only",
+          "supports" in low and "only" in low and "not ruled out" in low)
+    check("core: a failed control caps at weak, in every direction",
+          "failed control" in low and "weak" in low)
+    check("core: a near miss lowers confidence", "near miss" in low)
+    check("core: a question finding has no direction", "no direction" in low)
+    check("core: state is derived — strongest wins, newest breaks ties",
+          "derived" in low and "strongest" in low and "newest" in low)
+    check("core: there is no close step, and dropped nodes are parked",
+          "no close step" in low and "park" in low)
+    vo = section(skill, "Voice — the invisible notebook")
+    check("core: the voice section is inline, under its own heading",
+          bool(vo) and "mirror rule" in vo)
+    pi = section(skill, "Still the PI's")
+    check("core: what stays the PI's — autopilot start, unasked compute, merge to main, "
+          "plain-words correction",
+          all(w in pi for w in ("autopilot", "compute", "`main`", "plain words"))
+          and "wins" in pi)
+    rt = section(skill, "Router")
+    router = ("crux-wrap", "crux-wiki", "crux-litsearch", "crux-autopilot", "crux-cockpit",
+              "prezit", "storify", "crux-rd", "evolve-crux",
+              "crux-capture", "crux-prerun", "crux-situate", "crux-migrate")
+    lines = [l for l in rt.splitlines() if l.startswith("- ")]
+    missing = [n for n in router
+               if not any(f"**{n}**" in l and len(l) > len(n) + 30 for l in lines)]
+    check(f"core: one router line, with its trigger, per skill and agent ({missing})",
+          not missing)
+    ptrs = sorted(set(re.findall(r"references/[\w.-]+\.md", skill)))
+    dead = [p for p in ptrs if not os.path.isfile(os.path.join(sk_dir, p))]
+    check(f"core: every references/*.md pointer resolves ({dead})", ptrs and not dead)
+    refs = sorted("references/" + f for f in os.listdir(os.path.join(sk_dir, "references"))
+                  if f.endswith(".md"))
+    orphan = [r for r in refs if r not in ptrs]
+    check(f"core: every references/*.md file is reached by a pointer in the core ({orphan})",
+          not orphan)
+    check("core: the agent-only prohibitions stay inline — glossary.md, the migration "
+          "guardrail, generated files, the update tripwire",
+          "never write to `glossary.md` directly" in skill.lower().replace("**", "")
+          and "cruxvault/" in skill and "META.md" in skill
+          and "stash" in skill)
+
+    # ---- no removed verb survives in any skill text, except as "removed"
+    repo = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+    gone = re.compile(r"crux (review|answer|pursue|approve|approve-null|synthesize|close)\b"
+                      r"|`(review|answer|pursue|approve|approve-null|synthesize|close)`"
+                      r"|task (accept|review)\b")
+    texts = sorted(glob.glob(os.path.join(repo, "skills", "*", "SKILL.md"))
+                   + glob.glob(os.path.join(repo, "skills", "crux", "references", "*.md")))
+    stale = [f"{os.path.relpath(p, repo)}:{i}" for p in texts
+             for i, l in enumerate(read(p).splitlines(), 1)
+             if gone.search(l) and "removed" not in l]
+    check(f"core: no removed verb appears in any skill text except as removed ({stale[:4]})",
+          len(texts) > 9 and not stale)
+
+    # ---- /crux-wrap: the capture agent, then the records, then one question per candidate
+    wp = os.path.join(repo, "skills", "crux-wrap", "SKILL.md")
+    check("wrap: skills/crux-wrap/SKILL.md exists", os.path.isfile(wp))
+    w = read(wp) if os.path.isfile(wp) else ""
+    fm = w.split("---")[1] if w.startswith("---") else ""
+    check("wrap: frontmatter names the skill and its slash command",
+          "name: crux-wrap" in fm and "description:" in fm and "/crux-wrap" in fm)
+    check("wrap: it runs the capture agent, told it was started by /crux-wrap",
+          "crux-capture" in w and "--source wrap" in w)
+    check("wrap: it reads the real verbs — wrap --json, pending list, pending clear",
+          all(x in w for x in ("crux wrap --json", "crux pending list", "crux pending clear")))
+    i_rec = w.find("already recorded")
+    i_ask = w.find("AskUserQuestion")
+    check("wrap: it shows what the session recorded BEFORE it asks anything",
+          0 <= i_rec < i_ask)
+    check("wrap: it asks only about the pending candidates, one question each, accept or reject",
+          "only" in w[i_ask - 400:i_ask + 400] and "pending" in w[i_ask - 400:i_ask + 400]
+          and "accept" in w.lower() and "reject" in w.lower())
+    for sub in ("list", "add", "clear"):
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "pending", sub,
+                            "--help"], capture_output=True, text=True, encoding="utf-8")
+        check(f"wrap: `crux pending {sub}` is a real verb", r.returncode == 0)
+
+    # ---- the separability rulebook, where the pre-run design material now lives
+    design = read(os.path.join(sk_dir, "references", "design.md")) \
+        if os.path.isfile(os.path.join(sk_dir, "references", "design.md")) else ""
     spec = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
 
     def sentence(text):
-        """The rulebook blockquote, unwrapped and whitespace-collapsed, with markdown
-        emphasis stripped — so the two copies are compared on CONTENT, and a re-wrap or a
-        bolded clause cannot make them look different when they are not."""
         head = "One experiment settles several hypotheses separately only when"
-        # the two copies are wrapped differently and the skill bolds two clauses, so the
-        # comparison is on CONTENT: unwrap, drop blockquote markers and emphasis, collapse
-        # whitespace. Anything short of identical wording still fails.
         flat = " ".join(text.replace(">", " ").replace("*", "").split())
         i = flat.find(head)
         if i < 0:
@@ -4424,41 +4535,23 @@ def run_rulebook():
         j = flat.find("answers.", i)
         return flat[i:j + len("answers.")] if j > 0 else None
 
-    a, b = sentence(spec), sentence(skill)
-    check("rulebook: the separability sentence is in the skill", b is not None)
+    a, b = sentence(spec), sentence(design)
+    check("rulebook: the separability sentence is in references/design.md", b is not None)
     check("rulebook: the separability sentence matches the spec word for word", a and a == b)
-    check("rulebook: the three separability lines are in the skill",
-          all(x in skill for x in ("**Different lever.**", "**Different failure.**",
-                                   "**Different verdict.**")))
-    check("rulebook: the skill says a shared control is the fix, not the flaw",
-          "the fix, not the" in skill)
-
-    check("rulebook: the skill no longer teaches the retired verdict rule",
-          "→ `refuted`/`partial`" not in skill)
-    check("rulebook: the skill covers the whole verdict vocabulary",
-          all(f"`{x}`" in skill for x in E.VERDICTS))
-    check("rulebook: the skill says invalid-run is not a refutation",
-          "never a refutation" in skill)
-    check("rulebook: the skill states the boundary is permanent",
-          "boundary is permanent" in skill and "schema: 1" in skill
-          and 'Do not "fix" an old node' in skill)
-    check("rulebook: the skill names the combination rule and its CLI flag",
-          "rule: all | any | m-of-n" in skill and "--rule" in skill)
-    check("rulebook: the skill explains inconclusive is derived, never chosen",
-          "derived, never chosen" in skill)
-    check("rulebook: the skill carries the drift rule and says it blocks nothing",
-          "drift" in skill and "blocks nothing" in skill)
-
-    joint = "64% joint power"
+    check("rulebook: the three separability lines are there",
+          all(x in design for x in ("**Different lever.**", "**Different failure.**",
+                                    "**Different verdict.**")))
+    check("rulebook: a shared control is the fix, not the flaw", "the fix, not the" in design)
     check("rulebook: the joint-power cost is stated with its constraint",
-          joint in skill and "may\n  not be loosened" in skill.replace("\n  ", "\n  "))
-
+          "64% joint power" in design and "not be loosened" in " ".join(design.split()))
+    check("rulebook: the drift rule says it blocks nothing",
+          "drift" in design and "blocks nothing" in design)
     spec09 = read(os.path.join(HERE, "..", "..", "..", ".spec", "09-specialized-agents.md"))
     check("rulebook: spec 09 carries the crux-verifiables amendment",
-          "`crux-verifiables` gains a job" in spec09 and joint in spec09
+          "`crux-verifiables` gains a job" in spec09 and "64% joint power" in spec09
           and "Choose the combination rule" in spec09)
     check("rulebook: spec 15's work items are ticked for what shipped",
-          spec.count("- \u2611 ") >= 10 and "**Status:** \u25d0" in spec)
+          spec.count("- ☑ ") >= 10 and "**Status:** ◐" in spec)
 
 
 def _task_vault(prefix="crux_task_"):
@@ -5360,38 +5453,51 @@ def run_task_gui():
 
 
 def run_taskhub_skill():
-    print("\n# taskhub — the skill rules and the spec amendments (spec 08, PRD 08.5)")
+    """Spec 08 PRD 08.5, re-pointed by spec 19: the tree holds knowledge, the taskhub holds
+    work, and a task's output reaches the tree only as evidence on a finding. The always-on
+    core states the boundary; `references/taskhub.md` carries the procedure. The experiment
+    accept gate is gone, so no skill may teach `task accept` or `task review` except as
+    removed."""
+    print("\n# taskhub — the boundary in the core, the procedure behind a pointer (spec 08, 19)")
     skill = read(os.path.join(HERE, "..", "SKILL.md"))
+    tref_p = os.path.join(HERE, "..", "references", "taskhub.md")
+    tref = read(tref_p) if os.path.isfile(tref_p) else ""
     spec8 = read(os.path.join(HERE, "..", "..", "..", ".spec", "08-taskhub.md"))
     spec15 = read(os.path.join(HERE, "..", "..", "..", ".spec", "15-evidence-semantics.md"))
     spec7 = os.path.join(HERE, "..", "..", "..", ".spec", "07-rd-layer.md")
 
-    check("skill: SKILL.md carries the work-never-creates-direction line",
-          "Work never creates direction" in skill
-          and "an output that is evidence\n> about a hypothesis enters the gated tier" in skill)
-    check("skill: SKILL.md states what gets in and what stays scratch",
-          "would you be annoyed if this vanished next week" in skill.lower()
-          and "session scratch" in skill and "one context window" in skill)
-    check("skill: SKILL.md marks accept as the PI's signature",
-          "crux task accept" in skill and "never run it on your own judgment" in skill.lower())
-    check("skill: SKILL.md distinguishes a derived verdict from a written conclusion",
-          "Two provenances" in skill
-          and "does **not** close h44" in skill)
-    check("skill: SKILL.md carries the escape hatch",
-          "stops being a task" in skill and "goes through the normal gate" in skill.lower()
-          or "go through the normal gate" in skill)
+    check("skill: the core points at references/taskhub.md, and it exists",
+          "references/taskhub.md" in skill and bool(tref))
+    check("skill: the core says a task's output enters the tree only as evidence on a finding",
+          "only as evidence on a finding" in skill)
+    check("skill: the taskhub reference states what gets in and what stays scratch",
+          "would you be annoyed if this vanished next week" in tref.lower()
+          and "session scratch" in tref and "one context window" in tref)
+    check("skill: a task that would open a question becomes a tree node",
+          "stops being a task" in tref)
+    check("skill: the accept gate is taught nowhere — no skill text says task accept/review "
+          "except as removed",
+          all("removed" in l for l in (skill + "\n" + tref).splitlines()
+              if re.search(r"task (accept|review)\b", l)))
 
-    # every task sub-verb the CLI exposes is documented, derived from argparse rather than
-    # hand-listed, so a verb added later cannot go undocumented silently
+    # every live task sub-verb the CLI exposes is documented, derived from argparse rather
+    # than hand-listed, so a verb added later cannot go undocumented silently
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "--help"],
                        capture_output=True, text=True, encoding="utf-8")
-    verbs = {"add", "done", "drop", "list", "show", "categories", "review", "accept"}
-    check("skill: every task verb is documented in CLI help",
-          r.returncode == 0 and all(v in r.stdout for v in verbs))
-    check("skill: the verb table matches the CLI's task verbs",
-          all(f"`task {v}`" in skill or f"`{v}`" in skill for v in ("add", "done", "accept")))
+    live = re.findall(r"^    ([a-z]+)\b", r.stdout, re.M)
+    check(f"skill: the CLI's task verbs are the 4.0 set ({live})",
+          r.returncode == 0 and {"add", "done", "drop", "list", "show", "categories"} <= set(live)
+          and not {"review", "accept"} & set(live))
+    undoc = [v for v in live if f"`task {v}`" not in tref]
+    check(f"skill: every live task verb is documented in references/taskhub.md ({undoc})",
+          live and not undoc)
+    for v in ("review", "accept"):
+        rr = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", v],
+                            capture_output=True, text=True, encoding="utf-8")
+        check(f"skill: `crux task {v}` prints that it is removed",
+              "removed" in (rr.stdout + rr.stderr))
 
-    # -- the three .spec amendments (rulings D6 / D9 / D19)
+    # -- the .spec amendments (rulings D6 / D9 / D19) are history and stay as they were
     check("skill: .spec/08's conclusion vocabulary matches VERDICTS",
           all(c in spec8 for c in E.CONCLUSIONS)
           and "`supports` / `disputes`" not in spec8
@@ -5876,12 +5982,6 @@ def run_migrate():
           "gate" not in E.CHECKS + E.OPT_CHECKS)
     shutil.rmtree(root, ignore_errors=True)
 
-
-# The roster as it stood before 05.3, so the criterion can say the list grew by exactly two
-# rather than merely that it now holds twelve names.
-AG_ROSTER_052 = ("crux-null", "crux-verifiables", "crux-critic", "crux-migrate",
-                 "crux-close", "crux-audit", "crux-tests", "crux-glossary",
-                 "crux-situate", "crux-design")
 
 # `crux doctor` warnings that are facts about the MACHINE the suite runs on, not about the
 # repository: `cmd_doctor` reads `~/.claude/settings.json` for the chat-time voice lint, and
@@ -6535,17 +6635,6 @@ def run_design_agent():
     check("prerun: the engine refuses a malformed null it might draft",
           E.null_problem("capacity — the bigger arm has more parameters", 3) is None
           and E.null_problem("it might not work for many reasons", 3) is not None)
-
-
-def _probe_vault():
-    """A throwaway vault whose hypothesis has a sentinel problem statement, for the
-    cross-check that the brief's behaviour matches what the roster declares."""
-    root = tempfile.mkdtemp(prefix="crux_probe_")
-    shutil.rmtree(root); os.makedirs(root)
-    E.cmd_init("Probe", root)
-    q, _ = E.cmd_ask(root, "q")
-    h, _, _ = E.cmd_hypothesize(root, "claim", parent=q, problem="ADVOCACY", verifiables=["a"])
-    return root, h
 
 
 def run_glossary():
@@ -8030,7 +8119,7 @@ def run_correct_terms():
     E.cmd_init("Terms", fv, goal="Check the templates.")
     fq, _ = E.cmd_ask(fv, "a question")
     E.cmd_hypothesize(fv, "a claim", parent=fq, rule="all", verifiables=["a check"],
-                      neutral=["a control"])
+                      neutral=["a control"], expect="the check clears")
     files = list(shipped()) + [os.path.join(dp, f) for dp, _d, fs in os.walk(fv)
                                for f in fs if f.endswith(".md")]
     hits = [f"{os.path.relpath(f, repo)}: {p!r}" for f in files
@@ -8059,8 +8148,8 @@ def run_correct_terms():
           E._summary(f"## ELI5\n{new_ph}\n\n## TL;DR\nx\n", "ELI5") == ""
           and E._summary(f"## ELI5\n{old_ph}\n\n## TL;DR\nx\n", "ELI5") == "")
     sk = read(surfaces["crux SKILL.md"]).replace("\r\n", "\n").encode("utf-8")
-    check(f"terms: crux SKILL.md did not grow past its size on origin/main at this change "
-          f"({len(sk)} <= 37844 bytes)", len(sk) <= 37844)
+    check(f"terms: crux SKILL.md, the always-on core, stays within its 8,192-byte cap "
+          f"({len(sk)} bytes)", len(sk) <= 8192)
 
 
 def run_science_voice():
@@ -8220,15 +8309,32 @@ def run_science_voice():
           sum(1 for s, _t in st if s == ag) >= 2)
     check(f"voice: SKILL.md's session dialogue is ID-free science ({ids_of(st)})",
           ids_of(st) == [])
-    check("voice: SKILL.md carries a top-level voice section naming all six rules",
+    low = skill.lower()
+    check("voice: SKILL.md carries a top-level voice section naming the 4.0 rules — mirror, "
+          "silent bookkeeping, relevance, titles, notebook mode, the PI's correction",
           re.search(r"^## .*[Vv]oice", skill, re.M)
-          and all(k in skill for k in ("mirror rule", "Silent bookkeeping", "Signature",
-                                       "relevance", "title", "Notebook mode")))
+          and all(k in low for k in ("mirror rule", "silent bookkeeping", "relevance", "title",
+                                     "notebook mode", "plain words")))
+    check("voice: the sign-off moments are gone from the core — nothing waits on the PI",
+          "signature moment" not in low and "review gate" not in low)
 
     # ---- glossary graduation. Without the waiver a crux process term can never be
     #      proposed: it appears nowhere in the corpus the centrality filter counts, so the
-    #      path spec 16 relies on would be dead on arrival.
-    root, ids = _voice_vault()
+    #      path spec 16 relies on would be dead on arrival. The tree is built inline: a 4.0
+    #      hypothesis states its expectation first.
+    root = tempfile.mkdtemp(prefix="crux_voice_")
+    shutil.rmtree(root); os.makedirs(root)
+    E.cmd_init("Voice", root)
+    ids = {}
+    ids["q1"], _ = E.cmd_ask(root, "how do we cut the label budget", None)
+    ids["q2"], _ = E.cmd_ask(root, "does pretraining help at low label count", ids["q1"])
+    ids["q3"], _ = E.cmd_ask(root, "which augmentation family matters", ids["q1"])
+    hy = lambda t, p: E.cmd_hypothesize(root, t, parent=p, verifiables=["accuracy >= +2.0"],
+                                        neutral=["the baseline reproduces its published number"],
+                                        expect="accuracy rises by at least 2 points")[0]
+    ids["h1"] = hy("pretraining beats scratch", ids["q2"])
+    ids["h2"] = hy("pretraining still helps at 20 labels", ids["q2"])
+    ids["h3"] = hy("colour jitter is the family that matters", ids["q3"])
     try:
         got = [c["term"] for c in E.glossary_candidates(root, ["review gate", "flumox"])]
         check(f"voice: a crux process term the vault never mentions is still proposable ({got})",
@@ -8236,7 +8342,7 @@ def run_science_voice():
         check("voice: and the waiver is narrow — a non-lexicon term still has to be central",
               E.glossary_candidates(root, ["flumox"]) == [])
 
-        # ---- the relevance gate, engine-computed (09's rule 1, and spec 16's own default)
+        # ---- relevance, engine-computed: what the agent may raise on its own initiative
         rel = lambda near, other: E.gate_relation(E.Vault(root), near, other)
         check("voice: lineage and immediate siblings are in scope, an unrelated branch is not",
               [rel(ids["q2"], x) for x in (ids["q2"], ids["q1"], ids["h1"], ids["q3"], ids["h3"])]
@@ -8246,37 +8352,14 @@ def run_science_voice():
         check("voice: every relation the engine can emit is in the declared vocabulary",
               all(rel(ids["q2"], o) in E.GATE_RELATIONS for o in ids.values()))
 
-        # trip a real gate, then read it back through the CLI the agent actually uses
-        for hid in (ids["h3"],):
-            declare_null(root, hid)
-            E.cmd_test(root, hid, "staged"); E.cmd_test(root, hid, "running", run="job 1")
-            n = E.Vault(root).get(hid)
-            E.write_if_changed(n["path"], E.render_doc(n["fm"], n["body"].replace("- [ ]", "- [x]")))
-            E.cmd_close(root, hid, metric="+2.1", findings="it held")
-        pend = E.cmd_review(root)
-        check(f"voice: the fixture actually trips a gate to annotate ({[p[0] for p in pend]})",
-              [p[0] for p in pend] == [ids["q3"]])
-
+        # ---- spec 19: there is no review gate left to annotate; the verb says so and writes
+        #      nothing, so a habit that still types it is redirected, never broken
+        before = _tree_hashes(root)
         out = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
                               "--json", "--near", ids["q2"]],
                              capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        rows = json.loads(out.stdout)
-        check("voice: `crux review --json --near` annotates every pending gate with its "
-              "relation and whether it is in scope",
-              out.returncode == 0 and rows
-              and all({"relation", "in_scope"} <= set(r) for r in rows)
-              and rows[0]["relation"] == "sibling" and rows[0]["in_scope"] is True)
-        far = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review",
-                              "--json", "--near", ids["h1"]],
-                             capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        check("voice: a gate outside the lineage reads out-of-scope — the agent never raises "
-              "it on its own initiative",
-              json.loads(far.stdout)[0]["in_scope"] is False)
-        plain = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "review", "--json"],
-                               capture_output=True, cwd=root, encoding="utf-8", errors="replace")
-        check("voice: without --near nothing is annotated — a PI asking what is pending gets "
-              "everything, and the restriction binds agent initiative only",
-              "relation" not in json.loads(plain.stdout)[0])
+        check("voice: `crux review` is removed — it prints one pointer and writes nothing",
+              "removed" in out.stdout + out.stderr and _tree_hashes(root) == before)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -8426,7 +8509,8 @@ def run_cli_third_person():
     try:
         out = [run(["init", "Person Project"], cwd=root).stdout]
         vault = os.path.join(root, "cruxvault")
-        for argv in (["review"], ["task", "review"], ["status"], ["validate"]):
+        for argv in (["status"], ["validate"], ["task", "list"], ["pending", "list"],
+                     ["finding", "--help"], ["park", "--help"]):
             out.append(run(argv, cwd=vault).stdout)
         bad = sorted({SECOND.search(t).group(0) for t in out if SECOND.search(t)})
         check(f"voice: no second-person address in the CLI's own text output ({bad})", not bad)
@@ -9366,8 +9450,9 @@ def run_lit_fetch():
 
 def run_cli_help():
     print("\n# CLI --help smoke")
-    for argv in (["--help"], ["ask", "--help"], ["close", "--help"], ["hypothesize", "--help"], ["serve", "--help"],
-                 ["selftest", "--help"], ["approve", "--help"], ["synthesize", "--help"], ["deck", "--help"],
+    for argv in (["--help"], ["ask", "--help"], ["finding", "--help"], ["hypothesize", "--help"],
+                 ["serve", "--help"], ["selftest", "--help"], ["park", "--help"],
+                 ["wrap", "--help"], ["pending", "--help"], ["sweep", "--help"], ["deck", "--help"],
                  ["brief", "--help"], ["glossary", "--help"], ["doctor", "--help"],
                  ["auto", "--help"], ["auto", "check", "--help"],
                  ["auto", "run", "--help"], ["auto", "status", "--help"]):
@@ -9382,6 +9467,14 @@ def run_cli_help():
             verbs = re.findall(r"^    ([a-z]+)\s", r.stdout, re.M)
             check("auto: help lists exactly the verbs check, run, status (spec 18)",
                   verbs == ["check", "run", "status"])
+
+    # -- spec 19: a removed verb answers with one pointer line naming its replacement
+    for argv in (["close"], ["approve"], ["synthesize"], ["review"], ["answer"], ["pursue"],
+                 ["approve-null"], ["task", "accept"], ["task", "review"]):
+        r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py")] + argv,
+                           capture_output=True, text=True, encoding="utf-8")
+        check(f"help: crux {' '.join(argv)} says it is removed",
+              "is removed" in r.stdout + r.stderr)
 
     # -- the post-init hint must work from where the user just ran init: the vault is
     #    created *below* the cwd, so the hint carries the cd into it

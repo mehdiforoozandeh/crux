@@ -45,14 +45,16 @@ The PI's guidance, in their words.
 required. `objective` is `<address> <min|max> <bar>`: the score's address, its direction, and
 the threshold (the plan's `bar` field). The rest default to the values shown; `mode` is
 `climb` or `explore`, and `worker` is `<model> <low|medium|high|xhigh|max>`. The optional
-`min_gain` (a number >= 0, default 0, in the objective's units) sets how much an attempt must
-beat its parent, and climb's best, to count as better; set it above the scorer's noise. Put no comment
-after a value: it becomes part of the value.
+`min_gain` (a number >= 0, in the objective's units) sets how much an attempt must beat its
+parent, and climb's best, to count as better. Leave it out unless the PI has a reason: `crux
+auto check` measures the scorer's noise (below), and with a deterministic scorer the default
+is near zero, so any real gain counts. Put no comment after a value: it becomes part of the
+value.
 
 ## The steps
 
-1. **The anchor.** Find the question this run serves. If it does not exist, propose it; `ask`
-   needs the PI's yes, as everywhere in crux.
+1. **The anchor.** Find the question this run serves. If it does not exist, open it
+   (`crux ask`), silently, as the crux core does for any question the conversation asks.
 2. **The harness, in one turn.** Ask for the repo, the base, the editable paths and the scorer
    command. Everything not in `editable` is frozen; a change outside it discards the attempt.
 3. **The scorer contract.** Run the scorer once on the base yourself and read its output. It
@@ -74,17 +76,38 @@ after a value: it becomes part of the value.
 6. **The guidance.** Ask one open question for the PI's priors: the analogy they see, the
    routes they rate and in what order, the dead ends they already know, the invariant to keep.
    Do not turn it into a questionnaire. "I don't know" leaves it empty, and the run proceeds.
-7. **Write the plan, then run `crux auto check <plan>`.** It scores the base, scores again with
-   the first editable file emptied (the score must change), and runs the worker once (one model
-   call) to prove it can commit. Fix what it reports and run it again. `--static` reads the
-   plan alone and starts nothing.
-8. **Stop.** Give the PI the plan's path, the baseline the check printed, and the exact line:
+7. **Write the plan, then run `crux auto check <plan>`.** It scores the base **3 times** (the
+   baseline is the median, and the spread is recorded as the scorer's **noise**), scores again
+   with the first editable file emptied (the score must change), and runs the worker once (one
+   model call) to prove it can commit. Fix what it reports and run it again. `--static` reads
+   the plan alone and starts nothing.
+8. **Stop.** Give the PI the plan's path, the baseline and the noise the check printed, and
+   the exact line:
    `crux auto run auto/<qid>/plan.md`. On Fir, a benchmark starts with
    `bash examples/autopilot/run-fir.sh <bench>`.
 
-**Never start `crux auto run` yourself.** The PI's start is the signature on the threshold, and
-the run spends compute unattended. Start it only when the PI tells you to, in so many words.
-Read a run in progress with `crux auto status`.
+**Never start `crux auto run` yourself.** Starting it is the PI's: the run spends compute
+unattended, against a threshold the PI fixed. Start it only when the PI tells you to, in so
+many words. Merging an attempt into `main` is also the PI's.
+
+## How a run reads back
+
+Each attempt becomes one hypothesis under the anchor with one finding, computed from the
+score with no model call. This is the one place crux computes a confidence instead of judging
+it:
+- **Direction.** A kept attempt that beats its parent by more than `min_gain`: supports.
+  A kept attempt that does not: against. A rejected, failed or discarded attempt: no answer
+  yet, weak, with the worker log as evidence.
+- **Confidence, symmetric.** Strong when the score lands past the bar, in either direction,
+  by more than the noise (or `min_gain` when the noise is 0); else moderate. A run recorded
+  before noise was measured caps every finding at moderate.
+
+Read a run with `crux auto status [<qid>] --json`: `anchor`, `mode`, `address`, `direction`,
+`bar`, `baseline`, `noise`, `best`, and `attempts` (each with `n`, `id`, `parent`, `score`,
+`status`, `finding`, `direction`, `confidence`), plus `elapsed_hours`, `budget_hours`, `live`
+and `stop`. The findings settle or lean the anchor like any others; there is nothing to close.
+Report a run to the PI in science: what improved, by how much against the noise, and how sure
+that makes us.
 
 ## Whose words go in the guidance
 

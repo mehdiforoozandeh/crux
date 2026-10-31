@@ -95,7 +95,10 @@ already has:
 
 1. **Write the asserts first (red).** Add new cases to `skills/crux/scaffold/selftest.py` — one
    per automatable acceptance criterion — and run `python skills/crux/scaffold/selftest.py`; the
-   new ones should **fail**. (For a bug, this failing test *is* the reproduction.)
+   new ones should **fail**. (For a bug, this failing test *is* the reproduction.) To keep the
+   tests honest to the requirement, hand the requirement (never the implementation) to the
+   **crux-tests** agent, which ships with this skill at `agents/crux-tests.md` and which
+   `./install.sh` installs.
 2. **Implement to green.** Edit `skills/crux/scaffold/` (`engine.py` / `crux.py` / `render.py` /
    `templates/`) until selftest is fully green — new asserts included, none regressed.
 3. **Un-automatable criteria** (a GUI looking right, Obsidian rendering) stay as a **manual
@@ -115,6 +118,8 @@ A fixed gate; **all four must pass before ship.** Nothing here is judgment — i
 
 1. **Selftest green.** `python skills/crux/scaffold/selftest.py` → all pass, and the count has *grown*
    by your new asserts (a feature that added no assert didn't really register its criteria).
+   The always-on core stays within its cap: `wc -c skills/crux/SKILL.md` ≤ 8,192 (see
+   `AGENTS.md` for what may stay inline).
 
    This includes the **agent evals** ([`.spec/10`](../../.spec/10-agent-evals.md)), but only
    their deterministic half: fixture certification, the manifest schema, the scorer's arithmetic
@@ -125,8 +130,8 @@ A fixed gate; **all four must pass before ship.** Nothing here is judgment — i
    `python skills/crux/scaffold/evals.py` when you change an agent definition or a prompt.
 2. **Stdlib-only.** Grep the diff for imports; fail on any module outside the Python stdlib.
    `git diff -U0 -- skills/crux/scaffold | grep -E '^\+\s*(import|from) ' | grep -vE '<stdlib names>'`
-3. **Existing vaults still load.** Run the engine's read paths — `status`, `review`,
-   `validate`, and a render — against a vault **copy** and confirm nothing breaks:
+3. **Existing vaults still load.** Run the engine's read paths — `status`, `validate`,
+   `brief`, and a render — against a vault **copy** and confirm nothing breaks:
    - if a **real vault is discoverable** (e.g. a `cruxvault/` in a nearby project), copy it
      to a scratch dir and validate against the copy — never mutate the original;
    - **otherwise** fall back to the committed synthetic fixture **`skills/crux/examples/demo_vault/`**
@@ -135,7 +140,7 @@ A fixed gate; **all four must pass before ship.** Nothing here is judgment — i
 4. **Version / migration.** *Only if the change alters vault format or verdict/roll-up/view
    logic:* bump `ENGINE_VERSION` in `engine.py`, **and** prove an **old-format** vault
    migrates or still reads cleanly (the drift warning from `check_and_stamp_version` is
-   expected; a crash or wrong verdict is a fail). If format is unchanged, leave
+   expected; a crash, or a node whose derived state or confidence moved, is a fail). If format is unchanged, leave
    `ENGINE_VERSION` alone and note "no migration."
 
 Then walk any **manual** acceptance criteria from the PRD and tick them.

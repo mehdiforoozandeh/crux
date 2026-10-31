@@ -1,8 +1,8 @@
 {
  "fixture": "persona-01",
  "agent": "crux",
- "agent_sha": "b2a64317a7086faadd3155d47fa5880cfc01aa1c9b5d3aa356f2d70661b22065",
- "_note": "CANNED — the session spec 16 is asking for: the persona never says a crux word, and neither does the agent, while the notebook is kept underneath. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider. RE-PINNED 2026-09-16 for PRD 05.0: SKILL.md gained two verb-table rows (auto check/brief, auto guide) and one note on hypothesize --builds-on; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-16 for PRD 05.1: SKILL.md gained or rewrote verb-table rows (auto check --static, auto refs, auto promote); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.2: SKILL.md gained the autopilot leash paragraph (spec 05 §12) at the end of 'Three roles — and the leash' and three verb-table rows (auto approve, auto run, auto status); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.3: SKILL.md gained the fifth-act sentence in the autopilot leash paragraph (spec 05 D14, ruled in by the PI) and a clause on the agent probe in the `auto check` verb row; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-19 for PRD 05.5: SKILL.md gained one cross-reference line in the verb table — the `auto check` · `auto brief` and `auto approve` rows now point at the **crux-autopilot** skill, which produces the plan `auto check` validates and stops short of `auto approve` because that signature is the PI's; the `## Voice` section this fixture measures is BYTE-IDENTICAL to the sha it was pinned to, and the pin asserts that and nothing wider.",
+ "agent_sha": "f47f3a5db1ac35c3a1742312210a1b4438a4664e369add8240f5c25ab9559b33",
+ "_note": "CANNED — the session spec 16 is asking for: the persona never says a crux word, and neither does the agent, while the notebook is kept underneath. RE-PINNED after the SKILL.md trim: the voice rules this measures are unchanged (voice_lint passes, all six state predicates hold); the pin asserts that and nothing wider. RE-PINNED again for PRD 16.2: the `## Voice` section this measures is BYTE-IDENTICAL to the sha it was pinned to — 16.2 moved the section above the verbs table and deleted the `act-and-report` line that contradicted rule 2, changing no rule inside it. The pin asserts that and nothing wider. RE-PINNED 2026-09-16 for PRD 05.0: SKILL.md gained two verb-table rows (auto check/brief, auto guide) and one note on hypothesize --builds-on; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-16 for PRD 05.1: SKILL.md gained or rewrote verb-table rows (auto check --static, auto refs, auto promote); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.2: SKILL.md gained the autopilot leash paragraph (spec 05 §12) at the end of 'Three roles — and the leash' and three verb-table rows (auto approve, auto run, auto status); the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-17 for PRD 05.3: SKILL.md gained the fifth-act sentence in the autopilot leash paragraph (spec 05 D14, ruled in by the PI) and a clause on the agent probe in the `auto check` verb row; the ## Voice section and every voice rule are byte-identical, so the claim being renewed is unchanged. RE-PINNED 2026-09-19 for PRD 05.5: SKILL.md gained one cross-reference line in the verb table — the `auto check` · `auto brief` and `auto approve` rows now point at the **crux-autopilot** skill, which produces the plan `auto check` validates and stops short of `auto approve` because that signature is the PI's; the `## Voice` section this fixture measures is BYTE-IDENTICAL to the sha it was pinned to, and the pin asserts that and nothing wider. RE-PINNED 2026-10-31 for spec 19 (C8): SKILL.md was rewritten as the always-on core (at most 8,192 bytes), and the review gate, synthesis and sign-off are gone. The judged rows were rewritten to the 4.0 behaviour: judge:science-gate became judge:silent-record (a result is recorded with nothing asked) and judge:shows-draft became judge:states-confidence (each conclusion carries its direction, confidence and why). The voice rules this fixture measures (the mirror rule, silent bookkeeping, relevance, titles, notebook mode) are kept in the core's Voice section; the canned transcript and vault_after are unchanged, and the pin asserts that and nothing wider.",
  "transcript": [
   {
    "speaker": "pi",
@@ -158,8 +158,8 @@
  "runs": [
   {
    "findings": [
-    "judge:science-gate",
-    "judge:shows-draft",
+    "judge:silent-record",
+    "judge:states-confidence",
     "judge:relevance",
     "judge:pi-asks-everything",
     "judge:cockpit",
@@ -168,8 +168,8 @@
   },
   {
    "findings": [
-    "judge:science-gate",
-    "judge:shows-draft",
+    "judge:silent-record",
+    "judge:states-confidence",
     "judge:relevance",
     "judge:pi-asks-everything",
     "judge:cockpit",
@@ -178,8 +178,8 @@
   },
   {
    "findings": [
-    "judge:science-gate",
-    "judge:shows-draft",
+    "judge:silent-record",
+    "judge:states-confidence",
     "judge:relevance",
     "judge:pi-asks-everything",
     "judge:cockpit",

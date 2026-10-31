@@ -23,9 +23,10 @@ metadata:
 
 The **cockpit** is crux's read-only browser GUI: `crux serve` boots a stdlib HTTP server
 on `127.0.0.1`, serves the `webui/` frontend, and exposes the vault as `/snapshot.json`
-(status-colored tree — pan / zoom / collapse / search / re-orient / focus one question —
-plus the review queue, node detail with rendered markdown, and a hypothesis's linked report
-and figures; live-refreshing, zero writes). Either panel can go full-screen (`[` / `]`,
+(a tree colored by each node's derived state and confidence — open, leaning, settled,
+parked — with pan / zoom / collapse / search / re-orient / focus one question, plus node
+detail with rendered markdown, each node's findings with their direction, confidence and
+evidence, and a hypothesis's linked report and figures; live-refreshing, zero writes). Either panel can go full-screen (`[` / `]`,
 `Esc` restores). The engine does the serving; **you (the
 agent) do the operating**: find the vault, launch clean, verify, hand over one URL, and
 manage the server's lifecycle. The user should never have to touch a terminal **on the
@@ -283,6 +284,9 @@ lacks a piece.
   means the vault didn't resolve (wrong dir) or a pinned `--port` was busy. Fix and relaunch.
 - **URL answers but `/snapshot.json` 500s** → the vault is structurally broken; run
   `python3 "$ENGINE" validate` in the vault and surface the findings.
+- **A "not migrated yet" banner** → the vault was written by an older engine. The cockpit
+  never writes, so it shows the migrated view in memory; the first write-capable crux command
+  in the vault migrates it on disk, with a backup. Nothing to fix by hand.
 - **Zombie from a crashed session** holding a port → the step-3 kill loop clears it; on
   local (auto-pick) launches a survivor you *shouldn't* kill (another vault's server) never
   blocks a new launch. On **pinned remote** launches it does block — that's the step-4

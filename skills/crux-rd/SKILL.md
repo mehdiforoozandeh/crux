@@ -65,7 +65,7 @@ need an RD" is a correct, complete answer.
 ## Writing one
 
 ```bash
-crux rd <node-id> "<title>"          # a question or a hypothesis; the project root and syntheses do not carry RDs
+crux rd <node-id> "<title>"          # a question or a hypothesis; the project root does not carry an RD
 ```
 
 That creates `rd/<slug>.md` and writes the `RD::` backlink into the node, beside `Parent::`.
@@ -110,8 +110,9 @@ diff is the history.** For an RD, the ruling writes a *new* document.
 
 ## What an RD is not
 
-- **Not evidence.** It never enters the roll-up, never moves `ledger_counts`, never trips the
-  review gate. Verdicts come from verifiables; an RD is a document.
+- **Not evidence.** It never enters the roll-up and never moves a node's state or
+  confidence. Those come from findings judged against the expectation, the null and the
+  verifiables; an RD is a document.
 - **Not a work list.** Open work items are a taskhub concern, not a design document. An RD
   that accumulates TODOs is turning into the node it was meant to relieve.
 - **Not a changelog.** Decision history goes to git.

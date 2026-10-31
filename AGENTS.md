@@ -19,14 +19,15 @@ Hard rules, gated before every PR:
 - **The cockpit (`crux serve`) is read-only** — no route ever writes.
 - **Never hand-edit generated files** (`META.md`, `EXPERIMENTS.md`, `WIKI.md`, ledger
   blocks) — regenerate via the engine.
-- **`skills/crux/SKILL.md` stays under 34,000 bytes** (`wc -c skills/crux/SKILL.md`). It
-  loads on every crux session, and it grew 42% in five commits before anyone was counting.
+- **`skills/crux/SKILL.md` stays at or under 8,192 bytes** (`wc -c skills/crux/SKILL.md`).
+  It is the always-on core: a SessionStart hook injects it into every session in a vault
+  repo, and the old skill grew 42% in five commits before anyone was counting.
   New material earns its place inline by one
   test: **if the agent never reads it, does it do the wrong thing — or does it visibly
   fail?** Content the engine itself refuses or validates may live in `references/` or
   `scaffold/README.md` behind a pointer, because the refusal is what sends the agent to go
-  read it. Content only the agent can enforce — the leash, the voice rules, the migration
-  guardrail, "never write `glossary.md` directly" — must be inline, however rare the path,
+  read it. Content only the agent can enforce — what is still the PI's, the voice rules, the
+  migration guardrail, "never write `glossary.md` directly" — must be inline, however rare the path,
   because a missed read there is silent. Two riders: a prohibition stays inline even when its
   procedure moves out, and rare content whose trigger the agent would not notice needs a
   one-line tripwire left behind pointing at the reference. Repetition of a prohibition at
