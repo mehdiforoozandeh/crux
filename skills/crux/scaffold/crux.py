@@ -10,8 +10,8 @@ the PI, never to them, so no line of it is meant to be relayed to the PI verbati
 
 Quick tour:
     crux init "My project"                  # bootstrap a vault here
-    crux ask "Can X improve Y?"             # open a question (alias: question, q, meta)
-    crux hypothesize "A beats B" -p q1 \\
+    crux ask "Can X improve Y?" --bears "…" # open a question (alias: question, q, meta)
+    crux hypothesize "A beats B" -p q1 --bears "…" \\
         --expect "A scores 2 points higher"   # a hypothesis states its expectation first
     crux test h1 --run "job 4012"           # record a run link (alias: experiment, run, stage, launch)
     crux finding h1 -d supports -c moderate \\
@@ -126,10 +126,12 @@ def main(argv=None):
     s = _jsonable(sub.add_parser("ask", aliases=["question", "q", "meta"], help="open a Question under the project or another question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", default=None, help="parent id (default: project root)")
     s.add_argument("-b", "--body", default="", help="optional question detail")
+    s.add_argument("--bears", default=None, help="REQUIRED: how this item's answer would move its parent's answer (spec 20)")
 
     s = _jsonable(sub.add_parser("hypothesize", aliases=["hypothesis", "idea"], help="add a testable hypothesis under a question"))
     s.add_argument("title"); s.add_argument("-p", "--parent", required=True, help="parent question id")
     s.add_argument("--problem", default="")
+    s.add_argument("--bears", default=None, help="REQUIRED: how this item's answer would move its parent's answer (spec 20)")
     s.add_argument("-e", "--expect", default=None,
                    help="REQUIRED: the expected result, stated before any evidence (spec 19)")
     # the methodology slots (spec 13): declared BEFORE the run, and deliberately not `--metric`
@@ -196,6 +198,7 @@ def main(argv=None):
                    help="how the result compared with the expectation")
     s.add_argument("--verifiables", default=None,
                    help="how the result compared with the verifiables")
+    s.add_argument("--exploratory", action="store_true", help="question findings only: the answer came from looking at data with no stated prediction; counts at most moderate")
 
     s = _jsonable(sub.add_parser("park", aliases=["shelve"],
                                  help="park a question or hypothesis the conversation dropped "
@@ -753,16 +756,20 @@ def dispatch(a):
         else:
             print("crux: init needs a project title, or --from <seed.md>", file=sys.stderr); return 1
     elif c in ("ask", "question", "q", "meta"):
-        nid, fn = E.cmd_ask(_vault(), a.title, a.parent, a.body)
+        if not (a.bears or "").strip():
+            raise E.CruxError("ask needs --bears: how this question's answer would move its parent's answer")
+        nid, fn = E.cmd_ask(_vault(), a.title, a.parent, a.body, bears=a.bears)
         if a.json:
             return _emit({"id": nid, "file": fn})
         print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
     elif c in ("hypothesize", "hypothesis", "idea"):
+        if not (a.bears or "").strip():
+            raise E.CruxError("hypothesize needs --bears: how this hypothesis's answer would move its parent's answer")
         nid, fn, warn = E.cmd_hypothesize(_vault(), a.title, a.parent, a.problem,
                                           a.verifiable, a.neutral, a.rule, a.rule_m, a.null,
                                           a.fails_if, _pair_discriminates(sys.argv),
                                           measurement=a.measurement, replicates=a.replicates,
-                                          builds_on=a.builds_on, expect=a.expect)
+                                          builds_on=a.builds_on, expect=a.expect, bears=a.bears)
         if a.json:
             return _emit({"id": nid, "file": fn, "parent": a.parent, "warning": warn})
         print(f"✓ {nid}  ({fn})\n" + E.chat_handle(nid, a.title))
@@ -779,7 +786,7 @@ def dispatch(a):
         fid, fn, note = E.cmd_finding(root, a.parent, a.confidence, why=a.why,
                                       direction=a.direction, evidence=a.evidence, null=a.null,
                                       vs_expect=a.vs_expect, verifiables=a.verifiables,
-                                      answer=a.answer)
+                                      answer=a.answer, exploratory=a.exploratory)
         v = E.Vault(root)
         st = E.derive_state(v, a.parent)
         stored = v.get(fid)["fm"].get("confidence")

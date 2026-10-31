@@ -11,7 +11,7 @@ description: >-
 trigger: "/crux-wrap (this session's transcript) and the catch-up sweep at session start (transcript text not yet swept). Never periodic, never on a schedule."
 cold_input: "a transcript slice in a text file (lines start `PI:`, `AGENT:` or `AGENT ran:`), plus `crux status --json`"
 tools: Bash, Read
-toolbelt: "crux status --json; crux status <id> --json; crux pending list --json; crux ask <title> -p <parent>; crux hypothesize <title> -p <qid> --expect <expectation>; crux finding <id> -c <confidence> -d <direction> -w <why> -e <path>; crux park <id>; crux pending add --kind <kind> --parent <id> --text <text> --source <wrap|sweep>; crux validate --check=tree --json"
+toolbelt: "crux status --json; crux status <id> --json; crux pending list --json; crux ask <title> -p <parent> --bears <bears>; crux hypothesize <title> -p <qid> --expect <expectation> --bears <bears>; crux finding <id> -c <confidence> -d <direction> -w <why> -e <path>; crux park <id>; crux pending add --kind <kind> --parent <id> --text <text> --source <wrap|sweep>; crux validate --check=tree --json"
 excludes: "the PI — you never ask them anything, by any route, because nobody is watching this run; every tool but Bash running crux and Read; every crux verb outside recording the tree (no task, no run, no autopilot); and anything the transcript does not say"
 license: MIT
 metadata:
@@ -38,9 +38,12 @@ into it. You turn the talking into records.
    or the same hypothesis, even in other words; if it exists, use its id as the parent.
 3. **Sort each item: knowledge or work.** (Rules below.) Work you leave alone.
 4. **Ideation opens nodes.** For a question the conversation asked:
-   `crux ask "<the question>" -p <parent question or root>`. For a guess about the answer:
-   `crux hypothesize "<the claim>" -p <qid> --expect "<the result expected, with its size if
-   one was said>"`. Every hypothesis states an expectation. Add `--null "<family> — <the
+   `crux ask "<the question>" -p <parent question or root> --bears "<how its answer moves the
+   parent's answer>"`. For a guess about the answer: `crux hypothesize "<the claim>" -p <qid>
+   --expect "<the result expected, with its size if one was said>" --bears "<…>"`. Every
+   hypothesis states an expectation, and every question and hypothesis states how its answer
+   moves its parent's answer. When the transcript cannot support that line, the item goes to
+   the pending list instead. Add `--null "<family> — <the
    instance>"` and `-v "<check>"` only when the conversation made them clearly definable.
 5. **Evidence is always recorded.** A result, a number, a plot, an output, an answer: it
    becomes a finding with its evidence links.
@@ -49,7 +52,10 @@ into it. You turn the talking into records.
      <path> --null <ruled-out|not-ruled-out|none> --vs-expect "<result against the
      expectation>"`.
    - On a question: `crux finding <qid> -c <confidence> -a "<the answer>" -e <path>`. A
-     question finding has answer text and a confidence, and no direction.
+     question finding has answer text and a confidence, and no direction. Add
+     `--exploratory` when the answer came from browsing data for patterns no question or
+     prediction asked for; it counts at most moderate. A measurement the question asked for is
+     not exploratory.
    - `-e` takes a path under `results/` or `tasks/` that exists; repeat it for each file. When
      the result has no file there, record the finding without `-e` and add a pending item
      asking where the output lives.
@@ -84,6 +90,9 @@ into it. You turn the talking into records.
   - Evidence that answers nothing yet is `no answer yet`; it is recorded but does not move
     the node's state.
   - A question finding carries no direction: answer text and a confidence.
+- **Side questions stay out of the tree.** A question a finding raises that does not bear on
+  its parent is not opened: it goes to the pending list, `--kind question`, with text naming
+  it a side question.
 - **The PI's correction wins.** When the conversation corrects something already recorded,
   do not argue with it through a new finding; add a pending item, `--kind correction`, naming
   what to change.

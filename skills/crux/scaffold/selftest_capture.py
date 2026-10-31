@@ -454,7 +454,7 @@ def _capture_cwd_tests(check, tmp):
     # This stub does what the brief tells the capture agent: run a crux write verb, as given.
     _write(p, "#!%s\nimport sys, os, json, subprocess\n"
               "r = subprocess.run([sys.executable, %r, 'ask', 'Does the stub reach the vault?',"
-              " '--json'], capture_output=True, text=True)\n"
+              " '--bears', 'a yes shows capture works', '--json'], capture_output=True, text=True)\n"
               "with open(%r, 'a') as f:\n"
               "    f.write(json.dumps({'rc': r.returncode, 'out': r.stdout, 'err': r.stderr,"
               " 'cwd': os.getcwd()}) + '\\n')\n" % (sys.executable, CLI, log))

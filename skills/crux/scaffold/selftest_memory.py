@@ -81,7 +81,7 @@ def _raises(fn):
 
 # ------------------------------------------------------------------------------- sections
 def _model_tests(check):
-    check("model: ENGINE_VERSION is 4.0", E.ENGINE_VERSION == "4.0")
+    check("model: ENGINE_VERSION is 4.1", E.ENGINE_VERSION == "4.1")
     check("model: SCHEMA_GENERATION is 3", E.SCHEMA_GENERATION == 3)
     check("model: node types are project / question / idea / finding (synthesis removed)",
           set(E.TYPES) == {"project", "question", "idea", "finding"})
@@ -145,10 +145,11 @@ def _hypothesize_tests(check, tmp):
     check("test: --to running still takes the lock on a hypothesis with checks",
           bool(E.Vault(root).get(h2)["fm"].get(E.LOCK_FIELD)))
 
-    r = _cli(root, "hypothesize", "cli without expectation", "-p", q1)
+    r = _cli(root, "hypothesize", "cli without expectation", "-p", q1, "--bears", "a yes answers it")
     check("cli: `crux hypothesize` without --expect exits 1 and names --expect",
           r.returncode == 1 and "--expect" in r.stderr)
-    r = _cli(root, "hypothesize", "cli with expectation", "-p", q1, "--expect",
+    r = _cli(root, "hypothesize", "cli with expectation", "-p", q1, "--bears", "a yes answers it",
+             "--expect",
              "the loss falls below 0.3", "--json")
     ok = r.returncode == 0
     hid = json.loads(r.stdout)["id"] if ok else None
