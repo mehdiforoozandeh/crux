@@ -6,6 +6,20 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Anchoring** (spec 20; engine **4.0 → 4.1**). Every new question and hypothesis carries a
+  `## Bears on` section: how its answer moves its parent's answer. `crux ask` and
+  `crux hypothesize` require it as `--bears` (optional in the Python API); `crux validate`
+  lists items without it as info. `crux finding <qid> --exploratory` marks an answer drawn from
+  looking at data with no stated prediction and caps it at moderate, on write and on read.
+  `crux brief` (both modes) and `crux wrap --json` carry `path`, the titles and bears lines
+  from the top question down; `crux wrap --json` also carries `review`, the questions that
+  gained an item this session with no strong finding, and `/crux-wrap` gains a fifth step that
+  asks the PI about each line it judges stalled: keep going, park it, or rewrite the parent.
+  The core skill, crux-capture and crux-prerun gain the matching rules. Engine 4.0 → 4.1 needs
+  no migration: a 4.0 vault is only restamped.
+
 ### Fixed
 
 - The background capture run now reaches a vault in `./cruxvault` (the engine falls back to

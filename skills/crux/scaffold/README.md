@@ -72,8 +72,8 @@ The engine never reads run logs — you supply the per-box judgement and a headl
 
 ```bash
 python crux.py init "My project" --goal "..."
-python crux.py ask "Can X improve Y?"
-python crux.py hypothesize "A beats B" -p q1 -v "metric ≥ +0.01 vs baseline" -v "no regression on Z"
+python crux.py ask "Can X improve Y?" --bears "if yes, the goal is in reach"
+python crux.py hypothesize "A beats B" -p q1 --bears "if A wins, X improves Y" -v "metric ≥ +0.01 vs baseline" -v "no regression on Z"
 python crux.py launch h1 --run "job 4012"
 # …tick the boxes in h1_*.md (the agent or you), then:
 python crux.py close h1 -m "metric +0.012" -f "A wins decisively."
