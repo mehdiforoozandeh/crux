@@ -313,7 +313,8 @@ EVIDENCE_ROOTS = (RESULTS_DIR, TASK_DIR)              # where an evidence link m
 # id allocation is serialized across processes (risk R2: the capture run, autopilot and the
 # main agent can write at once). A plain O_EXCL lock file, stdlib only.
 LOCK_FILE     = ".crux.lock"
-LOCK_TIMEOUT  = 30.0      # seconds to wait for the lock; a lock older than this is stale
+LOCK_TIMEOUT  = 30.0      # seconds to wait for the lock; an older lock whose holder is dead is stale
+LOCK_FOREIGN_STALE = 3600.0   # a holder on another host cannot be probed: break only after this
 
 # Verbs spec 19 removes. Each prints ONE pointer line and writes nothing (not even the
 # version stamp), so an agent or a habit that still types one is redirected, never broken.
@@ -4053,35 +4054,125 @@ def cmd_init_from(seed_path, dirpath="."):
 def _save_cfg(v):
     write_if_changed(os.path.join(v.root, VAULT_MARKER), yaml_dump(v.cfg) + "\n")
 
+def _pid_alive(pid):
+    """True / False when this host can tell whether `pid` runs, None when it cannot. POSIX
+    probes with signal 0. On Windows `os.kill` would TERMINATE the process, so it asks
+    OpenProcess + GetExitCodeProcess through ctypes instead, and answers None on any doubt."""
+    if pid <= 0:
+        return None
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True                 # it exists; it belongs to another user
+        except (OSError, OverflowError, ValueError):
+            return None                 # incl. a pid too large for the platform
+        return True
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False if k32.GetLastError() == 87 else None   # 87: no such process
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return (code.value == 259) if ok else None              # 259: STILL_ACTIVE
+    except Exception:
+        return None
+
+
 class id_lock:
     """Serialize id allocation across processes: an O_EXCL lock file at the vault root.
 
-    Stdlib only, and it works the same on POSIX and Windows. A lock older than LOCK_TIMEOUT
-    belongs to a writer that died, so it is broken rather than waited on forever — a stuck
-    vault is worse than the rare race a broken stale lock could let through."""
+    Stdlib only, and it works the same on POSIX and Windows. The file records the holder's
+    `<pid> <host>`. A lock is broken only when its holder is shown dead: on this host, an old
+    lock whose pid no longer runs. Age alone never breaks a live holder's lock, because the
+    4.0 migration holds it while it copies a whole-vault backup, and a second process that
+    broke it would roll back a migration still running. A holder that cannot be probed (on
+    another host, or liveness unknown) is broken only after LOCK_FOREIGN_STALE; a lock with
+    no readable pid (written by a crashed or older writer) keeps the old LOCK_TIMEOUT rule.
+
+    Breaking is an atomic rename to a per-waiter tombstone, so of two waiters only one wins.
+    The winner re-reads the tombstone: if it is not the stamp it judged dead, another process
+    had already broken and re-taken the lock, so the winner links it back and retries. A
+    residual window stays: between that rename and the link back, a third process can take
+    the free path, and then two processes believe they hold the lock. It needs three
+    contenders racing a dead holder's lock within microseconds, and is accepted."""
+    _host = None
+
     def __init__(self, root, timeout=LOCK_TIMEOUT):
         self.path = os.path.join(root, LOCK_FILE)
         self.timeout = timeout
 
+    @classmethod
+    def host(cls):
+        if cls._host is None:
+            import socket
+            cls._host = socket.gethostname() or "?"
+        return cls._host
+
+    def _stale_after(self):
+        """(seconds of age after which the current lock may be broken, or None for never;
+        the stamp text that judgement was made on)."""
+        try:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            return None, None           # gone already: the next O_EXCL attempt takes it
+        parts = text.split()
+        if not parts or not parts[0].isdigit():
+            return self.timeout, text   # no holder recorded: the pre-pid rule
+        if len(parts) > 1 and parts[1] != self.host():
+            return LOCK_FOREIGN_STALE, text
+        alive = _pid_alive(int(parts[0]))
+        if alive is None:
+            return LOCK_FOREIGN_STALE, text
+        return (None if alive else self.timeout), text
+
+    def _break(self, judged):
+        """Break the lock whose stamp was `judged` stale. Only one waiter's rename wins; a
+        winner that finds a different stamp in its tombstone put it back."""
+        tomb = f"{self.path}.{os.getpid()}.stale"
+        os.rename(self.path, tomb)      # OSError: another waiter won; the caller retries
+        try:
+            with open(tomb, encoding="utf-8", errors="replace") as f:
+                got = f.read()
+            if got != judged:           # a live holder's fresh lock: restore it
+                try:
+                    os.link(tomb, self.path)
+                except FileExistsError:
+                    pass
+        finally:
+            os.remove(tomb)
+
     def __enter__(self):
         import time
         start = time.time()
+        stamp = f"{os.getpid()} {self.host()}\n".encode()
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode())
+                os.write(fd, stamp)
                 os.close(fd)
                 return self
             except FileExistsError:
                 try:
-                    if time.time() - os.path.getmtime(self.path) > self.timeout:
-                        os.remove(self.path)
+                    age = time.time() - os.path.getmtime(self.path)
+                    after, judged = (self._stale_after() if age > self.timeout
+                                     else (None, None))
+                    if after is not None and age > after:
+                        self._break(judged)
                         continue
                 except OSError:
                     continue            # the holder released it between the two calls
                 if time.time() - start > self.timeout:
                     raise CruxError(f"could not take the vault lock {self.path} within "
-                                    f"{self.timeout:.0f}s; another crux process holds it")
+                                    f"{self.timeout:.0f}s; another crux process holds it "
+                                    f"(the file names its pid and host; delete it only if "
+                                    f"that process is gone)")
                 time.sleep(0.005)
 
     def __exit__(self, *exc):

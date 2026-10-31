@@ -5385,9 +5385,17 @@ def run_taskhub_skill():
     # hand-listed, so a verb added later cannot go undocumented silently
     r = subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", "--help"],
                        capture_output=True, text=True, encoding="utf-8")
-    verbs = {"add", "done", "drop", "list", "show", "categories", "review", "accept"}
+    # spec 19 removed `task review` and `task accept` (the experiment-task gate): they leave
+    # the live help, and each still answers with a one-line pointer instead of a traceback
+    verbs = {"add", "done", "drop", "list", "show", "categories"}
     check("skill: every task verb is documented in CLI help",
           r.returncode == 0 and all(v in r.stdout for v in verbs))
+    gone = {v: subprocess.run([sys.executable, os.path.join(HERE, "crux.py"), "task", v],
+                              capture_output=True, text=True, encoding="utf-8")
+            for v in ("review", "accept")}
+    check("skill: the removed task verbs print a spec-19 pointer, not a traceback",
+          all(g.returncode == 0 and f"`task {v}` is removed (spec 19)" in g.stdout
+              and "Traceback" not in g.stderr for v, g in gone.items()))
     check("skill: the verb table matches the CLI's task verbs",
           all(f"`task {v}`" in skill or f"`{v}`" in skill for v in ("add", "done", "accept")))
 
@@ -8502,19 +8510,21 @@ def run_voice_enforcement():
         minted["ask"] = run(["ask", "does more data beat a better model"], cwd=vault).stdout
         qid = re.search(r"✓ (q\d+)", minted["ask"]).group(1)
         minted["hypothesize"] = run(["hypothesize", "doubling the data wins on held-out",
-                                     "--parent", qid, "-v", "imp-Spearman >= +0.01"],
+                                     "--parent", qid, "-v", "imp-Spearman >= +0.01",
+                                     "--expect", "held-out gain above 0.01"],
                                     cwd=vault).stdout
         hid = re.search(r"✓ (h\d+)", minted["hypothesize"]).group(1)
         minted["task add"] = run(["task", "add", "fetch the antibody lot",
                                   "--category", "data-acquisition", "--blocked-by", "None"],
                                  cwd=vault).stdout
-        minted["synthesize"] = run(["synthesize", "what the data question settled",
-                                    "--for", qid], cwd=vault).stdout
+        # spec 19 removed `synthesize`; a Finding is the id-minting verb that replaced it
+        minted["finding"] = run(["finding", qid, "--answer", "what the data question settled",
+                                 "-c", "moderate"], cwd=vault).stdout
         minted["rd"] = run(["rd", hid, "the sweep design"], cwd=vault).stdout
         titles = {"ask": "does more data beat a better model",
                   "hypothesize": "doubling the data wins on held-out",
                   "task add": "fetch the antibody lot",
-                  "synthesize": "what the data question settled",
+                  "finding": "what the data question settled",
                   "rd": "the sweep design"}
         bad = sorted(v for v, out in minted.items()
                      if "in chat" not in out or titles[v] not in out)
