@@ -480,29 +480,57 @@ def _version_tests(check, tmp):
     check("anchor ix: migrate4.TARGET stays 4.0", migrate4.TARGET == "4.0")
     check("anchor ix: a 4.0 vault needs no migration", migrate4.needs_migration("4.0") is False)
 
-    copy = os.path.join(tmp, "demoix")
-    shutil.copytree(DEMO, copy)
+    examples = os.path.dirname(DEMO)
+    vaults = sorted(d for d in os.listdir(examples)
+                    if d.endswith("_vault") and os.path.isdir(os.path.join(examples, d)))
+    check("anchor ix: the committed example vaults are found", len(vaults) >= 4)
+    for name in vaults:
+        try:
+            _version_one(check, tmp, os.path.join(examples, name), name)
+        except Exception as e:
+            check("anchor ix: %s crashed: %s: %s" % (name, type(e).__name__, e), False)
+
+
+def _stamp(marker):
+    return str(E.yaml_load(_read(marker)).get("engine_version"))
+
+
+def _version_one(check, tmp, src, name):
+    """Decision ix: a copy of a committed example vault loads at 4.1 with no file rewritten
+    beyond the version stamp and no node's state or confidence moved. Only a copy stamped
+    4.0 before the load gets the drift line and the one-line .crux.yaml diff; a copy already
+    stamped 4.1 loads with nothing changed at all."""
+    copy = os.path.join(tmp, "ix_" + name)
+    shutil.copytree(src, copy)
     marker = os.path.join(copy, E.VAULT_MARKER)
-    check("anchor ix: the demo vault copy is stamped 4.0",
-          str(E.yaml_load(_read(marker)).get("engine_version")) == "4.0")
+    was = _stamp(marker)
+    check("anchor ix: %s is stamped 4.0 or 4.1 before the load" % name, was in ("4.0", "4.1"))
     before, states = _tree_bytes(copy), _states(copy)
+    had_dot_crux = os.path.isdir(os.path.join(copy, ".crux"))
     msg = _try(E.check_and_stamp_version, copy)
-    check("anchor ix: loading a 4.0 vault returns the drift line, not a migration line",
-          isinstance(msg, str) and msg.startswith("engine drift:") and "v4.0" in msg
-          and "migrat" not in msg.lower())
-    check("anchor ix: ... and restamps it 4.1",
-          str(E.yaml_load(_read(marker)).get("engine_version")) == "4.1")
     after = _tree_bytes(copy)
-    check("anchor ix: ... with no `.crux/` directory and no backup written",
-          set(after) == set(before) and not os.path.isdir(os.path.join(copy, ".crux")))
-    check("anchor ix: ... and every other file byte-identical",
+    check("anchor ix: %s reads 4.1 after the load" % name, _stamp(marker) == "4.1")
+    check("anchor ix: %s gains no `.crux/` directory, no backup and no new file" % name,
+          set(after) == set(before)
+          and os.path.isdir(os.path.join(copy, ".crux")) == had_dot_crux)
+    check("anchor ix: %s keeps every file but .crux.yaml byte-identical" % name,
           all(after.get(k) == b for k, b in before.items() if k != E.VAULT_MARKER))
-    diff = [(a, b) for a, b in zip(before.get(E.VAULT_MARKER, b"").decode().splitlines(),
-                                   after.get(E.VAULT_MARKER, b"").decode().splitlines()) if a != b]
-    check("anchor ix: ... where .crux.yaml differs only on the engine_version line",
-          len(diff) == 1 and diff[0][0].startswith("engine_version:")
-          and len(before[E.VAULT_MARKER].splitlines()) == len(after[E.VAULT_MARKER].splitlines()))
-    check("anchor ix: ... and no node's state or confidence moves", _states(copy) == states)
+    check("anchor ix: %s moves no node's state or confidence" % name, _states(copy) == states)
+    if was == "4.0":
+        check("anchor ix: %s (stamped 4.0) returns the drift line, not a migration line" % name,
+              isinstance(msg, str) and msg.startswith("engine drift:") and "v4.0" in msg
+              and "migrat" not in msg.lower())
+        b = before.get(E.VAULT_MARKER, b"").decode().splitlines()
+        a = after.get(E.VAULT_MARKER, b"").decode().splitlines()
+        diff = [(x, y) for x, y in zip(b, a) if x != y]
+        check("anchor ix: %s (stamped 4.0) .crux.yaml differs only on the engine_version line"
+              % name, len(a) == len(b) and len(diff) == 1
+              and diff[0][0].startswith("engine_version:")
+              and diff[0][1].startswith("engine_version:"))
+    else:
+        check("anchor ix: %s (stamped 4.1) loads with no drift line and an unchanged "
+              ".crux.yaml" % name,
+              msg is None and after.get(E.VAULT_MARKER) == before.get(E.VAULT_MARKER))
 
 
 # ------------------------------------------------------------------------------- driver
