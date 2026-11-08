@@ -2548,13 +2548,18 @@ def voice_hook_command():
 def hook_report(payload):
     """The hook's whole decision: a context string to hand back, or None to stay silent.
 
-    Silent is the default and covers every uninteresting case — the tool call was not a crux
-    command, the transcript is unreadable, the newest turn is the PI's, the agent's newest
+    Silent is the default and covers every uninteresting case — the tool call came from a
+    subagent or was not a crux command, the transcript is unreadable, the newest turn is the PI's, the agent's newest
     turn is clean. Reporting is scoped to the NEWEST agent turn while licensing stays
     cumulative over the conversation: without the scoping, one slip in turn 3 re-fires on
     every tool call for the rest of the session, and a warning that never stops is a warning
     nobody reads."""
     if not isinstance(payload, dict):
+        return None
+    # Claude Code sets `agent_id` only when the hook fires inside a subagent, and its
+    # `transcript_path` is then the PARENT's — linting would re-report the parent's newest
+    # turn once per subagent crux call. A subagent's chat is not the PI's: stay silent.
+    if payload.get("agent_id"):
         return None
     cmd = payload.get("tool_input")
     cmd = cmd.get("command") if isinstance(cmd, dict) else None
