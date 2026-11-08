@@ -8,6 +8,7 @@ verdict/roll-up/view logic changes.
 
 ### Changed
 
+- docs: rewrite README.md and INSTALL.md in plain language. The README now opens with one example session and the four main features.
 - **Shorter skill and agent descriptions.** Every crux skill and agent description is now
   about 300 characters or less (what, when, trigger phrases), down from about 7k characters in
   total, because they load into every session. crux-situate claims "where are we" only inside
