@@ -6,7 +6,23 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+### Changed
+
 - docs: rewrite README.md and INSTALL.md in plain language. The README now opens with one example session and the four main features.
+- **Shorter skill and agent descriptions.** Every crux skill and agent description is now
+  about 300 characters or less (what, when, trigger phrases), down from about 7k characters in
+  total, because they load into every session. crux-situate claims "where are we" only inside
+  a vault.
+- **storify is the default write-up after an experiment**, a short paper for a science
+  undergraduate who does not remember earlier results; prezit is the choice for talks. storify
+  asks the reader's reading-time budget and sizes the paper to it, with overflow to an appendix.
+- **Core skill:** inside a bitesize session, a finding waits for the PI's yes before it is
+  recorded as settled.
+
+### Fixed
+
+- **`crux voice --hook` is silent on a subagent's tool call** (the payload carries `agent_id`).
+  Before, each subagent crux call re-linted the parent's newest turn and repeated its warning.
 
 ## [1.1.0] - 2026-10-31
 

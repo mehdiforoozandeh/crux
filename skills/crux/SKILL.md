@@ -1,6 +1,10 @@
 ---
 name: crux
-description: "The always-on core of crux, a research notebook that fills itself: a tree of questions, hypotheses and findings, with evidence and confidence, recorded silently from the conversation. Injected at session start in a repo with a vault. Use for research talk in a crux repo, or when the PI wants to start one. Triggers: crux, lab notebook, research notebook, open a research question, hypothesis tracking, what did we find."
+description: >-
+  Always-on core of crux, a research notebook that fills itself: a tree of questions,
+  hypotheses and findings with evidence and confidence, recorded silently from the
+  conversation. Use for research talk in a repo with a vault, or to start one. Triggers:
+  crux, lab notebook, research notebook, "what did we find".
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
@@ -94,7 +98,8 @@ The question and the hypothesis with its expectation were recorded during that e
 ## Still the PI's
 
 Recording, settling and parking are yours. The PI keeps: starting an autopilot run, starting
-compute they did not ask for, and merging into `main`. A correction in plain words always
+compute they did not ask for, and merging into `main`. Inside a bitesize session, a finding
+waits for the PI's yes before it is recorded as settled. A correction in plain words always
 wins: change the record to match (a new finding, or `crux park <id> --undo`), never argue.
 
 ## Guardrails
@@ -124,7 +129,8 @@ Hand an agent the engine-built brief named here, never your own summary of the n
 - **crux-wiki**: ingest a paper, or ask what the literature says.
 - **crux-litsearch**: find the papers the wiki is missing.
 - **crux-cockpit**: the PI wants to see the vault in a browser.
-- **prezit**: slides from a question and its subtree.
-- **storify**: a short private paper from a question or hypothesis.
+- **storify**: the default write-up after an experiment: a short paper on a question or
+  hypothesis, for a science undergraduate who does not remember earlier results.
+- **prezit**: slides for a talk, from a question and its subtree.
 - **crux-rd**: the PI says a design has settled and wants it written down.
 - **evolve-crux**: change crux itself: its engine, its CLI or its skills.

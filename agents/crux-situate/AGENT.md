@@ -1,12 +1,10 @@
 ---
 name: crux-situate
 description: >-
-  Orient the PI over one subtree of a crux vault after time away: what this is, where we are,
-  what is known, what is yet to be tested, and the paths forward. Reads a deterministic
-  payload the engine assembles from vault state, composes one ELI5 paragraph and three TL;DR
-  paragraphs, and writes nothing — the answer is ephemeral by ruling, so it can never go
-  stale. Use when the PI asks to be oriented or caught up on the vault or a subtree — "where
-  are we", "catch me up".
+  Inside a crux vault only: orient the PI on the vault or one subtree after time away (what
+  it is, where it stands, what is known and untested, paths forward) from the engine's
+  situate payload. Chat only; writes nothing. Triggers, in a vault: "where are we", "catch
+  me up".
 trigger: "the PI asks to be oriented or caught up on the project or one part of it, after time away (where are we, catch me up)"
 cold_input: crux brief <node> --mode=situate --json
 toolbelt: "crux brief <node> --mode=situate --json; crux brief --lint-situate --anchor-title <title> --json; crux status --json"

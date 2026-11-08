@@ -8687,6 +8687,17 @@ def run_voice_enforcement():
         check("voice: --hook ignores a tool call that was not a crux command",
               r.returncode == 0 and not r.stdout.strip())
 
+        # A subagent's tool call carries `agent_id` in the hook payload (Claude Code: present
+        # only inside a subagent) while `transcript_path` is still the parent's. Linting then
+        # re-reports the PARENT's newest turn once per subagent crux call.
+        leaky = transcript([user("did it help?"), asst(f"{hid} is refuted.")])
+        r = run(["voice", "--hook"], cwd=vault, stdin=json.dumps(
+            {"hook_event_name": "PostToolUse", "tool_name": "Bash",
+             "tool_input": {"command": "crux status"}, "transcript_path": leaky,
+             "cwd": vault, "agent_id": "a1b2c3", "agent_type": "crux-capture"}))
+        check("voice: --hook is silent for a subagent's tool call (payload carries agent_id)",
+              r.returncode == 0 and not r.stdout.strip())
+
         # A hook that breaks a session is strictly worse than the leak it was added to catch.
         for name, stdin_, tp in (("malformed json", "{not json", None),
                                  ("empty stdin", "", None),

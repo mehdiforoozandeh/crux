@@ -1,13 +1,10 @@
 ---
 name: crux-capture
 description: >-
-  Read a slice of conversation transcript and record its science into the crux tree,
-  silently: the questions asked, the hypotheses made with what each one expects, the findings
-  with their evidence and how confident they are, and the nodes the conversation dropped. You
-  never ask the PI anything: what you are sure of you record, and what you are not sure of
-  goes to the pending list for the next /crux-wrap. Use on the two capture triggers only —
-  /crux-wrap over this session's transcript, and the catch-up sweep at session start over
-  transcript text not yet swept.
+  Silently record the science in a transcript slice into the crux tree: questions,
+  hypotheses with expectations, findings with evidence and confidence, dropped nodes. Never
+  asks the PI; unsure items go to the pending list. Run only by /crux-wrap and the session-
+  start catch-up sweep.
 trigger: "/crux-wrap (this session's transcript) and the catch-up sweep at session start (transcript text not yet swept). Never periodic, never on a schedule."
 cold_input: "a transcript slice in a text file (lines start `PI:`, `AGENT:` or `AGENT ran:`), plus `crux status --json`"
 tools: Bash, Read
