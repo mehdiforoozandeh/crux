@@ -106,7 +106,7 @@ answer does not make this one result settled.
 
 ## Voice
 
-The paper reads like a short journal article written for one expert.
+The paper reads like a short journal article written for a science undergraduate who does not remember earlier results.
 
 - **The correct term, glossed on first use.** Write the term the field uses (null
   hypothesis, confound, pre-registration, 95% confidence interval, standard deviation,
