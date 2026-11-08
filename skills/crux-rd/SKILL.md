@@ -1,15 +1,9 @@
 ---
 name: crux-rd
 description: >-
-  Write the Requirements Document for a crux node — the design detail that does not fit, and
-  should not fit, inside a 400-word question or hypothesis. An RD is one immutable design
-  document per node, living in `rd/` beside the tree, linked from the node, outside the
-  roll-up: the estimand and its bound, the probe ladder, the negative control, the known
-  distortion that must travel with every result. You do not interview and you do not
-  re-derive — you write up the design that has just been settled in conversation with the PI,
-  and you apply the write-vs-skip filter that stops every node from growing one. A design
-  change is never an amendment: it is a new RD that supersedes the old, and the chain is the
-  reasoning history. Invoke explicitly — the PI decides when a design has settled.
+  Write the Requirements Document (RD) for a crux node: the settled design detail too long
+  for the node, as one immutable page in rd/; a design change is a new RD that supersedes
+  the old. Invoke explicitly, when the PI says a design has settled.
 license: MIT
 disable-model-invocation: true
 metadata:

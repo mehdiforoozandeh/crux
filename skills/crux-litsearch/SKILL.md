@@ -1,16 +1,10 @@
 ---
 name: crux-litsearch
 description: >-
-  Set up a literature search over a crux vault with the PI, in two asks and one approval, and
-  write it to `wiki/lit/<slug>/scope.md` — what the search is for, and the 3–8 papers the PI
-  already trusts, which are what the citation crawl walks outward from. Spends its turns
-  getting the seeds right rather than polishing prose, because the seed set defines the
-  subgraph and a beautiful scope over bad seeds gives a bad list. Lints the file with
-  `crux lit lint`, then stops and hands the PI the exact `crux lit crawl` line. Never runs the
-  crawl, never writes to `raw/`. Use when a crux user wants to find the papers their wiki is
-  missing. Triggers: "what am I missing in the literature", "find papers for this", "set up a
-  literature search", "search the literature", "who else has done this", crux lit, lit scope,
-  literature crawl.
+  Scope a literature search for a crux vault with the PI: its purpose and 3-8 trusted seed
+  papers, written to wiki/lit/<slug>/scope.md; hands over the `crux lit crawl` line, never
+  runs it. Triggers: "what am I missing in the literature", "find papers for this", "who
+  else has done this", crux lit.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh

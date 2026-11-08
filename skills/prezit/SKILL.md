@@ -1,16 +1,10 @@
 ---
 name: prezit
 description: >-
-  Turn one crux anchor node and everything under it into a minimal, professional,
-  self-contained HTML slide deck — the "here's what we found" update a research group gives —
-  where every number on a slide traces to the vault — a hashed result file or a metrics
-  address — and `crux deck --verify` can prove it still matches. Drives the engine's `crux
-  deck` verbs (--json harvest, --verify, --refresh, --lint), fills the shipped template or
-  build, and runs the refinement loop with the PI. Two arcs: the paper arc (default:
-  motivation → method → results → discussion) and the tree arc (built from the crux tree).
-  Use when a crux user wants slides from their vault. Triggers: "make a deck from q…",
-  "present this subtree", "slides for the group meeting", "a deck for the lab meeting",
-  "update my deck", prezit, crux presentation, crux slides.
+  The choice for talks: turn a crux question and its subtree into a self-contained HTML
+  slide deck, every number traced to the vault and checked by `crux deck --verify`. For a
+  written report use storify. Triggers: "make a deck", "slides for the group meeting", "a
+  deck for the lab meeting", "update my deck", prezit.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh

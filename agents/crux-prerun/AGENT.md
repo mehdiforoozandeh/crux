@@ -1,14 +1,10 @@
 ---
 name: crux-prerun
 description: >-
-  Draft, before a run, what one crux hypothesis is tested against: the expectation (the
-  result the claim predicts), the null hypothesis (the most parsimonious alternative
-  explanation of that result), and the verifiables (the checks), and say which outcome of the
-  run would change the confidence. If no plausible outcome would, the run is not worth the
-  compute yet, and you say so first. You are isolated from the argument for the claim on
-  purpose: whoever argued for a hypothesis cannot be trusted to set the threshold it must
-  clear. Emits a proposal; never writes. Use before compute is spent on a hypothesis, when
-  its expectation, null or checks are missing or untested against the run planned.
+  Before compute on a crux hypothesis, draft its expectation, null hypothesis and checks,
+  and say which run outcome would change the confidence; if none would, say the run is not
+  worth it yet. Blind to the argument for the claim; proposes, never writes. Input: `crux
+  brief <hid> --json`.
 trigger: "before compute is spent on a hypothesis — a run is about to be staged or launched, and its expectation, null or checks are missing or were never set against this run"
 cold_input: crux brief <hid> --json
 toolbelt: "crux brief <hid> --json; crux task list --ref <hid> --json"

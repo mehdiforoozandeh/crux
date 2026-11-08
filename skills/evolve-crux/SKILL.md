@@ -1,16 +1,10 @@
 ---
 name: evolve-crux
 description: >-
-  Evolve crux itself — add a capability or fix a recurring flaw in the crux tool,
-  end to end: ideate → build → validate → ship. Turns a feature idea or a "crux keeps
-  doing X" annoyance into a signed-off PRD, a tests-first implementation, a hard
-  validation gate (selftest green · stdlib-only · existing vaults still load ·
-  version/migration), and a pull request. Works for anyone contributing to crux, not
-  just the maintainer; the maintainer self-merges and cuts releases. Use when working
-  ON crux — adding to the engine/CLI/skill, picking up a backlog epic from `.spec/`
-  (UI, wiki, marketing), or fixing an engine bug. Triggers: "evolve crux", "add a feature
-  to crux", "crux keeps <doing X>", "improve crux", "contribute to crux", "send a crux PR",
-  crux roadmap, crux backlog, wiki/GUI/autoresearch for crux.
+  Change crux itself (engine, CLI or skills) end to end: a signed-off PRD, tests first, a
+  hard gate (selftest green, stdlib only, old vaults load), then a pull request. For work on
+  crux, not on a project that uses it. Triggers: "evolve crux", "crux keeps doing X", "add a
+  feature to crux", "send a crux PR".
 license: MIT
 metadata:
   author: Mehdi Foroozandeh

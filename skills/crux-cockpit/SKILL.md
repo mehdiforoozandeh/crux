@@ -1,16 +1,10 @@
 ---
 name: crux-cockpit
 description: >-
-  Launch and manage the crux cockpit — the read-only browser GUI over a crux research
-  vault (`crux serve`). This skill runs it beginning to finish: locate the vault, start
-  the server fresh on localhost, verify it actually serves, and hand the user one
-  clickable URL — plus status / stop / restart, and a setup-or-demo path when no vault
-  exists yet. Works wherever the agent runs: local machine, VS Code Remote-SSH (drives
-  the port forward itself via `code --openExternal`), or a plain SSH terminal (hands the
-  user the exact `ssh -L` tunnel command). Use when a crux user wants to see their vault in a browser.
-  Triggers: "open the cockpit", "launch the crux GUI", "show me the tree in a browser",
-  "serve the vault", "is the cockpit running", "stop the cockpit", "restart the
-  cockpit", crux gui, crux cockpit.
+  Launch, check, stop or restart the crux cockpit, the read-only browser view of a crux
+  vault (`crux serve`), locally or over SSH, and hand the user one URL. Triggers: "open the
+  cockpit", "show me the tree in a browser", "is the cockpit running", "stop the cockpit",
+  crux gui.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
