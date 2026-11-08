@@ -1,16 +1,10 @@
 ---
 name: crux-wiki
 description: >-
-  A literature wiki for a crux research vault — Andrej Karpathy's LLM-wiki pattern applied to
-  a crux project. The PI curates immutable sources under `raw/`; you (the agent) compile them
-  into a persistent, interlinked `wiki/` of background, prior methods, SOTA, baselines,
-  datasets, and definitions, and draw on it to ask sharper questions and design better
-  hypotheses. The crux engine owns the bookkeeping (source hashes, the generated `WIKI.md`
-  index, structural lint via `crux validate`); you supply the reading and synthesis. One-way
-  by design: literature → wiki → informs the tree; a project's own findings never enter the
-  wiki. Use when a crux user wants a project-relevant literature base. Triggers: "ingest this
-  paper", "add to the wiki", "what does the literature say", "compile a wiki", "lint the wiki",
-  literature review, prior work / SOTA / baselines for a crux project, crux wiki, LLM wiki.
+  Literature wiki for a crux vault (Karpathy's LLM-wiki pattern): compile PI-curated sources
+  in raw/ into linked wiki/ pages on background, methods, SOTA, baselines and datasets. One-
+  way: project findings never enter it. Triggers: "ingest this paper", "add to the wiki",
+  "what does the literature say".
 license: MIT
 metadata:
   author: Mehdi Foroozandeh

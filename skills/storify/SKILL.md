@@ -1,13 +1,10 @@
 ---
 name: storify
 description: >-
-  Write one crux anchor (a question and everything under it, or one hypothesis after its
-  run) as a short private paper: a PDF of at most 4 pages in the Springer Nature article
-  template, read only by the PI. Every number is a LaTeX macro that a stdlib build reads
-  from the vault's result files, and `crux story --verify` proves that the paper still
-  matches them. Use when a crux user wants a written account of their results. Triggers:
-  storify, "write this up", "a short paper on q…", "write up the experiment", "a paper
-  version of this", crux paper, crux write-up.
+  The default write-up after an experiment: a short paper (PDF) on a crux question or
+  hypothesis, for a science undergraduate who does not remember earlier results; every
+  number checked by `crux story --verify`. Triggers: storify, "write this up", "a short
+  paper on", "write up the experiment", crux paper.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh
@@ -48,9 +45,9 @@ Start from `assets/`. The worked example `examples/q1_story/` is built on
    Done when each claim you will make has a result file behind it. For a hypothesis
    anchor, also read the hypothesis's own file: the harvest omits its problem statement.
 3. **State the scope and draft.** Tell the PI the scope in one line ("a short paper on
-   <the anchor's title>, from <what was run>"). Then draft at once. Do not ask
-   questions first: the PI is the only reader, and they redirect the draft after they read
-   it. Copy `assets/` into `<vault>/stories/<anchor-id>/` and write `story_src.tex` and the
+   <the anchor's title>, from <what was run>"). Ask only the reading-time budget (see
+   Length), then draft at once: the PI is the only reader, and they redirect the draft
+   after they read it. Copy `assets/` into `<vault>/stories/<anchor-id>/` and write `story_src.tex` and the
    REDUCE block of `build_story.py`.
 4. **Build.** `python3 build_story.py`. It finds the vault by walking up to the folder that
    holds `META.md` (or takes the vault path as its first argument).
@@ -103,6 +100,9 @@ answer does not make this one result settled.
   captions, TikZ and pgfplots code, and the references do not.
 - At most **4 PDF pages** in total, references included.
 - Cut words before you cut a negative result or an uncertainty.
+- **Ask the PI the reader's reading-time budget in minutes** and size the main text to it
+  (about 200 words a minute); what does not fit goes to an appendix after the Conclusion
+  (`\appendix`, then `\subsection`s), still inside the two caps above.
 
 ## Voice
 

@@ -1,13 +1,10 @@
 ---
 name: crux-autopilot
 description: >-
-  Set up a crux autopilot plan with the PI and write it to `auto/<qid>/plan.md`: the anchor
-  question, the program repo and the paths the worker may edit, the frozen scorer, the
-  objective with its direction and threshold, and the PI's own guidance. Checks the scorer
-  contract, runs `crux auto check` (which scores the baseline), then stops and hands the PI the
-  exact `crux auto run` line. Never starts the run. Use when a crux user wants to start an
-  autopilot search. Triggers: "set up an autopilot run", "I want to search this", "start the
-  autopilot", "write me an auto plan", "configure crux auto", crux autopilot, crux auto setup.
+  Set up a crux autopilot search with the PI: write auto/<qid>/plan.md (question, editable
+  paths, frozen scorer, objective), run `crux auto check`, and hand over the `crux auto run`
+  line; never starts the run. Triggers: "set up an autopilot run", "start the autopilot",
+  "write me an auto plan", crux auto.
 license: MIT
 metadata:
   author: Mehdi Foroozandeh

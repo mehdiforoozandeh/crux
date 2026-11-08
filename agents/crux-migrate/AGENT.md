@@ -1,10 +1,8 @@
 ---
 name: crux-migrate
 description: >-
-  Read an unorganized research repo — code, notes, results, papers — and draft a crux SEED
-  FILE that reconstructs the work already done as a question tree: questions, hypotheses with
-  what each one expected, and, for work that ran, a finding with its direction and confidence.
-  You produce a seed for a human to approve; you never write a vault and you never invent a
+  Read an existing, unorganized research repo and draft a crux seed file that rebuilds the
+  work done as a question tree, for the PI to approve. Never writes a vault, never invents a
   result. Use when the PI wants an existing research repo reconstructed into a crux vault.
 trigger: "the PI wants an existing research repo, with work already done, reconstructed into a new crux project"
 cold_input: a path to a research repo
