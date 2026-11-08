@@ -6,6 +6,8 @@ verdict/roll-up/view logic changes.
 
 ## [Unreleased]
 
+- docs: rewrite README.md and INSTALL.md in plain language. The README now opens with one example session and the four main features.
+
 ## [1.1.0] - 2026-10-31
 
 **Anchoring** (spec 20; engine **4.0 → 4.1**, no migration). Every new question and hypothesis
